@@ -23,6 +23,7 @@ type Reference = {
   description: string;
   tag: string;
   url?: string;
+  imageUrl?: string;
 };
 
 type Idea = {
@@ -91,7 +92,7 @@ const BLOCK_RULES = [
   { complete: /\[NEW_DESIGN\]\s*\n\s*```html\s*\n[\s\S]*?\n?\s*```/, partial: /\[NEW_DESIGN\][\s\S]*$/, doneLabel: "새 목업 생성됨", pendingLabel: "새 목업 생성 중..." },
   { complete: /```html\s*\n[\s\S]*?\n?\s*```/, partial: /```html[\s\S]*$/, doneLabel: "목업 수정됨", pendingLabel: "목업 수정 중..." },
   { complete: /```presentation\s*\n[\s\S]*?\n?\s*```/, partial: /```presentation[\s\S]*$/, doneLabel: "피치덱 생성됨", pendingLabel: "피치덱 생성 중..." },
-  { complete: /\[FETCH_REFERENCES\]/, partial: /\[FETCH_REFERENCES\]/, doneLabel: "레퍼런스 검색됨", pendingLabel: "레퍼런스 검색 중..." },
+  { complete: /\[FETCH_REFERENCES(?::[^\]]+)?\]/, partial: /\[FETCH_REFERENCES[\s\S]*$/, doneLabel: "레퍼런스 검색됨", pendingLabel: "레퍼런스 검색 중..." },
   { complete: /\[IDEAS\][\s\S]*?\[\/IDEAS\]/, partial: /\[IDEAS\][\s\S]*$/, doneLabel: "아이디어 저장됨", pendingLabel: "아이디어 정리 중..." },
 ];
 
@@ -503,8 +504,10 @@ export default function MainScreenPage() {
       }
 
       // Parse special blocks from completed response
-      if (fullText.includes("[FETCH_REFERENCES]")) {
-        fetchReferences(missionTitle, missionBrief);
+      const fetchRefMatch = fullText.match(/\[FETCH_REFERENCES(?::\s*(.*?))?\]/);
+      if (fetchRefMatch) {
+        const customQuery = fetchRefMatch[1]?.trim() || null;
+        fetchReferences(missionTitle, missionBrief, customQuery);
       }
 
       const parsedIdeas = parseIdeas(fullText);
@@ -573,14 +576,14 @@ export default function MainScreenPage() {
 
   const clearSelectedElement = () => setSelectedElement(null);
 
-  const fetchReferences = useCallback(async (title: string, brief: string) => {
+  const fetchReferences = useCallback(async (title: string, brief: string, customQuery?: string | null) => {
     if (isFetchingRefs || isReadOnly) return;
     setIsFetchingRefs(true);
     try {
       const res = await fetch("/api/references", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ missionTitle: title, missionBrief: brief }),
+        body: JSON.stringify({ missionTitle: title, missionBrief: brief, customQuery }),
       });
       const data = await res.json();
       if (data.references?.length > 0) setReferences(data.references);
@@ -665,24 +668,33 @@ export default function MainScreenPage() {
             </div>
             {references.length === 0 && !isFetchingRefs ? (
               <div className="mt-4 rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-6 text-center text-sm text-slate-400">
-                미션 브리핑을 입력하면 레퍼런스가 자동으로 표시됩니다.
+                채팅에서 &quot;레퍼런스 찾아줘&quot;라고 입력하면 관련 UI 이미지가 표시됩니다.
               </div>
             ) : (
               <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
                 {references.map((card) => {
-                  const domain = card.url ? (() => { try { return new URL(card.url).hostname.replace("www.", ""); } catch { return null; } })() : null;
                   return (
                     <a
                       key={card.id}
                       href={card.url || "#"}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="group flex flex-col gap-1.5 rounded-2xl border border-slate-100 bg-slate-50 p-4 transition hover:border-slate-300 hover:bg-white hover:shadow-sm"
+                      className="group flex flex-col rounded-2xl border border-slate-100 bg-slate-50 overflow-hidden transition hover:border-slate-300 hover:bg-white hover:shadow-sm"
                     >
-                      {domain && <span className="text-xs text-slate-400">{domain}</span>}
-                      <p className="text-sm font-semibold text-slate-900 group-hover:text-indigo-600 leading-snug">{card.title}</p>
-                      <p className="text-xs text-slate-500 leading-relaxed">{card.description}</p>
-                      <span className="mt-1 self-start rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-500">{card.tag}</span>
+                      {card.imageUrl && (
+                        <div className="w-full h-36 overflow-hidden bg-slate-100">
+                          <img
+                            src={card.imageUrl}
+                            alt={card.title}
+                            className="w-full h-full object-cover"
+                            onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
+                          />
+                        </div>
+                      )}
+                      <div className="flex flex-col gap-1 p-3">
+                        <p className="text-sm font-semibold text-slate-900 group-hover:text-indigo-600 leading-snug line-clamp-2">{card.title}</p>
+                        <span className="self-start rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-500">{card.tag}</span>
+                      </div>
                     </a>
                   );
                 })}
