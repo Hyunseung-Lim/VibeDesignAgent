@@ -42,6 +42,7 @@ type Artboard = {
   x: number;
   y: number;
   device: Device;
+  stitchScreenId?: string;
 };
 
 const DEVICE_SIZE: Record<Device, { width: number; height: number }> = {
@@ -76,22 +77,26 @@ function parsePresentationHtml(text: string): string | null {
 
 
 
-function parseMockupHtml(text: string): string | null {
-  const match = text.match(/```html\s*\n([\s\S]*?)\n?\s*```/);
-  return match ? match[1].trim() : null;
-}
-
-function parseNewDesignHtml(text: string): string | null {
-  const match = text.match(/\[NEW_DESIGN\]\s*\n\s*```html\s*\n([\s\S]*?)\n?\s*```/);
-  return match ? match[1].trim() : null;
+function injectNoNavigation(html: string): string {
+  const script = `<script>
+(function(){
+  document.addEventListener('click', function(e){
+    var a = e.target && (e.target.closest ? e.target.closest('a[href]') : null);
+    if(a){ e.preventDefault(); e.stopPropagation(); }
+  }, true);
+  document.addEventListener('submit', function(e){ e.preventDefault(); }, true);
+})();
+</script>`;
+  const idx = html.lastIndexOf('</body>');
+  return idx !== -1 ? html.slice(0, idx) + script + html.slice(idx) : html + script;
 }
 
 type ContentChip = { label: string; done: boolean; code?: string };
 type ContentPart = { type: "text"; content: string } | { type: "chip"; chip: ContentChip };
 
 const BLOCK_RULES = [
-  { complete: /\[NEW_DESIGN\]\s*\n\s*```html\s*\n[\s\S]*?\n?\s*```/, partial: /\[NEW_DESIGN\][\s\S]*$/, doneLabel: "새 목업 생성됨", pendingLabel: "새 목업 생성 중..." },
-  { complete: /```html\s*\n[\s\S]*?\n?\s*```/, partial: /```html[\s\S]*$/, doneLabel: "목업 수정됨", pendingLabel: "목업 수정 중..." },
+  { complete: /\[GENERATE_MOCKUP:[^\]]+\]/, partial: /\[GENERATE_MOCKUP:[\s\S]*$/, doneLabel: "새 목업 생성 요청", pendingLabel: "목업 설명 작성 중..." },
+  { complete: /\[EDIT_MOCKUP:[^\]]+\]/, partial: /\[EDIT_MOCKUP:[\s\S]*$/, doneLabel: "목업 수정 요청", pendingLabel: "수정 내용 작성 중..." },
   { complete: /```presentation\s*\n[\s\S]*?\n?\s*```/, partial: /```presentation[\s\S]*$/, doneLabel: "피치덱 생성됨", pendingLabel: "피치덱 생성 중..." },
   { complete: /\[FETCH_REFERENCES(?::[^\]]+)?\]/, partial: /\[FETCH_REFERENCES[\s\S]*$/, doneLabel: "레퍼런스 검색됨", pendingLabel: "레퍼런스 검색 중..." },
   { complete: /\[IDEAS\][\s\S]*?\[\/IDEAS\]/, partial: /\[IDEAS\][\s\S]*$/, doneLabel: "아이디어 저장됨", pendingLabel: "아이디어 정리 중..." },
@@ -235,6 +240,8 @@ export default function MainScreenPage() {
   const [isFetchingRefs, setIsFetchingRefs] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
   const [viewAsName, setViewAsName] = useState<string | null>(null);
+  const [stitchProjectId, setStitchProjectId] = useState<string>("");
+  const [isGeneratingMockup, setIsGeneratingMockup] = useState(false);
 
   const isReadOnly = !!(viewAs && isAdmin);
 
@@ -302,9 +309,23 @@ export default function MainScreenPage() {
 
       if (session?.messages) setMessages(session.messages);
       if (session?.artboards && session.artboards.length > 0) {
-        setArtboards(session.artboards);
-        setActiveArtboardId(session.artboards[session.artboards.length - 1].id);
+        const loaded: Artboard[] = session.artboards;
+        setArtboards(loaded);
+        setActiveArtboardId(loaded[loaded.length - 1].id);
         setActiveIdeaTab("mockup");
+        // Re-fetch HTML for Stitch artboards (not saved in Firestore)
+        const pid = session.stitchProjectId;
+        if (pid) {
+          loaded.forEach((a: Artboard) => {
+            if (!a.stitchScreenId || a.html) return;
+            fetch(`/api/stitch/html?projectId=${pid}&screenId=${a.stitchScreenId}`)
+              .then(r => r.json())
+              .then(d => {
+                if (d.html) setArtboards(prev => prev.map(p => p.id === a.id ? { ...p, html: d.html } : p));
+              })
+              .catch(() => {});
+          });
+        }
       } else if (session?.mockupHtml) {
         const board: Artboard = { id: crypto.randomUUID(), html: session.mockupHtml, label: "Design 1", x: 0, y: 0, device: "desktop" };
         setArtboards([board]);
@@ -314,6 +335,7 @@ export default function MainScreenPage() {
       if (session?.presentationHtml) setPresentationHtml(session.presentationHtml);
       if (session?.references) setReferences(session.references);
       if (session?.ideas) setIdeas(session.ideas);
+      if (session?.stitchProjectId) setStitchProjectId(session.stitchProjectId);
 
       // Prefer session-saved overrides; fall back to admin-set mission data
       setMissionTitle(session?.missionTitle || mission?.title || "");
@@ -332,10 +354,12 @@ export default function MainScreenPage() {
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     saveTimerRef.current = setTimeout(() => {
       const ref = doc(db, "sessions", userId, "missions", missionId);
-      setDoc(ref, { messages, artboards, presentationHtml, references, ideas, missionTitle, missionBrief, updatedAt: Date.now() }, { merge: true });
+      // Strip HTML from Stitch artboards before saving (re-fetched on load)
+      const artboardsToSave = artboards.map(a => a.stitchScreenId ? { ...a, html: "" } : a);
+      setDoc(ref, { messages, artboards: artboardsToSave, presentationHtml, references, ideas, missionTitle, missionBrief, stitchProjectId: stitchProjectId || null, updatedAt: Date.now() }, { merge: true });
     }, 1500);
     return () => { if (saveTimerRef.current) clearTimeout(saveTimerRef.current); };
-  }, [userId, missionId, messages, artboards, presentationHtml, references, ideas, missionTitle, missionBrief]);
+  }, [userId, missionId, messages, artboards, presentationHtml, references, ideas, missionTitle, missionBrief, stitchProjectId]);
 
   useEffect(() => {
     chatBottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -452,7 +476,7 @@ export default function MainScreenPage() {
 
   const sendMessage = useCallback(async () => {
     const text = inputText.trim();
-    if (!text || isLoading) return;
+    if (!text || isLoading || isGeneratingMockup) return;
 
     const userMsg: Message = {
       id: crypto.randomUUID(),
@@ -522,32 +546,111 @@ export default function MainScreenPage() {
         setTimeout(() => ideaSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
       }
 
-      const newDesignHtml = parseNewDesignHtml(fullText);
-      const editHtml = !newDesignHtml ? parseMockupHtml(fullText) : null;
+      const generateMatch = fullText.match(/\[GENERATE_MOCKUP:\s*([\s\S]*?)\]/);
+      const editMatch = !generateMatch ? fullText.match(/\[EDIT_MOCKUP:\s*([\s\S]*?)\]/) : null;
 
-      if (newDesignHtml) {
-        const newId = crypto.randomUUID();
-        setArtboards(prev => {
-          const last = prev[prev.length - 1];
-          return [...prev, {
-            id: newId,
-            html: newDesignHtml,
-            label: `Design ${prev.length + 1}`,
-            x: last ? last.x + DEVICE_SIZE[last.device ?? "desktop"].width + ARTBOARD_GAP : 0,
-            y: 0,
-            device,
-          }];
-        });
-        setActiveArtboardId(newId);
-        setActiveIdeaTab("mockup");
-        setSelectedElement(null);
-        setTimeout(() => mockupSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
-      } else if (editHtml) {
-        const targetId = activeArtboardId ?? artboards[artboards.length - 1]?.id;
-        setArtboards(prev => prev.map(a => a.id === targetId ? { ...a, html: editHtml } : a));
-        setActiveIdeaTab("mockup");
-        setSelectedElement(null);
-        setTimeout(() => mockupSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
+      if (generateMatch || editMatch) {
+        const prompt = (generateMatch ?? editMatch)![1].trim();
+        const isNew = !!generateMatch;
+        const targetArtboard = !isNew
+          ? (artboards.find(a => a.id === activeArtboardId) ?? artboards[artboards.length - 1] ?? null)
+          : null;
+
+        setIsGeneratingMockup(true);
+        try {
+          const stitchController = new AbortController();
+          const stitchTimeout = setTimeout(() => stitchController.abort(), 115_000);
+          let res: Response;
+          try {
+            res = await fetch("/api/stitch", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              signal: stitchController.signal,
+              body: JSON.stringify({
+                prompt,
+                device,
+                projectId: stitchProjectId || undefined,
+                screenId: targetArtboard?.stitchScreenId || undefined,
+              }),
+            });
+          } finally {
+            clearTimeout(stitchTimeout);
+          }
+          if (!res.ok) {
+            const errText = await res.text().catch(() => `HTTP ${res.status}`);
+            throw new Error(errText);
+          }
+          const data = await res.json();
+          if (data.error) throw new Error(data.error);
+
+          if (data.projectId) setStitchProjectId(data.projectId);
+
+          if (isNew) {
+            const primaryId = crypto.randomUUID();
+            // Collect extra screens Stitch created (excluding the primary one)
+            const extraScreenIds: string[] = (data.allScreenIds ?? []).filter(
+              (sid: string) => sid !== data.screenId
+            );
+
+            setArtboards(prev => {
+              const existingScreenIds = new Set(prev.map(a => a.stitchScreenId).filter(Boolean));
+              const newExtra = extraScreenIds.filter((sid: string) => !existingScreenIds.has(sid));
+              const last = prev[prev.length - 1];
+              let offsetX = last ? last.x + DEVICE_SIZE[last.device ?? "desktop"].width + ARTBOARD_GAP : 0;
+
+              const primaryBoard: Artboard = {
+                id: primaryId,
+                html: data.html,
+                label: `Design ${prev.length + 1}`,
+                x: offsetX,
+                y: 0,
+                device,
+                stitchScreenId: data.screenId,
+              };
+              offsetX += DEVICE_SIZE[device].width + ARTBOARD_GAP;
+
+              const extraBoards: Artboard[] = newExtra.map((sid: string, i: number) => ({
+                id: crypto.randomUUID(),
+                html: "",
+                label: `Design ${prev.length + 2 + i}`,
+                x: offsetX + i * (DEVICE_SIZE[device].width + ARTBOARD_GAP),
+                y: 0,
+                device,
+                stitchScreenId: sid,
+              }));
+
+              return [...prev, primaryBoard, ...extraBoards];
+            });
+            setActiveArtboardId(primaryId);
+
+            // Lazy-load HTML for extra screens
+            extraScreenIds.forEach((sid: string) => {
+              fetch(`/api/stitch/html?projectId=${data.projectId}&screenId=${sid}`)
+                .then(r => r.json())
+                .then(d => {
+                  if (d.html) setArtboards(prev => prev.map(a =>
+                    a.stitchScreenId === sid ? { ...a, html: d.html } : a
+                  ));
+                })
+                .catch(() => {});
+            });
+          } else {
+            const targetId = activeArtboardId ?? artboards[artboards.length - 1]?.id;
+            setArtboards(prev => prev.map(a =>
+              a.id === targetId ? { ...a, html: data.html, stitchScreenId: data.screenId } : a
+            ));
+          }
+          setActiveIdeaTab("mockup");
+          setSelectedElement(null);
+          setTimeout(() => mockupSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
+        } catch (err) {
+          const errMsg = err instanceof Error ? err.message : "Stitch 생성 실패";
+          setMessages(prev => prev.map(m =>
+            m.id === assistantId ? { ...m, content: m.content + `\n\n⚠️ 목업 생성 실패: ${errMsg}` } : m
+          ));
+        } finally {
+          setIsGeneratingMockup(false);
+        }
       }
 
       const parsedPresentation = parsePresentationHtml(fullText);
@@ -570,7 +673,7 @@ export default function MainScreenPage() {
       abortControllerRef.current = null;
       setIsLoading(false);
     }
-  }, [inputText, isLoading, messages, artboards, activeArtboardId, selectedElement, ideas]);
+  }, [inputText, isLoading, isGeneratingMockup, messages, artboards, activeArtboardId, selectedElement, selectedReferences, ideas, device, stitchProjectId, missionTitle, missionBrief]);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
@@ -830,6 +933,12 @@ export default function MainScreenPage() {
                         onMouseUp={handleCanvasMouseUp}
                         onMouseLeave={handleCanvasMouseUp}
                       >
+                        {isGeneratingMockup && (
+                          <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-black/60 rounded-2xl">
+                            <div className="h-8 w-8 animate-spin rounded-full border-2 border-white/30 border-t-white" />
+                            <p className="text-sm text-white/80">Stitch로 목업 생성 중...</p>
+                          </div>
+                        )}
                         {artboards.map(artboard => {
                           const screenX = canvasOffset.x + artboard.x * canvasScale;
                           const screenY = canvasOffset.y + artboard.y * canvasScale;
@@ -870,7 +979,7 @@ export default function MainScreenPage() {
                                 onClick={() => setActiveArtboardId(artboard.id)}
                               >
                                 <iframe
-                                  srcDoc={editMode ? injectSelectionScript(artboard.html, artboard.id) : artboard.html}
+                                  srcDoc={injectNoNavigation(editMode ? injectSelectionScript(artboard.html, artboard.id) : artboard.html)}
                                   sandbox="allow-scripts"
                                   style={{ width: DEVICE_SIZE[artboard.device ?? "desktop"].width, height: DEVICE_SIZE[artboard.device ?? "desktop"].height, border: "none", display: "block" }}
                                   title={artboard.label}
@@ -881,8 +990,15 @@ export default function MainScreenPage() {
                         })}
                       </div>
                     ) : (
-                      <div className="flex h-64 items-center justify-center rounded-2xl border border-dashed border-slate-300 bg-white/70 text-sm text-slate-400">
-                        에이전트에게 "목업 만들어줘"라고 말하면 여기에 표시됩니다.
+                      <div className="flex h-64 flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-slate-300 bg-white/70 text-sm text-slate-400">
+                        {isGeneratingMockup ? (
+                          <>
+                            <div className="h-7 w-7 animate-spin rounded-full border-2 border-slate-300 border-t-slate-600" />
+                            <p className="text-slate-500">Stitch로 목업 생성 중...</p>
+                          </>
+                        ) : (
+                          <p>{'에이전트에게 "목업 만들어줘"라고 말하면 여기에 표시됩니다.'}</p>
+                        )}
                       </div>
                     )}
                   </section>
@@ -1054,7 +1170,12 @@ export default function MainScreenPage() {
                   placeholder="에이전트에게 메시지를 입력하세요..."
                   className="max-h-24 flex-1 resize-none bg-transparent text-sm text-slate-700 outline-none placeholder:text-slate-400"
                 />
-                {isLoading ? (
+                {isGeneratingMockup ? (
+                  <span className="flex items-center gap-1.5 rounded-full bg-slate-100 px-4 py-2 text-xs text-slate-500">
+                    <span className="h-2 w-2 animate-spin rounded-full border border-slate-400 border-t-transparent" />
+                    Stitch 생성 중
+                  </span>
+                ) : isLoading ? (
                   <button
                     onClick={cancelMessage}
                     className="rounded-full bg-red-500 px-4 py-2 text-xs font-semibold text-white transition hover:bg-red-600"
