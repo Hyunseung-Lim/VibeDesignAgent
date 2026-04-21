@@ -26,9 +26,11 @@ OUTPUT RULES:
   - If this is a NEW design (first mockup, or user explicitly asked for a new/different variant): write 1–2 sentences explaining what you're about to design and key decisions, then output EXACTLY [NEW_DESIGN] on its own line, then a blank line, then the \`\`\`html block, then 1–2 sentences summarizing what was created.
   - If this is an EDIT/MODIFICATION of an existing mockup: write 1 sentence explaining what you're changing, then output the updated HTML block directly, then 1 sentence describing what changed.
 - To suggest references: write 1 sentence explaining you're searching for references, then output [FETCH_REFERENCES: {query}] on its own line, where {query} is a specific image search query based on what the user asked for (e.g. "toss.tech UI screens" or "onboarding mobile app UI"). If the user asked for a specific site or source, include it in the query (e.g. "site:toss.tech" or "kakao app UI"). Do NOT generate URLs or reference lists yourself — the system will perform a real search automatically.
-- To capture or summarize ideas from the conversation: write 1 sentence before, then output a JSON array wrapped in [IDEAS]...[/IDEAS], then 1 sentence after.
+- To save/record ideas: write 1 sentence before, then output a JSON array wrapped in [IDEAS]...[/IDEAS], then 1 sentence after.
   Format: [{"title":"Idea Title","description":"Concise description of the idea or decision"}]
-  Use this when the user asks to save ideas, summarize decisions, or explicitly requests idea extraction.
+  STRICT RULE: Use [IDEAS] ONLY when the user's message contains explicit save/record intent such as "저장", "기록", "캡처", "정리해서 저장".
+  "요약해줘", "설명해줘", "정리해줘" alone = plain text answer, NEVER [IDEAS].
+  When in doubt, answer in plain text.
 - To create a presentation/pitch deck: write 1–2 sentences explaining the structure you're creating, then output a complete, self-contained HTML file wrapped in \`\`\`presentation ... \`\`\`, then 1 sentence summarizing what was created.
   - Include Tailwind CDN, DaisyUI, Inter font, and Lucide in <head> (same as mockup rules above).
   - Design as a slide deck: full-screen slides with prev/next navigation buttons fixed at bottom.
@@ -42,7 +44,7 @@ When editing a selected element, modify only that element and output the full up
 Always write surrounding text in the same language the user is using.`;
 
 export async function POST(request: Request) {
-  const { messages, mockupHtml, selectedElement, missionTitle, missionBrief, device } = await request.json();
+  const { messages, mockupHtml, selectedElement, citedReferences, missionTitle, missionBrief, device } = await request.json();
   const deviceLabel = device === "mobile" ? "모바일 (390×844px)" : "PC (1280×900px)";
 
   const systemMessages: OpenAI.Chat.ChatCompletionMessageParam[] = [
@@ -75,11 +77,44 @@ export async function POST(request: Request) {
     });
   }
 
+  // Build messages, injecting cited reference images into the last user message via vision API
+  type OAIMessage = OpenAI.Chat.ChatCompletionMessageParam;
+  const builtMessages: OAIMessage[] = [...messages];
+
+  if (citedReferences?.length > 0) {
+    const imageUrls: string[] = citedReferences
+      .map((r: { imageUrl?: string }) => r.imageUrl)
+      .filter(Boolean);
+    const titles: string[] = citedReferences.map((r: { title: string }) => r.title);
+
+    // Find last user message and upgrade it to multimodal content
+    const lastUserIdx = builtMessages.findLastIndex((m: OAIMessage) => m.role === "user");
+    if (lastUserIdx !== -1 && imageUrls.length > 0) {
+      const originalContent = builtMessages[lastUserIdx].content as string;
+      builtMessages[lastUserIdx] = {
+        role: "user",
+        content: [
+          { type: "text", text: `[인용된 레퍼런스: ${titles.join(", ")}]\n\n${originalContent}` },
+          ...imageUrls.map(url => ({
+            type: "image_url" as const,
+            image_url: { url, detail: "low" as const },
+          })),
+        ],
+      };
+    } else {
+      // Fallback: no images, just prepend titles as text
+      systemMessages.push({
+        role: "system",
+        content: `The user is citing these references for inspiration: ${titles.join(", ")}. Use them as design direction.`,
+      });
+    }
+  }
+
   const stream = await openai.chat.completions.create({
     model: "gpt-4o",
     messages: [
       ...systemMessages,
-      ...messages,
+      ...builtMessages,
     ],
     stream: true,
   });

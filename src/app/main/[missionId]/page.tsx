@@ -15,6 +15,7 @@ type Message = {
   role: "user" | "assistant";
   content: string;
   citedElement?: { selector: string; artboardId: string } | null;
+  citedReferences?: { id: string; title: string; imageUrl?: string }[] | null;
 };
 
 type Reference = {
@@ -223,6 +224,7 @@ export default function MainScreenPage() {
   const [references, setReferences] = useState<Reference[]>([]);
   const [ideas, setIdeas] = useState<Idea[]>([]);
   const [selectedElement, setSelectedElement] = useState<SelectedElement | null>(null);
+  const [selectedReferences, setSelectedReferences] = useState<Reference[]>([]);
   const [editMode, setEditMode] = useState(false);
   const [device, setDevice] = useState<Device>("desktop");
   const [missionTitle, setMissionTitle] = useState("");
@@ -457,6 +459,7 @@ export default function MainScreenPage() {
       role: "user",
       content: text,
       citedElement: selectedElement ? { selector: selectedElement.selector, artboardId: selectedElement.artboardId } : null,
+      citedReferences: selectedReferences.length > 0 ? selectedReferences.map(r => ({ id: r.id, title: r.title, imageUrl: r.imageUrl })) : null,
     };
     const assistantId = crypto.randomUUID();
     const assistantMsg: Message = { id: assistantId, role: "assistant", content: "" };
@@ -464,6 +467,7 @@ export default function MainScreenPage() {
     setMessages((prev) => [...prev, userMsg, assistantMsg]);
     setInputText("");
     if (textareaRef.current) textareaRef.current.style.height = "auto";
+    setSelectedReferences([]);
     setIsLoading(true);
 
     const controller = new AbortController();
@@ -481,6 +485,7 @@ export default function MainScreenPage() {
           messages: [...messages, userMsg].map(({ role, content }) => ({ role, content })),
           mockupHtml: activeBoard?.html || undefined,
           selectedElement: selectedElement || undefined,
+          citedReferences: selectedReferences.length > 0 ? selectedReferences : undefined,
           missionTitle: missionTitle || undefined,
           missionBrief: missionBrief || undefined,
           device,
@@ -668,18 +673,21 @@ export default function MainScreenPage() {
             </div>
             {references.length === 0 && !isFetchingRefs ? (
               <div className="mt-4 rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-6 text-center text-sm text-slate-400">
-                채팅에서 &quot;레퍼런스 찾아줘&quot;라고 입력하면 관련 UI 이미지가 표시됩니다.
+                {'채팅에서 "레퍼런스 찾아줘"라고 입력하면 관련 UI 이미지가 표시됩니다.'}
               </div>
             ) : (
               <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
                 {references.map((card) => {
+                  const isSelected = selectedReferences.some(r => r.id === card.id);
                   return (
-                    <a
+                    <div
                       key={card.id}
-                      href={card.url || "#"}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="group flex flex-col rounded-2xl border border-slate-100 bg-slate-50 overflow-hidden transition hover:border-slate-300 hover:bg-white hover:shadow-sm"
+                      onClick={() => setSelectedReferences(prev => isSelected ? prev.filter(r => r.id !== card.id) : [...prev, card])}
+                      className={`group relative flex flex-col rounded-2xl border overflow-hidden transition cursor-pointer ${
+                        isSelected
+                          ? "border-indigo-400 bg-indigo-50 ring-2 ring-indigo-300"
+                          : "border-slate-100 bg-slate-50 hover:border-slate-300 hover:bg-white hover:shadow-sm"
+                      }`}
                     >
                       {card.imageUrl && (
                         <div className="w-full h-36 overflow-hidden bg-slate-100">
@@ -692,10 +700,27 @@ export default function MainScreenPage() {
                         </div>
                       )}
                       <div className="flex flex-col gap-1 p-3">
-                        <p className="text-sm font-semibold text-slate-900 group-hover:text-indigo-600 leading-snug line-clamp-2">{card.title}</p>
-                        <span className="self-start rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-500">{card.tag}</span>
+                        <p className={`text-sm font-semibold leading-snug line-clamp-2 ${isSelected ? "text-indigo-700" : "text-slate-900"}`}>{card.title}</p>
+                        <div className="flex items-center justify-between mt-1">
+                          <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-500">{card.tag}</span>
+                          {card.url && (
+                            <a
+                              href={card.url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              onClick={(e) => e.stopPropagation()}
+                              className="rounded-full p-1 text-slate-400 hover:bg-slate-200 hover:text-slate-600 transition"
+                              title="새 탭에서 열기"
+                            >
+                              <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+                            </a>
+                          )}
+                        </div>
                       </div>
-                    </a>
+                      {isSelected && (
+                        <div className="absolute top-2 right-2 rounded-full bg-indigo-500 text-white text-xs px-2 py-0.5">인용됨</div>
+                      )}
+                    </div>
                   );
                 })}
               </div>
@@ -926,6 +951,16 @@ export default function MainScreenPage() {
                           </span>
                         </div>
                       )}
+                      {msg.citedReferences && msg.citedReferences.length > 0 && (
+                        <div className="flex flex-wrap justify-end gap-1">
+                          {msg.citedReferences.map(r => (
+                            <span key={r.id} className="flex items-center gap-1 rounded-full bg-white/20 px-2 py-0.5 text-xs text-white/80">
+                              {r.imageUrl && <img src={r.imageUrl} alt="" className="h-3.5 w-5 rounded object-cover opacity-80" />}
+                              <span className="max-w-32 truncate">{r.title}</span>
+                            </span>
+                          ))}
+                        </div>
+                      )}
                       <div>{msg.content}</div>
                     </div>
                   ) : msg.content ? (() => {
@@ -989,6 +1024,23 @@ export default function MainScreenPage() {
                   선택된 요소: <code className="font-mono">{selectedElement.selector}</code>
                 </span>
                 <button onClick={clearSelectedElement} className="text-indigo-400 hover:text-indigo-600">✕</button>
+              </div>
+            )}
+            {!isReadOnly && selectedReferences.length > 0 && (
+              <div className="mb-2 rounded-xl bg-violet-50 px-3 py-2 text-xs">
+                <div className="flex items-center justify-between mb-1.5">
+                  <span className="font-medium text-violet-600">레퍼런스 인용 ({selectedReferences.length})</span>
+                  <button onClick={() => setSelectedReferences([])} className="text-violet-400 hover:text-violet-600">전체 해제</button>
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  {selectedReferences.map(r => (
+                    <span key={r.id} className="flex items-center gap-1 rounded-full bg-violet-100 px-2 py-0.5 text-violet-700">
+                      {r.imageUrl && <img src={r.imageUrl} alt="" className="h-3.5 w-5 rounded object-cover" />}
+                      <span className="max-w-32 truncate">{r.title}</span>
+                      <button onClick={() => setSelectedReferences(prev => prev.filter(x => x.id !== r.id))} className="ml-0.5 text-violet-400 hover:text-violet-600">✕</button>
+                    </span>
+                  ))}
+                </div>
               </div>
             )}
             {!isReadOnly && (
