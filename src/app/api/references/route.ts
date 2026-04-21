@@ -1,62 +1,96 @@
 import OpenAI from "openai";
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+const SERPER_API_KEY = process.env.SERPER_API_KEY;
+
+async function extractKeywords(missionTitle: string, missionBrief: string): Promise<string[]> {
+  const res = await openai.chat.completions.create({
+    model: "gpt-4o-mini",
+    messages: [
+      {
+        role: "system",
+        content: `Extract 3 concise UI/UX search keywords from the design mission. Return ONLY a JSON array of strings, e.g. ["keyword1", "keyword2", "keyword3"]. Each keyword should be 1-3 words suitable for image search.`,
+      },
+      {
+        role: "user",
+        content: `Mission title: ${missionTitle ?? ""}\nMission brief: ${missionBrief ?? ""}`,
+      },
+    ],
+  });
+  const text = res.choices[0]?.message?.content ?? "";
+  const match = text.match(/\[[\s\S]*?\]/);
+  if (!match) return [missionTitle ?? "mobile app UI"];
+  try {
+    return JSON.parse(match[0]);
+  } catch {
+    return [missionTitle ?? "mobile app UI"];
+  }
+}
+
+type SerperImage = {
+  title: string;
+  imageUrl: string;
+  thumbnailUrl: string;
+  source: string;
+  link: string;
+};
+
+async function searchImages(query: string, raw = false): Promise<SerperImage[]> {
+  const q = raw ? query : `${query} app UI design mobile`;
+  const res = await fetch("https://google.serper.dev/images", {
+    method: "POST",
+    headers: {
+      "X-API-KEY": SERPER_API_KEY!,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ q, num: 10 }),
+  });
+  if (!res.ok) return [];
+  const data = await res.json();
+  return (data.images ?? []) as SerperImage[];
+}
 
 export async function POST(request: Request) {
-  const { missionTitle, missionBrief } = await request.json();
+  const { missionTitle, missionBrief, customQuery } = await request.json();
 
-  if (!missionTitle && !missionBrief) {
-    return Response.json({ error: "missionTitle or missionBrief required" }, { status: 400 });
+  if (!missionTitle && !missionBrief && !customQuery) {
+    return Response.json({ error: "missionTitle, missionBrief, or customQuery required" }, { status: 400 });
   }
 
   try {
-    const res = await openai.chat.completions.create({
-      model: "gpt-4o",
-      messages: [
-        {
-          role: "system",
-          content: `You are a senior UX researcher. Given a design mission, suggest 4–6 real apps or products that have well-known, relevant UI patterns the designer should study.
+    const keywords: string[] = customQuery
+      ? [customQuery]
+      : await extractKeywords(missionTitle ?? "", missionBrief ?? "");
 
-Return ONLY a raw JSON array — no markdown fences, no explanation, no wrapper object:
-[
-  {
-    "title": "App Name — Screen or Flow Name",
-    "description": "이 앱의 어떤 부분이 이 미션에 참고할 만한지 한 줄 (한국어, 40자 이내)",
-    "tag": "UI pattern keyword",
-    "url": "https://www.appname.com"
-  }
-]
+    const results = await Promise.all(keywords.map((kw) => searchImages(kw, !!customQuery)));
 
-Rules:
-- Only include apps you are highly confident exist and are relevant
-- Prefer apps with publicly accessible UX
-- Include a mix of global and Korean apps when relevant
-- URL should be the app's main page or a well-known feature page — do not fabricate deep links`,
-        },
-        {
-          role: "user",
-          content: `Mission title: ${missionTitle ?? ""}\nMission brief: ${missionBrief ?? ""}`,
-        },
-      ],
+    const seen = new Set<string>();
+    const references: {
+      id: string;
+      title: string;
+      description: string;
+      tag: string;
+      url: string;
+      imageUrl: string;
+    }[] = [];
+
+    results.forEach((images, kwIdx) => {
+      images.forEach((img, i) => {
+        if (!img.imageUrl || seen.has(img.imageUrl)) return;
+        seen.add(img.imageUrl);
+        const domain = (() => { try { return new URL(img.link).hostname.replace("www.", ""); } catch { return img.source; } })();
+        references.push({
+          id: `ref-${Date.now()}-${kwIdx}-${i}`,
+          title: img.title || keywords[kwIdx],
+          description: `${keywords[kwIdx]} 관련 UI 레퍼런스`,
+          tag: domain,
+          url: img.link,
+          imageUrl: img.imageUrl,
+        });
+      });
     });
 
-    const text = res.choices[0]?.message?.content ?? "";
-    const jsonMatch = text.match(/\[[\s\S]*\]/);
-    if (!jsonMatch) return Response.json({ references: [] });
-    const arr = JSON.parse(jsonMatch[0]);
-    if (!Array.isArray(arr)) return Response.json({ references: [] });
-
-    const references = arr.map(
-      (r: { title: string; description: string; tag: string; url: string }, i: number) => ({
-        id: `ref-${Date.now()}-${i}`,
-        title: r.title ?? "",
-        description: r.description ?? "",
-        tag: r.tag ?? "",
-        url: r.url ?? "",
-      }),
-    );
-
-    return Response.json({ references });
+    return Response.json({ references: references.slice(0, 12) });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     return Response.json({ error: message }, { status: 500 });
