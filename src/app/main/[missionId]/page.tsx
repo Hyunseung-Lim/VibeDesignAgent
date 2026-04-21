@@ -1,17 +1,20 @@
 'use client';
 
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import { firebaseAuth, db } from "@/lib/firebase";
 import { onAuthStateChanged } from "firebase/auth";
 import { doc, getDoc, setDoc } from "firebase/firestore";
 
+const ADMIN_EMAILS = ["03leesun@gmail.com"];
+
 type Message = {
   id: string;
   role: "user" | "assistant";
   content: string;
+  citedElement?: { selector: string; artboardId: string } | null;
 };
 
 type Reference = {
@@ -28,12 +31,20 @@ type Idea = {
   description: string;
 };
 
+type Device = "desktop" | "mobile";
+
 type Artboard = {
   id: string;
   html: string;
   label: string;
   x: number;
   y: number;
+  device: Device;
+};
+
+const DEVICE_SIZE: Record<Device, { width: number; height: number }> = {
+  desktop: { width: 1280, height: 900 },
+  mobile: { width: 390, height: 844 },
 };
 
 type SelectedElement = {
@@ -61,38 +72,26 @@ function parsePresentationHtml(text: string): string | null {
   return match ? match[1].trim() : null;
 }
 
-function parseReferences(text: string): Reference[] | null {
-  const match = text.match(/\[REFERENCES\]([\s\S]*?)\[\/REFERENCES\]/);
-  if (!match) return null;
-  try {
-    const parsed = JSON.parse(match[1].trim());
-    return parsed.map((r: Omit<Reference, "id">, i: number) => ({
-      ...r,
-      id: `ref-${Date.now()}-${i}`,
-    }));
-  } catch {
-    return null;
-  }
-}
+
 
 function parseMockupHtml(text: string): string | null {
-  const match = text.match(/```html\n([\s\S]*?)\n```/);
+  const match = text.match(/```html\s*\n([\s\S]*?)\n?\s*```/);
   return match ? match[1].trim() : null;
 }
 
 function parseNewDesignHtml(text: string): string | null {
-  const match = text.match(/\[NEW_DESIGN\]\n?```html\n([\s\S]*?)\n```/);
+  const match = text.match(/\[NEW_DESIGN\]\s*\n\s*```html\s*\n([\s\S]*?)\n?\s*```/);
   return match ? match[1].trim() : null;
 }
 
-type ContentChip = { label: string; done: boolean };
+type ContentChip = { label: string; done: boolean; code?: string };
 type ContentPart = { type: "text"; content: string } | { type: "chip"; chip: ContentChip };
 
 const BLOCK_RULES = [
-  { complete: /\[NEW_DESIGN\]\n?```html\n[\s\S]*?\n```/, partial: /\[NEW_DESIGN\][\s\S]*$/, doneLabel: "새 목업 생성됨", pendingLabel: "새 목업 생성 중..." },
-  { complete: /```html\n[\s\S]*?\n```/, partial: /```html[\s\S]*$/, doneLabel: "목업 수정됨", pendingLabel: "목업 수정 중..." },
-  { complete: /```presentation\n[\s\S]*?\n```/, partial: /```presentation[\s\S]*$/, doneLabel: "피치덱 생성됨", pendingLabel: "피치덱 생성 중..." },
-  { complete: /\[REFERENCES\][\s\S]*?\[\/REFERENCES\]/, partial: /\[REFERENCES\][\s\S]*$/, doneLabel: "레퍼런스 추가됨", pendingLabel: "레퍼런스 검색 중..." },
+  { complete: /\[NEW_DESIGN\]\s*\n\s*```html\s*\n[\s\S]*?\n?\s*```/, partial: /\[NEW_DESIGN\][\s\S]*$/, doneLabel: "새 목업 생성됨", pendingLabel: "새 목업 생성 중..." },
+  { complete: /```html\s*\n[\s\S]*?\n?\s*```/, partial: /```html[\s\S]*$/, doneLabel: "목업 수정됨", pendingLabel: "목업 수정 중..." },
+  { complete: /```presentation\s*\n[\s\S]*?\n?\s*```/, partial: /```presentation[\s\S]*$/, doneLabel: "피치덱 생성됨", pendingLabel: "피치덱 생성 중..." },
+  { complete: /\[FETCH_REFERENCES\]/, partial: /\[FETCH_REFERENCES\]/, doneLabel: "레퍼런스 검색됨", pendingLabel: "레퍼런스 검색 중..." },
   { complete: /\[IDEAS\][\s\S]*?\[\/IDEAS\]/, partial: /\[IDEAS\][\s\S]*$/, doneLabel: "아이디어 저장됨", pendingLabel: "아이디어 정리 중..." },
 ];
 
@@ -122,11 +121,46 @@ function processMessageContent(content: string): ContentPart[] {
 
     const before = remaining.slice(0, earliest.index).trim();
     if (before) parts.push({ type: "text", content: before });
-    parts.push({ type: "chip", chip: { label: earliest.label, done: earliest.done } });
+
+    // Extract code content from the matched block
+    const codeMatch = earliest.matchStr.match(/```(?:html|presentation)\s*\n([\s\S]*?)(?:\n?\s*```|$)/);
+    const code = codeMatch ? codeMatch[1].trim() : earliest.matchStr;
+
+    parts.push({ type: "chip", chip: { label: earliest.label, done: earliest.done, code } });
     remaining = remaining.slice(earliest.index + earliest.matchStr.length);
   }
 
   return parts;
+}
+
+function CodeChip({ chipKey, chip, expanded, onToggle }: {
+  chipKey: string;
+  chip: ContentChip;
+  expanded: boolean;
+  onToggle: (key: string) => void;
+}) {
+  const hasCode = !!chip.code;
+  return (
+    <div className="overflow-hidden rounded-xl border border-slate-200 bg-slate-50 text-xs">
+      <button
+        onClick={() => hasCode && onToggle(chipKey)}
+        className={`flex w-full items-center gap-2 px-3 py-2 text-left ${hasCode ? "cursor-pointer hover:bg-slate-100" : "cursor-default"}`}
+      >
+        {chip.done ? (
+          <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-400" />
+        ) : (
+          <span className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-slate-400" />
+        )}
+        <span className="flex-1 text-slate-600">{chip.label}</span>
+        {hasCode && <span className="text-slate-400">{expanded ? "▲" : "▼"}</span>}
+      </button>
+      {expanded && hasCode && (
+        <pre className="max-h-64 overflow-y-auto border-t border-slate-200 bg-slate-900 p-3 font-mono text-[11px] leading-relaxed text-slate-100 whitespace-pre-wrap break-all">
+          {chip.code}
+        </pre>
+      )}
+    </div>
+  );
 }
 
 function injectSelectionScript(html: string, artboardId: string): string {
@@ -166,8 +200,6 @@ function injectSelectionScript(html: string, artboardId: string): string {
   return html + script;
 }
 
-const ARTBOARD_WIDTH = 1280;
-const ARTBOARD_HEIGHT = 900;
 const ARTBOARD_GAP = 120;
 
 const ideaTabs = [
@@ -178,6 +210,8 @@ const ideaTabs = [
 
 export default function MainScreenPage() {
   const { missionId } = useParams<{ missionId: string }>();
+  const searchParams = useSearchParams();
+  const viewAs = searchParams.get("viewAs"); // admin: view another user's session
 
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputText, setInputText] = useState("");
@@ -188,10 +222,18 @@ export default function MainScreenPage() {
   const [references, setReferences] = useState<Reference[]>([]);
   const [ideas, setIdeas] = useState<Idea[]>([]);
   const [selectedElement, setSelectedElement] = useState<SelectedElement | null>(null);
+  const [editMode, setEditMode] = useState(false);
+  const [device, setDevice] = useState<Device>("desktop");
   const [missionTitle, setMissionTitle] = useState("");
   const [missionBrief, setMissionBrief] = useState("");
+  const [missionPeriod, setMissionPeriod] = useState("");
   const [activeIdeaTab, setActiveIdeaTab] = useState("idea");
   const [userId, setUserId] = useState<string | null>(null);
+  const [isFetchingRefs, setIsFetchingRefs] = useState(false);
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [viewAsName, setViewAsName] = useState<string | null>(null);
+
+  const isReadOnly = !!(viewAs && isAdmin);
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const chatBottomRef = useRef<HTMLDivElement>(null);
@@ -204,10 +246,12 @@ export default function MainScreenPage() {
   const canvasScaleRef = useRef(0.5);
   const artboardsRef = useRef<Artboard[]>([]);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   const [canvasOffset, setCanvasOffset] = useState({ x: 40, y: 40 });
   const [canvasScale, setCanvasScale] = useState(0.5);
   const [isDragging, setIsDragging] = useState(false);
+  const [expandedChips, setExpandedChips] = useState<Set<string>>(new Set());
 
   // Keep refs in sync
   useEffect(() => { canvasOffsetRef.current = canvasOffset; }, [canvasOffset]);
@@ -218,38 +262,69 @@ export default function MainScreenPage() {
   useEffect(() => {
     return onAuthStateChanged(firebaseAuth, (user) => {
       setUserId(user?.uid ?? null);
+      setIsAdmin(ADMIN_EMAILS.includes(user?.email ?? ""));
     });
   }, []);
 
-  // Load session from Firestore
+  // Load session from Firestore + fallback to global mission data
   useEffect(() => {
     if (!userId || !missionId) return;
-    const ref = doc(db, "sessions", userId, "missions", missionId);
-    getDoc(ref).then((snap) => {
-      if (!snap.exists()) return;
-      const data = snap.data();
-      if (data.messages) setMessages(data.messages);
-      if (data.artboards && data.artboards.length > 0) {
-        setArtboards(data.artboards);
-        setActiveArtboardId(data.artboards[data.artboards.length - 1].id);
+
+    const targetUserId = (viewAs && isAdmin) ? viewAs : userId;
+    const sessionRef = doc(db, "sessions", targetUserId, "missions", missionId);
+    const missionRef = doc(db, "missions", missionId);
+
+    // Register current user as participant (skip if viewing as someone else)
+    if (!viewAs) {
+      const user = firebaseAuth.currentUser;
+      setDoc(doc(db, "missions", missionId, "participants", userId), {
+        displayName: user?.displayName ?? null,
+        email: user?.email ?? null,
+        photoURL: user?.photoURL ?? null,
+        updatedAt: Date.now(),
+      }, { merge: true });
+    }
+
+    // If viewAs, fetch participant display name
+    if (viewAs && isAdmin) {
+      getDoc(doc(db, "missions", missionId, "participants", viewAs)).then(snap => {
+        if (snap.exists()) setViewAsName(snap.data().displayName ?? snap.data().email ?? viewAs);
+        else setViewAsName(viewAs);
+      }).catch(() => setViewAsName(viewAs));
+    }
+
+    Promise.all([getDoc(sessionRef), getDoc(missionRef)]).then(([sessionSnap, missionSnap]) => {
+      const session = sessionSnap.exists() ? sessionSnap.data() : null;
+      const mission = missionSnap.exists() ? missionSnap.data() : null;
+
+      if (session?.messages) setMessages(session.messages);
+      if (session?.artboards && session.artboards.length > 0) {
+        setArtboards(session.artboards);
+        setActiveArtboardId(session.artboards[session.artboards.length - 1].id);
         setActiveIdeaTab("mockup");
-      } else if (data.mockupHtml) {
-        // backward compat: migrate old single mockupHtml
-        const board: Artboard = { id: crypto.randomUUID(), html: data.mockupHtml, label: "Design 1", x: 0, y: 0 };
+      } else if (session?.mockupHtml) {
+        const board: Artboard = { id: crypto.randomUUID(), html: session.mockupHtml, label: "Design 1", x: 0, y: 0, device: "desktop" };
         setArtboards([board]);
         setActiveArtboardId(board.id);
         setActiveIdeaTab("mockup");
       }
-      if (data.presentationHtml) setPresentationHtml(data.presentationHtml);
-      if (data.references) setReferences(data.references);
-      if (data.ideas) setIdeas(data.ideas);
-      if (data.missionTitle) setMissionTitle(data.missionTitle);
-      if (data.missionBrief) setMissionBrief(data.missionBrief);
+      if (session?.presentationHtml) setPresentationHtml(session.presentationHtml);
+      if (session?.references) setReferences(session.references);
+      if (session?.ideas) setIdeas(session.ideas);
+
+      // Prefer session-saved overrides; fall back to admin-set mission data
+      setMissionTitle(session?.missionTitle || mission?.title || "");
+      setMissionBrief(session?.missionBrief || mission?.description || "");
+      if (mission?.startDate && mission?.endDate) {
+        setMissionPeriod(`${mission.startDate} – ${mission.endDate}`);
+      }
+      if (mission?.device) setDevice(mission.device as Device);
     });
-  }, [userId, missionId]);
+  }, [userId, missionId, viewAs, isAdmin]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Save session to Firestore (debounced to avoid write storms during streaming)
   useEffect(() => {
+    if (isReadOnly) return;
     if (!userId || !missionId || (messages.length === 0 && artboards.length === 0 && !presentationHtml && references.length === 0 && ideas.length === 0 && !missionTitle && !missionBrief)) return;
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     saveTimerRef.current = setTimeout(() => {
@@ -264,9 +339,12 @@ export default function MainScreenPage() {
   }, [messages]);
 
   // Listen for element selection from iframe
+  const editModeRef = useRef(false);
+  useEffect(() => { editModeRef.current = editMode; }, [editMode]);
+
   useEffect(() => {
     const handler = (e: MessageEvent) => {
-      if (e.data?.type === "vda-element-selected") {
+      if (e.data?.type === "vda-element-selected" && editModeRef.current) {
         setSelectedElement({
           artboardId: e.data.artboardId,
           selector: e.data.selector,
@@ -311,8 +389,8 @@ export default function MainScreenPage() {
     const { clientWidth, clientHeight } = canvas;
     const minX = Math.min(...boards.map(a => a.x));
     const minY = Math.min(...boards.map(a => a.y));
-    const maxX = Math.max(...boards.map(a => a.x + ARTBOARD_WIDTH));
-    const maxY = Math.max(...boards.map(a => a.y + ARTBOARD_HEIGHT));
+    const maxX = Math.max(...boards.map(a => a.x + DEVICE_SIZE[a.device ?? "desktop"].width));
+    const maxY = Math.max(...boards.map(a => a.y + DEVICE_SIZE[a.device ?? "desktop"].height));
     const totalW = maxX - minX;
     const totalH = maxY - minY;
     const scale = Math.min((clientWidth - 80) / totalW, (clientHeight - 80) / totalH, 1);
@@ -365,11 +443,20 @@ export default function MainScreenPage() {
     target.style.height = `${Math.min(target.scrollHeight, 96)}px`;
   };
 
+  const cancelMessage = useCallback(() => {
+    abortControllerRef.current?.abort();
+  }, []);
+
   const sendMessage = useCallback(async () => {
     const text = inputText.trim();
     if (!text || isLoading) return;
 
-    const userMsg: Message = { id: crypto.randomUUID(), role: "user", content: text };
+    const userMsg: Message = {
+      id: crypto.randomUUID(),
+      role: "user",
+      content: text,
+      citedElement: selectedElement ? { selector: selectedElement.selector, artboardId: selectedElement.artboardId } : null,
+    };
     const assistantId = crypto.randomUUID();
     const assistantMsg: Message = { id: assistantId, role: "assistant", content: "" };
 
@@ -378,18 +465,24 @@ export default function MainScreenPage() {
     if (textareaRef.current) textareaRef.current.style.height = "auto";
     setIsLoading(true);
 
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+    const timeoutId = setTimeout(() => controller.abort("timeout"), 90_000);
+
     const activeBoard = artboards.find(a => a.id === activeArtboardId) ?? artboards[artboards.length - 1] ?? null;
 
     try {
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        signal: controller.signal,
         body: JSON.stringify({
           messages: [...messages, userMsg].map(({ role, content }) => ({ role, content })),
           mockupHtml: activeBoard?.html || undefined,
           selectedElement: selectedElement || undefined,
           missionTitle: missionTitle || undefined,
           missionBrief: missionBrief || undefined,
+          device,
         }),
       });
 
@@ -410,8 +503,9 @@ export default function MainScreenPage() {
       }
 
       // Parse special blocks from completed response
-      const parsedRefs = parseReferences(fullText);
-      if (parsedRefs) setReferences(parsedRefs);
+      if (fullText.includes("[FETCH_REFERENCES]")) {
+        fetchReferences(missionTitle, missionBrief);
+      }
 
       const parsedIdeas = parseIdeas(fullText);
       if (parsedIdeas) {
@@ -431,8 +525,9 @@ export default function MainScreenPage() {
             id: newId,
             html: newDesignHtml,
             label: `Design ${prev.length + 1}`,
-            x: last ? last.x + ARTBOARD_WIDTH + ARTBOARD_GAP : 0,
+            x: last ? last.x + DEVICE_SIZE[last.device ?? "desktop"].width + ARTBOARD_GAP : 0,
             y: 0,
+            device,
           }];
         });
         setActiveArtboardId(newId);
@@ -453,13 +548,18 @@ export default function MainScreenPage() {
         setActiveIdeaTab("presentation");
         setTimeout(() => presentationSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
       }
-    } catch {
+    } catch (err) {
+      const isTimeout = (err as Error)?.message === "timeout" || (err instanceof DOMException && err.name === "AbortError");
       setMessages((prev) =>
         prev.map((m) =>
-          m.id === assistantId ? { ...m, content: "오류가 발생했습니다. 다시 시도해주세요." } : m
+          m.id === assistantId
+            ? { ...m, content: isTimeout ? "응답 시간이 초과되었습니다. 다시 시도해주세요." : "오류가 발생했습니다. 다시 시도해주세요." }
+            : m
         )
       );
     } finally {
+      clearTimeout(timeoutId);
+      abortControllerRef.current = null;
       setIsLoading(false);
     }
   }, [inputText, isLoading, messages, artboards, activeArtboardId, selectedElement, ideas]);
@@ -473,14 +573,39 @@ export default function MainScreenPage() {
 
   const clearSelectedElement = () => setSelectedElement(null);
 
+  const fetchReferences = useCallback(async (title: string, brief: string) => {
+    if (isFetchingRefs || isReadOnly) return;
+    setIsFetchingRefs(true);
+    try {
+      const res = await fetch("/api/references", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ missionTitle: title, missionBrief: brief }),
+      });
+      const data = await res.json();
+      if (data.references?.length > 0) setReferences(data.references);
+    } finally {
+      setIsFetchingRefs(false);
+    }
+  }, [isFetchingRefs, isReadOnly]);
+
+
+
   const activeArtboard = artboards.find(a => a.id === activeArtboardId) ?? artboards[artboards.length - 1] ?? null;
 
   return (
     <div className="flex h-screen flex-col bg-[#f5f5f5] text-slate-900">
+      {/* Read-only banner */}
+      {isReadOnly && (
+        <div className="flex items-center justify-between bg-amber-50 border-b border-amber-200 px-6 py-2 text-xs text-amber-700">
+          <span>👁 읽기 전용 — <strong>{viewAsName ?? viewAs}</strong>의 세션을 보고 있습니다</span>
+          <Link href={`/admin`} className="font-semibold underline underline-offset-2">어드민으로 돌아가기</Link>
+        </div>
+      )}
       {/* Header */}
       <header className="flex items-center justify-between border-b border-slate-200 bg-white px-6 py-4 lg:px-10">
         <div className="space-y-1">
-          <p className="text-sm text-slate-500">Week · {missionId}</p>
+          {missionPeriod && <p className="text-sm text-slate-500">{missionPeriod}</p>}
           <h1 className="text-xl font-semibold">{missionTitle || "미션 제목 없음"}</h1>
         </div>
         <div className="flex items-center gap-4 text-sm text-slate-500">
@@ -498,7 +623,17 @@ export default function MainScreenPage() {
         <section className="flex-1 space-y-6 overflow-y-auto pb-32 pt-8 pl-10 pr-6">
           {/* Mission */}
           <div className="rounded-3xl border border-slate-200 bg-white p-6">
-            <p className="text-xl font-semibold text-slate-900">Mission</p>
+            <div className="flex items-center justify-between">
+              <p className="text-xl font-semibold text-slate-900">Mission</p>
+              <div className="flex items-center gap-2">
+                {missionPeriod && (
+                  <span className="rounded-full bg-slate-100 px-3 py-1 text-xs text-slate-500">{missionPeriod}</span>
+                )}
+                <span className="rounded-full bg-slate-100 px-3 py-1 text-xs text-slate-500">
+                  {device === "mobile" ? "📱 모바일" : "💻 PC"}
+                </span>
+              </div>
+            </div>
             <div className="mt-4 space-y-3">
               <input
                 type="text"
@@ -519,42 +654,36 @@ export default function MainScreenPage() {
 
           {/* Reference */}
           <div className="rounded-3xl border border-slate-200 bg-white p-6">
-            <p className="text-xl font-semibold text-slate-900">Reference</p>
-            {references.length === 0 ? (
+            <div className="flex items-center justify-between">
+              <p className="text-xl font-semibold text-slate-900">Reference</p>
+              {isFetchingRefs && (
+                <span className="flex items-center gap-1.5 text-xs text-slate-400">
+                  <span className="h-3 w-3 animate-spin rounded-full border-2 border-slate-300 border-t-slate-500" />
+                  레퍼런스 검색 중...
+                </span>
+              )}
+            </div>
+            {references.length === 0 && !isFetchingRefs ? (
               <div className="mt-4 rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-6 text-center text-sm text-slate-400">
-                에이전트에게 "레퍼런스 찾아줘"라고 말하면 여기에 표시됩니다.
+                미션 브리핑을 입력하면 레퍼런스가 자동으로 표시됩니다.
               </div>
             ) : (
-              <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+              <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
                 {references.map((card) => {
-                  const domain = card.url
-                    ? card.url.replace(/^https?:\/\//, "").split("/")[0]
-                    : null;
-                  const thumbnailSrc = domain ? `https://logo.clearbit.com/${domain}` : null;
+                  const domain = card.url ? (() => { try { return new URL(card.url).hostname.replace("www.", ""); } catch { return null; } })() : null;
                   return (
-                    <div key={card.id} className="rounded-2xl border border-slate-100 bg-slate-50 p-4">
-                      <div className="flex h-28 w-full items-center justify-center overflow-hidden rounded-xl bg-slate-100">
-                        {thumbnailSrc ? (
-                          <img
-                            src={thumbnailSrc}
-                            alt={card.title}
-                            className="h-16 w-16 object-contain"
-                            onError={(e) => {
-                              (e.currentTarget as HTMLImageElement).style.display = "none";
-                              (e.currentTarget.parentElement as HTMLElement).innerHTML =
-                                `<span class="text-xs text-slate-400">${card.title}</span>`;
-                            }}
-                          />
-                        ) : (
-                          <span className="text-xs text-slate-400">{card.title}</span>
-                        )}
-                      </div>
-                      <p className="mt-4 text-sm font-semibold text-slate-900">{card.title}</p>
-                      <p className="mt-2 text-xs text-slate-500">{card.description}</p>
-                      <span className="mt-3 inline-block rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-600">
-                        {card.tag}
-                      </span>
-                    </div>
+                    <a
+                      key={card.id}
+                      href={card.url || "#"}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="group flex flex-col gap-1.5 rounded-2xl border border-slate-100 bg-slate-50 p-4 transition hover:border-slate-300 hover:bg-white hover:shadow-sm"
+                    >
+                      {domain && <span className="text-xs text-slate-400">{domain}</span>}
+                      <p className="text-sm font-semibold text-slate-900 group-hover:text-indigo-600 leading-snug">{card.title}</p>
+                      <p className="text-xs text-slate-500 leading-relaxed">{card.description}</p>
+                      <span className="mt-1 self-start rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-500">{card.tag}</span>
+                    </a>
                   );
                 })}
               </div>
@@ -590,11 +719,12 @@ export default function MainScreenPage() {
                       에이전트에게 "아이디어 정리해줘"라고 말하면 여기에 저장됩니다.
                     </div>
                   ) : (
-                    <div className="space-y-3">
-                      {ideas.map((idea) => (
-                        <div key={idea.id} className="rounded-2xl border border-slate-100 bg-slate-50 p-4">
+                    <div className="rounded-2xl border border-slate-100 bg-slate-50 p-5 space-y-4">
+                      {ideas.map((idea, i) => (
+                        <div key={idea.id}>
+                          {i > 0 && <div className="border-t border-slate-200 mb-4" />}
                           <p className="text-sm font-semibold text-slate-900">{idea.title}</p>
-                          <p className="mt-1 text-xs text-slate-500">{idea.description}</p>
+                          <p className="mt-1 text-xs text-slate-500 leading-relaxed">{idea.description}</p>
                         </div>
                       ))}
                     </div>
@@ -606,13 +736,24 @@ export default function MainScreenPage() {
                       <p className="text-lg font-semibold text-slate-900">Mockup</p>
                       {artboards.length > 0 && (
                         <div className="flex items-center gap-2">
-                          {selectedElement && (
+                          {editMode && selectedElement && (
                             <span className="flex items-center gap-1.5 rounded-full bg-indigo-50 px-3 py-1 text-xs font-medium text-indigo-600">
                               <span className="h-1.5 w-1.5 rounded-full bg-indigo-500" />
                               {selectedElement.selector} 선택됨
                               <button onClick={clearSelectedElement} className="ml-1 text-indigo-400 hover:text-indigo-600">✕</button>
                             </span>
                           )}
+                          <button
+                            onClick={() => {
+                              setEditMode(p => {
+                                if (p) setSelectedElement(null);
+                                return !p;
+                              });
+                            }}
+                            className={`rounded border px-2 py-1 text-xs font-semibold transition ${editMode ? "border-indigo-400 bg-indigo-50 text-indigo-600" : "border-slate-200 text-slate-500 hover:bg-slate-50"}`}
+                          >
+                            {editMode ? "편집 중" : "편집"}
+                          </button>
                           <button onClick={fitToCanvas} className="rounded border border-slate-200 px-2 py-1 text-xs text-slate-500 hover:bg-slate-50">Fit</button>
                           <button onClick={() => setCanvasScale(s => Math.min(s * 1.2, 4))} className="rounded border border-slate-200 px-2 py-1 text-xs text-slate-600 hover:bg-slate-50">+</button>
                           <button onClick={() => setCanvasScale(s => Math.max(s * 0.8, 0.1))} className="rounded border border-slate-200 px-2 py-1 text-xs text-slate-600 hover:bg-slate-50">−</button>
@@ -681,9 +822,9 @@ export default function MainScreenPage() {
                                   top: screenY,
                                   transform: `scale(${canvasScale})`,
                                   transformOrigin: "0 0",
-                                  width: ARTBOARD_WIDTH,
-                                  height: ARTBOARD_HEIGHT,
-                                  borderRadius: 12,
+                                  width: DEVICE_SIZE[artboard.device ?? "desktop"].width,
+                                  height: DEVICE_SIZE[artboard.device ?? "desktop"].height,
+                                  borderRadius: artboard.device === "mobile" ? 24 : 12,
                                   overflow: "hidden",
                                   outline: isActive ? "2px solid #6366f1" : "2px solid transparent",
                                   outlineOffset: 3,
@@ -692,9 +833,9 @@ export default function MainScreenPage() {
                                 onClick={() => setActiveArtboardId(artboard.id)}
                               >
                                 <iframe
-                                  srcDoc={injectSelectionScript(artboard.html, artboard.id)}
+                                  srcDoc={editMode ? injectSelectionScript(artboard.html, artboard.id) : artboard.html}
                                   sandbox="allow-scripts"
-                                  style={{ width: ARTBOARD_WIDTH, height: ARTBOARD_HEIGHT, border: "none", display: "block" }}
+                                  style={{ width: DEVICE_SIZE[artboard.device ?? "desktop"].width, height: DEVICE_SIZE[artboard.device ?? "desktop"].height, border: "none", display: "block" }}
                                   title={artboard.label}
                                 />
                               </div>
@@ -764,7 +905,17 @@ export default function MainScreenPage() {
                   }`}
                 >
                   {msg.role === "user" ? (
-                    msg.content
+                    <div className="space-y-1.5">
+                      {msg.citedElement && (
+                        <div className="flex justify-end">
+                          <span className="flex items-center gap-1.5 rounded-full bg-white/20 px-2.5 py-0.5 text-xs text-white/80">
+                            <span className="h-1.5 w-1.5 rounded-full bg-indigo-300" />
+                            {msg.citedElement.selector}
+                          </span>
+                        </div>
+                      )}
+                      <div>{msg.content}</div>
+                    </div>
                   ) : msg.content ? (() => {
                     const parts = processMessageContent(msg.content);
                     const mdComponents = {
@@ -785,14 +936,17 @@ export default function MainScreenPage() {
                           part.type === "text" ? (
                             <ReactMarkdown key={i} components={mdComponents}>{part.content}</ReactMarkdown>
                           ) : (
-                            <div key={i} className="flex items-center gap-1.5 text-xs text-slate-500">
-                              {part.chip.done ? (
-                                <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
-                              ) : (
-                                <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-slate-400" />
-                              )}
-                              {part.chip.label}
-                            </div>
+                            <CodeChip
+                              key={i}
+                              chipKey={`${msg.id}-${i}`}
+                              chip={part.chip}
+                              expanded={expandedChips.has(`${msg.id}-${i}`)}
+                              onToggle={(k: string) => setExpandedChips(prev => {
+                                const next = new Set(prev);
+                                next.has(k) ? next.delete(k) : next.add(k);
+                                return next;
+                              })}
+                            />
                           )
                         )}
                       </div>
@@ -812,7 +966,12 @@ export default function MainScreenPage() {
 
           {/* Input */}
           <div className="border-t border-slate-200 bg-white/95 p-4">
-            {selectedElement && (
+            {isReadOnly && (
+              <div className="flex h-12 items-center justify-center rounded-2xl bg-amber-50 text-xs text-amber-600">
+                읽기 전용 모드 — 채팅을 사용할 수 없습니다
+              </div>
+            )}
+            {!isReadOnly && selectedElement && (
               <div className="mb-2 flex items-center justify-between rounded-xl bg-indigo-50 px-3 py-2 text-xs">
                 <span className="font-medium text-indigo-600">
                   선택된 요소: <code className="font-mono">{selectedElement.selector}</code>
@@ -820,24 +979,35 @@ export default function MainScreenPage() {
                 <button onClick={clearSelectedElement} className="text-indigo-400 hover:text-indigo-600">✕</button>
               </div>
             )}
-            <div className="flex items-start gap-3 rounded-3xl border border-slate-200 bg-white px-4 py-3">
-              <textarea
-                ref={textareaRef}
-                rows={1}
-                value={inputText}
-                onChange={handleTextareaChange}
-                onKeyDown={handleKeyDown}
-                placeholder="에이전트에게 메시지를 입력하세요..."
-                className="max-h-24 flex-1 resize-none bg-transparent text-sm text-slate-700 outline-none placeholder:text-slate-400"
-              />
-              <button
-                onClick={sendMessage}
-                disabled={!inputText.trim() || isLoading}
-                className="rounded-full bg-slate-900 px-4 py-2 text-xs font-semibold text-white transition disabled:cursor-not-allowed disabled:opacity-40"
-              >
-                Send
-              </button>
-            </div>
+            {!isReadOnly && (
+              <div className="flex items-start gap-3 rounded-3xl border border-slate-200 bg-white px-4 py-3">
+                <textarea
+                  ref={textareaRef}
+                  rows={1}
+                  value={inputText}
+                  onChange={handleTextareaChange}
+                  onKeyDown={handleKeyDown}
+                  placeholder="에이전트에게 메시지를 입력하세요..."
+                  className="max-h-24 flex-1 resize-none bg-transparent text-sm text-slate-700 outline-none placeholder:text-slate-400"
+                />
+                {isLoading ? (
+                  <button
+                    onClick={cancelMessage}
+                    className="rounded-full bg-red-500 px-4 py-2 text-xs font-semibold text-white transition hover:bg-red-600"
+                  >
+                    중단
+                  </button>
+                ) : (
+                  <button
+                    onClick={sendMessage}
+                    disabled={!inputText.trim()}
+                    className="rounded-full bg-slate-900 px-4 py-2 text-xs font-semibold text-white transition disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    Send
+                  </button>
+                )}
+              </div>
+            )}
           </div>
         </aside>
       </main>
