@@ -5,11 +5,19 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { onAuthStateChanged } from "firebase/auth";
 import {
-  collection, onSnapshot, addDoc, deleteDoc, doc, updateDoc, query, orderBy, getDocs,
+  collection,
+  onSnapshot,
+  addDoc,
+  deleteDoc,
+  doc,
+  updateDoc,
+  query,
+  orderBy,
+  getDocs,
 } from "firebase/firestore";
 import { firebaseAuth, db } from "@/lib/firebase";
 
-const ADMIN_EMAILS = ["03leesun@gmail.com"];
+const ADMIN_EMAILS = ["03leesun@gmail.com", "charlie9807@gmail.com"];
 
 type Device = "desktop" | "mobile";
 
@@ -31,13 +39,18 @@ type Mission = {
   createdAt: number;
 };
 
-function derivedStatus(startDate: string, endDate: string): { label: string; style: string } {
+function derivedStatus(
+  startDate: string,
+  endDate: string,
+): { label: string; style: string } {
   const now = new Date();
   now.setHours(0, 0, 0, 0);
   const start = new Date(startDate);
   const end = new Date(endDate);
-  if (now < start) return { label: "대기", style: "bg-slate-100 text-slate-600" };
-  if (now > end) return { label: "완료", style: "bg-emerald-100 text-emerald-700" };
+  if (now < start)
+    return { label: "대기", style: "bg-slate-100 text-slate-600" };
+  if (now > end)
+    return { label: "완료", style: "bg-emerald-100 text-emerald-700" };
   return { label: "진행중", style: "bg-amber-100 text-amber-700" };
 }
 
@@ -45,7 +58,13 @@ function today() {
   return new Date().toISOString().slice(0, 10);
 }
 
-const EMPTY_FORM = { title: "", description: "", startDate: today(), endDate: today(), device: "desktop" as Device };
+const EMPTY_FORM = {
+  title: "",
+  description: "",
+  startDate: today(),
+  endDate: today(),
+  device: "desktop" as Device,
+};
 
 export default function AdminPage() {
   const router = useRouter();
@@ -56,7 +75,9 @@ export default function AdminPage() {
   const [isCreating, setIsCreating] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editFields, setEditFields] = useState<Partial<Mission>>({});
-  const [participantsMissionId, setParticipantsMissionId] = useState<string | null>(null);
+  const [participantsMissionId, setParticipantsMissionId] = useState<
+    string | null
+  >(null);
   const [participants, setParticipants] = useState<Participant[]>([]);
 
   useEffect(() => {
@@ -128,11 +149,18 @@ export default function AdminPage() {
   const openParticipants = async (missionId: string) => {
     setParticipantsMissionId(missionId);
     setParticipants([]);
-    const snap = await getDocs(collection(db, "missions", missionId, "participants"));
-    setParticipants(snap.docs.map(d => ({ id: d.id, ...d.data() }) as Participant));
+    const snap = await getDocs(
+      collection(db, "missions", missionId, "participants"),
+    );
+    setParticipants(
+      snap.docs.map((d) => ({ id: d.id, ...d.data() }) as Participant),
+    );
   };
 
-  const closeParticipants = () => { setParticipantsMissionId(null); setParticipants([]); };
+  const closeParticipants = () => {
+    setParticipantsMissionId(null);
+    setParticipants([]);
+  };
 
   if (!ready) return null;
 
@@ -142,8 +170,15 @@ export default function AdminPage() {
       <div className="sticky top-0 z-10 border-b border-slate-200 bg-white">
         <div className="flex items-center justify-between px-6 py-4 lg:px-10">
           <div className="flex items-center gap-4">
-            <Link href="/lobby" className="text-sm text-slate-500 transition hover:text-slate-900">← 로비</Link>
-            <h1 className="text-lg font-semibold text-slate-900">관리자 페이지</h1>
+            <Link
+              href="/lobby"
+              className="text-sm text-slate-500 transition hover:text-slate-900"
+            >
+              ← 로비
+            </Link>
+            <h1 className="text-lg font-semibold text-slate-900">
+              관리자 페이지
+            </h1>
           </div>
           <button
             onClick={() => setShowModal(true)}
@@ -171,7 +206,10 @@ export default function AdminPage() {
               const isEditing = editingId === mission.id;
 
               return (
-                <div key={mission.id} className="rounded-3xl border border-slate-100 bg-white px-6 py-5 shadow-sm">
+                <div
+                  key={mission.id}
+                  className="rounded-3xl border border-slate-100 bg-white px-6 py-5 shadow-sm"
+                >
                   <div className="flex items-start gap-3">
                     <div className="flex-1 min-w-0 space-y-3">
                       {isEditing ? (
@@ -179,8 +217,13 @@ export default function AdminPage() {
                           <input
                             autoFocus
                             value={editFields.title ?? ""}
-                            onChange={e => setEditFields(p => ({ ...p, title: e.target.value }))}
-                            onKeyDown={e => {
+                            onChange={(e) =>
+                              setEditFields((p) => ({
+                                ...p,
+                                title: e.target.value,
+                              }))
+                            }
+                            onKeyDown={(e) => {
                               if (e.key === "Escape") setEditingId(null);
                             }}
                             placeholder="미션 제목"
@@ -188,7 +231,12 @@ export default function AdminPage() {
                           />
                           <textarea
                             value={editFields.description ?? ""}
-                            onChange={e => setEditFields(p => ({ ...p, description: e.target.value }))}
+                            onChange={(e) =>
+                              setEditFields((p) => ({
+                                ...p,
+                                description: e.target.value,
+                              }))
+                            }
                             placeholder="미션 설명 (선택)"
                             rows={2}
                             className="w-full resize-none rounded-xl border border-slate-200 px-3 py-1.5 text-sm text-slate-600 outline-none focus:border-slate-400"
@@ -198,7 +246,12 @@ export default function AdminPage() {
                             <input
                               type="date"
                               value={editFields.startDate ?? ""}
-                              onChange={e => setEditFields(p => ({ ...p, startDate: e.target.value }))}
+                              onChange={(e) =>
+                                setEditFields((p) => ({
+                                  ...p,
+                                  startDate: e.target.value,
+                                }))
+                              }
                               className="rounded-lg border border-slate-200 px-2 py-1 text-xs outline-none focus:border-slate-400"
                             />
                             <span className="text-slate-300">–</span>
@@ -206,17 +259,24 @@ export default function AdminPage() {
                               type="date"
                               value={editFields.endDate ?? ""}
                               min={editFields.startDate}
-                              onChange={e => setEditFields(p => ({ ...p, endDate: e.target.value }))}
+                              onChange={(e) =>
+                                setEditFields((p) => ({
+                                  ...p,
+                                  endDate: e.target.value,
+                                }))
+                              }
                               className="rounded-lg border border-slate-200 px-2 py-1 text-xs outline-none focus:border-slate-400"
                             />
                           </div>
                           <div className="flex items-center gap-2 text-xs text-slate-500">
                             <span>디바이스</span>
-                            {(["desktop", "mobile"] as Device[]).map(d => (
+                            {(["desktop", "mobile"] as Device[]).map((d) => (
                               <button
                                 key={d}
                                 type="button"
-                                onClick={() => setEditFields(p => ({ ...p, device: d }))}
+                                onClick={() =>
+                                  setEditFields((p) => ({ ...p, device: d }))
+                                }
                                 className={`rounded-lg border px-3 py-1 text-xs font-semibold transition ${
                                   (editFields.device ?? "desktop") === d
                                     ? "border-slate-900 bg-slate-900 text-white"
@@ -245,18 +305,28 @@ export default function AdminPage() {
                       ) : (
                         <>
                           <div className="flex items-center gap-3">
-                            <p className="text-sm font-semibold text-slate-900 truncate">{mission.title}</p>
-                            <span className={`shrink-0 rounded-full px-2.5 py-0.5 text-xs font-semibold ${status.style}`}>
+                            <p className="text-sm font-semibold text-slate-900 truncate">
+                              {mission.title}
+                            </p>
+                            <span
+                              className={`shrink-0 rounded-full px-2.5 py-0.5 text-xs font-semibold ${status.style}`}
+                            >
                               {status.label}
                             </span>
                             <span className="shrink-0 rounded-full bg-slate-100 px-2.5 py-0.5 text-xs text-slate-500">
-                              {(mission.device ?? "desktop") === "desktop" ? "💻 PC" : "📱 모바일"}
+                              {(mission.device ?? "desktop") === "desktop"
+                                ? "💻 PC"
+                                : "📱 모바일"}
                             </span>
                           </div>
                           {mission.description && (
-                            <p className="text-xs text-slate-500 leading-relaxed">{mission.description}</p>
+                            <p className="text-xs text-slate-500 leading-relaxed">
+                              {mission.description}
+                            </p>
                           )}
-                          <p className="text-xs text-slate-400">{mission.startDate} – {mission.endDate}</p>
+                          <p className="text-xs text-slate-400">
+                            {mission.startDate} – {mission.endDate}
+                          </p>
                         </>
                       )}
                     </div>
@@ -296,17 +366,30 @@ export default function AdminPage() {
 
       {/* Participants modal */}
       {participantsMissionId && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm" onClick={closeParticipants}>
-          <div className="w-full max-w-sm rounded-3xl bg-white p-8 shadow-2xl" onClick={e => e.stopPropagation()}>
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm"
+          onClick={closeParticipants}
+        >
+          <div
+            className="w-full max-w-sm rounded-3xl bg-white p-8 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="flex items-center justify-between">
               <h3 className="text-lg font-semibold text-slate-900">참여자</h3>
-              <button onClick={closeParticipants} className="text-slate-400 hover:text-slate-600">✕</button>
+              <button
+                onClick={closeParticipants}
+                className="text-slate-400 hover:text-slate-600"
+              >
+                ✕
+              </button>
             </div>
             <div className="mt-4 space-y-2">
               {participants.length === 0 ? (
-                <p className="text-sm text-slate-400">아직 참여자가 없습니다.</p>
+                <p className="text-sm text-slate-400">
+                  아직 참여자가 없습니다.
+                </p>
               ) : (
-                participants.map(p => (
+                participants.map((p) => (
                   <Link
                     key={p.id}
                     href={`/main/${participantsMissionId}?viewAs=${p.id}`}
@@ -314,15 +397,27 @@ export default function AdminPage() {
                     onClick={closeParticipants}
                   >
                     {p.photoURL ? (
-                      <img src={p.photoURL} alt="" className="h-8 w-8 rounded-full object-cover" />
+                      <img
+                        src={p.photoURL}
+                        alt=""
+                        className="h-8 w-8 rounded-full object-cover"
+                      />
                     ) : (
                       <div className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-900 text-xs font-semibold text-white">
-                        {(p.displayName ?? p.email ?? "?").charAt(0).toUpperCase()}
+                        {(p.displayName ?? p.email ?? "?")
+                          .charAt(0)
+                          .toUpperCase()}
                       </div>
                     )}
                     <div className="min-w-0">
-                      <p className="truncate text-sm font-semibold text-slate-900">{p.displayName ?? p.email ?? p.id}</p>
-                      {p.displayName && p.email && <p className="truncate text-xs text-slate-400">{p.email}</p>}
+                      <p className="truncate text-sm font-semibold text-slate-900">
+                        {p.displayName ?? p.email ?? p.id}
+                      </p>
+                      {p.displayName && p.email && (
+                        <p className="truncate text-xs text-slate-400">
+                          {p.email}
+                        </p>
+                      )}
                     </div>
                     <span className="ml-auto text-xs text-slate-400">→</span>
                   </Link>
@@ -337,31 +432,45 @@ export default function AdminPage() {
       {showModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
           <div className="w-full max-w-md rounded-3xl bg-white p-8 shadow-2xl">
-            <h3 className="text-lg font-semibold text-slate-900">새 미션 만들기</h3>
+            <h3 className="text-lg font-semibold text-slate-900">
+              새 미션 만들기
+            </h3>
             <div className="mt-6 space-y-4">
               <input
                 type="text"
                 value={form.title}
-                onChange={e => setForm(p => ({ ...p, title: e.target.value }))}
-                onKeyDown={e => e.key === "Enter" && !e.nativeEvent.isComposing && createMission()}
+                onChange={(e) =>
+                  setForm((p) => ({ ...p, title: e.target.value }))
+                }
+                onKeyDown={(e) =>
+                  e.key === "Enter" &&
+                  !e.nativeEvent.isComposing &&
+                  createMission()
+                }
                 placeholder="미션 제목"
                 autoFocus
                 className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none focus:border-slate-400"
               />
               <textarea
                 value={form.description}
-                onChange={e => setForm(p => ({ ...p, description: e.target.value }))}
+                onChange={(e) =>
+                  setForm((p) => ({ ...p, description: e.target.value }))
+                }
                 placeholder="미션 설명 (선택)"
                 rows={3}
                 className="w-full resize-none rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none focus:border-slate-400"
               />
               <div className="space-y-2">
-                <p className="text-xs font-semibold text-slate-500">수행 기간</p>
+                <p className="text-xs font-semibold text-slate-500">
+                  수행 기간
+                </p>
                 <div className="flex items-center gap-3">
                   <input
                     type="date"
                     value={form.startDate}
-                    onChange={e => setForm(p => ({ ...p, startDate: e.target.value }))}
+                    onChange={(e) =>
+                      setForm((p) => ({ ...p, startDate: e.target.value }))
+                    }
                     className="flex-1 rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none focus:border-slate-400"
                   />
                   <span className="text-slate-400">–</span>
@@ -369,7 +478,9 @@ export default function AdminPage() {
                     type="date"
                     value={form.endDate}
                     min={form.startDate}
-                    onChange={e => setForm(p => ({ ...p, endDate: e.target.value }))}
+                    onChange={(e) =>
+                      setForm((p) => ({ ...p, endDate: e.target.value }))
+                    }
                     className="flex-1 rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none focus:border-slate-400"
                   />
                 </div>
@@ -377,11 +488,11 @@ export default function AdminPage() {
               <div className="space-y-2">
                 <p className="text-xs font-semibold text-slate-500">디바이스</p>
                 <div className="flex gap-2">
-                  {(["desktop", "mobile"] as Device[]).map(d => (
+                  {(["desktop", "mobile"] as Device[]).map((d) => (
                     <button
                       key={d}
                       type="button"
-                      onClick={() => setForm(p => ({ ...p, device: d }))}
+                      onClick={() => setForm((p) => ({ ...p, device: d }))}
                       className={`flex-1 rounded-2xl border py-3 text-sm font-semibold transition ${
                         form.device === d
                           ? "border-slate-900 bg-slate-900 text-white"
@@ -396,7 +507,10 @@ export default function AdminPage() {
             </div>
             <div className="mt-6 flex gap-3">
               <button
-                onClick={() => { setShowModal(false); setForm(EMPTY_FORM); }}
+                onClick={() => {
+                  setShowModal(false);
+                  setForm(EMPTY_FORM);
+                }}
                 className="flex-1 rounded-2xl border border-slate-200 py-3 text-sm font-semibold text-slate-600 transition hover:bg-slate-50"
               >
                 취소
