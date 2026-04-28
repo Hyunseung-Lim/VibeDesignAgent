@@ -84,6 +84,15 @@ function parsePresentationBlock(text: string): { isJson: true; data: Presentatio
   return { isJson: false, html: content };
 }
 
+function normalizePresentationStatusText(text: string): string {
+  if (!/```presentation\s*\n/.test(text)) return text;
+  return text
+    .replace(/프레젠테이션을 생성했습니다\./g, "프레젠테이션 이미지를 생성하고 있습니다.")
+    .replace(/프레젠테이션이 생성되었습니다\./g, "프레젠테이션 이미지를 생성하고 있습니다.")
+    .replace(/피치덱을 생성했습니다\./g, "피치덱 이미지를 생성하고 있습니다.")
+    .replace(/피치덱이 생성되었습니다\./g, "피치덱 이미지를 생성하고 있습니다.");
+}
+
 
 
 function injectNoNavigation(html: string): string {
@@ -106,7 +115,7 @@ type ContentPart = { type: "text"; content: string } | { type: "chip"; chip: Con
 const BLOCK_RULES = [
   { complete: /\[GENERATE_MOCKUP:[^\]]+\]/, partial: /\[GENERATE_MOCKUP:[\s\S]*$/, doneLabel: "새 목업 생성 요청", pendingLabel: "목업 설명 작성 중..." },
   { complete: /\[EDIT_MOCKUP:[^\]]+\]/, partial: /\[EDIT_MOCKUP:[\s\S]*$/, doneLabel: "목업 수정 요청", pendingLabel: "수정 내용 작성 중..." },
-  { complete: /```presentation\s*\n[\s\S]*?\n?\s*```/, partial: /```presentation[\s\S]*$/, doneLabel: "피치덱 생성됨", pendingLabel: "피치덱 생성 중..." },
+  { complete: /```presentation\s*\n[\s\S]*?\n?\s*```/, partial: /```presentation[\s\S]*$/, doneLabel: "피치덱 프롬프트 준비됨", pendingLabel: "피치덱 프롬프트 작성 중..." },
   { complete: /\[FETCH_REFERENCES(?::[^\]]+)?\]/, partial: /\[FETCH_REFERENCES[\s\S]*$/, doneLabel: "레퍼런스 검색됨", pendingLabel: "레퍼런스 검색 중..." },
   { complete: /\[WEB_SEARCHED\]/, partial: /\[WEB_SEARCHED\]/, doneLabel: "웹 검색 완료", pendingLabel: "웹 검색 중..." },
 ];
@@ -594,6 +603,8 @@ export default function MainScreenPage() {
         );
       }
 
+      fullText = normalizePresentationStatusText(fullText);
+
       // Convert web search citation domains (domain.com) to clickable markdown links
       fullText = fullText.replace(
         /\(([a-zA-Z0-9][a-zA-Z0-9-]*(?:\.[a-zA-Z0-9][a-zA-Z0-9-]*)+(?:\/[^\s)]*)?)\)/g,
@@ -741,16 +752,16 @@ export default function MainScreenPage() {
           console.log("[presentation] slides:", presentationBlock.data.slides?.length);
           setIsGeneratingPresentation(true);
           try {
+            const uid = firebaseAuth.currentUser?.uid ?? "anonymous";
             const presRes = await fetch("/api/presentation", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ title: presentationBlock.data.title, slides: presentationBlock.data.slides }),
+              body: JSON.stringify({ title: presentationBlock.data.title, slides: presentationBlock.data.slides, uid, missionId }),
             });
             const presData = await presRes.json();
             console.log("[presentation] api response:", presData.error ?? `${presData.slides?.length} slides`);
             if (presData.error) throw new Error(presData.error);
             if (presData.slides) {
-              const uid = firebaseAuth.currentUser?.uid ?? "anonymous";
               const uploadedSlides: PresentationSlide[] = await Promise.all(
                 (presData.slides as PresentationSlide[]).map(async (slide, i) => {
                   if (!slide.imageUrl.startsWith("data:")) return slide;
@@ -760,8 +771,8 @@ export default function MainScreenPage() {
                     const url = await getDownloadURL(imgRef);
                     console.log(`[presentation] slide ${i} uploaded`);
                     return { ...slide, imageUrl: url };
-                  } catch (uploadErr) {
-                    console.warn(`[presentation] slide ${i} storage upload failed, using base64:`, uploadErr);
+                  } catch {
+                    console.info(`[presentation] slide ${i} storage upload skipped; showing generated base64 image for this session.`);
                     return slide;
                   }
                 })
