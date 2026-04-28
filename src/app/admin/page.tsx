@@ -7,9 +7,9 @@ import { onAuthStateChanged } from "firebase/auth";
 import {
   collection,
   onSnapshot,
-  addDoc,
   deleteDoc,
   doc,
+  setDoc,
   updateDoc,
   query,
   orderBy,
@@ -102,7 +102,9 @@ export default function AdminPage() {
     if (!form.title.trim()) return;
     setIsCreating(true);
     try {
-      await addDoc(collection(db, "missions"), {
+      const now = new Date();
+      const id = `mission-${now.getFullYear()}${String(now.getMonth()+1).padStart(2,"0")}${String(now.getDate()).padStart(2,"0")}-${String(now.getHours()).padStart(2,"0")}${String(now.getMinutes()).padStart(2,"0")}${String(now.getSeconds()).padStart(2,"0")}`;
+      await setDoc(doc(db, "missions", id), {
         title: form.title.trim(),
         description: form.description.trim(),
         startDate: form.startDate,

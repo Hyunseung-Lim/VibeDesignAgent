@@ -4,9 +4,10 @@ import Link from "next/link";
 import { useParams, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
-import { firebaseAuth, db } from "@/lib/firebase";
+import { firebaseAuth, db, storage } from "@/lib/firebase";
 import { onAuthStateChanged } from "firebase/auth";
 import { doc, getDoc, setDoc } from "firebase/firestore";
+import { ref as storageRef, uploadString, getDownloadURL } from "firebase/storage";
 
 const ADMIN_EMAILS = ["03leesun@gmail.com"];
 
@@ -31,6 +32,8 @@ type Idea = {
   id: string;
   title: string;
   description: string;
+  presentationSlides?: PresentationSlide[];
+  presentationHtml?: string;
 };
 
 type Device = "desktop" | "mobile";
@@ -43,6 +46,13 @@ type Artboard = {
   y: number;
   device: Device;
   stitchScreenId?: string;
+  ideaId: string;
+};
+
+type PresentationSlide = {
+  title: string;
+  content: string;
+  imageUrl: string;
 };
 
 const DEVICE_SIZE: Record<Device, { width: number; height: number }> = {
@@ -56,23 +66,21 @@ type SelectedElement = {
   outerHTML: string;
 };
 
-function parseIdeas(text: string): Idea[] | null {
-  const match = text.match(/\[IDEAS\]([\s\S]*?)\[\/IDEAS\]/);
-  if (!match) return null;
-  try {
-    const parsed = JSON.parse(match[1].trim());
-    return parsed.map((r: Omit<Idea, "id">, i: number) => ({
-      ...r,
-      id: `idea-${Date.now()}-${i}`,
-    }));
-  } catch {
-    return null;
-  }
-}
 
-function parsePresentationHtml(text: string): string | null {
+type PresentationData = { title: string; slides: { title: string; content: string; imagePrompt: string }[] };
+
+function parsePresentationBlock(text: string): { isJson: true; data: PresentationData } | { isJson: false; html: string } | null {
   const match = text.match(/```presentation\n([\s\S]*?)\n```/);
-  return match ? match[1].trim() : null;
+  if (!match) return null;
+  const content = match[1].trim();
+  if (content.startsWith("{")) {
+    try {
+      return { isJson: true, data: JSON.parse(content) as PresentationData };
+    } catch {
+      // fall through to HTML
+    }
+  }
+  return { isJson: false, html: content };
 }
 
 
@@ -99,7 +107,6 @@ const BLOCK_RULES = [
   { complete: /\[EDIT_MOCKUP:[^\]]+\]/, partial: /\[EDIT_MOCKUP:[\s\S]*$/, doneLabel: "목업 수정 요청", pendingLabel: "수정 내용 작성 중..." },
   { complete: /```presentation\s*\n[\s\S]*?\n?\s*```/, partial: /```presentation[\s\S]*$/, doneLabel: "피치덱 생성됨", pendingLabel: "피치덱 생성 중..." },
   { complete: /\[FETCH_REFERENCES(?::[^\]]+)?\]/, partial: /\[FETCH_REFERENCES[\s\S]*$/, doneLabel: "레퍼런스 검색됨", pendingLabel: "레퍼런스 검색 중..." },
-  { complete: /\[IDEAS\][\s\S]*?\[\/IDEAS\]/, partial: /\[IDEAS\][\s\S]*$/, doneLabel: "아이디어 저장됨", pendingLabel: "아이디어 정리 중..." },
 ];
 
 function processMessageContent(content: string): ContentPart[] {
@@ -209,11 +216,6 @@ function injectSelectionScript(html: string, artboardId: string): string {
 
 const ARTBOARD_GAP = 120;
 
-const ideaTabs = [
-  { id: "idea", label: "Idea" },
-  { id: "mockup", label: "Mockup" },
-  { id: "presentation", label: "Presentation" },
-];
 
 export default function MainScreenPage() {
   const { missionId } = useParams<{ missionId: string }>();
@@ -225,7 +227,8 @@ export default function MainScreenPage() {
   const [isLoading, setIsLoading] = useState(false);
   const [artboards, setArtboards] = useState<Artboard[]>([]);
   const [activeArtboardId, setActiveArtboardId] = useState<string | null>(null);
-  const [presentationHtml, setPresentationHtml] = useState("");
+  const [currentSlideIndex, setCurrentSlideIndex] = useState(0);
+  const [isGeneratingPresentation, setIsGeneratingPresentation] = useState(false);
   const [references, setReferences] = useState<Reference[]>([]);
   const [ideas, setIdeas] = useState<Idea[]>([]);
   const [selectedElement, setSelectedElement] = useState<SelectedElement | null>(null);
@@ -236,12 +239,14 @@ export default function MainScreenPage() {
   const [missionBrief, setMissionBrief] = useState("");
   const [missionPeriod, setMissionPeriod] = useState("");
   const [activeIdeaTab, setActiveIdeaTab] = useState("idea");
+  const [activeIdeaId, setActiveIdeaId] = useState<string | null>(null);
   const [userId, setUserId] = useState<string | null>(null);
   const [isFetchingRefs, setIsFetchingRefs] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
   const [viewAsName, setViewAsName] = useState<string | null>(null);
   const [stitchProjectId, setStitchProjectId] = useState<string>("");
   const [isGeneratingMockup, setIsGeneratingMockup] = useState(false);
+  const [ideaEditMode, setIdeaEditMode] = useState(false);
 
   const isReadOnly = !!(viewAs && isAdmin);
 
@@ -255,6 +260,7 @@ export default function MainScreenPage() {
   const canvasOffsetRef = useRef({ x: 40, y: 40 });
   const canvasScaleRef = useRef(0.5);
   const artboardsRef = useRef<Artboard[]>([]);
+  const activeIdeaIdRef = useRef<string | null>(null);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
 
@@ -267,6 +273,7 @@ export default function MainScreenPage() {
   useEffect(() => { canvasOffsetRef.current = canvasOffset; }, [canvasOffset]);
   useEffect(() => { canvasScaleRef.current = canvasScale; }, [canvasScale]);
   useEffect(() => { artboardsRef.current = artboards; }, [artboards]);
+  useEffect(() => { activeIdeaIdRef.current = activeIdeaId; }, [activeIdeaId]);
 
   // Auth state
   useEffect(() => {
@@ -308,12 +315,19 @@ export default function MainScreenPage() {
       const mission = missionSnap.exists() ? missionSnap.data() : null;
 
       if (session?.messages) setMessages(session.messages);
+      // Load ideas first so we can reference their IDs
+      const loadedIdeas: Idea[] = session?.ideas ?? [];
+      const firstIdeaId = loadedIdeas[0]?.id ?? "";
+
       if (session?.artboards && session.artboards.length > 0) {
-        const loaded: Artboard[] = session.artboards;
+        // Backward compat: old artboards without ideaId → assign to first idea
+        const loaded: Artboard[] = session.artboards.map((a: Artboard) => ({
+          ...a,
+          ideaId: a.ideaId ?? firstIdeaId,
+        }));
         setArtboards(loaded);
         setActiveArtboardId(loaded[loaded.length - 1].id);
         setActiveIdeaTab("mockup");
-        // Re-fetch HTML for Stitch artboards (not saved in Firestore)
         const pid = session.stitchProjectId;
         if (pid) {
           loaded.forEach((a: Artboard) => {
@@ -327,14 +341,29 @@ export default function MainScreenPage() {
           });
         }
       } else if (session?.mockupHtml) {
-        const board: Artboard = { id: crypto.randomUUID(), html: session.mockupHtml, label: "Design 1", x: 0, y: 0, device: "desktop" };
+        const board: Artboard = { id: crypto.randomUUID(), html: session.mockupHtml, label: "Design 1", x: 0, y: 0, device: "desktop", ideaId: firstIdeaId };
         setArtboards([board]);
         setActiveArtboardId(board.id);
         setActiveIdeaTab("mockup");
       }
-      if (session?.presentationHtml) setPresentationHtml(session.presentationHtml);
+
+      // Backward compat: global presentation → assign to first idea
+      const ideasWithPresentation: Idea[] = loadedIdeas.map((idea: Idea, idx: number) => {
+        if (idx === 0) {
+          return {
+            ...idea,
+            presentationSlides: idea.presentationSlides ?? (session?.presentationSlides?.length ? session.presentationSlides : undefined),
+            presentationHtml: idea.presentationHtml ?? session?.presentationHtml ?? undefined,
+          };
+        }
+        return idea;
+      });
+
+      if (ideasWithPresentation.length > 0) {
+        setIdeas(ideasWithPresentation);
+        setActiveIdeaId(ideasWithPresentation[0].id);
+      }
       if (session?.references) setReferences(session.references);
-      if (session?.ideas) setIdeas(session.ideas);
       if (session?.stitchProjectId) setStitchProjectId(session.stitchProjectId);
 
       // Prefer session-saved overrides; fall back to admin-set mission data
@@ -350,16 +379,20 @@ export default function MainScreenPage() {
   // Save session to Firestore (debounced to avoid write storms during streaming)
   useEffect(() => {
     if (isReadOnly) return;
-    if (!userId || !missionId || (messages.length === 0 && artboards.length === 0 && !presentationHtml && references.length === 0 && ideas.length === 0 && !missionTitle && !missionBrief)) return;
+    if (!userId || !missionId || (messages.length === 0 && artboards.length === 0 && references.length === 0 && ideas.length === 0 && !missionTitle && !missionBrief)) return;
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     saveTimerRef.current = setTimeout(() => {
       const ref = doc(db, "sessions", userId, "missions", missionId);
-      // Strip HTML from Stitch artboards before saving (re-fetched on load)
       const artboardsToSave = artboards.map(a => a.stitchScreenId ? { ...a, html: "" } : a);
-      setDoc(ref, { messages, artboards: artboardsToSave, presentationHtml, references, ideas, missionTitle, missionBrief, stitchProjectId: stitchProjectId || null, updatedAt: Date.now() }, { merge: true });
+      // Per-idea presentation: only save Storage URLs (not base64)
+      const ideasToSave = ideas.map(idea => ({
+        ...idea,
+        presentationSlides: (idea.presentationSlides ?? []).filter(s => s.imageUrl.startsWith("https://")),
+      }));
+      setDoc(ref, { messages, artboards: artboardsToSave, references, ideas: ideasToSave, missionTitle, missionBrief, stitchProjectId: stitchProjectId || null, updatedAt: Date.now() }, { merge: true });
     }, 1500);
     return () => { if (saveTimerRef.current) clearTimeout(saveTimerRef.current); };
-  }, [userId, missionId, messages, artboards, presentationHtml, references, ideas, missionTitle, missionBrief, stitchProjectId]);
+  }, [userId, missionId, messages, artboards, references, ideas, missionTitle, missionBrief, stitchProjectId]);
 
   useEffect(() => {
     chatBottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -411,7 +444,7 @@ export default function MainScreenPage() {
   const fitToCanvas = useCallback(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const boards = artboardsRef.current;
+    const boards = artboardsRef.current.filter(a => a.ideaId === activeIdeaIdRef.current);
     if (boards.length === 0) return;
     const { clientWidth, clientHeight } = canvas;
     const minX = Math.min(...boards.map(a => a.x));
@@ -433,15 +466,36 @@ export default function MainScreenPage() {
     if (artboards.length === 1) setTimeout(fitToCanvas, 0);
   }, [artboards.length, fitToCanvas]);
 
-  const sectionRefs: Record<string, React.RefObject<HTMLElement | null>> = {
-    idea: ideaSectionRef,
-    mockup: mockupSectionRef,
-    presentation: presentationSectionRef,
+
+  const addIdea = () => {
+    const newIdea: Idea = { id: crypto.randomUUID(), title: "새 아이디어", description: "" };
+    setIdeas(prev => [...prev, newIdea]);
+    setActiveIdeaId(newIdea.id);
+    setActiveArtboardId(null);
+    setCurrentSlideIndex(0);
+    setActiveIdeaTab("idea");
+    setIdeaEditMode(true);
   };
 
-  const scrollToSection = (id: string) => {
-    setActiveIdeaTab(id);
-    setTimeout(() => sectionRefs[id]?.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 0);
+  const switchIdea = (ideaId: string) => {
+    setActiveIdeaId(ideaId);
+    setCurrentSlideIndex(0);
+    setActiveIdeaTab("idea");
+    setIdeaEditMode(false);
+    const ideaBoards = artboardsRef.current.filter(a => a.ideaId === ideaId);
+    setActiveArtboardId(ideaBoards.at(-1)?.id ?? null);
+  };
+
+  const updateIdea = (id: string, changes: Partial<Omit<Idea, "id">>) => {
+    setIdeas(prev => prev.map(i => i.id === id ? { ...i, ...changes } : i));
+  };
+
+  const deleteIdea = (id: string) => {
+    setIdeas(prev => {
+      const next = prev.filter(i => i.id !== id);
+      if (activeIdeaId === id) setActiveIdeaId(next[next.length - 1]?.id ?? null);
+      return next;
+    });
   };
 
   const handleCanvasMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
@@ -498,7 +552,8 @@ export default function MainScreenPage() {
     abortControllerRef.current = controller;
     const timeoutId = setTimeout(() => controller.abort("timeout"), 90_000);
 
-    const activeBoard = artboards.find(a => a.id === activeArtboardId) ?? artboards[artboards.length - 1] ?? null;
+    const currentIdeaBoards = artboards.filter(a => a.ideaId === activeIdeaId);
+    const activeBoard = currentIdeaBoards.find(a => a.id === activeArtboardId) ?? currentIdeaBoards.at(-1) ?? null;
 
     try {
       const res = await fetch("/api/chat", {
@@ -539,12 +594,6 @@ export default function MainScreenPage() {
         fetchReferences(missionTitle, missionBrief, customQuery);
       }
 
-      const parsedIdeas = parseIdeas(fullText);
-      if (parsedIdeas) {
-        setIdeas((prev) => [...prev, ...parsedIdeas]);
-        setActiveIdeaTab("idea");
-        setTimeout(() => ideaSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
-      }
 
       const generateMatch = fullText.match(/\[GENERATE_MOCKUP:\s*([\s\S]*?)\]/);
       const editMatch = !generateMatch ? fullText.match(/\[EDIT_MOCKUP:\s*([\s\S]*?)\]/) : null;
@@ -552,8 +601,18 @@ export default function MainScreenPage() {
       if (generateMatch || editMatch) {
         const prompt = (generateMatch ?? editMatch)![1].trim();
         const isNew = !!generateMatch;
+
+        if (isNew && ideas.length === 0) {
+          setMessages(prev => prev.map(m =>
+            m.id === assistantId
+              ? { ...m, content: m.content + "\n\n⚠️ 아이디어를 먼저 저장해야 목업을 생성할 수 있습니다. 아이디어를 정리한 후 다시 시도해 주세요." }
+              : m
+          ));
+          return;
+        }
+
         const targetArtboard = !isNew
-          ? (artboards.find(a => a.id === activeArtboardId) ?? artboards[artboards.length - 1] ?? null)
+          ? (currentIdeaBoards.find(a => a.id === activeArtboardId) ?? currentIdeaBoards.at(-1) ?? null)
           : null;
 
         setIsGeneratingMockup(true);
@@ -598,25 +657,28 @@ export default function MainScreenPage() {
               const last = prev[prev.length - 1];
               let offsetX = last ? last.x + DEVICE_SIZE[last.device ?? "desktop"].width + ARTBOARD_GAP : 0;
 
+              const ideaId = activeIdeaId ?? "";
               const primaryBoard: Artboard = {
                 id: primaryId,
                 html: data.html,
-                label: `Design ${prev.length + 1}`,
+                label: `Design ${prev.filter(a => a.ideaId === ideaId).length + 1}`,
                 x: offsetX,
                 y: 0,
                 device,
                 stitchScreenId: data.screenId,
+                ideaId,
               };
               offsetX += DEVICE_SIZE[device].width + ARTBOARD_GAP;
 
               const extraBoards: Artboard[] = newExtra.map((sid: string, i: number) => ({
                 id: crypto.randomUUID(),
                 html: "",
-                label: `Design ${prev.length + 2 + i}`,
+                label: `Design ${prev.filter(a => a.ideaId === ideaId).length + 2 + i}`,
                 x: offsetX + i * (DEVICE_SIZE[device].width + ARTBOARD_GAP),
                 y: 0,
                 device,
                 stitchScreenId: sid,
+                ideaId,
               }));
 
               return [...prev, primaryBoard, ...extraBoards];
@@ -635,14 +697,13 @@ export default function MainScreenPage() {
                 .catch(() => {});
             });
           } else {
-            const targetId = activeArtboardId ?? artboards[artboards.length - 1]?.id;
+            const targetId = activeArtboardId ?? currentIdeaBoards.at(-1)?.id;
             setArtboards(prev => prev.map(a =>
               a.id === targetId ? { ...a, html: data.html, stitchScreenId: data.screenId } : a
             ));
           }
           setActiveIdeaTab("mockup");
           setSelectedElement(null);
-          setTimeout(() => mockupSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
         } catch (err) {
           const errMsg = err instanceof Error ? err.message : "Stitch 생성 실패";
           setMessages(prev => prev.map(m =>
@@ -653,11 +714,63 @@ export default function MainScreenPage() {
         }
       }
 
-      const parsedPresentation = parsePresentationHtml(fullText);
-      if (parsedPresentation) {
-        setPresentationHtml(parsedPresentation);
-        setActiveIdeaTab("presentation");
-        setTimeout(() => presentationSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
+      const presentationBlock = parsePresentationBlock(fullText);
+      console.log("[presentation] block:", presentationBlock ? (presentationBlock.isJson ? "json" : "html") : "none");
+      if (presentationBlock) {
+        if (currentIdeaBoards.length === 0) {
+          setMessages(prev => prev.map(m =>
+            m.id === assistantId
+              ? { ...m, content: m.content + "\n\n⚠️ 목업이 먼저 만들어져야 피치덱을 생성할 수 있습니다." }
+              : m
+          ));
+        } else if (presentationBlock.isJson) {
+          console.log("[presentation] slides:", presentationBlock.data.slides?.length);
+          setIsGeneratingPresentation(true);
+          try {
+            const presRes = await fetch("/api/presentation", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ title: presentationBlock.data.title, slides: presentationBlock.data.slides }),
+            });
+            const presData = await presRes.json();
+            console.log("[presentation] api response:", presData.error ?? `${presData.slides?.length} slides`);
+            if (presData.error) throw new Error(presData.error);
+            if (presData.slides) {
+              const uid = firebaseAuth.currentUser?.uid ?? "anonymous";
+              const uploadedSlides: PresentationSlide[] = await Promise.all(
+                (presData.slides as PresentationSlide[]).map(async (slide, i) => {
+                  if (!slide.imageUrl.startsWith("data:")) return slide;
+                  try {
+                    const imgRef = storageRef(storage, `presentations/${uid}/${missionId}/slide-${i}.png`);
+                    await uploadString(imgRef, slide.imageUrl, "data_url");
+                    const url = await getDownloadURL(imgRef);
+                    console.log(`[presentation] slide ${i} uploaded`);
+                    return { ...slide, imageUrl: url };
+                  } catch (uploadErr) {
+                    console.warn(`[presentation] slide ${i} storage upload failed, using base64:`, uploadErr);
+                    return slide;
+                  }
+                })
+              );
+              if (activeIdeaId) updateIdea(activeIdeaId, { presentationSlides: uploadedSlides });
+              setCurrentSlideIndex(0);
+              setActiveIdeaTab("presentation");
+            }
+          } catch (presErr) {
+            const msg = presErr instanceof Error ? presErr.message : String(presErr);
+            console.error("[presentation] error:", msg);
+            setMessages(prev => prev.map(m =>
+              m.id === assistantId
+                ? { ...m, content: m.content + `\n\n⚠️ 피치덱 이미지 생성 실패: ${msg}` }
+                : m
+            ));
+          } finally {
+            setIsGeneratingPresentation(false);
+          }
+        } else {
+          if (activeIdeaId) updateIdea(activeIdeaId, { presentationHtml: presentationBlock.html });
+          setActiveIdeaTab("presentation");
+        }
       }
     } catch (err) {
       const isTimeout = (err as Error)?.message === "timeout" || (err instanceof DOMException && err.name === "AbortError");
@@ -673,7 +786,7 @@ export default function MainScreenPage() {
       abortControllerRef.current = null;
       setIsLoading(false);
     }
-  }, [inputText, isLoading, isGeneratingMockup, messages, artboards, activeArtboardId, selectedElement, selectedReferences, ideas, device, stitchProjectId, missionTitle, missionBrief]);
+  }, [inputText, isLoading, isGeneratingMockup, messages, artboards, activeArtboardId, activeIdeaId, selectedElement, selectedReferences, ideas, device, stitchProjectId, missionTitle, missionBrief]);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
@@ -702,7 +815,8 @@ export default function MainScreenPage() {
 
 
 
-  const activeArtboard = artboards.find(a => a.id === activeArtboardId) ?? artboards[artboards.length - 1] ?? null;
+  const ideaArtboards = artboards.filter(a => a.ideaId === activeIdeaId);
+  const activeArtboard = ideaArtboards.find(a => a.id === activeArtboardId) ?? ideaArtboards[ideaArtboards.length - 1] ?? null;
 
   return (
     <div className="flex h-screen flex-col bg-[#f5f5f5] text-slate-900">
@@ -746,20 +860,16 @@ export default function MainScreenPage() {
               </div>
             </div>
             <div className="mt-4 space-y-3">
-              <input
-                type="text"
-                value={missionTitle}
-                onChange={e => setMissionTitle(e.target.value)}
-                placeholder="미션 제목을 입력하세요"
-                className="w-full rounded-2xl border border-slate-100 bg-slate-50 px-4 py-3 text-base font-semibold text-slate-900 outline-none transition placeholder:font-normal placeholder:text-slate-400 focus:border-slate-300 focus:bg-white"
-              />
-              <textarea
-                value={missionBrief}
-                onChange={e => setMissionBrief(e.target.value)}
-                placeholder="미션 브리핑을 입력하세요. 목표, 대상 사용자, 주요 요구사항 등을 자유롭게 작성하면 에이전트가 참고합니다."
-                rows={4}
-                className="w-full resize-none rounded-2xl border border-slate-100 bg-slate-50 px-4 py-3 text-sm text-slate-700 outline-none transition placeholder:text-slate-400 focus:border-slate-300 focus:bg-white"
-              />
+              <p className="rounded-2xl border border-slate-100 bg-slate-50 px-4 py-3 text-base font-semibold text-slate-900">
+                {missionTitle || <span className="font-normal text-slate-400">미션 제목 없음</span>}
+              </p>
+              {missionBrief ? (
+                <p className="rounded-2xl border border-slate-100 bg-slate-50 px-4 py-3 text-sm text-slate-700 leading-relaxed whitespace-pre-wrap">
+                  {missionBrief}
+                </p>
+              ) : (
+                <p className="rounded-2xl border border-slate-100 bg-slate-50 px-4 py-3 text-sm text-slate-400">미션 브리핑 없음</p>
+              )}
             </div>
           </div>
 
@@ -832,194 +942,198 @@ export default function MainScreenPage() {
 
           {/* Idea / Mockup / Presentation */}
           <div className="rounded-3xl border border-slate-200 bg-white p-6">
-            <div className="flex gap-4">
-              {/* Tab sidebar */}
-              <div className="sticky top-4 flex flex-col space-y-2 self-start text-sm text-slate-600">
-                {ideaTabs.map((tab) => (
-                  <button
-                    key={tab.id}
-                    onClick={() => scrollToSection(tab.id)}
-                    className={`rounded-xl border px-4 py-2 text-left transition ${
-                      activeIdeaTab === tab.id
-                        ? "border-slate-900 bg-slate-900 text-white"
-                        : "border-slate-200 bg-white hover:bg-slate-50"
-                    }`}
-                  >
-                    {tab.label}
-                  </button>
-                ))}
+            {ideas.length === 0 ? (
+              <div className="flex flex-col items-center gap-4 rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-8 text-center text-sm text-slate-400">
+                <p>아이디어를 직접 작성해보세요.</p>
+                <button onClick={addIdea} className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm text-slate-700 hover:bg-slate-50 transition">+ 새 아이디어</button>
               </div>
+            ) : (
+              <>
+                {/* Top: idea tabs */}
+                <div className="flex gap-2 overflow-x-auto pb-4 mb-6 border-b border-slate-100">
+                  {ideas.map((idea) => (
+                    <button
+                      key={idea.id}
+                      onClick={() => switchIdea(idea.id)}
+                      className={`shrink-0 rounded-xl border px-4 py-2 text-sm transition ${
+                        activeIdeaId === idea.id
+                          ? "border-slate-900 bg-slate-900 text-white"
+                          : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+                      }`}
+                    >
+                      {idea.title}
+                    </button>
+                  ))}
+                  <button onClick={addIdea} className="shrink-0 rounded-xl border border-dashed border-slate-300 px-4 py-2 text-sm text-slate-400 hover:bg-slate-50 transition">+</button>
+                </div>
 
-              {/* Sections — always rendered, tabs scroll to them */}
-              <div className="flex-1 space-y-10">
-                <section ref={ideaSectionRef} className="space-y-3 scroll-mt-4">
-                  <p className="text-lg font-semibold text-slate-900">Idea</p>
-                  {ideas.length === 0 ? (
-                    <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-6 text-center text-sm text-slate-400">
-                      에이전트에게 "아이디어 정리해줘"라고 말하면 여기에 저장됩니다.
-                    </div>
-                  ) : (
-                    <div className="rounded-2xl border border-slate-100 bg-slate-50 p-5 space-y-4">
-                      {ideas.map((idea, i) => (
-                        <div key={idea.id}>
-                          {i > 0 && <div className="border-t border-slate-200 mb-4" />}
-                          <p className="text-sm font-semibold text-slate-900">{idea.title}</p>
-                          <p className="mt-1 text-xs text-slate-500 leading-relaxed">{idea.description}</p>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </section>
-
-                <section ref={mockupSectionRef} className="space-y-3 scroll-mt-4">
-                    <div className="flex items-center justify-between">
-                      <p className="text-lg font-semibold text-slate-900">Mockup</p>
-                      {artboards.length > 0 && (
-                        <div className="flex items-center gap-2">
-                          {editMode && selectedElement && (
-                            <span className="flex items-center gap-1.5 rounded-full bg-indigo-50 px-3 py-1 text-xs font-medium text-indigo-600">
-                              <span className="h-1.5 w-1.5 rounded-full bg-indigo-500" />
-                              {selectedElement.selector} 선택됨
-                              <button onClick={clearSelectedElement} className="ml-1 text-indigo-400 hover:text-indigo-600">✕</button>
-                            </span>
-                          )}
-                          <button
-                            onClick={() => {
-                              setEditMode(p => {
-                                if (p) setSelectedElement(null);
-                                return !p;
-                              });
-                            }}
-                            className={`rounded border px-2 py-1 text-xs font-semibold transition ${editMode ? "border-indigo-400 bg-indigo-50 text-indigo-600" : "border-slate-200 text-slate-500 hover:bg-slate-50"}`}
-                          >
-                            {editMode ? "편집 중" : "편집"}
-                          </button>
-                          <button onClick={fitToCanvas} className="rounded border border-slate-200 px-2 py-1 text-xs text-slate-500 hover:bg-slate-50">Fit</button>
-                          <button onClick={() => setCanvasScale(s => Math.min(s * 1.2, 4))} className="rounded border border-slate-200 px-2 py-1 text-xs text-slate-600 hover:bg-slate-50">+</button>
-                          <button onClick={() => setCanvasScale(s => Math.max(s * 0.8, 0.1))} className="rounded border border-slate-200 px-2 py-1 text-xs text-slate-600 hover:bg-slate-50">−</button>
-                          <span className="w-10 text-center text-xs text-slate-400">{Math.round(canvasScale * 100)}%</span>
-                          <button
-                            onClick={() => {
-                              const html = activeArtboard?.html;
-                              if (!html) return;
-                              const blob = new Blob([html], { type: "text/html" });
-                              const url = URL.createObjectURL(blob);
-                              const a = document.createElement("a");
-                              a.href = url;
-                              a.download = `${activeArtboard?.label ?? "mockup"}.html`;
-                              a.click();
-                              URL.revokeObjectURL(url);
-                            }}
-                            className="text-xs font-semibold text-slate-600 hover:text-slate-900"
-                          >
-                            Export
-                          </button>
-                        </div>
-                      )}
-                    </div>
-
-                    {artboards.length > 0 ? (
-                      <div
-                        ref={canvasRef}
-                        className="relative h-150 w-full overflow-hidden rounded-2xl select-none"
-                        style={{
-                          backgroundColor: "#1a1a1a",
-                          backgroundImage: "radial-gradient(circle, #383838 1px, transparent 1px)",
-                          backgroundSize: "20px 20px",
-                          cursor: isDragging ? "grabbing" : "grab",
+                <div className="flex gap-4">
+                  {/* Sub-tab sidebar */}
+                  <div className="sticky top-4 flex flex-col space-y-2 self-start text-sm text-slate-600">
+                    {[
+                      { id: "idea", label: "Idea", ref: ideaSectionRef },
+                      { id: "mockup", label: "Mockup", ref: mockupSectionRef },
+                      { id: "presentation", label: "Presentation", ref: presentationSectionRef },
+                    ].map((tab) => (
+                      <button
+                        key={tab.id}
+                        onClick={() => {
+                          setActiveIdeaTab(tab.id);
+                          setTimeout(() => tab.ref.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 0);
                         }}
-                        onMouseDown={handleCanvasMouseDown}
-                        onMouseMove={handleCanvasMouseMove}
-                        onMouseUp={handleCanvasMouseUp}
-                        onMouseLeave={handleCanvasMouseUp}
+                        className={`rounded-xl border px-4 py-2 text-left transition ${
+                          activeIdeaTab === tab.id
+                            ? "border-slate-900 bg-slate-900 text-white"
+                            : "border-slate-200 bg-white hover:bg-slate-50"
+                        }`}
                       >
-                        {isGeneratingMockup && (
-                          <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-black/60 rounded-2xl">
-                            <div className="h-8 w-8 animate-spin rounded-full border-2 border-white/30 border-t-white" />
-                            <p className="text-sm text-white/80">Stitch로 목업 생성 중...</p>
+                        {tab.label}
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* Content — all sections always visible */}
+                  <div className="flex-1 min-w-0 space-y-10">
+                    {/* Idea */}
+                    {(() => {
+                      const idea = ideas.find(i => i.id === activeIdeaId) ?? null;
+                      if (!idea) return null;
+                      return (
+                        <section ref={ideaSectionRef} className="space-y-3 scroll-mt-4">
+                          <div className="flex items-center justify-between">
+                            {ideaEditMode ? (
+                              <input
+                                className="flex-1 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-base font-semibold text-slate-900 outline-none focus:border-slate-400"
+                                value={idea.title}
+                                onChange={e => updateIdea(idea.id, { title: e.target.value })}
+                              />
+                            ) : (
+                              <p className="text-base font-semibold text-slate-900">{idea.title}</p>
+                            )}
+                            <div className="ml-3 flex items-center gap-2">
+                              <button onClick={() => setIdeaEditMode(p => !p)} className="rounded border border-slate-200 px-2 py-1 text-xs text-slate-500 hover:bg-slate-50 transition">
+                                {ideaEditMode ? "완료" : "편집"}
+                              </button>
+                              <button onClick={() => { if (confirm("이 아이디어를 삭제할까요?")) deleteIdea(idea.id); }} className="rounded border border-red-100 px-2 py-1 text-xs text-red-400 hover:bg-red-50 transition">삭제</button>
+                            </div>
+                          </div>
+                          {ideaEditMode ? (
+                            <textarea
+                              className="w-full min-h-64 resize-y rounded-xl border border-slate-200 bg-white px-4 py-3 font-mono text-sm text-slate-700 outline-none focus:border-slate-400"
+                              placeholder={"마크다운으로 아이디어를 작성하세요.\n\n## 목표\n- ...\n\n## 핵심 기능\n- ..."}
+                              value={idea.description}
+                              onChange={e => updateIdea(idea.id, { description: e.target.value })}
+                            />
+                          ) : (
+                            <div className="prose prose-sm max-w-none rounded-xl border border-slate-100 bg-slate-50 px-5 py-4 text-slate-700">
+                              {idea.description ? (
+                                <ReactMarkdown>{idea.description}</ReactMarkdown>
+                              ) : (
+                                <p className="text-slate-400 text-sm">편집 버튼을 눌러 내용을 작성하세요.</p>
+                              )}
+                            </div>
+                          )}
+                        </section>
+                      );
+                    })()}
+
+                    {/* Mockup */}
+                    <section ref={mockupSectionRef} className="space-y-3 scroll-mt-4">
+                      <div className="flex items-center justify-between">
+                        <p className="text-base font-semibold text-slate-900">Mockup</p>
+                        {ideaArtboards.length > 0 && (
+                          <div className="flex items-center gap-2">
+                            {editMode && selectedElement && (
+                              <span className="flex items-center gap-1.5 rounded-full bg-indigo-50 px-3 py-1 text-xs font-medium text-indigo-600">
+                                <span className="h-1.5 w-1.5 rounded-full bg-indigo-500" />
+                                {selectedElement.selector} 선택됨
+                                <button onClick={clearSelectedElement} className="ml-1 text-indigo-400 hover:text-indigo-600">✕</button>
+                              </span>
+                            )}
+                            <button onClick={() => { setEditMode(p => { if (p) setSelectedElement(null); return !p; }); }} className={`rounded border px-2 py-1 text-xs font-semibold transition ${editMode ? "border-indigo-400 bg-indigo-50 text-indigo-600" : "border-slate-200 text-slate-500 hover:bg-slate-50"}`}>
+                              {editMode ? "편집 중" : "편집"}
+                            </button>
+                            <button onClick={fitToCanvas} className="rounded border border-slate-200 px-2 py-1 text-xs text-slate-500 hover:bg-slate-50">Fit</button>
+                            <button onClick={() => setCanvasScale(s => Math.min(s * 1.2, 4))} className="rounded border border-slate-200 px-2 py-1 text-xs text-slate-600 hover:bg-slate-50">+</button>
+                            <button onClick={() => setCanvasScale(s => Math.max(s * 0.8, 0.1))} className="rounded border border-slate-200 px-2 py-1 text-xs text-slate-600 hover:bg-slate-50">−</button>
+                            <span className="w-10 text-center text-xs text-slate-400">{Math.round(canvasScale * 100)}%</span>
+                            <button onClick={() => { const html = activeArtboard?.html; if (!html) return; const blob = new Blob([html], { type: "text/html" }); const url = URL.createObjectURL(blob); const a = document.createElement("a"); a.href = url; a.download = `${activeArtboard?.label ?? "mockup"}.html`; a.click(); URL.revokeObjectURL(url); }} className="text-xs font-semibold text-slate-600 hover:text-slate-900">Export</button>
                           </div>
                         )}
-                        {artboards.map(artboard => {
-                          const screenX = canvasOffset.x + artboard.x * canvasScale;
-                          const screenY = canvasOffset.y + artboard.y * canvasScale;
-                          const isActive = artboard.id === activeArtboardId;
-                          return (
-                            <div key={artboard.id} style={{ pointerEvents: isDragging ? "none" : "auto" }}>
-                              {/* Label */}
-                              <div
-                                style={{
-                                  position: "absolute",
-                                  left: screenX,
-                                  top: screenY - 22,
-                                  color: isActive ? "#a5b4fc" : "#888",
-                                  fontSize: 11,
-                                  fontWeight: isActive ? 600 : 400,
-                                  whiteSpace: "nowrap",
-                                  userSelect: "none",
-                                }}
-                              >
-                                {artboard.label}
+                      </div>
+                      {ideaArtboards.length > 0 ? (
+                        <div ref={canvasRef} className="relative h-150 w-full overflow-hidden rounded-2xl select-none" style={{ backgroundColor: "#1a1a1a", backgroundImage: "radial-gradient(circle, #383838 1px, transparent 1px)", backgroundSize: "20px 20px", cursor: isDragging ? "grabbing" : "grab" }} onMouseDown={handleCanvasMouseDown} onMouseMove={handleCanvasMouseMove} onMouseUp={handleCanvasMouseUp} onMouseLeave={handleCanvasMouseUp}>
+                          {isGeneratingMockup && (
+                            <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-black/60 rounded-2xl">
+                              <div className="h-8 w-8 animate-spin rounded-full border-2 border-white/30 border-t-white" />
+                              <p className="text-sm text-white/80">Stitch로 목업 생성 중...</p>
+                            </div>
+                          )}
+                          {ideaArtboards.map(artboard => {
+                            const screenX = canvasOffset.x + artboard.x * canvasScale;
+                            const screenY = canvasOffset.y + artboard.y * canvasScale;
+                            const isActive = artboard.id === activeArtboardId;
+                            return (
+                              <div key={artboard.id} style={{ pointerEvents: isDragging ? "none" : "auto" }}>
+                                <div style={{ position: "absolute", left: screenX, top: screenY - 22, color: isActive ? "#a5b4fc" : "#888", fontSize: 11, fontWeight: isActive ? 600 : 400, whiteSpace: "nowrap", userSelect: "none" }}>{artboard.label}</div>
+                                <div style={{ position: "absolute", left: screenX, top: screenY, transform: `scale(${canvasScale})`, transformOrigin: "0 0", width: DEVICE_SIZE[artboard.device ?? "desktop"].width, height: DEVICE_SIZE[artboard.device ?? "desktop"].height, borderRadius: artboard.device === "mobile" ? 24 : 12, overflow: "hidden", outline: isActive ? "2px solid #6366f1" : "2px solid transparent", outlineOffset: 3, boxShadow: "0 8px 40px rgba(0,0,0,0.5)" }} onClick={() => setActiveArtboardId(artboard.id)}>
+                                  <iframe srcDoc={injectNoNavigation(editMode ? injectSelectionScript(artboard.html, artboard.id) : artboard.html)} sandbox="allow-scripts" style={{ width: DEVICE_SIZE[artboard.device ?? "desktop"].width, height: DEVICE_SIZE[artboard.device ?? "desktop"].height, border: "none", display: "block" }} title={artboard.label} />
+                                </div>
                               </div>
-                              {/* Artboard */}
-                              <div
-                                style={{
-                                  position: "absolute",
-                                  left: screenX,
-                                  top: screenY,
-                                  transform: `scale(${canvasScale})`,
-                                  transformOrigin: "0 0",
-                                  width: DEVICE_SIZE[artboard.device ?? "desktop"].width,
-                                  height: DEVICE_SIZE[artboard.device ?? "desktop"].height,
-                                  borderRadius: artboard.device === "mobile" ? 24 : 12,
-                                  overflow: "hidden",
-                                  outline: isActive ? "2px solid #6366f1" : "2px solid transparent",
-                                  outlineOffset: 3,
-                                  boxShadow: "0 8px 40px rgba(0,0,0,0.5)",
-                                }}
-                                onClick={() => setActiveArtboardId(artboard.id)}
-                              >
-                                <iframe
-                                  srcDoc={injectNoNavigation(editMode ? injectSelectionScript(artboard.html, artboard.id) : artboard.html)}
-                                  sandbox="allow-scripts"
-                                  style={{ width: DEVICE_SIZE[artboard.device ?? "desktop"].width, height: DEVICE_SIZE[artboard.device ?? "desktop"].height, border: "none", display: "block" }}
-                                  title={artboard.label}
-                                />
+                            );
+                          })}
+                        </div>
+                      ) : (
+                        <div className="flex h-64 flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-slate-300 bg-white/70 text-sm text-slate-400">
+                          {isGeneratingMockup ? (
+                            <><div className="h-7 w-7 animate-spin rounded-full border-2 border-slate-300 border-t-slate-600" /><p className="text-slate-500">Stitch로 목업 생성 중...</p></>
+                          ) : (
+                            <p>{'에이전트에게 "목업 만들어줘"라고 말하면 여기에 표시됩니다.'}</p>
+                          )}
+                        </div>
+                      )}
+                    </section>
+
+                    {/* Presentation — per-idea */}
+                    {(() => {
+                      const activeIdea = ideas.find(i => i.id === activeIdeaId);
+                      const slides = activeIdea?.presentationSlides ?? [];
+                      const html = activeIdea?.presentationHtml ?? "";
+                      return (
+                        <section ref={presentationSectionRef} className="space-y-3 scroll-mt-4">
+                          <p className="text-base font-semibold text-slate-900">Presentation</p>
+                          {isGeneratingPresentation ? (
+                            <div className="flex h-64 flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-slate-300 bg-white/70 text-sm text-slate-400">
+                              <div className="h-7 w-7 animate-spin rounded-full border-2 border-slate-300 border-t-slate-600" />
+                              <p className="text-slate-500">피치덱 이미지 생성 중...</p>
+                            </div>
+                          ) : slides.length > 0 ? (
+                            <div className="overflow-hidden rounded-2xl border border-slate-200 bg-black">
+                              {slides[currentSlideIndex]?.imageUrl ? (
+                                <img src={slides[currentSlideIndex].imageUrl} alt={slides[currentSlideIndex].title} className="w-full object-contain" />
+                              ) : (
+                                <div className="flex h-64 items-center justify-center text-sm text-slate-500">이미지 생성 실패</div>
+                              )}
+                              <div className="flex items-center justify-between bg-slate-900 px-4 py-2">
+                                <button onClick={() => setCurrentSlideIndex(i => Math.max(0, i - 1))} disabled={currentSlideIndex === 0} className="rounded px-3 py-1 text-xs text-white disabled:opacity-30 hover:bg-white/10">← 이전</button>
+                                <span className="text-xs text-slate-400">{slides[currentSlideIndex]?.title} ({currentSlideIndex + 1} / {slides.length})</span>
+                                <button onClick={() => setCurrentSlideIndex(i => Math.min(slides.length - 1, i + 1))} disabled={currentSlideIndex === slides.length - 1} className="rounded px-3 py-1 text-xs text-white disabled:opacity-30 hover:bg-white/10">다음 →</button>
                               </div>
                             </div>
-                          );
-                        })}
-                      </div>
-                    ) : (
-                      <div className="flex h-64 flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-slate-300 bg-white/70 text-sm text-slate-400">
-                        {isGeneratingMockup ? (
-                          <>
-                            <div className="h-7 w-7 animate-spin rounded-full border-2 border-slate-300 border-t-slate-600" />
-                            <p className="text-slate-500">Stitch로 목업 생성 중...</p>
-                          </>
-                        ) : (
-                          <p>{'에이전트에게 "목업 만들어줘"라고 말하면 여기에 표시됩니다.'}</p>
-                        )}
-                      </div>
-                    )}
-                  </section>
-
-                <section ref={presentationSectionRef} className="space-y-3 scroll-mt-4">
-                  <p className="text-lg font-semibold text-slate-900">Presentation</p>
-                  {presentationHtml ? (
-                    <iframe
-                      srcDoc={presentationHtml}
-                      sandbox="allow-scripts allow-same-origin"
-                      className="h-125 w-full rounded-2xl border border-slate-200 bg-white"
-                      title="Presentation preview"
-                    />
-                  ) : (
-                    <div className="flex h-64 items-center justify-center rounded-2xl border border-dashed border-slate-300 bg-white/70 text-sm text-slate-400">
-                      에이전트에게 "피치덱 만들어줘"라고 말하면 여기에 표시됩니다.
-                    </div>
-                  )}
-                </section>
-              </div>
-            </div>
+                          ) : html ? (
+                            <iframe srcDoc={html} sandbox="allow-scripts allow-same-origin" className="h-125 w-full rounded-2xl border border-slate-200 bg-white" title="Presentation preview" />
+                          ) : (
+                            <div className="flex h-64 items-center justify-center rounded-2xl border border-dashed border-slate-300 bg-white/70 text-sm text-slate-400">
+                              {ideaArtboards.length === 0 ? "목업을 먼저 생성하면 피치덱을 만들 수 있습니다." : '에이전트에게 "피치덱 만들어줘"라고 말하면 여기에 표시됩니다.'}
+                            </div>
+                          )}
+                        </section>
+                      );
+                    })()}
+                  </div>
+                </div>
+              </>
+            )}
           </div>
         </section>
 
@@ -1032,7 +1146,7 @@ export default function MainScreenPage() {
                 <p className="font-medium text-slate-500">디자인 에이전트</p>
                 <p>레퍼런스 탐색, 목업 생성, 요소 수정을 도와드립니다.</p>
                 <div className="mt-4 flex flex-col gap-2 text-xs">
-                  {["레퍼런스 찾아줘", "목업 만들어줘", "이 버튼 색상 바꿔줘"].map((hint) => (
+                  {(ideas.length > 0 ? ["레퍼런스 찾아줘", "목업 만들어줘", "이 버튼 색상 바꿔줘"] : ["레퍼런스 찾아줘", "목업에 쓸 레퍼런스 찾아줘"]).map((hint) => (
                     <button
                       key={hint}
                       onClick={() => setInputText(hint)}
