@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
+import { ArrowLeftIcon, ArrowRightIcon, DeviceMobileIcon, MonitorIcon, XIcon, PencilSimpleIcon, UsersThreeIcon } from "@phosphor-icons/react";
 import { onAuthStateChanged } from "firebase/auth";
 import {
   collection,
@@ -176,7 +177,7 @@ export default function AdminPage() {
               href="/lobby"
               className="text-sm text-slate-500 transition hover:text-slate-900"
             >
-              ← 로비
+              <ArrowLeftIcon size={14} className="inline" /> 로비
             </Link>
             <h1 className="text-lg font-semibold text-slate-900">
               관리자 페이지
@@ -317,8 +318,8 @@ export default function AdminPage() {
                             </span>
                             <span className="shrink-0 rounded-full bg-slate-100 px-2.5 py-0.5 text-xs text-slate-500">
                               {(mission.device ?? "desktop") === "desktop"
-                                ? "💻 PC"
-                                : "📱 모바일"}
+                                ? <><MonitorIcon size={12} className="inline" /> PC</>
+                                : <><DeviceMobileIcon size={12} className="inline" /> 모바일</>}
                             </span>
                           </div>
                           {mission.description && (
@@ -340,21 +341,21 @@ export default function AdminPage() {
                           className="rounded-full p-1.5 text-slate-300 transition hover:bg-slate-50 hover:text-slate-600"
                           title="참여자 보기"
                         >
-                          👥
+                          <UsersThreeIcon size={16} />
                         </button>
                         <button
                           onClick={() => startEdit(mission)}
                           className="rounded-full p-1.5 text-slate-300 transition hover:bg-slate-50 hover:text-slate-600"
                           title="수정"
                         >
-                          ✎
+                          <PencilSimpleIcon size={16} />
                         </button>
                         <button
                           onClick={() => deleteMission(mission.id)}
                           className="rounded-full p-1.5 text-slate-300 transition hover:bg-red-50 hover:text-red-400"
                           title="삭제"
                         >
-                          ✕
+                          <XIcon size={16} />
                         </button>
                       </div>
                     )}
@@ -421,7 +422,7 @@ export default function AdminPage() {
                         </p>
                       )}
                     </div>
-                    <span className="ml-auto text-xs text-slate-400">→</span>
+                    <ArrowRightIcon size={14} className="ml-auto text-slate-400" />
                   </Link>
                 ))
               )}
@@ -501,7 +502,7 @@ export default function AdminPage() {
                           : "border-slate-200 text-slate-600 hover:bg-slate-50"
                       }`}
                     >
-                      {d === "desktop" ? "💻 PC" : "📱 모바일"}
+                      {d === "desktop" ? <><MonitorIcon size={14} className="inline mr-1" />PC</> : <><DeviceMobileIcon size={14} className="inline mr-1" />모바일</>}
                     </button>
                   ))}
                 </div>

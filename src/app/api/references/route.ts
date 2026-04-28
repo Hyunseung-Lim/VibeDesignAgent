@@ -90,7 +90,7 @@ export async function POST(request: Request) {
       });
     });
 
-    return Response.json({ references: references.slice(0, 12) });
+    return Response.json({ references: references.slice(0, 3) });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     return Response.json({ error: message }, { status: 500 });

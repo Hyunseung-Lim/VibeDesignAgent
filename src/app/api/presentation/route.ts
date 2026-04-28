@@ -17,8 +17,9 @@ export async function POST(request: Request) {
     return Response.json({ error: "slides array required" }, { status: 400 });
   }
 
+  // Always generate exactly one slide
   const results = await Promise.allSettled(
-    slides.map(async (slide: SlideInput) => {
+    slides.slice(0, 1).map(async (slide: SlideInput) => {
       const prompt = `Presentation slide for "${title || "Pitch Deck"}". Slide: "${slide.title}". ${slide.imagePrompt}`;
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const response = await openai.images.generate({ model: "gpt-image-2", prompt, n: 1, size: "1536x1024", quality: "medium" } as any) as { data: Array<{ b64_json?: string; url?: string }> };

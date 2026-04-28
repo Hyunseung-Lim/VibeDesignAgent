@@ -8,6 +8,7 @@ import { firebaseAuth, db, storage } from "@/lib/firebase";
 import { onAuthStateChanged } from "firebase/auth";
 import { doc, getDoc, setDoc } from "firebase/firestore";
 import { ref as storageRef, uploadString, getDownloadURL } from "firebase/storage";
+import { ArrowLeftIcon, ArrowRightIcon, ArrowSquareOutIcon, ArrowsOutIcon, ArrowsInIcon, CaretUpIcon, CaretDownIcon, DeviceMobileIcon, MonitorIcon, EyeIcon, XIcon } from "@phosphor-icons/react";
 
 const ADMIN_EMAILS = ["03leesun@gmail.com"];
 
@@ -107,6 +108,7 @@ const BLOCK_RULES = [
   { complete: /\[EDIT_MOCKUP:[^\]]+\]/, partial: /\[EDIT_MOCKUP:[\s\S]*$/, doneLabel: "목업 수정 요청", pendingLabel: "수정 내용 작성 중..." },
   { complete: /```presentation\s*\n[\s\S]*?\n?\s*```/, partial: /```presentation[\s\S]*$/, doneLabel: "피치덱 생성됨", pendingLabel: "피치덱 생성 중..." },
   { complete: /\[FETCH_REFERENCES(?::[^\]]+)?\]/, partial: /\[FETCH_REFERENCES[\s\S]*$/, doneLabel: "레퍼런스 검색됨", pendingLabel: "레퍼런스 검색 중..." },
+  { complete: /\[WEB_SEARCHED\]/, partial: /\[WEB_SEARCHED\]/, doneLabel: "웹 검색 완료", pendingLabel: "웹 검색 중..." },
 ];
 
 function processMessageContent(content: string): ContentPart[] {
@@ -166,7 +168,7 @@ function CodeChip({ chipKey, chip, expanded, onToggle }: {
           <span className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-slate-400" />
         )}
         <span className="flex-1 text-slate-600">{chip.label}</span>
-        {hasCode && <span className="text-slate-400">{expanded ? "▲" : "▼"}</span>}
+        {hasCode && (expanded ? <CaretUpIcon size={12} className="text-slate-400" /> : <CaretDownIcon size={12} className="text-slate-400" />)}
       </button>
       {expanded && hasCode && (
         <pre className="max-h-64 overflow-y-auto border-t border-slate-200 bg-slate-900 p-3 font-mono text-[11px] leading-relaxed text-slate-100 whitespace-pre-wrap break-all">
@@ -247,6 +249,7 @@ export default function MainScreenPage() {
   const [stitchProjectId, setStitchProjectId] = useState<string>("");
   const [isGeneratingMockup, setIsGeneratingMockup] = useState(false);
   const [ideaEditMode, setIdeaEditMode] = useState(false);
+  const [isMockupExpanded, setIsMockupExpanded] = useState(false);
 
   const isReadOnly = !!(viewAs && isAdmin);
 
@@ -388,8 +391,11 @@ export default function MainScreenPage() {
       const ideasToSave = ideas.map(idea => ({
         ...idea,
         presentationSlides: (idea.presentationSlides ?? []).filter(s => s.imageUrl.startsWith("https://")),
+        presentationHtml: idea.presentationHtml ?? null,
       }));
-      setDoc(ref, { messages, artboards: artboardsToSave, references, ideas: ideasToSave, missionTitle, missionBrief, stitchProjectId: stitchProjectId || null, updatedAt: Date.now() }, { merge: true });
+      // Strip undefined values — Firestore rejects them
+      const clean = <T,>(v: T): T => JSON.parse(JSON.stringify(v, (_, val) => val === undefined ? null : val));
+      setDoc(ref, clean({ messages, artboards: artboardsToSave, references, ideas: ideasToSave, missionTitle, missionBrief, stitchProjectId: stitchProjectId || null, updatedAt: Date.now() }), { merge: true });
     }, 1500);
     return () => { if (saveTimerRef.current) clearTimeout(saveTimerRef.current); };
   }, [userId, missionId, messages, artboards, references, ideas, missionTitle, missionBrief, stitchProjectId]);
@@ -568,6 +574,7 @@ export default function MainScreenPage() {
           missionTitle: missionTitle || undefined,
           missionBrief: missionBrief || undefined,
           device,
+          activeIdea: ideas.find(i => i.id === activeIdeaId) ?? undefined,
         }),
       });
 
@@ -586,6 +593,13 @@ export default function MainScreenPage() {
           prev.map((m) => (m.id === assistantId ? { ...m, content: fullText } : m))
         );
       }
+
+      // Convert web search citation domains (domain.com) to clickable markdown links
+      fullText = fullText.replace(
+        /\(([a-zA-Z0-9][a-zA-Z0-9-]*(?:\.[a-zA-Z0-9][a-zA-Z0-9-]*)+(?:\/[^\s)]*)?)\)/g,
+        (match, domain) => /\.[a-zA-Z]{2,}/.test(domain) ? `([${domain}](https://${domain}))` : match
+      );
+      setMessages(prev => prev.map(m => m.id === assistantId ? { ...m, content: fullText } : m));
 
       // Parse special blocks from completed response
       const fetchRefMatch = fullText.match(/\[FETCH_REFERENCES(?::\s*(.*?))?\]/);
@@ -807,7 +821,13 @@ export default function MainScreenPage() {
         body: JSON.stringify({ missionTitle: title, missionBrief: brief, customQuery }),
       });
       const data = await res.json();
-      if (data.references?.length > 0) setReferences(data.references);
+      if (data.references?.length > 0) {
+        setReferences(prev => {
+          const existingIds = new Set(prev.map(r => r.id));
+          const newRefs = data.references.filter((r: Reference) => !existingIds.has(r.id));
+          return [...prev, ...newRefs];
+        });
+      }
     } finally {
       setIsFetchingRefs(false);
     }
@@ -823,7 +843,7 @@ export default function MainScreenPage() {
       {/* Read-only banner */}
       {isReadOnly && (
         <div className="flex items-center justify-between bg-amber-50 border-b border-amber-200 px-6 py-2 text-xs text-amber-700">
-          <span>👁 읽기 전용 — <strong>{viewAsName ?? viewAs}</strong>의 세션을 보고 있습니다</span>
+          <span className="flex items-center gap-1"><EyeIcon size={14} /> 읽기 전용 —<strong>{viewAsName ?? viewAs}</strong>의 세션을 보고 있습니다</span>
           <Link href={`/admin`} className="font-semibold underline underline-offset-2">어드민으로 돌아가기</Link>
         </div>
       )}
@@ -855,7 +875,7 @@ export default function MainScreenPage() {
                   <span className="rounded-full bg-slate-100 px-3 py-1 text-xs text-slate-500">{missionPeriod}</span>
                 )}
                 <span className="rounded-full bg-slate-100 px-3 py-1 text-xs text-slate-500">
-                  {device === "mobile" ? "📱 모바일" : "💻 PC"}
+                  {device === "mobile" ? <><DeviceMobileIcon size={12} className="inline" /> 모바일</> : <><MonitorIcon size={12} className="inline" /> PC</>}
                 </span>
               </div>
             </div>
@@ -916,18 +936,33 @@ export default function MainScreenPage() {
                         <p className={`text-sm font-semibold leading-snug line-clamp-2 ${isSelected ? "text-indigo-700" : "text-slate-900"}`}>{card.title}</p>
                         <div className="flex items-center justify-between mt-1">
                           <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-500">{card.tag}</span>
-                          {card.url && (
-                            <a
-                              href={card.url}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              onClick={(e) => e.stopPropagation()}
-                              className="rounded-full p-1 text-slate-400 hover:bg-slate-200 hover:text-slate-600 transition"
-                              title="새 탭에서 열기"
+                          <div className="flex items-center gap-1">
+                            {card.url && (
+                              <a
+                                href={card.url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                onClick={(e) => e.stopPropagation()}
+                                className="flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-600 hover:bg-slate-200 hover:text-slate-900 transition"
+                                title="새 탭에서 열기"
+                              >
+                                <ArrowSquareOutIcon size={12} />
+                                링크
+                              </a>
+                            )}
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                if (!confirm("이 레퍼런스를 삭제할까요?")) return;
+                                setReferences(prev => prev.filter(r => r.id !== card.id));
+                                setSelectedReferences(prev => prev.filter(r => r.id !== card.id));
+                              }}
+                              className="rounded-full p-1 text-slate-400 hover:bg-red-50 hover:text-red-400 transition"
+                              title="삭제"
                             >
-                              <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
-                            </a>
-                          )}
+                              <XIcon size={12} />
+                            </button>
+                          </div>
                         </div>
                       </div>
                       {isSelected && (
@@ -1025,11 +1060,25 @@ export default function MainScreenPage() {
                               onChange={e => updateIdea(idea.id, { description: e.target.value })}
                             />
                           ) : (
-                            <div className="prose prose-sm max-w-none rounded-xl border border-slate-100 bg-slate-50 px-5 py-4 text-slate-700">
+                            <div className="rounded-xl border border-slate-100 bg-slate-50 px-5 py-4 text-sm text-slate-700 space-y-2">
                               {idea.description ? (
-                                <ReactMarkdown>{idea.description}</ReactMarkdown>
+                                <ReactMarkdown components={{
+                                  h1: ({ children }) => <h1 className="text-base font-bold text-slate-900 mb-1">{children}</h1>,
+                                  h2: ({ children }) => <h2 className="text-sm font-semibold text-slate-900 mb-1 mt-3">{children}</h2>,
+                                  h3: ({ children }) => <h3 className="text-sm font-medium text-slate-800 mb-1 mt-2">{children}</h3>,
+                                  p: ({ children }) => <p className="leading-relaxed mb-2 last:mb-0">{children}</p>,
+                                  ul: ({ children }) => <ul className="list-disc ml-4 space-y-1 mb-2">{children}</ul>,
+                                  ol: ({ children }) => <ol className="list-decimal ml-4 space-y-1 mb-2">{children}</ol>,
+                                  li: ({ children }) => <li className="leading-relaxed">{children}</li>,
+                                  strong: ({ children }) => <strong className="font-semibold text-slate-900">{children}</strong>,
+                                  em: ({ children }) => <em className="italic text-slate-600">{children}</em>,
+                                  code: ({ children }) => <code className="rounded bg-slate-200 px-1 py-0.5 font-mono text-xs text-slate-800">{children}</code>,
+                                  blockquote: ({ children }) => <blockquote className="border-l-2 border-slate-300 pl-3 italic text-slate-500 my-2">{children}</blockquote>,
+                                  hr: () => <hr className="border-slate-200 my-3" />,
+                                  a: ({ href, children }) => <a href={href} target="_blank" rel="noopener noreferrer" className="text-indigo-500 underline underline-offset-2 hover:text-indigo-700">{children}</a>,
+                                }}>{idea.description}</ReactMarkdown>
                               ) : (
-                                <p className="text-slate-400 text-sm">편집 버튼을 눌러 내용을 작성하세요.</p>
+                                <p className="text-slate-400">편집 버튼을 눌러 내용을 작성하세요.</p>
                               )}
                             </div>
                           )}
@@ -1047,7 +1096,7 @@ export default function MainScreenPage() {
                               <span className="flex items-center gap-1.5 rounded-full bg-indigo-50 px-3 py-1 text-xs font-medium text-indigo-600">
                                 <span className="h-1.5 w-1.5 rounded-full bg-indigo-500" />
                                 {selectedElement.selector} 선택됨
-                                <button onClick={clearSelectedElement} className="ml-1 text-indigo-400 hover:text-indigo-600">✕</button>
+                                <button onClick={clearSelectedElement} className="ml-1 text-indigo-400 hover:text-indigo-600"><XIcon size={12} /></button>
                               </span>
                             )}
                             <button onClick={() => { setEditMode(p => { if (p) setSelectedElement(null); return !p; }); }} className={`rounded border px-2 py-1 text-xs font-semibold transition ${editMode ? "border-indigo-400 bg-indigo-50 text-indigo-600" : "border-slate-200 text-slate-500 hover:bg-slate-50"}`}>
@@ -1058,6 +1107,7 @@ export default function MainScreenPage() {
                             <button onClick={() => setCanvasScale(s => Math.max(s * 0.8, 0.1))} className="rounded border border-slate-200 px-2 py-1 text-xs text-slate-600 hover:bg-slate-50">−</button>
                             <span className="w-10 text-center text-xs text-slate-400">{Math.round(canvasScale * 100)}%</span>
                             <button onClick={() => { const html = activeArtboard?.html; if (!html) return; const blob = new Blob([html], { type: "text/html" }); const url = URL.createObjectURL(blob); const a = document.createElement("a"); a.href = url; a.download = `${activeArtboard?.label ?? "mockup"}.html`; a.click(); URL.revokeObjectURL(url); }} className="text-xs font-semibold text-slate-600 hover:text-slate-900">Export</button>
+                            <button onClick={() => setIsMockupExpanded(true)} className="rounded border border-slate-200 p-1 text-slate-500 hover:bg-slate-50" title="확대"><ArrowsOutIcon size={14} /></button>
                           </div>
                         )}
                       </div>
@@ -1109,16 +1159,11 @@ export default function MainScreenPage() {
                             </div>
                           ) : slides.length > 0 ? (
                             <div className="overflow-hidden rounded-2xl border border-slate-200 bg-black">
-                              {slides[currentSlideIndex]?.imageUrl ? (
-                                <img src={slides[currentSlideIndex].imageUrl} alt={slides[currentSlideIndex].title} className="w-full object-contain" />
+                              {slides[0]?.imageUrl ? (
+                                <img src={slides[0].imageUrl} alt={slides[0].title} className="w-full object-contain" />
                               ) : (
                                 <div className="flex h-64 items-center justify-center text-sm text-slate-500">이미지 생성 실패</div>
                               )}
-                              <div className="flex items-center justify-between bg-slate-900 px-4 py-2">
-                                <button onClick={() => setCurrentSlideIndex(i => Math.max(0, i - 1))} disabled={currentSlideIndex === 0} className="rounded px-3 py-1 text-xs text-white disabled:opacity-30 hover:bg-white/10">← 이전</button>
-                                <span className="text-xs text-slate-400">{slides[currentSlideIndex]?.title} ({currentSlideIndex + 1} / {slides.length})</span>
-                                <button onClick={() => setCurrentSlideIndex(i => Math.min(slides.length - 1, i + 1))} disabled={currentSlideIndex === slides.length - 1} className="rounded px-3 py-1 text-xs text-white disabled:opacity-30 hover:bg-white/10">다음 →</button>
-                              </div>
                             </div>
                           ) : html ? (
                             <iframe srcDoc={html} sandbox="allow-scripts allow-same-origin" className="h-125 w-full rounded-2xl border border-slate-200 bg-white" title="Presentation preview" />
@@ -1159,7 +1204,7 @@ export default function MainScreenPage() {
               </div>
             )}
 
-            {messages.map((msg) => (
+            {messages.map((msg, msgIdx) => (
               <div
                 key={msg.id}
                 className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
@@ -1206,7 +1251,11 @@ export default function MainScreenPage() {
                       h1: ({ children }: { children?: React.ReactNode }) => <h1 className="mb-1 text-base font-semibold">{children}</h1>,
                       h2: ({ children }: { children?: React.ReactNode }) => <h2 className="mb-1 text-sm font-semibold">{children}</h2>,
                       h3: ({ children }: { children?: React.ReactNode }) => <h3 className="mb-1 text-sm font-medium">{children}</h3>,
+                      a: ({ href, children }: { href?: string; children?: React.ReactNode }) => (
+                        <a href={href} target="_blank" rel="noopener noreferrer" className="text-indigo-500 underline underline-offset-2 hover:text-indigo-700">{children}</a>
+                      ),
                     };
+                    const isStreamingThis = isLoading && msgIdx === messages.length - 1;
                     return (
                       <div className="space-y-2">
                         {parts.map((part, i) =>
@@ -1225,6 +1274,13 @@ export default function MainScreenPage() {
                               })}
                             />
                           )
+                        )}
+                        {isStreamingThis && (
+                          <span className="inline-flex items-center gap-0.5 ml-0.5">
+                            <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-slate-400" style={{ animationDelay: "0ms" }} />
+                            <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-slate-400" style={{ animationDelay: "150ms" }} />
+                            <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-slate-400" style={{ animationDelay: "300ms" }} />
+                          </span>
                         )}
                       </div>
                     );
@@ -1253,7 +1309,7 @@ export default function MainScreenPage() {
                 <span className="font-medium text-indigo-600">
                   선택된 요소: <code className="font-mono">{selectedElement.selector}</code>
                 </span>
-                <button onClick={clearSelectedElement} className="text-indigo-400 hover:text-indigo-600">✕</button>
+                <button onClick={clearSelectedElement} className="text-indigo-400 hover:text-indigo-600"><XIcon size={12} /></button>
               </div>
             )}
             {!isReadOnly && selectedReferences.length > 0 && (
@@ -1267,7 +1323,7 @@ export default function MainScreenPage() {
                     <span key={r.id} className="flex items-center gap-1 rounded-full bg-violet-100 px-2 py-0.5 text-violet-700">
                       {r.imageUrl && <img src={r.imageUrl} alt="" className="h-3.5 w-5 rounded object-cover" />}
                       <span className="max-w-32 truncate">{r.title}</span>
-                      <button onClick={() => setSelectedReferences(prev => prev.filter(x => x.id !== r.id))} className="ml-0.5 text-violet-400 hover:text-violet-600">✕</button>
+                      <button onClick={() => setSelectedReferences(prev => prev.filter(x => x.id !== r.id))} className="ml-0.5 text-violet-400 hover:text-violet-600"><XIcon size={12} /></button>
                     </span>
                   ))}
                 </div>
@@ -1310,6 +1366,52 @@ export default function MainScreenPage() {
           </div>
         </aside>
       </main>
+
+      {/* Mockup fullscreen overlay */}
+      {isMockupExpanded && (
+        <div className="fixed inset-0 z-50 flex flex-col bg-[#1a1a1a]" style={{ backgroundImage: "radial-gradient(circle, #383838 1px, transparent 1px)", backgroundSize: "20px 20px" }}>
+          {/* Overlay header */}
+          <div className="flex items-center justify-between bg-slate-900/80 px-5 py-3 backdrop-blur">
+            <div className="flex items-center gap-3">
+              <button onClick={fitToCanvas} className="rounded border border-white/20 px-2 py-1 text-xs text-white/70 hover:bg-white/10">Fit</button>
+              <button onClick={() => setCanvasScale(s => Math.min(s * 1.2, 4))} className="rounded border border-white/20 px-2 py-1 text-xs text-white/70 hover:bg-white/10">+</button>
+              <button onClick={() => setCanvasScale(s => Math.max(s * 0.8, 0.1))} className="rounded border border-white/20 px-2 py-1 text-xs text-white/70 hover:bg-white/10">−</button>
+              <span className="text-xs text-white/40">{Math.round(canvasScale * 100)}%</span>
+            </div>
+            <button onClick={() => setIsMockupExpanded(false)} className="flex items-center gap-1.5 rounded-full bg-white/10 px-3 py-1.5 text-xs text-white hover:bg-white/20">
+              <ArrowsInIcon size={14} /> 축소
+            </button>
+          </div>
+
+          {/* Canvas */}
+          <div
+            ref={canvasRef}
+            className="flex-1 overflow-hidden select-none"
+            style={{ cursor: isDragging ? "grabbing" : "grab" }}
+            onMouseDown={handleCanvasMouseDown}
+            onMouseMove={handleCanvasMouseMove}
+            onMouseUp={handleCanvasMouseUp}
+            onMouseLeave={handleCanvasMouseUp}
+          >
+            {ideaArtboards.map(artboard => {
+              const screenX = canvasOffset.x + artboard.x * canvasScale;
+              const screenY = canvasOffset.y + artboard.y * canvasScale;
+              const isActive = artboard.id === activeArtboardId;
+              return (
+                <div key={artboard.id} style={{ pointerEvents: isDragging ? "none" : "auto" }}>
+                  <div style={{ position: "absolute", left: screenX, top: screenY - 22, color: isActive ? "#a5b4fc" : "#888", fontSize: 11, fontWeight: isActive ? 600 : 400, whiteSpace: "nowrap", userSelect: "none" }}>{artboard.label}</div>
+                  <div
+                    style={{ position: "absolute", left: screenX, top: screenY, transform: `scale(${canvasScale})`, transformOrigin: "0 0", width: DEVICE_SIZE[artboard.device ?? "desktop"].width, height: DEVICE_SIZE[artboard.device ?? "desktop"].height, borderRadius: artboard.device === "mobile" ? 24 : 12, overflow: "hidden", outline: isActive ? "2px solid #6366f1" : "2px solid transparent", outlineOffset: 3, boxShadow: "0 8px 40px rgba(0,0,0,0.5)" }}
+                    onClick={() => setActiveArtboardId(artboard.id)}
+                  >
+                    <iframe srcDoc={injectNoNavigation(editMode ? injectSelectionScript(artboard.html, artboard.id) : artboard.html)} sandbox="allow-scripts" style={{ width: DEVICE_SIZE[artboard.device ?? "desktop"].width, height: DEVICE_SIZE[artboard.device ?? "desktop"].height, border: "none", display: "block" }} title={artboard.label} />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

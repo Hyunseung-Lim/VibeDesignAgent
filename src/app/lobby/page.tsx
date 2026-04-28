@@ -7,6 +7,7 @@ import { onAuthStateChanged, signOut } from "firebase/auth";
 import { useEffect, useRef, useState } from "react";
 import { collection, onSnapshot, query, orderBy } from "firebase/firestore";
 import { firebaseAuth, db } from "@/lib/firebase";
+import { DeviceMobileIcon, MonitorIcon } from "@phosphor-icons/react";
 
 const ADMIN_EMAILS = ["03leesun@gmail.com"];
 
@@ -159,7 +160,7 @@ export default function LobbyPage() {
                     <div className="mt-3 flex items-center gap-2">
                       <p className="text-xs text-slate-400">{mission.startDate} – {mission.endDate}</p>
                       <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-500">
-                        {(mission.device ?? "desktop") === "mobile" ? "📱 모바일" : "💻 PC"}
+                        {(mission.device ?? "desktop") === "mobile" ? <><DeviceMobileIcon size={12} className="inline" /> 모바일</> : <><MonitorIcon size={12} className="inline" /> PC</>}
                       </span>
                     </div>
                   </article>
