@@ -2,15 +2,16 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
-import { ArrowLeftIcon, ArrowRightIcon, DeviceMobileIcon, MonitorIcon, XIcon, PencilSimpleIcon, UsersThreeIcon } from "@phosphor-icons/react";
+import { useEffect, useRef, useState } from "react";
+import { ArrowLeftIcon, ArrowRightIcon, DeviceMobileIcon, MonitorIcon, XIcon, PencilSimpleIcon, UsersThreeIcon, UploadSimpleIcon } from "@phosphor-icons/react";
+import { ref as storageRef, uploadBytes, getDownloadURL } from "firebase/storage";
+import { storage } from "@/lib/firebase";
 import { onAuthStateChanged } from "firebase/auth";
 import {
   collection,
   onSnapshot,
   deleteDoc,
   doc,
-  setDoc,
   updateDoc,
   query,
   orderBy,
@@ -30,6 +31,14 @@ type Participant = {
   updatedAt: number;
 };
 
+type MissionOption = {
+  id: string;
+  title: string;
+  description: string;
+  imageUrls: string[];
+  content: string;
+};
+
 type Mission = {
   id: string;
   title: string;
@@ -37,6 +46,8 @@ type Mission = {
   startDate: string;
   endDate: string;
   device: Device;
+  durationMinutes?: number | null;
+  options?: MissionOption[];
   createdAt: number;
 };
 
@@ -59,27 +70,40 @@ function today() {
   return new Date().toISOString().slice(0, 10);
 }
 
+function createEmptyOption(): MissionOption {
+  return { id: crypto.randomUUID(), title: "", description: "", imageUrls: [], content: "" };
+}
+
+function normalizeOptions(options?: MissionOption[]) {
+  return (options ?? []).map((option) => ({
+    id: option.id || crypto.randomUUID(),
+    title: option.title ?? "",
+    description: option.description ?? "",
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    imageUrls: (option as any).imageUrls ?? ((option as any).imageUrl ? [(option as any).imageUrl] : []),
+    content: option.content ?? "",
+  }));
+}
+
 const EMPTY_FORM = {
   title: "",
   description: "",
   startDate: today(),
   endDate: today(),
   device: "desktop" as Device,
+  options: [createEmptyOption()],
 };
 
 export default function AdminPage() {
   const router = useRouter();
   const [ready, setReady] = useState(false);
   const [missions, setMissions] = useState<Mission[]>([]);
-  const [showModal, setShowModal] = useState(false);
-  const [form, setForm] = useState(EMPTY_FORM);
-  const [isCreating, setIsCreating] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editFields, setEditFields] = useState<Partial<Mission>>({});
-  const [participantsMissionId, setParticipantsMissionId] = useState<
-    string | null
-  >(null);
+  const [participantsMissionId, setParticipantsMissionId] = useState<string | null>(null);
   const [participants, setParticipants] = useState<Participant[]>([]);
+  const [editUploadingIds, setEditUploadingIds] = useState<Set<string>>(new Set());
+  const editImageInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
 
   useEffect(() => {
     return onAuthStateChanged(firebaseAuth, (user) => {
@@ -99,27 +123,6 @@ export default function AdminPage() {
     });
   }, [ready]);
 
-  const createMission = async () => {
-    if (!form.title.trim()) return;
-    setIsCreating(true);
-    try {
-      const now = new Date();
-      const id = `mission-${now.getFullYear()}${String(now.getMonth()+1).padStart(2,"0")}${String(now.getDate()).padStart(2,"0")}-${String(now.getHours()).padStart(2,"0")}${String(now.getMinutes()).padStart(2,"0")}${String(now.getSeconds()).padStart(2,"0")}`;
-      await setDoc(doc(db, "missions", id), {
-        title: form.title.trim(),
-        description: form.description.trim(),
-        startDate: form.startDate,
-        endDate: form.endDate,
-        device: form.device,
-        createdAt: Date.now(),
-      });
-      setForm(EMPTY_FORM);
-      setShowModal(false);
-    } finally {
-      setIsCreating(false);
-    }
-  };
-
   const deleteMission = async (id: string) => {
     if (!confirm("미션을 삭제할까요?")) return;
     await deleteDoc(doc(db, "missions", id));
@@ -133,6 +136,8 @@ export default function AdminPage() {
       startDate: mission.startDate,
       endDate: mission.endDate,
       device: mission.device ?? "desktop",
+      durationMinutes: mission.durationMinutes ?? 30,
+      options: normalizeOptions(mission.options).length > 0 ? normalizeOptions(mission.options) : [createEmptyOption()],
     });
   };
 
@@ -144,6 +149,8 @@ export default function AdminPage() {
         startDate: editFields.startDate,
         endDate: editFields.endDate,
         device: editFields.device ?? "desktop",
+        durationMinutes: (editFields.durationMinutes as number) > 0 ? editFields.durationMinutes : null,
+        options: normalizeOptions(editFields.options as MissionOption[]).filter((option) => option.title.trim()),
       });
     }
     setEditingId(null);
@@ -165,6 +172,30 @@ export default function AdminPage() {
     setParticipants([]);
   };
 
+  const updateEditOption = (id: string, changes: Partial<MissionOption>) => {
+    setEditFields((prev) => {
+      const options = normalizeOptions(prev.options as MissionOption[]);
+      return {
+        ...prev,
+        options: options.map((option) => option.id === id ? { ...option, ...changes } : option),
+      };
+    });
+  };
+
+  const addEditOption = () => {
+    setEditFields((prev) => ({ ...prev, options: [...normalizeOptions(prev.options as MissionOption[]), createEmptyOption()] }));
+  };
+
+  const removeEditOption = (id: string) => {
+    setEditFields((prev) => {
+      const options = normalizeOptions(prev.options as MissionOption[]);
+      return {
+        ...prev,
+        options: options.length <= 1 ? options : options.filter((option) => option.id !== id),
+      };
+    });
+  };
+
   if (!ready) return null;
 
   return (
@@ -183,12 +214,12 @@ export default function AdminPage() {
               관리자 페이지
             </h1>
           </div>
-          <button
-            onClick={() => setShowModal(true)}
+          <Link
+            href="/admin/new"
             className="rounded-2xl bg-slate-900 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-slate-700"
           >
             + 새 미션
-          </button>
+          </Link>
         </div>
       </div>
 
@@ -290,6 +321,105 @@ export default function AdminPage() {
                               </button>
                             ))}
                           </div>
+                          <div className="flex items-center gap-2 text-xs text-slate-500">
+                            <span>제한 시간 (분)</span>
+                            <input
+                              type="number"
+                              min={0}
+                              value={(editFields.durationMinutes as number) ?? 30}
+                              onChange={(e) => setEditFields((p) => ({ ...p, durationMinutes: Number(e.target.value) }))}
+                              className="w-20 rounded-lg border border-slate-200 px-2 py-1 text-xs outline-none focus:border-slate-400"
+                            />
+                            <span className="text-slate-400">(0 = 제한 없음)</span>
+                          </div>
+                          <div className="space-y-3 rounded-2xl border border-slate-100 bg-slate-50 p-3">
+                            <div className="flex items-center justify-between">
+                              <p className="text-xs font-semibold text-slate-500">옵션</p>
+                              <button
+                                type="button"
+                                onClick={addEditOption}
+                                className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-500 hover:bg-slate-50"
+                              >
+                                + 옵션 추가
+                              </button>
+                            </div>
+                            {normalizeOptions(editFields.options as MissionOption[]).map((option, index) => (
+                              <div key={option.id} className="space-y-2 rounded-xl border border-slate-100 bg-white p-3">
+                                <div className="flex items-center justify-between">
+                                  <p className="text-xs font-semibold text-slate-400">옵션 {index + 1}</p>
+                                  <button
+                                    type="button"
+                                    onClick={() => removeEditOption(option.id)}
+                                    className="text-xs text-red-400 hover:text-red-500"
+                                  >
+                                    삭제
+                                  </button>
+                                </div>
+                                <input
+                                  value={option.title}
+                                  onChange={(e) => updateEditOption(option.id, { title: e.target.value })}
+                                  placeholder="옵션 제목"
+                                  className="w-full rounded-lg border border-slate-200 px-3 py-1.5 text-xs outline-none focus:border-slate-400"
+                                />
+                                <textarea
+                                  value={option.description}
+                                  onChange={(e) => updateEditOption(option.id, { description: e.target.value })}
+                                  placeholder="옵션 설명"
+                                  rows={2}
+                                  className="w-full resize-none rounded-lg border border-slate-200 px-3 py-1.5 text-xs outline-none focus:border-slate-400"
+                                />
+                                {/* Images */}
+                                <div className="space-y-1.5">
+                                  <div className="flex items-center justify-between">
+                                    <p className="text-xs font-semibold text-slate-400">이미지 ({option.imageUrls.length}개)</p>
+                                    <button type="button" onClick={() => editImageInputRefs.current[option.id]?.click()} disabled={editUploadingIds.has(option.id)}
+                                      className="flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs font-semibold text-slate-500 hover:bg-slate-50 disabled:opacity-50">
+                                      <UploadSimpleIcon size={12} />{editUploadingIds.has(option.id) ? "업로드 중..." : "이미지 추가"}
+                                    </button>
+                                    <input ref={(el) => { editImageInputRefs.current[option.id] = el; }} type="file" accept="image/*" multiple className="hidden"
+                                      onChange={async (e) => {
+                                        const files = Array.from(e.target.files ?? []); if (!files.length) return;
+                                        setEditUploadingIds((s) => new Set(s).add(option.id));
+                                        try {
+                                          const urls = await Promise.all(files.map(async (f, i) => {
+                                            const ext = f.name.split(".").pop() || "jpg";
+                                            const imgRef = storageRef(storage, `missions/options/${option.id}-${Date.now()}-${i}/image.${ext}`);
+                                            await uploadBytes(imgRef, f);
+                                            return getDownloadURL(imgRef);
+                                          }));
+                                          updateEditOption(option.id, { imageUrls: [...option.imageUrls, ...urls] });
+                                        } finally {
+                                          setEditUploadingIds((s) => { const n = new Set(s); n.delete(option.id); return n; });
+                                          e.target.value = "";
+                                        }
+                                      }} />
+                                  </div>
+                                  {option.imageUrls.length > 0 && (
+                                    <div className="grid grid-cols-3 gap-1.5">
+                                      {option.imageUrls.map((url: string, i: number) => (
+                                        <div key={i} className="relative group">
+                                          <img src={url} alt="" className="h-20 w-full rounded-lg object-cover border border-slate-100" />
+                                          <button type="button" onClick={() => updateEditOption(option.id, { imageUrls: option.imageUrls.filter((_: string, j: number) => j !== i) })}
+                                            className="absolute top-0.5 right-0.5 hidden group-hover:flex h-4 w-4 items-center justify-center rounded-full bg-black/60 text-white text-xs">✕</button>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  )}
+                                </div>
+                                {/* Content — markdown */}
+                                <div className="space-y-1.5">
+                                  <p className="text-xs font-semibold text-slate-400">콘텐츠 (마크다운)</p>
+                                  <textarea
+                                    value={option.content}
+                                    onChange={(e) => updateEditOption(option.id, { content: e.target.value })}
+                                    placeholder={"## 서비스 개요\n- ..."}
+                                    rows={4}
+                                    className="w-full resize-y rounded-lg border border-slate-200 px-3 py-1.5 font-mono text-xs outline-none focus:border-slate-400"
+                                  />
+                                </div>
+                              </div>
+                            ))}
+                          </div>
                           <div className="flex gap-2">
                             <button
                               onClick={() => saveEdit(mission.id)}
@@ -327,6 +457,9 @@ export default function AdminPage() {
                               {mission.description}
                             </p>
                           )}
+                          <p className="text-xs text-slate-400">
+                            옵션 {mission.options?.length ?? 0}개
+                          </p>
                           <p className="text-xs text-slate-400">
                             {mission.startDate} – {mission.endDate}
                           </p>
@@ -431,104 +564,6 @@ export default function AdminPage() {
         </div>
       )}
 
-      {/* Create mission modal */}
-      {showModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
-          <div className="w-full max-w-md rounded-3xl bg-white p-8 shadow-2xl">
-            <h3 className="text-lg font-semibold text-slate-900">
-              새 미션 만들기
-            </h3>
-            <div className="mt-6 space-y-4">
-              <input
-                type="text"
-                value={form.title}
-                onChange={(e) =>
-                  setForm((p) => ({ ...p, title: e.target.value }))
-                }
-                onKeyDown={(e) =>
-                  e.key === "Enter" &&
-                  !e.nativeEvent.isComposing &&
-                  createMission()
-                }
-                placeholder="미션 제목"
-                autoFocus
-                className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none focus:border-slate-400"
-              />
-              <textarea
-                value={form.description}
-                onChange={(e) =>
-                  setForm((p) => ({ ...p, description: e.target.value }))
-                }
-                placeholder="미션 설명 (선택)"
-                rows={3}
-                className="w-full resize-none rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none focus:border-slate-400"
-              />
-              <div className="space-y-2">
-                <p className="text-xs font-semibold text-slate-500">
-                  수행 기간
-                </p>
-                <div className="flex items-center gap-3">
-                  <input
-                    type="date"
-                    value={form.startDate}
-                    onChange={(e) =>
-                      setForm((p) => ({ ...p, startDate: e.target.value }))
-                    }
-                    className="flex-1 rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none focus:border-slate-400"
-                  />
-                  <span className="text-slate-400">–</span>
-                  <input
-                    type="date"
-                    value={form.endDate}
-                    min={form.startDate}
-                    onChange={(e) =>
-                      setForm((p) => ({ ...p, endDate: e.target.value }))
-                    }
-                    className="flex-1 rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none focus:border-slate-400"
-                  />
-                </div>
-              </div>
-              <div className="space-y-2">
-                <p className="text-xs font-semibold text-slate-500">디바이스</p>
-                <div className="flex gap-2">
-                  {(["desktop", "mobile"] as Device[]).map((d) => (
-                    <button
-                      key={d}
-                      type="button"
-                      onClick={() => setForm((p) => ({ ...p, device: d }))}
-                      className={`flex-1 rounded-2xl border py-3 text-sm font-semibold transition ${
-                        form.device === d
-                          ? "border-slate-900 bg-slate-900 text-white"
-                          : "border-slate-200 text-slate-600 hover:bg-slate-50"
-                      }`}
-                    >
-                      {d === "desktop" ? <><MonitorIcon size={14} className="inline mr-1" />PC</> : <><DeviceMobileIcon size={14} className="inline mr-1" />모바일</>}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </div>
-            <div className="mt-6 flex gap-3">
-              <button
-                onClick={() => {
-                  setShowModal(false);
-                  setForm(EMPTY_FORM);
-                }}
-                className="flex-1 rounded-2xl border border-slate-200 py-3 text-sm font-semibold text-slate-600 transition hover:bg-slate-50"
-              >
-                취소
-              </button>
-              <button
-                onClick={createMission}
-                disabled={!form.title.trim() || isCreating}
-                className="flex-1 rounded-2xl bg-slate-900 py-3 text-sm font-semibold text-white transition hover:bg-slate-700 disabled:opacity-40"
-              >
-                {isCreating ? "생성 중..." : "만들기"}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

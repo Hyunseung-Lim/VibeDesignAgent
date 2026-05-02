@@ -18,6 +18,7 @@ type Mission = {
   startDate: string;
   endDate: string;
   device?: "desktop" | "mobile";
+  options?: { id: string; title: string; description: string; imageUrl: string; content: string }[];
   createdAt: number;
 };
 
@@ -72,6 +73,14 @@ export default function LobbyPage() {
   }, [isMenuOpen]);
 
   const userInitial = (userName?.trim()?.charAt(0) || "U").toUpperCase();
+  const todayDate = new Date();
+  todayDate.setHours(0, 0, 0, 0);
+  const todayMissions = missions.filter((mission) => {
+    const start = new Date(mission.startDate);
+    const end = new Date(mission.endDate);
+    return todayDate >= start && todayDate <= end;
+  });
+  const visibleMissions = todayMissions.length > 0 ? todayMissions.slice(0, 1) : missions;
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900">
@@ -130,17 +139,17 @@ export default function LobbyPage() {
         {/* Missions */}
         <main className="space-y-4">
           <div className="flex items-center justify-between">
-            <h2 className="text-xl font-semibold text-slate-900">Missions</h2>
-            <span className="text-sm text-slate-400">{missions.length}개의 미션</span>
+            <h2 className="text-xl font-semibold text-slate-900">오늘의 미션</h2>
+            <span className="text-sm text-slate-400">{visibleMissions.length}개의 미션</span>
           </div>
 
-          {missions.length === 0 ? (
+          {visibleMissions.length === 0 ? (
             <div className="flex h-40 items-center justify-center rounded-3xl border border-dashed border-slate-200 bg-white text-sm text-slate-400">
               아직 등록된 미션이 없습니다.
             </div>
           ) : (
             <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-              {missions.map((mission) => {
+              {visibleMissions.map((mission) => {
                 const status = derivedStatus(mission.startDate, mission.endDate);
                 return (
                   <article
@@ -157,6 +166,7 @@ export default function LobbyPage() {
                     {mission.description && (
                       <p className="mt-2 text-sm text-slate-500 leading-relaxed line-clamp-2">{mission.description}</p>
                     )}
+                    <p className="mt-3 text-xs text-slate-400">옵션 {mission.options?.length ?? 0}개 중 선택</p>
                     <div className="mt-3 flex items-center gap-2">
                       <p className="text-xs text-slate-400">{mission.startDate} – {mission.endDate}</p>
                       <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-500">

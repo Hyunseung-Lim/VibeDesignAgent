@@ -35,7 +35,7 @@ When reference images are provided, you MUST analyze them directly and describe 
 Always write surrounding text in the same language the user is using.`;
 
 export async function POST(request: Request) {
-  const { messages, mockupHtml, selectedElement, citedReferences, missionTitle, missionBrief, device, activeIdea } = await request.json();
+  const { messages, mockupHtml, selectedElement, citedReferences, missionTitle, missionBrief, missionImageUrls, device, activeIdea } = await request.json();
   const deviceLabel = device === "mobile" ? "모바일 (390×844px)" : "PC (1280×900px)";
 
   const systemMessages: OpenAI.Chat.ChatCompletionMessageParam[] = [
@@ -52,6 +52,31 @@ export async function POST(request: Request) {
       role: "system",
       content: `Current mission context:\nTitle: ${missionTitle || "(없음)"}\nBrief: ${missionBrief || "(없음)"}`,
     });
+  }
+
+  if (missionImageUrls?.length > 0) {
+    const base64Results = await Promise.allSettled(
+      (missionImageUrls as string[]).map(async (url: string) => {
+        const res = await fetch(url, { signal: AbortSignal.timeout(5000) });
+        if (!res.ok) throw new Error(`fetch failed: ${res.status}`);
+        const buffer = await res.arrayBuffer();
+        const ct = res.headers.get("content-type") || "image/jpeg";
+        return `data:${ct};base64,${Buffer.from(buffer).toString("base64")}`;
+      })
+    );
+    const dataUrls = base64Results
+      .filter(r => r.status === "fulfilled")
+      .map(r => (r as PromiseFulfilledResult<string>).value);
+
+    if (dataUrls.length > 0) {
+      systemMessages.push({
+        role: "system",
+        content: [
+          { type: "input_text", text: `The following ${dataUrls.length} image(s) are the actual content/product images for this mission. You MUST use them as the primary visual reference when generating mockups — incorporate their UI layout, style, colors, and content directly.` },
+          ...dataUrls.map(url => ({ type: "input_image", image_url: url, detail: "high" })),
+        ] as unknown as string,
+      });
+    }
   }
 
   if (activeIdea) {

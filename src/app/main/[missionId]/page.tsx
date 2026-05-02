@@ -6,11 +6,11 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import { firebaseAuth, db, storage } from "@/lib/firebase";
 import { onAuthStateChanged } from "firebase/auth";
-import { doc, getDoc, setDoc } from "firebase/firestore";
+import { doc, getDoc, setDoc, onSnapshot } from "firebase/firestore";
 import { ref as storageRef, uploadString, getDownloadURL } from "firebase/storage";
 import { ArrowLeftIcon, ArrowRightIcon, ArrowSquareOutIcon, ArrowsOutIcon, ArrowsInIcon, CaretUpIcon, CaretDownIcon, DeviceMobileIcon, MonitorIcon, EyeIcon, XIcon } from "@phosphor-icons/react";
 
-const ADMIN_EMAILS = ["03leesun@gmail.com"];
+const ADMIN_EMAILS = ["03leesun@gmail.com", "charlie9807@gmail.com"];
 
 type Message = {
   id: string;
@@ -39,6 +39,14 @@ type Idea = {
 };
 
 type Device = "desktop" | "mobile";
+
+type MissionOption = {
+  id: string;
+  title: string;
+  description: string;
+  imageUrls: string[];
+  content: string;
+};
 
 type Artboard = {
   id: string;
@@ -122,6 +130,39 @@ function normalizePresentations(idea: Idea): Presentation[] {
     }];
   }
   return [];
+}
+
+function normalizeMissionOptions(mission: { title?: string; description?: string; options?: MissionOption[] } | null): MissionOption[] {
+  const options = (mission?.options ?? [])
+    .filter(option => option?.title?.trim())
+    .map(option => ({
+      id: option.id || crypto.randomUUID(),
+      title: option.title ?? "",
+      description: option.description ?? "",
+      // backward compat: old data has imageUrl (string), new data has imageUrls (string[])
+      imageUrls: option.imageUrls ?? ((option as unknown as {imageUrl?: string}).imageUrl ? [(option as unknown as {imageUrl: string}).imageUrl] : []),
+      content: option.content ?? "",
+    }));
+  if (options.length > 0) return options;
+  if (mission?.title || mission?.description) {
+    return [{
+      id: "legacy-option",
+      title: mission.title || "미션 옵션",
+      description: mission.description || "",
+      imageUrls: [],
+      content: mission.description || "",
+    }];
+  }
+  return [];
+}
+
+function optionBrief(option: MissionOption | null) {
+  if (!option) return "";
+  return [
+    option.description,
+    option.imageUrls?.length ? `웹/앱에 들어가야 하는 이미지:\n${option.imageUrls.join("\n")}` : "",
+    option.content ? `웹/앱에 들어가야 하는 콘텐츠:\n${option.content}` : "",
+  ].filter(Boolean).join("\n\n");
 }
 
 function isInlineOrLocalAsset(url: string) {
@@ -618,9 +659,18 @@ export default function MainScreenPage() {
   const [missionTitle, setMissionTitle] = useState("");
   const [missionBrief, setMissionBrief] = useState("");
   const [missionPeriod, setMissionPeriod] = useState("");
+  const [missionOptions, setMissionOptions] = useState<MissionOption[]>([]);
+  const [selectedOptionId, setSelectedOptionId] = useState<string | null>(null);
+  const [missionDurationMinutes, setMissionDurationMinutes] = useState<number | null>(null);
+  const [activeOptionPreviewId, setActiveOptionPreviewId] = useState<string | null>(null);
+  const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
+  const [loadedImageUrls, setLoadedImageUrls] = useState<Set<string>>(new Set());
+  const [timerStartedAt, setTimerStartedAt] = useState<number | null>(null);
+  const [timerDisplay, setTimerDisplay] = useState<string>("");
   const [activeIdeaTab, setActiveIdeaTab] = useState("idea");
   const [activeIdeaId, setActiveIdeaId] = useState<string | null>(null);
   const [isIdeaExpanded, setIsIdeaExpanded] = useState(false);
+  const [isMissionBriefExpanded, setIsMissionBriefExpanded] = useState(false);
   const [activePresentationId, setActivePresentationId] = useState<string | null>(null);
   const [userId, setUserId] = useState<string | null>(null);
   const [isFetchingRefs, setIsFetchingRefs] = useState(false);
@@ -649,6 +699,7 @@ export default function MainScreenPage() {
   const artboardHeightsRef = useRef<Record<string, number>>({});
   const artboardsRef = useRef<Artboard[]>([]);
   const activeIdeaIdRef = useRef<string | null>(null);
+  const selectedOptionIdRef = useRef<string | null>(null);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
 
@@ -664,6 +715,7 @@ export default function MainScreenPage() {
   useEffect(() => { artboardHeightsRef.current = artboardHeights; }, [artboardHeights]);
   useEffect(() => { artboardsRef.current = artboards; }, [artboards]);
   useEffect(() => { activeIdeaIdRef.current = activeIdeaId; }, [activeIdeaId]);
+  useEffect(() => { selectedOptionIdRef.current = selectedOptionId; }, [selectedOptionId]);
 
   const applyCanvasViewDirectly = useCallback((scale: number, offset: { x: number; y: number }) => {
     canvasScaleRef.current = scale;
@@ -730,9 +782,34 @@ export default function MainScreenPage() {
       }).catch(() => setViewAsName(viewAs));
     }
 
-    Promise.all([getDoc(sessionRef), getDoc(missionRef)]).then(([sessionSnap, missionSnap]) => {
+    // Session: load once; Mission: real-time listener
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let sessionData: Record<string, any> | null = null;
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const applyMission = (missionData: Record<string, any> | null) => {
+      const session = sessionData;
+      const normalizedOptions = normalizeMissionOptions(missionData as { title?: string; description?: string; options?: MissionOption[] } | null);
+      // Use ref so re-selection by user is never overwritten
+      const currentOptionId = selectedOptionIdRef.current ?? (session?.selectedOptionId as string | undefined);
+      const selectedOption = normalizedOptions.find(o => o.id === currentOptionId) ?? (normalizedOptions.length === 1 ? normalizedOptions[0] : null);
+      setMissionOptions(normalizedOptions);
+      // Only update title/brief from mission if they can be freshly derived
+      if (selectedOption) {
+        setMissionTitle(selectedOption.title || missionData?.title || "");
+        setMissionBrief(optionBrief(selectedOption) || missionData?.description || "");
+      } else {
+        setMissionTitle(session?.missionTitle || missionData?.title || "");
+        setMissionBrief(session?.missionBrief || missionData?.description || "");
+      }
+      if (missionData?.startDate && missionData?.endDate) setMissionPeriod(`${missionData.startDate} – ${missionData.endDate}`);
+      if (missionData?.device) setDevice(missionData.device as Device);
+      if (missionData?.durationMinutes) setMissionDurationMinutes(Number(missionData.durationMinutes));
+    };
+
+    getDoc(sessionRef).then(sessionSnap => {
       const session = sessionSnap.exists() ? sessionSnap.data() : null;
-      const mission = missionSnap.exists() ? missionSnap.data() : null;
+      sessionData = session ?? null;
 
       if (session?.messages) setMessages(session.messages);
       // Load ideas first so we can reference their IDs
@@ -798,14 +875,20 @@ export default function MainScreenPage() {
       if (session?.references) setReferences(session.references);
       if (session?.stitchProjectId) setStitchProjectId(session.stitchProjectId);
 
-      // Prefer session-saved overrides; fall back to admin-set mission data
-      setMissionTitle(session?.missionTitle || mission?.title || "");
-      setMissionBrief(session?.missionBrief || mission?.description || "");
-      if (mission?.startDate && mission?.endDate) {
-        setMissionPeriod(`${mission.startDate} – ${mission.endDate}`);
+      if (session?.timerStartedAt) setTimerStartedAt(Number(session.timerStartedAt));
+      // Set selectedOptionId from session — only once at load
+      if (session?.selectedOptionId) {
+        setSelectedOptionId(session.selectedOptionId as string);
+        selectedOptionIdRef.current = session.selectedOptionId as string;
       }
-      if (mission?.device) setDevice(mission.device as Device);
     });
+
+    // Real-time mission listener — picks up admin edits immediately
+    const unsubMission = onSnapshot(missionRef, (snap) => {
+      applyMission(snap.exists() ? snap.data() : null);
+    });
+
+    return () => unsubMission();
   }, [userId, missionId, viewAs, isAdmin]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Save session to Firestore (debounced to avoid write storms during streaming)
@@ -829,10 +912,43 @@ export default function MainScreenPage() {
       }));
       // Strip undefined values — Firestore rejects them
       const clean = <T,>(v: T): T => JSON.parse(JSON.stringify(v, (_, val) => val === undefined ? null : val));
-      setDoc(ref, clean({ messages, artboards: artboardsToSave, references, ideas: ideasToSave, missionTitle, missionBrief, stitchProjectId: stitchProjectId || null, updatedAt: Date.now() }), { merge: true });
+      setDoc(ref, clean({ messages, artboards: artboardsToSave, references, ideas: ideasToSave, missionTitle, missionBrief, selectedOptionId, stitchProjectId: stitchProjectId || null, updatedAt: Date.now() }), { merge: true });
     }, 1500);
     return () => { if (saveTimerRef.current) clearTimeout(saveTimerRef.current); };
-  }, [userId, missionId, messages, artboards, references, ideas, missionTitle, missionBrief, stitchProjectId]);
+  }, [userId, missionId, messages, artboards, references, ideas, missionTitle, missionBrief, selectedOptionId, stitchProjectId]);
+
+  // Countdown / count-up timer
+  useEffect(() => {
+    if (!timerStartedAt) { setTimerDisplay(""); return; }
+    const update = () => {
+      const elapsed = Date.now() - timerStartedAt;
+      if (missionDurationMinutes && missionDurationMinutes > 0) {
+        const remaining = missionDurationMinutes * 60 * 1000 - elapsed;
+        if (remaining <= 0) { setTimerDisplay("시간 종료"); return; }
+        const m = Math.floor(remaining / 60000);
+        const s = Math.floor((remaining % 60000) / 1000);
+        setTimerDisplay(`${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`);
+      } else {
+        const m = Math.floor(elapsed / 60000);
+        const s = Math.floor((elapsed % 60000) / 1000);
+        setTimerDisplay(`${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`);
+      }
+    };
+    update();
+    const id = setInterval(update, 1000);
+    return () => clearInterval(id);
+  }, [timerStartedAt, missionDurationMinutes]);
+
+  // Preload all option images when options are available
+  useEffect(() => {
+    const allUrls = missionOptions.flatMap(o => o.imageUrls ?? []);
+    allUrls.forEach(url => {
+      if (!url) return;
+      const img = new window.Image();
+      img.onload = () => setLoadedImageUrls(prev => new Set(prev).add(url));
+      img.src = url;
+    });
+  }, [missionOptions]);
 
   useEffect(() => {
     chatBottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -1104,6 +1220,7 @@ export default function MainScreenPage() {
           citedReferences: selectedReferences.length > 0 ? selectedReferences : undefined,
           missionTitle: missionTitle || undefined,
           missionBrief: missionBrief || undefined,
+          missionImageUrls: selectedMissionOption?.imageUrls?.length ? selectedMissionOption.imageUrls : undefined,
           device,
           activeIdea: ideas.find(i => i.id === activeIdeaId) ?? undefined,
         }),
@@ -1458,6 +1575,24 @@ export default function MainScreenPage() {
 
   const ideaArtboards = artboards.filter(a => a.ideaId === activeIdeaId);
   const activeArtboard = ideaArtboards.find(a => a.id === activeArtboardId) ?? ideaArtboards[ideaArtboards.length - 1] ?? null;
+  const selectedMissionOption = missionOptions.find(option => option.id === selectedOptionId) ?? null;
+  const chooseMissionOption = async (option: MissionOption) => {
+    const now = Date.now();
+    setSelectedOptionId(option.id);
+    setMissionTitle(option.title);
+    setMissionBrief(optionBrief(option));
+    setTimerStartedAt(now);
+    if (!isReadOnly && userId) {
+      const ref = doc(db, "sessions", userId, "missions", missionId);
+      await setDoc(ref, {
+        selectedOptionId: option.id,
+        missionTitle: option.title,
+        missionBrief: optionBrief(option),
+        timerStartedAt: now,
+        updatedAt: now,
+      }, { merge: true });
+    }
+  };
   const isGeneratingCurrentIdeaMockup = isGeneratingMockup && generatingMockupIdeaId === activeIdeaId;
   const gridSize = 20 * canvasScale;
   const getArtboardRenderHeight = (artboard: Artboard) => Math.max(
@@ -1542,6 +1677,11 @@ export default function MainScreenPage() {
           <h1 className="text-xl font-semibold">{missionTitle || "미션 제목 없음"}</h1>
         </div>
         <div className="flex items-center gap-4 text-sm text-slate-500">
+          {timerDisplay && (
+            <span className={`font-mono text-lg font-semibold tabular-nums ${timerDisplay === "시간 종료" ? "text-red-500" : missionDurationMinutes && timerStartedAt && (missionDurationMinutes * 60 * 1000 - (Date.now() - timerStartedAt)) < 60000 ? "text-red-500" : "text-slate-900"}`}>
+              {missionDurationMinutes ? `⏱ ${timerDisplay}` : `${timerDisplay} 경과`}
+            </span>
+          )}
           <Link
             href="/lobby"
             className="rounded-full border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-800"
@@ -1551,6 +1691,119 @@ export default function MainScreenPage() {
         </div>
       </header>
 
+      {missionOptions.length > 1 && !selectedOptionId ? (
+        <main className="flex flex-1 flex-col overflow-hidden">
+          <div className="flex-1 overflow-y-auto">
+            <div className="mx-auto max-w-3xl px-8 py-8 space-y-6">
+
+              {/* Mission info */}
+              {(missionTitle || missionBrief) && (
+                <div className="rounded-2xl border border-slate-200 bg-white px-6 py-5">
+                  <div className="flex items-center gap-2">
+                    <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">미션</p>
+                    <span className="flex items-center gap-1 rounded-full bg-slate-100 px-2.5 py-0.5 text-xs text-slate-500">
+                      {device === "mobile" ? <><DeviceMobileIcon size={11} className="inline" /> 모바일</> : <><MonitorIcon size={11} className="inline" /> PC</>}
+                    </span>
+                    {missionPeriod && <span className="rounded-full bg-slate-100 px-2.5 py-0.5 text-xs text-slate-500">{missionPeriod}</span>}
+                  </div>
+                  {missionTitle && <h2 className="mt-2 text-lg font-semibold text-slate-900">{missionTitle}</h2>}
+                  {missionBrief && <p className="mt-1.5 text-sm leading-relaxed text-slate-500 whitespace-pre-wrap">{missionBrief}</p>}
+                </div>
+              )}
+
+              {/* Option tabs */}
+              <div className="flex gap-2 overflow-x-auto pb-1">
+                {missionOptions.map((o, i) => {
+                  const isActive = activeOptionPreviewId === o.id || (!activeOptionPreviewId && i === 0);
+                  return (
+                    <button
+                      key={o.id}
+                      onClick={() => setActiveOptionPreviewId(o.id)}
+                      className={`shrink-0 rounded-xl border px-4 py-2 text-sm font-semibold transition ${isActive ? "border-slate-900 bg-slate-900 text-white" : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"}`}
+                    >
+                      {o.title}
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Option detail */}
+              {(() => {
+                const option = missionOptions.find(o => o.id === activeOptionPreviewId) ?? missionOptions[0];
+                if (!option) return null;
+                return (
+                  <div className="space-y-6">
+                    {option.description && (
+                      <p className="text-base leading-relaxed text-slate-500">{option.description}</p>
+                    )}
+
+                    {/* Images — horizontal scroll with skeleton */}
+                    {option.imageUrls?.length > 0 && (
+                      <div className="space-y-2">
+                        <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">이미지</p>
+                        <div className="flex gap-4 overflow-x-auto pb-2">
+                          {option.imageUrls.map((url, i) => (
+                            <div key={i} className="relative h-72 shrink-0">
+                              {!loadedImageUrls.has(url) && (
+                                <div className="h-72 w-64 rounded-2xl bg-slate-200 animate-pulse" />
+                              )}
+                              <img
+                                src={url}
+                                alt={`image ${i + 1}`}
+                                onClick={() => setLightboxUrl(url)}
+                                onLoad={() => setLoadedImageUrls(prev => new Set(prev).add(url))}
+                                className={`h-72 w-auto rounded-2xl border border-slate-100 object-contain cursor-zoom-in transition-opacity duration-300 ${loadedImageUrls.has(url) ? "opacity-100" : "opacity-0 absolute inset-0"}`}
+                              />
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Content — markdown */}
+                    {option.content && (
+                      <div className="space-y-2">
+                        <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">콘텐츠</p>
+                        <div className="rounded-2xl border border-slate-100 bg-white px-6 py-5 text-sm text-slate-700 space-y-2">
+                          <ReactMarkdown components={{
+                            h1: ({ children }) => <h1 className="text-xl font-bold text-slate-900 mb-2 mt-4 first:mt-0">{children}</h1>,
+                            h2: ({ children }) => <h2 className="text-base font-semibold text-slate-900 mb-2 mt-4 first:mt-0">{children}</h2>,
+                            h3: ({ children }) => <h3 className="text-sm font-semibold text-slate-800 mb-1 mt-3">{children}</h3>,
+                            p: ({ children }) => <p className="leading-relaxed mb-2 last:mb-0">{children}</p>,
+                            ul: ({ children }) => <ul className="list-disc ml-5 space-y-1 mb-2">{children}</ul>,
+                            ol: ({ children }) => <ol className="list-decimal ml-5 space-y-1 mb-2">{children}</ol>,
+                            li: ({ children }) => <li className="leading-relaxed">{children}</li>,
+                            strong: ({ children }) => <strong className="font-semibold text-slate-900">{children}</strong>,
+                            em: ({ children }) => <em className="italic text-slate-600">{children}</em>,
+                            code: ({ children }) => <code className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-xs text-slate-800">{children}</code>,
+                            blockquote: ({ children }) => <blockquote className="border-l-2 border-slate-300 pl-4 italic text-slate-500 my-2">{children}</blockquote>,
+                            hr: () => <hr className="border-slate-200 my-4" />,
+                          }}>{option.content}</ReactMarkdown>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
+            </div>
+          </div>
+
+          {/* Start button — fixed bottom */}
+          <div className="border-t border-slate-200 bg-white px-8 py-4">
+            <div className="mx-auto max-w-3xl">
+              <button
+                onClick={() => {
+                  const option = missionOptions.find(o => o.id === activeOptionPreviewId) ?? missionOptions[0];
+                  if (option) chooseMissionOption(option);
+                }}
+                className="w-full rounded-2xl bg-slate-900 py-3.5 text-sm font-semibold text-white transition hover:bg-slate-700"
+              >
+                이 옵션으로 시작 {missionDurationMinutes ? `(${missionDurationMinutes}분)` : ""}
+              </button>
+            </div>
+          </div>
+        </main>
+      ) : (
       <main className="flex flex-1 overflow-hidden">
         {/* Left panel: content */}
         <section className="flex-1 space-y-6 overflow-y-auto pb-32 pt-8 pl-10 pr-6">
@@ -1559,6 +1812,20 @@ export default function MainScreenPage() {
             <div className="flex items-center justify-between">
               <p className="text-xl font-semibold text-slate-900">Mission</p>
               <div className="flex items-center gap-2">
+                {missionOptions.length > 1 && (
+                  <button
+                    onClick={async () => {
+                      setSelectedOptionId(null);
+                      selectedOptionIdRef.current = null;
+                      if (!isReadOnly && userId) {
+                        await setDoc(doc(db, "sessions", userId, "missions", missionId), { selectedOptionId: null, updatedAt: Date.now() }, { merge: true });
+                      }
+                    }}
+                    className="rounded-full border border-slate-200 px-3 py-1 text-xs font-semibold text-slate-500 transition hover:bg-slate-50"
+                  >
+                    옵션 변경
+                  </button>
+                )}
                 {missionPeriod && (
                   <span className="rounded-full bg-slate-100 px-3 py-1 text-xs text-slate-500">{missionPeriod}</span>
                 )}
@@ -1572,11 +1839,49 @@ export default function MainScreenPage() {
                 {missionTitle || <span className="font-normal text-slate-400">미션 제목 없음</span>}
               </p>
               {missionBrief ? (
-                <p className="rounded-2xl border border-slate-100 bg-slate-50 px-4 py-3 text-sm text-slate-700 leading-relaxed whitespace-pre-wrap">
-                  {missionBrief}
-                </p>
+                <div className="rounded-2xl border border-slate-100 bg-slate-50 overflow-hidden">
+                  <button
+                    onClick={() => setIsMissionBriefExpanded(p => !p)}
+                    className="flex w-full items-center justify-between px-4 py-3 text-left text-xs font-semibold text-slate-500 hover:bg-slate-100 transition"
+                  >
+                    <span>미션 브리핑</span>
+                    <span>{isMissionBriefExpanded ? "▲" : "▼"}</span>
+                  </button>
+                  {isMissionBriefExpanded && (
+                    <div className="border-t border-slate-100 px-4 py-3 text-sm text-slate-700 space-y-2">
+                      <ReactMarkdown components={{
+                        h1: ({ children }) => <h1 className="text-base font-bold text-slate-900 mb-1 mt-3 first:mt-0">{children}</h1>,
+                        h2: ({ children }) => <h2 className="text-sm font-semibold text-slate-900 mb-1 mt-3 first:mt-0">{children}</h2>,
+                        h3: ({ children }) => <h3 className="text-sm font-medium text-slate-800 mb-1 mt-2">{children}</h3>,
+                        p: ({ children }) => <p className="leading-relaxed mb-2 last:mb-0">{children}</p>,
+                        ul: ({ children }) => <ul className="list-disc ml-4 space-y-1 mb-2">{children}</ul>,
+                        ol: ({ children }) => <ol className="list-decimal ml-4 space-y-1 mb-2">{children}</ol>,
+                        li: ({ children }) => <li className="leading-relaxed">{children}</li>,
+                        strong: ({ children }) => <strong className="font-semibold text-slate-900">{children}</strong>,
+                        code: ({ children }) => <code className="rounded bg-slate-200 px-1 py-0.5 font-mono text-xs text-slate-800">{children}</code>,
+                        blockquote: ({ children }) => <blockquote className="border-l-2 border-slate-300 pl-3 italic text-slate-500 my-2">{children}</blockquote>,
+                      }}>{missionBrief}</ReactMarkdown>
+                    </div>
+                  )}
+                </div>
               ) : (
                 <p className="rounded-2xl border border-slate-100 bg-slate-50 px-4 py-3 text-sm text-slate-400">미션 브리핑 없음</p>
+              )}
+              {(selectedMissionOption?.imageUrls ?? []).length > 0 && (
+                <div className="flex gap-3 overflow-x-auto pb-1">
+                  {(selectedMissionOption?.imageUrls ?? []).map((url, i) => (
+                    <div key={i} className="relative shrink-0">
+                      {!loadedImageUrls.has(url) && <div className="h-48 w-48 rounded-2xl bg-slate-200 animate-pulse" />}
+                      <img
+                        src={url}
+                        alt=""
+                        onClick={() => setLightboxUrl(url)}
+                        onLoad={() => setLoadedImageUrls(prev => new Set(prev).add(url))}
+                        className={`h-48 w-auto rounded-2xl border border-slate-100 object-contain cursor-zoom-in transition-opacity duration-300 ${loadedImageUrls.has(url) ? "opacity-100" : "opacity-0 absolute inset-0"}`}
+                      />
+                    </div>
+                  ))}
+                </div>
               )}
             </div>
           </div>
@@ -1814,7 +2119,9 @@ export default function MainScreenPage() {
                         )}
                       </div>
                       {ideaArtboards.length > 0 ? (
-                        renderMockupCanvas()
+                        isMockupExpanded ? (
+                          <div className="flex h-64 items-center justify-center rounded-2xl bg-[#1a1a1a] text-xs text-white/40">확대 보기 중...</div>
+                        ) : renderMockupCanvas()
                       ) : (
                         <div className="flex h-64 flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-slate-300 bg-white/70 text-sm text-slate-400">
                           {isGeneratingCurrentIdeaMockup ? (
@@ -2107,6 +2414,7 @@ export default function MainScreenPage() {
           </div>
         </aside>
       </main>
+      )}
 
       {/* Mockup expanded canvas: keep the chat panel visible */}
       {isMockupExpanded && (
@@ -2126,6 +2434,27 @@ export default function MainScreenPage() {
 
           {/* Canvas */}
           {renderMockupCanvas(true)}
+        </div>
+      )}
+
+      {/* Lightbox */}
+      {lightboxUrl && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm"
+          onClick={() => setLightboxUrl(null)}
+        >
+          <img
+            src={lightboxUrl}
+            alt=""
+            className="max-h-[90vh] max-w-[90vw] rounded-2xl object-contain shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          />
+          <button
+            onClick={() => setLightboxUrl(null)}
+            className="absolute right-5 top-5 flex h-9 w-9 items-center justify-center rounded-full bg-white/10 text-white hover:bg-white/20"
+          >
+            <XIcon size={18} />
+          </button>
         </div>
       )}
     </div>
