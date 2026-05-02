@@ -20,6 +20,18 @@ type ServiceAccount = {
   token_uri: string;
 };
 
+type MockupStyle = {
+  background: string;
+  surface: string;
+  text: string;
+  muted: string;
+  accent: string;
+  border: string;
+  fontFamily: string;
+  radius: number;
+  notes: string;
+};
+
 let accessTokenCache: { token: string; expiresAt: number } | null = null;
 let serviceAccountCache: ServiceAccount | null = null;
 
@@ -48,6 +60,110 @@ function compactMockupHtml(html?: string) {
   ].filter(Boolean).join("\n");
 }
 
+function hexToRgb(hex: string) {
+  const normalized = hex.replace("#", "");
+  const value = normalized.length === 3
+    ? normalized.split("").map(char => char + char).join("")
+    : normalized;
+  const int = parseInt(value, 16);
+  if (Number.isNaN(int)) return null;
+  return {
+    r: (int >> 16) & 255,
+    g: (int >> 8) & 255,
+    b: int & 255,
+  };
+}
+
+function rgbToHex(r: number, g: number, b: number) {
+  return `#${[r, g, b].map(value => Math.max(0, Math.min(255, Math.round(value))).toString(16).padStart(2, "0")).join("")}`;
+}
+
+function normalizeColor(color: string) {
+  const value = color.trim().toLowerCase();
+  if (value.startsWith("#")) {
+    const rgb = hexToRgb(value);
+    return rgb ? rgbToHex(rgb.r, rgb.g, rgb.b) : null;
+  }
+  const rgbMatch = value.match(/rgba?\(\s*(\d{1,3})[\s,]+(\d{1,3})[\s,]+(\d{1,3})/);
+  if (rgbMatch) {
+    return rgbToHex(Number(rgbMatch[1]), Number(rgbMatch[2]), Number(rgbMatch[3]));
+  }
+  return null;
+}
+
+function luminance(hex: string) {
+  const rgb = hexToRgb(hex);
+  if (!rgb) return 1;
+  const channel = (value: number) => {
+    const s = value / 255;
+    return s <= 0.03928 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4);
+  };
+  return 0.2126 * channel(rgb.r) + 0.7152 * channel(rgb.g) + 0.0722 * channel(rgb.b);
+}
+
+function saturation(hex: string) {
+  const rgb = hexToRgb(hex);
+  if (!rgb) return 0;
+  const values = [rgb.r, rgb.g, rgb.b].map(v => v / 255);
+  const max = Math.max(...values);
+  const min = Math.min(...values);
+  return max === 0 ? 0 : (max - min) / max;
+}
+
+function extractMockupStyle(html?: string): MockupStyle {
+  const fallback: MockupStyle = {
+    background: "#f8fafc",
+    surface: "#ffffff",
+    text: "#0f172a",
+    muted: "#64748b",
+    accent: "#6366f1",
+    border: "#e2e8f0",
+    fontFamily: "Inter, Arial, sans-serif",
+    radius: 28,
+    notes: "",
+  };
+  if (!html) return fallback;
+
+  const colorMatches = html.match(/#[0-9a-fA-F]{3,8}\b|rgba?\([^)]+\)/g) ?? [];
+  const counts = new Map<string, number>();
+  for (const raw of colorMatches) {
+    const normalized = normalizeColor(raw);
+    if (!normalized) continue;
+    counts.set(normalized, (counts.get(normalized) ?? 0) + 1);
+  }
+  const colors = [...counts.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .map(([color]) => color);
+
+  const lightColors = colors.filter(color => luminance(color) > 0.72);
+  const darkColors = colors.filter(color => luminance(color) < 0.28);
+  const accentColors = colors.filter(color => luminance(color) >= 0.18 && luminance(color) <= 0.82 && saturation(color) > 0.18);
+  const borderColors = colors.filter(color => luminance(color) > 0.55 && luminance(color) <= 0.9);
+  const fontMatch = html.match(/font-family\s*:\s*([^;"'}]+)/i);
+  const radiusValues = [...html.matchAll(/border-radius\s*:\s*(\d+(?:\.\d+)?)px/gi)]
+    .map(match => Number(match[1]))
+    .filter(value => Number.isFinite(value));
+  const avgRadius = radiusValues.length
+    ? Math.round(radiusValues.reduce((sum, value) => sum + value, 0) / radiusValues.length)
+    : fallback.radius;
+
+  const style = {
+    background: lightColors[0] ?? fallback.background,
+    surface: lightColors.find(color => color !== lightColors[0]) ?? "#ffffff",
+    text: darkColors[0] ?? fallback.text,
+    muted: darkColors[1] ?? fallback.muted,
+    accent: accentColors[0] ?? darkColors[0] ?? fallback.accent,
+    border: borderColors[0] ?? fallback.border,
+    fontFamily: fontMatch?.[1]?.trim().replace(/['"]/g, "") || fallback.fontFamily,
+    radius: Math.max(8, Math.min(42, avgRadius)),
+  };
+
+  return {
+    ...style,
+    notes: `Extracted mockup style: background ${style.background}, surface ${style.surface}, text ${style.text}, muted ${style.muted}, accent ${style.accent}, border ${style.border}, font ${style.fontFamily}, radius ${style.radius}px.`,
+  };
+}
+
 function escapeXml(value: string) {
   return value
     .replace(/&/g, "&amp;")
@@ -73,59 +189,106 @@ function wrapText(text: string, maxChars: number) {
   return lines;
 }
 
-function composePresentationSlide(slide: SlideInput, title: string | undefined, mockupScreenshot: string, device?: string) {
-  const isMobile = device === "mobile";
-  const frameX = isMobile ? 104 : 88;
-  const frameY = isMobile ? 142 : 178;
-  const frameW = isMobile ? 390 : 760;
-  const frameH = isMobile ? 844 : 535;
-  const panelX = isMobile ? 585 : 910;
-  const panelW = isMobile ? 830 : 500;
-  const titleLines = wrapText(slide.title || title || "Presentation", 34).slice(0, 2);
-  const bullets = slide.content
+type Callout = {
+  label: string;
+  description: string;
+  side: "left" | "right";
+  yRatio: number;
+};
+
+function buildPresentationCallouts(slide: SlideInput): Callout[] {
+  const source = [slide.content, slide.imagePrompt].filter(Boolean).join("\n");
+  const lines = source
     .split(/\n+/)
-    .map(line => line.replace(/^[-•]\s*/, "").trim())
+    .map(line => line.replace(/^[-•]\s*/, "").replace(/^\d+\.\s*/, "").trim())
     .filter(Boolean)
-    .slice(0, 5);
+    .slice(0, 8);
 
-  let y = 166;
-  const titleText = titleLines.map((line, i) => `<text x="${panelX}" y="${y + i * 58}" fill="#0f172a" font-family="Inter, Arial, sans-serif" font-size="48" font-weight="800">${escapeXml(line)}</text>`).join("");
-  y += Math.max(titleLines.length, 1) * 58 + 34;
+  const fallback = [
+    ["Navigation", "Clarify the first entry point and make primary actions easy to find."],
+    ["Hero", "Explain the core offer quickly with headline, supporting copy, and CTA."],
+    ["Trust", "Use logos, metrics, or testimonials to establish credibility."],
+    ["Features", "Show the concrete benefits and product capabilities users should remember."],
+    ["Why Choose Us", "Make the differentiators obvious with concise visual proof."],
+    ["Reviews", "Let customer proof reduce doubt and build confidence."],
+    ["FAQ", "Answer common objections before users hesitate."],
+    ["Final CTA", "End with a focused conversion moment that repeats the main action."],
+  ];
 
-  const bulletText = bullets.map((bullet) => {
-    const lines = wrapText(bullet, isMobile ? 48 : 30).slice(0, 3);
-    const startY = y;
-    y += lines.length * 28 + 28;
-    return [
-      `<circle cx="${panelX + 8}" cy="${startY - 8}" r="5" fill="#6366f1" />`,
-      ...lines.map((line, i) => `<text x="${panelX + 28}" y="${startY + i * 28}" fill="#334155" font-family="Inter, Arial, sans-serif" font-size="22" font-weight="500">${escapeXml(line)}</text>`),
-    ].join("");
+  const items = (lines.length >= 4 ? lines : fallback.map(([label, description]) => `${label}: ${description}`));
+  const yRatios = [0.07, 0.16, 0.28, 0.42, 0.56, 0.7, 0.83, 0.94];
+
+  return items.slice(0, 8).map((item, index) => {
+    const [rawLabel, ...rest] = item.split(/[:—-]/);
+    const label = rawLabel?.trim().slice(0, 42) || fallback[index]?.[0] || `Section ${index + 1}`;
+    const description = rest.join(" ").trim() || fallback[index]?.[1] || item;
+    return {
+      label,
+      description: description.slice(0, 170),
+      side: index % 2 === 0 ? "left" : "right",
+      yRatio: yRatios[index] ?? 0.5,
+    };
+  });
+}
+
+function composePresentationSlide(
+  slide: SlideInput,
+  title: string | undefined,
+  mockupScreenshot: string,
+  device: string | undefined,
+  style: MockupStyle,
+  screenshotWidth?: number,
+  screenshotHeight?: number,
+) {
+  const isMobile = device === "mobile";
+  const pageW = 1536;
+  const shotW = screenshotWidth && screenshotWidth > 0 ? screenshotWidth : (isMobile ? 390 : 1280);
+  const shotH = screenshotHeight && screenshotHeight > 0 ? screenshotHeight : (isMobile ? 1600 : 2400);
+  const mockupW = isMobile ? 520 : 880;
+  const mockupH = Math.round(mockupW * (shotH / shotW));
+  const topPad = 190;
+  const bottomPad = 120;
+  const pageH = Math.max(1400, topPad + mockupH + bottomPad);
+  const mockupX = Math.round((pageW - mockupW) / 2);
+  const mockupY = topPad;
+  const leftTextX = 42;
+  const rightTextX = mockupX + mockupW + 58;
+  const titleText = slide.title || title || "Landing Page Breakdown";
+  const callouts = buildPresentationCallouts(slide);
+  const labelFont = escapeXml(style.fontFamily);
+  const calloutEls = callouts.map((callout) => {
+    const textX = callout.side === "left" ? leftTextX : rightTextX;
+    const lineStartX = callout.side === "left" ? leftTextX + 200 : rightTextX - 18;
+    const lineEndX = callout.side === "left" ? mockupX + 34 : mockupX + mockupW - 34;
+    const y = mockupY + Math.round(mockupH * callout.yRatio);
+    const labelLines = wrapText(callout.label, 18).slice(0, 2);
+    const descLines = wrapText(callout.description, 30).slice(0, 3);
+    const labelY = y - 18;
+    const descY = labelY + labelLines.length * 30 + 16;
+    return `<g>
+      <line x1="${lineStartX}" y1="${y}" x2="${lineEndX}" y2="${y}" stroke="${escapeXml(style.text)}" stroke-width="2" opacity="0.72" />
+      <path d="${callout.side === "left" ? `M ${lineEndX - 10} ${y - 6} L ${lineEndX} ${y} L ${lineEndX - 10} ${y + 6}` : `M ${lineEndX + 10} ${y - 6} L ${lineEndX} ${y} L ${lineEndX + 10} ${y + 6}`}" fill="none" stroke="${escapeXml(style.text)}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity="0.72" />
+      ${labelLines.map((line, i) => `<text x="${textX}" y="${labelY + i * 30}" fill="${escapeXml(style.text)}" font-family="${labelFont}" font-size="27" font-weight="800">${escapeXml(line)}</text>`).join("")}
+      ${descLines.map((line, i) => `<text x="${textX}" y="${descY + i * 19}" fill="${escapeXml(style.muted)}" font-family="${labelFont}" font-size="14" font-weight="500">${escapeXml(line)}</text>`).join("")}
+    </g>`;
   }).join("");
 
-  const frameRadius = isMobile ? 42 : 28;
-  const topBar = isMobile
-    ? `<rect x="${frameX + 135}" y="${frameY + 18}" width="120" height="20" rx="10" fill="#0f172a" opacity="0.9" />`
-    : `<rect x="${frameX}" y="${frameY}" width="${frameW}" height="44" rx="22" fill="#111827" /><circle cx="${frameX + 24}" cy="${frameY + 22}" r="6" fill="#ef4444" /><circle cx="${frameX + 44}" cy="${frameY + 22}" r="6" fill="#f59e0b" /><circle cx="${frameX + 64}" cy="${frameY + 22}" r="6" fill="#22c55e" />`;
-  const imageY = isMobile ? frameY : frameY + 44;
-  const imageH = isMobile ? frameH : frameH - 44;
-
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="1536" height="1024" viewBox="0 0 1536 1024">
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${pageW}" height="${pageH}" viewBox="0 0 ${pageW} ${pageH}">
   <defs>
-    <linearGradient id="bg" x1="0" x2="1" y1="0" y2="1"><stop offset="0" stop-color="#f8fafc"/><stop offset="1" stop-color="#eef2ff"/></linearGradient>
-    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%"><feDropShadow dx="0" dy="24" stdDeviation="28" flood-color="#0f172a" flood-opacity="0.22"/></filter>
+    <linearGradient id="bg" x1="0" x2="1" y1="0" y2="1"><stop offset="0" stop-color="${escapeXml(style.background)}"/><stop offset="1" stop-color="${escapeXml(style.surface)}"/></linearGradient>
+    <filter id="shadow" x="-12%" y="-2%" width="124%" height="108%"><feDropShadow dx="0" dy="20" stdDeviation="22" flood-color="${escapeXml(style.text)}" flood-opacity="0.14"/></filter>
   </defs>
-  <rect width="1536" height="1024" fill="url(#bg)" />
-  <text x="88" y="86" fill="#64748b" font-family="Inter, Arial, sans-serif" font-size="22" font-weight="700" letter-spacing="3">GENERATED MOCKUP PRESENTATION</text>
+  <rect width="${pageW}" height="${pageH}" fill="url(#bg)" />
+  <text x="${pageW / 2}" y="104" text-anchor="middle" fill="${escapeXml(style.text)}" font-family="${labelFont}" font-size="58" font-weight="900">${escapeXml(titleText)}</text>
+  <text x="${pageW / 2}" y="146" text-anchor="middle" fill="${escapeXml(style.muted)}" font-family="${labelFont}" font-size="18" font-weight="600">Full-page mockup breakdown with section-level rationale</text>
   <g filter="url(#shadow)">
-    <rect x="${frameX}" y="${frameY}" width="${frameW}" height="${frameH}" rx="${frameRadius}" fill="#ffffff" />
-    ${topBar}
-    <clipPath id="mockupClip"><rect x="${frameX}" y="${imageY}" width="${frameW}" height="${imageH}" rx="${isMobile ? 34 : 0}" /></clipPath>
-    <image href="${escapeXml(mockupScreenshot)}" x="${frameX}" y="${imageY}" width="${frameW}" height="${imageH}" preserveAspectRatio="xMidYMid meet" clip-path="url(#mockupClip)" />
+    <rect x="${mockupX}" y="${mockupY}" width="${mockupW}" height="${mockupH}" rx="${style.radius}" fill="${escapeXml(style.surface)}" stroke="${escapeXml(style.border)}" />
+    <clipPath id="mockupClip"><rect x="${mockupX}" y="${mockupY}" width="${mockupW}" height="${mockupH}" rx="${style.radius}" /></clipPath>
+    <image href="${escapeXml(mockupScreenshot)}" x="${mockupX}" y="${mockupY}" width="${mockupW}" height="${mockupH}" preserveAspectRatio="xMidYMid meet" clip-path="url(#mockupClip)" />
   </g>
-  <rect x="${panelX - 34}" y="116" width="${panelW + 68}" height="720" rx="30" fill="#ffffff" opacity="0.76" />
-  ${titleText}
-  ${bulletText}
-  <text x="${panelX}" y="904" fill="#64748b" font-family="Inter, Arial, sans-serif" font-size="20">${escapeXml(title || "Pitch Deck")}</text>
+  ${calloutEls}
+  <rect x="${mockupX}" y="${pageH - 70}" width="${mockupW}" height="1" fill="${escapeXml(style.border)}" />
+  <text x="${mockupX}" y="${pageH - 38}" fill="${escapeXml(style.muted)}" font-family="${labelFont}" font-size="15">Generated from the actual full-page mockup screenshot</text>
 </svg>`;
 
   return `data:image/svg+xml;base64,${Buffer.from(svg).toString("base64")}`;
@@ -245,20 +408,29 @@ async function uploadPresentationImage(dataUrl: string, objectName: string) {
 }
 
 export async function POST(request: Request) {
-  const { title, slides, uid = "anonymous", missionId = "unknown", mockupHtml, mockupScreenshot, device } = await request.json();
+  const { title, slides, uid = "anonymous", missionId = "unknown", mockupHtml, mockupScreenshot, mockupScreenshotWidth, mockupScreenshotHeight, device } = await request.json();
 
   if (!slides || !Array.isArray(slides) || slides.length === 0) {
     return Response.json({ error: "slides array required" }, { status: 400 });
   }
 
   const mockupContext = compactMockupHtml(mockupHtml);
+  const mockupStyle = extractMockupStyle(mockupHtml);
   const deviceContext = device === "mobile" ? "mobile app/landing mockup in a 390x844 phone frame" : "desktop landing page mockup in a 1280x900 browser frame";
 
   // Always generate exactly one slide
   const results = await Promise.allSettled(
     slides.slice(0, 1).map(async (slide: SlideInput) => {
       if (typeof mockupScreenshot === "string" && mockupScreenshot.startsWith("data:image/")) {
-        const imageUrl = composePresentationSlide(slide, title, mockupScreenshot, device);
+        const imageUrl = composePresentationSlide(
+          slide,
+          title,
+          mockupScreenshot,
+          device,
+          mockupStyle,
+          Number(mockupScreenshotWidth),
+          Number(mockupScreenshotHeight),
+        );
         try {
           const objectName = `presentations/${uid}/${missionId}/slide-${Date.now()}-${randomUUID()}.svg`;
           const uploadedUrl = await uploadPresentationImage(imageUrl, objectName);
@@ -275,6 +447,8 @@ export async function POST(request: Request) {
         `Slide: "${slide.title}".`,
         `The presentation must faithfully showcase the actual generated mockup as a central visual artifact, not a generic replacement.`,
         `Use a ${deviceContext}. Reflect the mockup's real layout, visible copy, sections, color palette, typography feel, cards/buttons/navigation, and visual hierarchy.`,
+        `Match the generated presentation's background, typography, spacing, border radius, accent colors, and UI detailing to the mockup style. Do not use a generic pitch deck theme if it conflicts with the mockup.`,
+        mockupStyle.notes,
         mockupContext,
         slide.imagePrompt,
       ].filter(Boolean).join("\n\n");

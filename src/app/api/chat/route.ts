@@ -17,6 +17,8 @@ OUTPUT RULES:
   - Example: [GENERATE_MOCKUP: Mobile onboarding screen with 3-step progress indicator at top, central illustration area, bold headline, subtitle text, and a prominent CTA button at bottom. Clean minimal style with indigo/white palette.]
 - To EDIT/MODIFY the current mockup: write 1 sentence explaining what you're changing. Then output [EDIT_MOCKUP: {prompt}] on its own line. Then 1 sentence confirming what changed.
   - The prompt (write in English) should describe specifically what to change and how.
+  - If Current mockup HTML is provided and the user asks to change, adjust, tweak, revise, replace, remove, add a small element, change copy/color/spacing/layout, or otherwise modify the existing design, you MUST use [EDIT_MOCKUP], not [GENERATE_MOCKUP].
+  - Preserve the existing screen structure, visual style, content hierarchy, and unrelated sections. Only change the requested details.
   - Example: [EDIT_MOCKUP: Change the primary button color to coral red, increase the font size of the headline to 28px, and add a subtle drop shadow to the card component.]
 - IMPORTANT: Do NOT output HTML or code blocks for UI mockups — Stitch AI generates the visual design from the text prompt.
 - To suggest references: write 1 sentence explaining you're searching for references, then output [FETCH_REFERENCES: {query}] on its own line, where {query} is a specific image search query based on what the user asked for (e.g. "toss.tech UI screens" or "onboarding mobile app UI"). If the user asked for a specific site or source, include it in the query (e.g. "site:toss.tech" or "kakao app UI"). Do NOT generate URLs or reference lists yourself — the system will perform a real search automatically.
@@ -62,7 +64,7 @@ export async function POST(request: Request) {
   if (mockupHtml) {
     systemMessages.push({
       role: "system",
-      content: `Current mockup HTML:\n\`\`\`html\n${mockupHtml}\n\`\`\``,
+      content: `Current mockup HTML exists. The next mockup-related request should be treated as an edit unless the user explicitly asks for a new/different mockup, a new design, another version, or a fresh canvas.\n\nCurrent mockup HTML:\n\`\`\`html\n${mockupHtml}\n\`\`\``,
     });
   }
 

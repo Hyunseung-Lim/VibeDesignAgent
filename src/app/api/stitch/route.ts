@@ -36,8 +36,9 @@ export async function POST(request: Request) {
         const existing = await project.getScreen(screenId);
         screen = await existing.edit(prompt, deviceType);
       } catch (editErr) {
-        console.warn("[stitch] edit failed, falling back to generate:", editErr instanceof Error ? editErr.message : editErr);
-        screen = await project.generate(prompt, deviceType);
+        const message = editErr instanceof Error ? editErr.message : String(editErr);
+        console.warn("[stitch] edit failed:", message);
+        return Response.json({ error: `Existing mockup edit failed: ${message}` }, { status: 500 });
       }
     } else {
       console.log("[stitch] generating screen for prompt:", prompt.slice(0, 80));

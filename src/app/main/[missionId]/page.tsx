@@ -271,7 +271,7 @@ function cloneWithComputedStyles(doc: Document) {
   return clonedRoot;
 }
 
-async function captureMockupScreenshot(html: string, device: Device): Promise<string | null> {
+async function captureMockupScreenshot(html: string, device: Device): Promise<{ dataUrl: string; width: number; height: number } | null> {
   if (typeof window === "undefined") return null;
 
   const { width, height } = DEVICE_SIZE[device];
@@ -301,9 +301,24 @@ async function captureMockupScreenshot(html: string, device: Device): Promise<st
     materializePseudoElements(doc);
     await new Promise((resolve) => window.setTimeout(resolve, 300));
 
+    const fullHeight = Math.min(
+      Math.max(
+        height,
+        doc.body?.scrollHeight ?? 0,
+        doc.body?.offsetHeight ?? 0,
+        doc.documentElement.scrollHeight,
+        doc.documentElement.offsetHeight,
+      ),
+      8000,
+    );
+    iframe.style.height = `${fullHeight}px`;
+    doc.documentElement.style.overflow = "hidden";
+    if (doc.body) doc.body.style.overflow = "hidden";
+    await new Promise((resolve) => window.setTimeout(resolve, 100));
+
     const clonedRoot = cloneWithComputedStyles(doc);
     const serialized = new XMLSerializer().serializeToString(clonedRoot);
-    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}"><foreignObject width="100%" height="100%">${serialized}</foreignObject></svg>`;
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${fullHeight}"><foreignObject width="100%" height="100%">${serialized}</foreignObject></svg>`;
     const svgDataUrl = `data:image/svg+xml;base64,${btoa(unescape(encodeURIComponent(svg)))}`;
 
     try {
@@ -316,15 +331,15 @@ async function captureMockupScreenshot(html: string, device: Device): Promise<st
       });
       const canvas = document.createElement("canvas");
       canvas.width = width;
-      canvas.height = height;
+      canvas.height = fullHeight;
       const ctx = canvas.getContext("2d");
-      if (!ctx) return svgDataUrl;
+      if (!ctx) return { dataUrl: svgDataUrl, width, height: fullHeight };
       ctx.fillStyle = "#ffffff";
-      ctx.fillRect(0, 0, width, height);
-      ctx.drawImage(image, 0, 0, width, height);
-      return canvas.toDataURL("image/png");
+      ctx.fillRect(0, 0, width, fullHeight);
+      ctx.drawImage(image, 0, 0, width, fullHeight);
+      return { dataUrl: canvas.toDataURL("image/png"), width, height: fullHeight };
     } catch {
-      return svgDataUrl;
+      return { dataUrl: svgDataUrl, width, height: fullHeight };
     }
   } finally {
     iframe.remove();
@@ -552,6 +567,18 @@ function buildMockupPrompt(basePrompt: string, idea?: Idea | null) {
     "Use the following active idea as the authoritative product brief and visual style guide. Preserve concrete requirements, visual tokens, typography, layout, components, and do/don't constraints instead of summarizing them away.",
     `Idea title: ${idea.title}`,
     `Idea content:\n${idea.description.slice(0, 12000)}`,
+  ].join("\n");
+}
+
+function isExplicitNewMockupRequest(text: string) {
+  return /새(로운|로)?\s*(목업|디자인|버전|시안|화면|캔버스)|처음부터|다시\s*(만들|생성)|완전(히)?\s*(새|다른)|another\s+(mockup|version|design)|new\s+(mockup|version|design)|fresh\s+(mockup|canvas|design)/i.test(text);
+}
+
+function buildEditMockupPrompt(changePrompt: string) {
+  return [
+    "Edit the existing mockup in place. Preserve the current layout structure, visual style, typography, spacing, colors, content hierarchy, and all unrelated sections.",
+    "Do not redesign the page from scratch. Do not create a new concept, new canvas, or unrelated alternative version.",
+    `Requested change: ${changePrompt}`,
   ].join("\n");
 }
 
@@ -1120,10 +1147,12 @@ export default function MainScreenPage() {
 
       if (generateMatch || editMatch) {
         const prompt = (generateMatch ?? editMatch)![1].trim();
-        const isNew = !!generateMatch;
+        const hasExistingMockup = !!activeBoard?.stitchScreenId || currentIdeaBoards.length > 0;
+        const forceEditExisting = !!generateMatch && hasExistingMockup && !isExplicitNewMockupRequest(text);
+        const isNew = !!generateMatch && !forceEditExisting;
         const activeIdea = ideas.find(i => i.id === activeIdeaId) ?? null;
         const mockupIdeaId = activeIdeaId;
-        const stitchPrompt = isNew ? buildMockupPrompt(prompt, activeIdea) : prompt;
+        const stitchPrompt = isNew ? buildMockupPrompt(prompt, activeIdea) : buildEditMockupPrompt(prompt);
 
         if (isNew && ideas.length === 0) {
           setMessages(prev => prev.map(m =>
@@ -1137,6 +1166,15 @@ export default function MainScreenPage() {
         const targetArtboard = !isNew
           ? (currentIdeaBoards.find(a => a.id === activeArtboardId) ?? currentIdeaBoards.at(-1) ?? null)
           : null;
+
+        if (!isNew && !targetArtboard?.stitchScreenId) {
+          setMessages(prev => prev.map(m =>
+            m.id === assistantId
+              ? { ...m, content: m.content + "\n\n⚠️ 기존 목업의 Stitch 화면 ID가 없어 수정할 수 없습니다. 새 목업으로 다시 생성해 주세요." }
+              : m
+          ));
+          return;
+        }
 
         setIsGeneratingMockup(true);
         setGeneratingMockupIdeaId(mockupIdeaId);
@@ -1269,7 +1307,9 @@ export default function MainScreenPage() {
                 missionId,
                 device: presentationMockupDevice,
                 mockupHtml: presentationMockupHtml || undefined,
-                mockupScreenshot: mockupScreenshot || undefined,
+                mockupScreenshot: mockupScreenshot?.dataUrl || undefined,
+                mockupScreenshotWidth: mockupScreenshot?.width,
+                mockupScreenshotHeight: mockupScreenshot?.height,
               }),
             });
             const presData = await presRes.json();
