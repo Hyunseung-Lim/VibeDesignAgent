@@ -3,7 +3,10 @@ import OpenAI from "openai";
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const SERPER_API_KEY = process.env.SERPER_API_KEY;
 
-async function extractKeywords(missionTitle: string, missionBrief: string): Promise<string[]> {
+async function extractKeywords(
+  missionTitle: string,
+  missionBrief: string,
+): Promise<string[]> {
   const res = await openai.chat.completions.create({
     model: "gpt-4o-mini",
     messages: [
@@ -35,7 +38,10 @@ type SerperImage = {
   link: string;
 };
 
-async function searchImages(query: string, raw = false): Promise<SerperImage[]> {
+async function searchImages(
+  query: string,
+  raw = false,
+): Promise<SerperImage[]> {
   const q = raw ? query : `${query} app UI design mobile`;
   const res = await fetch("https://google.serper.dev/images", {
     method: "POST",
@@ -45,7 +51,10 @@ async function searchImages(query: string, raw = false): Promise<SerperImage[]> 
     },
     body: JSON.stringify({ q, num: 10 }),
   });
-  if (!res.ok) return [];
+  if (!res.ok) {
+    console.error("[Serper API Error]", res.status, await res.text());
+    return [];
+  }
   const data = await res.json();
   return (data.images ?? []) as SerperImage[];
 }
@@ -54,7 +63,10 @@ export async function POST(request: Request) {
   const { missionTitle, missionBrief, customQuery } = await request.json();
 
   if (!missionTitle && !missionBrief && !customQuery) {
-    return Response.json({ error: "missionTitle, missionBrief, or customQuery required" }, { status: 400 });
+    return Response.json(
+      { error: "missionTitle, missionBrief, or customQuery required" },
+      { status: 400 },
+    );
   }
 
   try {
@@ -62,7 +74,9 @@ export async function POST(request: Request) {
       ? [customQuery]
       : await extractKeywords(missionTitle ?? "", missionBrief ?? "");
 
-    const results = await Promise.all(keywords.map((kw) => searchImages(kw, !!customQuery)));
+    const results = await Promise.all(
+      keywords.map((kw) => searchImages(kw, !!customQuery)),
+    );
 
     const seen = new Set<string>();
     const references: {
@@ -78,7 +92,13 @@ export async function POST(request: Request) {
       images.forEach((img, i) => {
         if (!img.imageUrl || seen.has(img.imageUrl)) return;
         seen.add(img.imageUrl);
-        const domain = (() => { try { return new URL(img.link).hostname.replace("www.", ""); } catch { return img.source; } })();
+        const domain = (() => {
+          try {
+            return new URL(img.link).hostname.replace("www.", "");
+          } catch {
+            return img.source;
+          }
+        })();
         references.push({
           id: `ref-${Date.now()}-${kwIdx}-${i}`,
           title: img.title || keywords[kwIdx],

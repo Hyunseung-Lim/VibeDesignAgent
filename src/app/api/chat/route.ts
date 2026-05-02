@@ -21,7 +21,7 @@ OUTPUT RULES:
   - Preserve the existing screen structure, visual style, content hierarchy, and unrelated sections. Only change the requested details.
   - Example: [EDIT_MOCKUP: Change the primary button color to coral red, increase the font size of the headline to 28px, and add a subtle drop shadow to the card component.]
 - IMPORTANT: Do NOT output HTML or code blocks for UI mockups — Stitch AI generates the visual design from the text prompt.
-- To suggest references: write 1 sentence explaining you're searching for references, then output [FETCH_REFERENCES: {query}] on its own line, where {query} is a specific image search query based on what the user asked for (e.g. "toss.tech UI screens" or "onboarding mobile app UI"). If the user asked for a specific site or source, include it in the query (e.g. "site:toss.tech" or "kakao app UI"). Do NOT generate URLs or reference lists yourself — the system will perform a real search automatically.
+- To suggest references: write 1 sentence explaining you're searching for references, then output [FETCH_REFERENCES: {query}] on its own line. The {query} MUST include relevant keywords from the Current mission context along with what the user asked for, to ensure the images fit the project (e.g. "fitness tracker app UI toss.tech"). If the user asked for a specific site or source, include it in the query (e.g. "site:toss.tech" or "kakao app UI"). Do NOT generate URLs or reference lists yourself — the system will perform a real search automatically.
 - To create a presentation/pitch deck: write 1–2 sentences explaining the structure you're preparing, then output a JSON structure wrapped in \`\`\`presentation\n{json}\n\`\`\`, then 1 sentence saying that the presentation image is being generated now. Do not say the presentation was already created.
   JSON format: {"title": "Deck Title", "slides": [{"title": "Slide Title", "content": "3-5 key points as plain text (newline-separated)", "imagePrompt": "Vivid visual description for AI image generation of this slide"}]}
   Generate exactly 1 slide that summarizes the entire pitch: title, core problem, solution, key design decisions, and next steps all on one compelling visual.
@@ -35,8 +35,19 @@ When reference images are provided, you MUST analyze them directly and describe 
 Always write surrounding text in the same language the user is using.`;
 
 export async function POST(request: Request) {
-  const { messages, mockupHtml, selectedElement, citedReferences, missionTitle, missionBrief, missionImageUrls, device, activeIdea } = await request.json();
-  const deviceLabel = device === "mobile" ? "모바일 (390×844px)" : "PC (1280×900px)";
+  const {
+    messages,
+    mockupHtml,
+    selectedElement,
+    citedReferences,
+    missionTitle,
+    missionBrief,
+    missionImageUrls,
+    device,
+    activeIdea,
+  } = await request.json();
+  const deviceLabel =
+    device === "mobile" ? "모바일 (390×844px)" : "PC (1280×900px)";
 
   const systemMessages: OpenAI.Chat.ChatCompletionMessageParam[] = [
     { role: "system", content: SYSTEM_PROMPT },
@@ -55,28 +66,10 @@ export async function POST(request: Request) {
   }
 
   if (missionImageUrls?.length > 0) {
-    const base64Results = await Promise.allSettled(
-      (missionImageUrls as string[]).map(async (url: string) => {
-        const res = await fetch(url, { signal: AbortSignal.timeout(5000) });
-        if (!res.ok) throw new Error(`fetch failed: ${res.status}`);
-        const buffer = await res.arrayBuffer();
-        const ct = res.headers.get("content-type") || "image/jpeg";
-        return `data:${ct};base64,${Buffer.from(buffer).toString("base64")}`;
-      })
-    );
-    const dataUrls = base64Results
-      .filter(r => r.status === "fulfilled")
-      .map(r => (r as PromiseFulfilledResult<string>).value);
-
-    if (dataUrls.length > 0) {
-      systemMessages.push({
-        role: "system",
-        content: [
-          { type: "input_text", text: `The following ${dataUrls.length} image(s) are the actual content/product images for this mission. You MUST use them as the primary visual reference when generating mockups — incorporate their UI layout, style, colors, and content directly.` },
-          ...dataUrls.map(url => ({ type: "input_image", image_url: url, detail: "high" })),
-        ] as unknown as string,
-      });
-    }
+    systemMessages.push({
+      role: "system",
+      content: `The following image URL(s) are the actual content/product images for this mission. You MUST use them as the primary visual reference when generating mockups:\n${(missionImageUrls as string[]).join("\n")}`,
+    });
   }
 
   if (activeIdea) {
@@ -105,52 +98,34 @@ export async function POST(request: Request) {
   const builtMessages: any[] = [...messages];
 
   if (citedReferences?.length > 0) {
-    const imageUrls: string[] = citedReferences
-      .map((r: { imageUrl?: string }) => r.imageUrl)
-      .filter(Boolean);
-    const titles: string[] = citedReferences.map((r: { title: string }) => r.title);
-    const refUrls: string[] = citedReferences.map((r: { title: string; url?: string }) => r.url).filter(Boolean) as string[];
+    const titles: string[] = citedReferences.map(
+      (r: { title: string }) => r.title,
+    );
+    const refUrls: string[] = citedReferences
+      .map((r: { title: string; url?: string }) => r.url)
+      .filter(Boolean) as string[];
 
     if (refUrls.length > 0) {
       systemMessages.push({
         role: "system",
-        content: `The user has cited the following reference URLs. You MUST use web_search to visit each URL and read its actual content before answering — do not rely solely on the screenshot image:\n${refUrls.map((url, i) => `- ${titles[i] ?? url}: ${url}`).join("\n")}`,
+        content: `The user has cited the following reference URLs. You MUST use web_search to visit each URL and read its actual content before answering:\n${refUrls.map((url, i) => `- ${titles[i] ?? url}: ${url}`).join("\n")}`,
       });
-    }
-
-    const lastUserIdx = builtMessages.findLastIndex((m: { role: string }) => m.role === "user");
-    if (lastUserIdx !== -1 && imageUrls.length > 0) {
-      // Fetch images server-side and convert to base64 so OpenAI can reliably access them
-      const base64Results = await Promise.allSettled(
-        imageUrls.map(async (url) => {
-          const res = await fetch(url, { signal: AbortSignal.timeout(5000) });
-          if (!res.ok) throw new Error(`fetch failed: ${res.status}`);
-          const buffer = await res.arrayBuffer();
-          const ct = res.headers.get("content-type") || "image/jpeg";
-          return `data:${ct};base64,${Buffer.from(buffer).toString("base64")}`;
-        })
-      );
-      const dataUrls = base64Results
-        .filter(r => r.status === "fulfilled")
-        .map(r => (r as PromiseFulfilledResult<string>).value);
-
-      const originalContent = builtMessages[lastUserIdx].content as string;
-      builtMessages[lastUserIdx] = {
-        role: "user",
-        content: [
-          { type: "input_text", text: `[인용된 레퍼런스: ${titles.join(", ")}]\n\n${originalContent}` },
-          ...dataUrls.map(dataUrl => ({
-            type: "input_image",
-            image_url: dataUrl,
-            detail: "high",
-          })),
-        ],
-      };
     } else {
       systemMessages.push({
         role: "system",
         content: `The user is citing these references for inspiration: ${titles.join(", ")}. Use them as design direction.`,
       });
+    }
+
+    const lastUserIdx = builtMessages.findLastIndex(
+      (m: { role: string }) => m.role === "user",
+    );
+    if (lastUserIdx !== -1) {
+      const originalContent = builtMessages[lastUserIdx].content as string;
+      builtMessages[lastUserIdx] = {
+        role: "user",
+        content: `[인용된 레퍼런스: ${titles.join(", ")}]\n\n${originalContent}`,
+      };
     }
   }
 
@@ -160,10 +135,9 @@ export async function POST(request: Request) {
     model: "gpt-4o",
     tools: [{ type: "web_search_preview" }],
     tool_choice: hasRefUrls ? "required" : "auto",
-    input: [
-      ...systemMessages,
-      ...builtMessages,
-    ] as Parameters<typeof openai.responses.create>[0]["input"],
+    input: [...systemMessages, ...builtMessages] as Parameters<
+      typeof openai.responses.create
+    >[0]["input"],
     stream: true,
   });
 
@@ -172,7 +146,10 @@ export async function POST(request: Request) {
     async start(controller) {
       let webSearched = false;
       for await (const event of stream) {
-        if (event.type === "response.web_search_call.searching" && !webSearched) {
+        if (
+          event.type === "response.web_search_call.searching" &&
+          !webSearched
+        ) {
           webSearched = true;
           controller.enqueue(encoder.encode("[WEB_SEARCHED]\n"));
         }
