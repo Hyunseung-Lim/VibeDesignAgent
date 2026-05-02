@@ -33,6 +33,7 @@ type Idea = {
   id: string;
   title: string;
   description: string;
+  presentations?: Presentation[];
   presentationSlides?: PresentationSlide[];
   presentationHtml?: string;
 };
@@ -54,6 +55,14 @@ type PresentationSlide = {
   title: string;
   content: string;
   imageUrl: string;
+};
+
+type Presentation = {
+  id: string;
+  title: string;
+  createdAt: number;
+  slides: PresentationSlide[];
+  html?: string;
 };
 
 const DEVICE_SIZE: Record<Device, { width: number; height: number }> = {
@@ -93,6 +102,235 @@ function normalizePresentationStatusText(text: string): string {
     .replace(/피치덱이 생성되었습니다\./g, "피치덱 이미지를 생성하고 있습니다.");
 }
 
+function normalizePresentations(idea: Idea): Presentation[] {
+  if (idea.presentations?.length) return idea.presentations;
+  if (idea.presentationSlides?.length) {
+    return [{
+      id: `legacy-slides-${idea.id}`,
+      title: idea.presentationSlides[0]?.title || "Presentation",
+      createdAt: 0,
+      slides: idea.presentationSlides,
+    }];
+  }
+  if (idea.presentationHtml) {
+    return [{
+      id: `legacy-html-${idea.id}`,
+      title: "Presentation",
+      createdAt: 0,
+      slides: [],
+      html: idea.presentationHtml,
+    }];
+  }
+  return [];
+}
+
+function isInlineOrLocalAsset(url: string) {
+  return !url || url.startsWith("data:") || url.startsWith("blob:") || url.startsWith("#") || url.startsWith("about:");
+}
+
+async function fetchAssetDataUrl(url: string, baseUrl: string) {
+  if (isInlineOrLocalAsset(url)) return url;
+  try {
+    const absoluteUrl = new URL(url, baseUrl).toString();
+    const res = await fetch(`/api/image-data?url=${encodeURIComponent(absoluteUrl)}`);
+    if (!res.ok) return url;
+    const data = await res.json() as { dataUrl?: string };
+    return data.dataUrl ?? url;
+  } catch {
+    return url;
+  }
+}
+
+async function inlineCaptureAssets(doc: Document) {
+  const baseUrl = doc.baseURI || window.location.href;
+
+  await Promise.all(
+    Array.from(doc.images).map(async (img) => {
+      const src = img.getAttribute("src");
+      if (!src || isInlineOrLocalAsset(src)) return;
+      const dataUrl = await fetchAssetDataUrl(src, baseUrl);
+      img.setAttribute("src", dataUrl);
+      img.removeAttribute("srcset");
+      img.removeAttribute("sizes");
+    })
+  );
+
+  await Promise.all(
+    Array.from(doc.querySelectorAll("svg image")).map(async (image) => {
+      const href = image.getAttribute("href") || image.getAttribute("xlink:href");
+      if (!href || isInlineOrLocalAsset(href)) return;
+      const dataUrl = await fetchAssetDataUrl(href, baseUrl);
+      image.setAttribute("href", dataUrl);
+      image.setAttribute("xlink:href", dataUrl);
+    })
+  );
+
+  const cssUrlPattern = /url\((['"]?)(.*?)\1\)/g;
+  await Promise.all(
+    Array.from(doc.querySelectorAll<HTMLElement>("*")).map(async (el) => {
+      const computed = doc.defaultView?.getComputedStyle(el);
+      if (!computed) return;
+
+      for (const prop of ["backgroundImage", "maskImage", "webkitMaskImage"] as const) {
+        const value = computed[prop];
+        if (!value || value === "none" || !value.includes("url(")) continue;
+
+        const replacements = await Promise.all(
+          Array.from(value.matchAll(cssUrlPattern)).map(async (match) => {
+            const originalUrl = match[2];
+            const dataUrl = await fetchAssetDataUrl(originalUrl, baseUrl);
+            return { raw: match[0], value: `url("${dataUrl}")` };
+          })
+        );
+
+        const nextValue = replacements.reduce(
+          (acc, item) => acc.replace(item.raw, item.value),
+          value,
+        );
+        el.style[prop] = nextValue;
+      }
+    })
+  );
+}
+
+function pseudoContentToText(content: string) {
+  if (!content || content === "none" || content === "normal") return "";
+  const unquoted = content.replace(/^['"]|['"]$/g, "");
+  return unquoted.replace(/\\([0-9a-fA-F]{1,6})\s?/g, (_, hex: string) => String.fromCodePoint(parseInt(hex, 16)));
+}
+
+function materializePseudoElements(doc: Document) {
+  const pseudoProps = [
+    "position",
+    "display",
+    "box-sizing",
+    "width",
+    "height",
+    "margin",
+    "padding",
+    "color",
+    "background",
+    "border",
+    "border-radius",
+    "font",
+    "font-family",
+    "font-size",
+    "font-weight",
+    "line-height",
+    "text-align",
+    "vertical-align",
+    "opacity",
+    "transform",
+    "inset",
+    "top",
+    "right",
+    "bottom",
+    "left",
+  ];
+
+  Array.from(doc.querySelectorAll<HTMLElement>("*")).forEach((el) => {
+    for (const pseudo of ["::before", "::after"] as const) {
+      const computed = doc.defaultView?.getComputedStyle(el, pseudo);
+      if (!computed) continue;
+      const text = pseudoContentToText(computed.content);
+      if (!text) continue;
+
+      const span = doc.createElement("span");
+      span.textContent = text;
+      span.setAttribute("aria-hidden", "true");
+      span.setAttribute("data-vda-materialized-pseudo", pseudo);
+      span.setAttribute(
+        "style",
+        pseudoProps
+          .map((prop) => `${prop}:${computed.getPropertyValue(prop)};`)
+          .join(""),
+      );
+
+      if (pseudo === "::before") el.prepend(span);
+      else el.append(span);
+    }
+  });
+}
+
+function cloneWithComputedStyles(doc: Document) {
+  const sourceNodes = [doc.documentElement, ...Array.from(doc.documentElement.querySelectorAll("*"))] as Element[];
+  const clonedRoot = doc.documentElement.cloneNode(true) as HTMLElement;
+  const clonedNodes = [clonedRoot, ...Array.from(clonedRoot.querySelectorAll("*"))] as HTMLElement[];
+
+  sourceNodes.forEach((source, index) => {
+    const target = clonedNodes[index];
+    if (!target) return;
+    const computed = doc.defaultView?.getComputedStyle(source);
+    if (!computed) return;
+    const style = Array.from(computed)
+      .map((prop) => `${prop}:${computed.getPropertyValue(prop)}${computed.getPropertyPriority(prop) ? " !important" : ""};`)
+      .join("");
+    target.setAttribute("style", `${target.getAttribute("style") ?? ""};${style}`);
+  });
+
+  return clonedRoot;
+}
+
+async function captureMockupScreenshot(html: string, device: Device): Promise<string | null> {
+  if (typeof window === "undefined") return null;
+
+  const { width, height } = DEVICE_SIZE[device];
+  const iframe = document.createElement("iframe");
+  iframe.setAttribute("sandbox", "allow-scripts allow-same-origin");
+  iframe.style.position = "fixed";
+  iframe.style.left = "-10000px";
+  iframe.style.top = "0";
+  iframe.style.width = `${width}px`;
+  iframe.style.height = `${height}px`;
+  iframe.style.border = "0";
+  iframe.style.pointerEvents = "none";
+
+  document.body.appendChild(iframe);
+
+  try {
+    await new Promise<void>((resolve) => {
+      iframe.onload = () => resolve();
+      iframe.srcdoc = html;
+      window.setTimeout(resolve, 1200);
+    });
+
+    const doc = iframe.contentDocument;
+    if (!doc?.documentElement) return null;
+
+    await inlineCaptureAssets(doc);
+    materializePseudoElements(doc);
+    await new Promise((resolve) => window.setTimeout(resolve, 300));
+
+    const clonedRoot = cloneWithComputedStyles(doc);
+    const serialized = new XMLSerializer().serializeToString(clonedRoot);
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}"><foreignObject width="100%" height="100%">${serialized}</foreignObject></svg>`;
+    const svgDataUrl = `data:image/svg+xml;base64,${btoa(unescape(encodeURIComponent(svg)))}`;
+
+    try {
+      const image = new Image();
+      image.crossOrigin = "anonymous";
+      await new Promise<void>((resolve, reject) => {
+        image.onload = () => resolve();
+        image.onerror = () => reject(new Error("mockup screenshot image load failed"));
+        image.src = svgDataUrl;
+      });
+      const canvas = document.createElement("canvas");
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return svgDataUrl;
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(0, 0, width, height);
+      ctx.drawImage(image, 0, 0, width, height);
+      return canvas.toDataURL("image/png");
+    } catch {
+      return svgDataUrl;
+    }
+  } finally {
+    iframe.remove();
+  }
+}
+
 
 
 function injectNoNavigation(html: string): string {
@@ -103,6 +341,45 @@ function injectNoNavigation(html: string): string {
     if(a){ e.preventDefault(); e.stopPropagation(); }
   }, true);
   document.addEventListener('submit', function(e){ e.preventDefault(); }, true);
+})();
+</script>`;
+  const idx = html.lastIndexOf('</body>');
+  return idx !== -1 ? html.slice(0, idx) + script + html.slice(idx) : html + script;
+}
+
+function injectHeightReporter(html: string, artboardId: string): string {
+  const script = `<script>
+(function(){
+  var lastHeight = 0;
+  function measure(){
+    var body = document.body;
+    var root = document.documentElement;
+    var height = Math.max(
+      body ? body.scrollHeight : 0,
+      body ? body.offsetHeight : 0,
+      root ? root.scrollHeight : 0,
+      root ? root.offsetHeight : 0
+    );
+    if (Math.abs(height - lastHeight) < 2) return;
+    lastHeight = height;
+    window.parent.postMessage({
+      type: 'vda-artboard-height',
+      artboardId: '${artboardId}',
+      height: height
+    }, '*');
+  }
+  if (document.documentElement) document.documentElement.style.overflow = 'hidden';
+  if (document.body) document.body.style.overflow = 'hidden';
+  window.addEventListener('load', measure);
+  window.addEventListener('resize', measure);
+  if (typeof ResizeObserver !== 'undefined') {
+    var observer = new ResizeObserver(measure);
+    if (document.body) observer.observe(document.body);
+    if (document.documentElement) observer.observe(document.documentElement);
+  }
+  setTimeout(measure, 0);
+  setTimeout(measure, 300);
+  setTimeout(measure, 1000);
 })();
 </script>`;
   const idx = html.lastIndexOf('</body>');
@@ -194,6 +471,38 @@ function injectSelectionScript(html: string, artboardId: string): string {
   [data-vda-selected] { outline: 2px solid #6366f1 !important; outline-offset: 2px; }
 </style>
 <script>
+  document.addEventListener('wheel', function(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    window.parent.postMessage({
+      type: 'vda-canvas-wheel',
+      artboardId: '${artboardId}',
+      deltaY: e.deltaY,
+      deltaMode: e.deltaMode,
+      ctrlKey: e.ctrlKey,
+      clientX: e.clientX,
+      clientY: e.clientY
+    }, '*');
+  }, { capture: true, passive: false });
+  document.addEventListener('gesturestart', function(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    window.parent.postMessage({
+      type: 'vda-canvas-gesture-start',
+      artboardId: '${artboardId}'
+    }, '*');
+  }, { capture: true, passive: false });
+  document.addEventListener('gesturechange', function(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    window.parent.postMessage({
+      type: 'vda-canvas-gesture-change',
+      artboardId: '${artboardId}',
+      scale: e.scale,
+      clientX: e.clientX,
+      clientY: e.clientY
+    }, '*');
+  }, { capture: true, passive: false });
   document.addEventListener('click', function(e) {
     e.preventDefault();
     e.stopPropagation();
@@ -226,6 +535,39 @@ function injectSelectionScript(html: string, artboardId: string): string {
 }
 
 const ARTBOARD_GAP = 120;
+const MIN_CANVAS_SCALE = 0.1;
+const MAX_CANVAS_SCALE = 4;
+
+type WebKitGestureEvent = Event & {
+  scale?: number;
+  clientX?: number;
+  clientY?: number;
+};
+
+function buildMockupPrompt(basePrompt: string, idea?: Idea | null) {
+  if (!idea?.description?.trim()) return basePrompt;
+  return [
+    basePrompt,
+    "",
+    "Use the following active idea as the authoritative product brief and visual style guide. Preserve concrete requirements, visual tokens, typography, layout, components, and do/don't constraints instead of summarizing them away.",
+    `Idea title: ${idea.title}`,
+    `Idea content:\n${idea.description.slice(0, 12000)}`,
+  ].join("\n");
+}
+
+function normalizeArtboardPositionsByIdea(boards: Artboard[]) {
+  const counts = new Map<string, number>();
+  return boards.map((board) => {
+    const ideaId = board.ideaId ?? "";
+    const index = counts.get(ideaId) ?? 0;
+    counts.set(ideaId, index + 1);
+    return {
+      ...board,
+      x: index * (DEVICE_SIZE[board.device ?? "desktop"].width + ARTBOARD_GAP),
+      y: 0,
+    };
+  });
+}
 
 
 export default function MainScreenPage() {
@@ -251,12 +593,15 @@ export default function MainScreenPage() {
   const [missionPeriod, setMissionPeriod] = useState("");
   const [activeIdeaTab, setActiveIdeaTab] = useState("idea");
   const [activeIdeaId, setActiveIdeaId] = useState<string | null>(null);
+  const [isIdeaExpanded, setIsIdeaExpanded] = useState(false);
+  const [activePresentationId, setActivePresentationId] = useState<string | null>(null);
   const [userId, setUserId] = useState<string | null>(null);
   const [isFetchingRefs, setIsFetchingRefs] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
   const [viewAsName, setViewAsName] = useState<string | null>(null);
   const [stitchProjectId, setStitchProjectId] = useState<string>("");
   const [isGeneratingMockup, setIsGeneratingMockup] = useState(false);
+  const [generatingMockupIdeaId, setGeneratingMockupIdeaId] = useState<string | null>(null);
   const [ideaEditMode, setIdeaEditMode] = useState(false);
   const [isMockupExpanded, setIsMockupExpanded] = useState(false);
 
@@ -268,9 +613,13 @@ export default function MainScreenPage() {
   const mockupSectionRef = useRef<HTMLElement>(null);
   const presentationSectionRef = useRef<HTMLElement>(null);
   const canvasRef = useRef<HTMLDivElement>(null);
+  const canvasWorldRef = useRef<HTMLDivElement>(null);
+  const canvasViewCommitTimerRef = useRef<number | null>(null);
   const dragStartRef = useRef<{ mouseX: number; mouseY: number; offsetX: number; offsetY: number } | null>(null);
   const canvasOffsetRef = useRef({ x: 40, y: 40 });
   const canvasScaleRef = useRef(0.5);
+  const gestureStartScaleRef = useRef(0.5);
+  const artboardHeightsRef = useRef<Record<string, number>>({});
   const artboardsRef = useRef<Artboard[]>([]);
   const activeIdeaIdRef = useRef<string | null>(null);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -278,14 +627,46 @@ export default function MainScreenPage() {
 
   const [canvasOffset, setCanvasOffset] = useState({ x: 40, y: 40 });
   const [canvasScale, setCanvasScale] = useState(0.5);
+  const [artboardHeights, setArtboardHeights] = useState<Record<string, number>>({});
   const [isDragging, setIsDragging] = useState(false);
   const [expandedChips, setExpandedChips] = useState<Set<string>>(new Set());
 
   // Keep refs in sync
   useEffect(() => { canvasOffsetRef.current = canvasOffset; }, [canvasOffset]);
   useEffect(() => { canvasScaleRef.current = canvasScale; }, [canvasScale]);
+  useEffect(() => { artboardHeightsRef.current = artboardHeights; }, [artboardHeights]);
   useEffect(() => { artboardsRef.current = artboards; }, [artboards]);
   useEffect(() => { activeIdeaIdRef.current = activeIdeaId; }, [activeIdeaId]);
+
+  const applyCanvasViewDirectly = useCallback((scale: number, offset: { x: number; y: number }) => {
+    canvasScaleRef.current = scale;
+    canvasOffsetRef.current = offset;
+    if (canvasRef.current) {
+      const gridSize = 20 * scale;
+      canvasRef.current.style.backgroundSize = `${gridSize}px ${gridSize}px`;
+      canvasRef.current.style.backgroundPosition = `${offset.x}px ${offset.y}px`;
+    }
+    if (canvasWorldRef.current) {
+      canvasWorldRef.current.style.transform = `translate3d(${offset.x}px, ${offset.y}px, 0) scale(${scale})`;
+    }
+  }, []);
+
+  const commitCanvasViewSoon = useCallback((scale: number, offset: { x: number; y: number }) => {
+    if (canvasViewCommitTimerRef.current !== null) {
+      window.clearTimeout(canvasViewCommitTimerRef.current);
+    }
+    canvasViewCommitTimerRef.current = window.setTimeout(() => {
+      canvasViewCommitTimerRef.current = null;
+      setCanvasScale(scale);
+      setCanvasOffset(offset);
+    }, 120);
+  }, []);
+
+  useEffect(() => () => {
+    if (canvasViewCommitTimerRef.current !== null) {
+      window.clearTimeout(canvasViewCommitTimerRef.current);
+    }
+  }, []);
 
   // Auth state
   useEffect(() => {
@@ -337,12 +718,14 @@ export default function MainScreenPage() {
           ...a,
           ideaId: a.ideaId ?? firstIdeaId,
         }));
-        setArtboards(loaded);
-        setActiveArtboardId(loaded[loaded.length - 1].id);
+        const normalizedLoaded = normalizeArtboardPositionsByIdea(loaded);
+        setArtboards(normalizedLoaded);
+        const firstIdeaBoards = normalizedLoaded.filter(a => a.ideaId === firstIdeaId);
+        setActiveArtboardId((firstIdeaBoards.at(-1) ?? normalizedLoaded[normalizedLoaded.length - 1])?.id ?? null);
         setActiveIdeaTab("mockup");
         const pid = session.stitchProjectId;
         if (pid) {
-          loaded.forEach((a: Artboard) => {
+          normalizedLoaded.forEach((a: Artboard) => {
             if (!a.stitchScreenId || a.html) return;
             fetch(`/api/stitch/html?projectId=${pid}&screenId=${a.stitchScreenId}`)
               .then(r => r.json())
@@ -361,14 +744,24 @@ export default function MainScreenPage() {
 
       // Backward compat: global presentation → assign to first idea
       const ideasWithPresentation: Idea[] = loadedIdeas.map((idea: Idea, idx: number) => {
+        const ideaWithLegacy = idx === 0
+          ? {
+              ...idea,
+              presentationSlides: idea.presentationSlides ?? (session?.presentationSlides?.length ? session.presentationSlides : undefined),
+              presentationHtml: idea.presentationHtml ?? session?.presentationHtml ?? undefined,
+            }
+          : idea;
+        const presentations = normalizePresentations(ideaWithLegacy);
         if (idx === 0) {
           return {
-            ...idea,
-            presentationSlides: idea.presentationSlides ?? (session?.presentationSlides?.length ? session.presentationSlides : undefined),
-            presentationHtml: idea.presentationHtml ?? session?.presentationHtml ?? undefined,
+            ...ideaWithLegacy,
+            presentations,
           };
         }
-        return idea;
+        return {
+          ...ideaWithLegacy,
+          presentations,
+        };
       });
 
       if (ideasWithPresentation.length > 0) {
@@ -399,6 +792,11 @@ export default function MainScreenPage() {
       // Per-idea presentation: only save Storage URLs (not base64)
       const ideasToSave = ideas.map(idea => ({
         ...idea,
+        presentations: normalizePresentations(idea).map(p => ({
+          ...p,
+          slides: (p.slides ?? []).filter(s => s.imageUrl.startsWith("https://")),
+          html: p.html ?? null,
+        })),
         presentationSlides: (idea.presentationSlides ?? []).filter(s => s.imageUrl.startsWith("https://")),
         presentationHtml: idea.presentationHtml ?? null,
       }));
@@ -427,45 +825,133 @@ export default function MainScreenPage() {
         });
         setActiveArtboardId(e.data.artboardId);
       }
+      if (e.data?.type === "vda-artboard-height") {
+        const artboardId = String(e.data.artboardId ?? "");
+        const height = Number(e.data.height);
+        if (!artboardId || !Number.isFinite(height)) return;
+        setArtboardHeights(prev => {
+          const nextHeight = Math.max(Math.ceil(height), 1);
+          if (Math.abs((prev[artboardId] ?? 0) - nextHeight) < 2) return prev;
+          return { ...prev, [artboardId]: nextHeight };
+        });
+      }
+      if (e.data?.type === "vda-canvas-gesture-start") {
+        gestureStartScaleRef.current = canvasScaleRef.current;
+      }
+      if (e.data?.type === "vda-canvas-wheel" || e.data?.type === "vda-canvas-gesture-change") {
+        const canvas = canvasRef.current;
+        if (!canvas) return;
+        const artboard = artboardsRef.current.find(a => a.id === e.data.artboardId);
+        if (!artboard) return;
+
+        const rect = canvas.getBoundingClientRect();
+        const scale = canvasScaleRef.current;
+        const clientX = rect.left + canvasOffsetRef.current.x + (artboard.x + (e.data.clientX ?? 0)) * scale;
+        const clientY = rect.top + canvasOffsetRef.current.y + (artboard.y + (e.data.clientY ?? 0)) * scale;
+        const mouseX = clientX - rect.left;
+        const mouseY = clientY - rect.top;
+        const prevScale = canvasScaleRef.current;
+        const nextScale = e.data.type === "vda-canvas-gesture-change"
+          ? gestureStartScaleRef.current * (e.data.scale ?? 1)
+          : prevScale * Math.exp(-(e.data.deltaY ?? 0) * (e.data.ctrlKey ? 0.006 : 0.0025));
+        const clampedScale = Math.min(Math.max(nextScale, MIN_CANVAS_SCALE), MAX_CANVAS_SCALE);
+        if (Math.abs(clampedScale - prevScale) < 0.001) return;
+
+        const prevOffset = canvasOffsetRef.current;
+        const nextOffset = {
+          x: mouseX - (mouseX - prevOffset.x) * (clampedScale / prevScale),
+          y: mouseY - (mouseY - prevOffset.y) * (clampedScale / prevScale),
+        };
+        applyCanvasViewDirectly(clampedScale, nextOffset);
+        commitCanvasViewSoon(clampedScale, nextOffset);
+      }
     };
     window.addEventListener("message", handler);
     return () => window.removeEventListener("message", handler);
-  }, []);
+  }, [applyCanvasViewDirectly, commitCanvasViewSoon]);
 
-  // Wheel zoom toward cursor
+  // Trackpad and mouse zoom toward cursor
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const onWheel = (e: WheelEvent) => {
-      e.preventDefault();
-      const rect = canvas.getBoundingClientRect();
-      const mouseX = e.clientX - rect.left;
-      const mouseY = e.clientY - rect.top;
-      const factor = e.deltaY < 0 ? 1.1 : 0.9;
-      const prevScale = canvasScaleRef.current;
-      const newScale = Math.min(Math.max(prevScale * factor, 0.1), 4);
-      const prevOffset = canvasOffsetRef.current;
-      setCanvasScale(newScale);
-      setCanvasOffset({
-        x: mouseX - (mouseX - prevOffset.x) * (newScale / prevScale),
-        y: mouseY - (mouseY - prevOffset.y) * (newScale / prevScale),
+    let animationFrame: number | null = null;
+    let pendingScale = canvasScaleRef.current;
+    let pendingOffset = canvasOffsetRef.current;
+
+    const clampScale = (scale: number) => Math.min(Math.max(scale, MIN_CANVAS_SCALE), MAX_CANVAS_SCALE);
+    const scheduleCanvasView = (scale: number, offset: { x: number; y: number }) => {
+      pendingScale = scale;
+      pendingOffset = offset;
+      if (animationFrame !== null) return;
+
+      animationFrame = requestAnimationFrame(() => {
+        animationFrame = null;
+        applyCanvasViewDirectly(pendingScale, pendingOffset);
+        commitCanvasViewSoon(pendingScale, pendingOffset);
       });
     };
+
+    const zoomAtPoint = (clientX: number, clientY: number, nextScale: number) => {
+      const rect = canvas.getBoundingClientRect();
+      const mouseX = clientX - rect.left;
+      const mouseY = clientY - rect.top;
+      const prevScale = canvasScaleRef.current;
+      const clampedScale = clampScale(nextScale);
+      if (Math.abs(clampedScale - prevScale) < 0.001) return;
+
+      const prevOffset = canvasOffsetRef.current;
+      scheduleCanvasView(clampedScale, {
+        x: mouseX - (mouseX - prevOffset.x) * (clampedScale / prevScale),
+        y: mouseY - (mouseY - prevOffset.y) * (clampedScale / prevScale),
+      });
+    };
+
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+
+      const unit = e.deltaMode === WheelEvent.DOM_DELTA_LINE ? 16 : e.deltaMode === WheelEvent.DOM_DELTA_PAGE ? canvas.clientHeight : 1;
+      const normalizedDelta = e.deltaY * unit;
+      const sensitivity = e.ctrlKey ? 0.006 : 0.0025;
+      const factor = Math.exp(-normalizedDelta * sensitivity);
+      zoomAtPoint(e.clientX, e.clientY, canvasScaleRef.current * factor);
+    };
+
+    const onGestureStart = (e: Event) => {
+      e.preventDefault();
+      gestureStartScaleRef.current = canvasScaleRef.current;
+    };
+
+    const onGestureChange = (e: Event) => {
+      e.preventDefault();
+      const gesture = e as WebKitGestureEvent;
+      const rect = canvas.getBoundingClientRect();
+      const clientX = gesture.clientX ?? rect.left + rect.width / 2;
+      const clientY = gesture.clientY ?? rect.top + rect.height / 2;
+      zoomAtPoint(clientX, clientY, gestureStartScaleRef.current * (gesture.scale ?? 1));
+    };
+
     canvas.addEventListener("wheel", onWheel, { passive: false });
-    return () => canvas.removeEventListener("wheel", onWheel);
-  }, []);
+    canvas.addEventListener("gesturestart", onGestureStart, { passive: false });
+    canvas.addEventListener("gesturechange", onGestureChange, { passive: false });
+    return () => {
+      if (animationFrame !== null) cancelAnimationFrame(animationFrame);
+      canvas.removeEventListener("wheel", onWheel);
+      canvas.removeEventListener("gesturestart", onGestureStart);
+      canvas.removeEventListener("gesturechange", onGestureChange);
+    };
+  }, [artboards.length, activeIdeaId, isMockupExpanded, applyCanvasViewDirectly, commitCanvasViewSoon]);
 
   // Fit all artboards into canvas view
-  const fitToCanvas = useCallback(() => {
+  const fitToCanvasForIdea = useCallback((ideaId: string | null) => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const boards = artboardsRef.current.filter(a => a.ideaId === activeIdeaIdRef.current);
+    const boards = artboardsRef.current.filter(a => a.ideaId === ideaId);
     if (boards.length === 0) return;
     const { clientWidth, clientHeight } = canvas;
     const minX = Math.min(...boards.map(a => a.x));
     const minY = Math.min(...boards.map(a => a.y));
     const maxX = Math.max(...boards.map(a => a.x + DEVICE_SIZE[a.device ?? "desktop"].width));
-    const maxY = Math.max(...boards.map(a => a.y + DEVICE_SIZE[a.device ?? "desktop"].height));
+    const maxY = Math.max(...boards.map(a => a.y + (artboardHeightsRef.current[a.id] ?? DEVICE_SIZE[a.device ?? "desktop"].height)));
     const totalW = maxX - minX;
     const totalH = maxY - minY;
     const scale = Math.min((clientWidth - 80) / totalW, (clientHeight - 80) / totalH, 1);
@@ -475,6 +961,10 @@ export default function MainScreenPage() {
       y: (clientHeight - totalH * scale) / 2 - minY * scale,
     });
   }, []);
+
+  const fitToCanvas = useCallback(() => {
+    fitToCanvasForIdea(activeIdeaIdRef.current);
+  }, [fitToCanvasForIdea]);
 
   // Auto-fit when first artboard is added
   useEffect(() => {
@@ -488,6 +978,8 @@ export default function MainScreenPage() {
     setActiveIdeaId(newIdea.id);
     setActiveArtboardId(null);
     setCurrentSlideIndex(0);
+    setActivePresentationId(null);
+    setIsIdeaExpanded(false);
     setActiveIdeaTab("idea");
     setIdeaEditMode(true);
   };
@@ -495,10 +987,13 @@ export default function MainScreenPage() {
   const switchIdea = (ideaId: string) => {
     setActiveIdeaId(ideaId);
     setCurrentSlideIndex(0);
+    setActivePresentationId(null);
+    setIsIdeaExpanded(false);
     setActiveIdeaTab("idea");
     setIdeaEditMode(false);
     const ideaBoards = artboardsRef.current.filter(a => a.ideaId === ideaId);
     setActiveArtboardId(ideaBoards.at(-1)?.id ?? null);
+    setTimeout(() => fitToCanvasForIdea(ideaId), 0);
   };
 
   const updateIdea = (id: string, changes: Partial<Omit<Idea, "id">>) => {
@@ -626,6 +1121,9 @@ export default function MainScreenPage() {
       if (generateMatch || editMatch) {
         const prompt = (generateMatch ?? editMatch)![1].trim();
         const isNew = !!generateMatch;
+        const activeIdea = ideas.find(i => i.id === activeIdeaId) ?? null;
+        const mockupIdeaId = activeIdeaId;
+        const stitchPrompt = isNew ? buildMockupPrompt(prompt, activeIdea) : prompt;
 
         if (isNew && ideas.length === 0) {
           setMessages(prev => prev.map(m =>
@@ -641,6 +1139,7 @@ export default function MainScreenPage() {
           : null;
 
         setIsGeneratingMockup(true);
+        setGeneratingMockupIdeaId(mockupIdeaId);
         try {
           const stitchController = new AbortController();
           const stitchTimeout = setTimeout(() => stitchController.abort(), 115_000);
@@ -651,7 +1150,7 @@ export default function MainScreenPage() {
               headers: { "Content-Type": "application/json" },
               signal: stitchController.signal,
               body: JSON.stringify({
-                prompt,
+                prompt: stitchPrompt,
                 device,
                 projectId: stitchProjectId || undefined,
                 screenId: targetArtboard?.stitchScreenId || undefined,
@@ -679,14 +1178,14 @@ export default function MainScreenPage() {
             setArtboards(prev => {
               const existingScreenIds = new Set(prev.map(a => a.stitchScreenId).filter(Boolean));
               const newExtra = extraScreenIds.filter((sid: string) => !existingScreenIds.has(sid));
-              const last = prev[prev.length - 1];
-              let offsetX = last ? last.x + DEVICE_SIZE[last.device ?? "desktop"].width + ARTBOARD_GAP : 0;
-
               const ideaId = activeIdeaId ?? "";
+              const ideaBoards = prev.filter(a => a.ideaId === ideaId);
+              const last = ideaBoards[ideaBoards.length - 1];
+              let offsetX = last ? last.x + DEVICE_SIZE[last.device ?? "desktop"].width + ARTBOARD_GAP : 0;
               const primaryBoard: Artboard = {
                 id: primaryId,
                 html: data.html,
-                label: `Design ${prev.filter(a => a.ideaId === ideaId).length + 1}`,
+                label: `Design ${ideaBoards.length + 1}`,
                 x: offsetX,
                 y: 0,
                 device,
@@ -698,7 +1197,7 @@ export default function MainScreenPage() {
               const extraBoards: Artboard[] = newExtra.map((sid: string, i: number) => ({
                 id: crypto.randomUUID(),
                 html: "",
-                label: `Design ${prev.filter(a => a.ideaId === ideaId).length + 2 + i}`,
+                label: `Design ${ideaBoards.length + 2 + i}`,
                 x: offsetX + i * (DEVICE_SIZE[device].width + ARTBOARD_GAP),
                 y: 0,
                 device,
@@ -709,6 +1208,7 @@ export default function MainScreenPage() {
               return [...prev, primaryBoard, ...extraBoards];
             });
             setActiveArtboardId(primaryId);
+            setTimeout(() => fitToCanvasForIdea(activeIdeaId ?? ""), 0);
 
             // Lazy-load HTML for extra screens
             extraScreenIds.forEach((sid: string) => {
@@ -736,6 +1236,7 @@ export default function MainScreenPage() {
           ));
         } finally {
           setIsGeneratingMockup(false);
+          setGeneratingMockupIdeaId(null);
         }
       }
 
@@ -753,10 +1254,23 @@ export default function MainScreenPage() {
           setIsGeneratingPresentation(true);
           try {
             const uid = firebaseAuth.currentUser?.uid ?? "anonymous";
+            const presentationMockupHtml = activeBoard?.html || currentIdeaBoards.at(-1)?.html || "";
+            const presentationMockupDevice = activeBoard?.device || currentIdeaBoards.at(-1)?.device || device;
+            const mockupScreenshot = presentationMockupHtml
+              ? await captureMockupScreenshot(presentationMockupHtml, presentationMockupDevice)
+              : null;
             const presRes = await fetch("/api/presentation", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ title: presentationBlock.data.title, slides: presentationBlock.data.slides, uid, missionId }),
+              body: JSON.stringify({
+                title: presentationBlock.data.title,
+                slides: presentationBlock.data.slides,
+                uid,
+                missionId,
+                device: presentationMockupDevice,
+                mockupHtml: presentationMockupHtml || undefined,
+                mockupScreenshot: mockupScreenshot || undefined,
+              }),
             });
             const presData = await presRes.json();
             console.log("[presentation] api response:", presData.error ?? `${presData.slides?.length} slides`);
@@ -777,7 +1291,49 @@ export default function MainScreenPage() {
                   }
                 })
               );
-              if (activeIdeaId) updateIdea(activeIdeaId, { presentationSlides: uploadedSlides });
+              if (activeIdeaId) {
+                const newPresentation: Presentation = {
+                  id: crypto.randomUUID(),
+                  title: presentationBlock.data.title || uploadedSlides[0]?.title || "Presentation",
+                  createdAt: Date.now(),
+                  slides: uploadedSlides,
+                };
+                const nextIdeas = ideas.map(idea =>
+                  idea.id === activeIdeaId
+                    ? {
+                        ...idea,
+                        presentations: [...normalizePresentations(idea), newPresentation],
+                        presentationSlides: uploadedSlides,
+                      }
+                    : idea
+                );
+                setIdeas(nextIdeas);
+
+                const persistentSlides = uploadedSlides.filter(s => s.imageUrl.startsWith("https://"));
+                if (persistentSlides.length !== uploadedSlides.length) {
+                  setMessages(prev => prev.map(m =>
+                    m.id === assistantId
+                      ? { ...m, content: m.content + "\n\n⚠️ 프레젠테이션 이미지를 임시로 표시했지만 Firebase Storage 저장에 실패했습니다. 새로고침하면 사라질 수 있습니다." }
+                      : m
+                  ));
+                } else if (!isReadOnly && userId) {
+                  const ref = doc(db, "sessions", userId, "missions", missionId);
+                  const artboardsToSave = artboards.map(a => a.stitchScreenId ? { ...a, html: "" } : a);
+                  const ideasToSave = nextIdeas.map(idea => ({
+                    ...idea,
+                    presentations: normalizePresentations(idea).map(p => ({
+                      ...p,
+                      slides: (p.slides ?? []).filter(s => s.imageUrl.startsWith("https://")),
+                      html: p.html ?? null,
+                    })),
+                    presentationSlides: (idea.presentationSlides ?? []).filter(s => s.imageUrl.startsWith("https://")),
+                    presentationHtml: idea.presentationHtml ?? null,
+                  }));
+                  const clean = <T,>(v: T): T => JSON.parse(JSON.stringify(v, (_, val) => val === undefined ? null : val));
+                  await setDoc(ref, clean({ messages, artboards: artboardsToSave, references, ideas: ideasToSave, missionTitle, missionBrief, stitchProjectId: stitchProjectId || null, updatedAt: Date.now() }), { merge: true });
+                }
+                setActivePresentationId(newPresentation.id);
+              }
               setCurrentSlideIndex(0);
               setActiveIdeaTab("presentation");
             }
@@ -793,7 +1349,21 @@ export default function MainScreenPage() {
             setIsGeneratingPresentation(false);
           }
         } else {
-          if (activeIdeaId) updateIdea(activeIdeaId, { presentationHtml: presentationBlock.html });
+          if (activeIdeaId) {
+            const newPresentation: Presentation = {
+              id: crypto.randomUUID(),
+              title: "Presentation",
+              createdAt: Date.now(),
+              slides: [],
+              html: presentationBlock.html,
+            };
+            const activeIdea = ideas.find(idea => idea.id === activeIdeaId);
+            updateIdea(activeIdeaId, {
+              presentations: activeIdea ? [...normalizePresentations(activeIdea), newPresentation] : [newPresentation],
+              presentationHtml: presentationBlock.html,
+            });
+            setActivePresentationId(newPresentation.id);
+          }
           setActiveIdeaTab("presentation");
         }
       }
@@ -811,7 +1381,7 @@ export default function MainScreenPage() {
       abortControllerRef.current = null;
       setIsLoading(false);
     }
-  }, [inputText, isLoading, isGeneratingMockup, messages, artboards, activeArtboardId, activeIdeaId, selectedElement, selectedReferences, ideas, device, stitchProjectId, missionTitle, missionBrief]);
+  }, [inputText, isLoading, isGeneratingMockup, messages, artboards, activeArtboardId, activeIdeaId, selectedElement, selectedReferences, ideas, references, device, stitchProjectId, missionTitle, missionBrief, userId, isReadOnly, missionId, fitToCanvasForIdea]);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
@@ -848,6 +1418,73 @@ export default function MainScreenPage() {
 
   const ideaArtboards = artboards.filter(a => a.ideaId === activeIdeaId);
   const activeArtboard = ideaArtboards.find(a => a.id === activeArtboardId) ?? ideaArtboards[ideaArtboards.length - 1] ?? null;
+  const isGeneratingCurrentIdeaMockup = isGeneratingMockup && generatingMockupIdeaId === activeIdeaId;
+  const gridSize = 20 * canvasScale;
+  const getArtboardRenderHeight = (artboard: Artboard) => Math.max(
+    DEVICE_SIZE[artboard.device ?? "desktop"].height,
+    artboardHeights[artboard.id] ?? 0,
+  );
+  const renderMockupCanvas = (expanded = false) => (
+    <div
+      ref={canvasRef}
+      className={`relative w-full overflow-hidden select-none ${expanded ? "flex-1" : "h-150 rounded-2xl"}`}
+      style={{
+        backgroundColor: "#1a1a1a",
+        backgroundImage: "radial-gradient(circle, #383838 1px, transparent 1px)",
+        backgroundSize: `${gridSize}px ${gridSize}px`,
+        backgroundPosition: `${canvasOffset.x}px ${canvasOffset.y}px`,
+        cursor: isDragging ? "grabbing" : "grab",
+      }}
+      onMouseDown={handleCanvasMouseDown}
+      onMouseMove={handleCanvasMouseMove}
+      onMouseUp={handleCanvasMouseUp}
+      onMouseLeave={handleCanvasMouseUp}
+    >
+      {isGeneratingCurrentIdeaMockup && (
+        <div className={`absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-black/60 ${expanded ? "" : "rounded-2xl"}`}>
+          <div className="h-8 w-8 animate-spin rounded-full border-2 border-white/30 border-t-white" />
+          <p className="text-sm text-white/80">Stitch로 목업 생성 중...</p>
+        </div>
+      )}
+      <div
+        ref={canvasWorldRef}
+        className="absolute inset-0"
+        style={{
+          transform: `translate3d(${canvasOffset.x}px, ${canvasOffset.y}px, 0) scale(${canvasScale})`,
+          transformOrigin: "0 0",
+          willChange: "transform",
+          pointerEvents: isDragging ? "none" : "auto",
+        }}
+      >
+        {ideaArtboards.map(artboard => {
+          const isActive = artboard.id === activeArtboardId;
+          const artboardHeight = getArtboardRenderHeight(artboard);
+          const artboardHtml = injectHeightReporter(injectNoNavigation(editMode ? injectSelectionScript(artboard.html, artboard.id) : artboard.html), artboard.id);
+          return (
+            <div key={artboard.id}>
+              <div style={{ position: "absolute", left: artboard.x, top: artboard.y - 22, color: isActive ? "#a5b4fc" : "#888", fontSize: 11, fontWeight: isActive ? 600 : 400, whiteSpace: "nowrap", userSelect: "none" }}>{artboard.label}</div>
+              <div style={{ position: "absolute", left: artboard.x, top: artboard.y, width: DEVICE_SIZE[artboard.device ?? "desktop"].width, height: artboardHeight, borderRadius: artboard.device === "mobile" ? 24 : 12, overflow: "hidden", outline: isActive ? "2px solid #6366f1" : "2px solid transparent", outlineOffset: 3, boxShadow: "0 8px 40px rgba(0,0,0,0.5)" }} onClick={() => setActiveArtboardId(artboard.id)}>
+                <iframe
+                  srcDoc={artboardHtml}
+                  sandbox="allow-scripts"
+                  scrolling="no"
+                  style={{
+                    width: DEVICE_SIZE[artboard.device ?? "desktop"].width,
+                    height: artboardHeight,
+                    border: "none",
+                    display: "block",
+                    overflow: "hidden",
+                    pointerEvents: editMode ? "auto" : "none",
+                  }}
+                  title={artboard.label}
+                />
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
 
   return (
     <div className="flex h-screen flex-col bg-[#f5f5f5] text-slate-900">
@@ -1071,26 +1708,40 @@ export default function MainScreenPage() {
                               onChange={e => updateIdea(idea.id, { description: e.target.value })}
                             />
                           ) : (
-                            <div className="rounded-xl border border-slate-100 bg-slate-50 px-5 py-4 text-sm text-slate-700 space-y-2">
-                              {idea.description ? (
-                                <ReactMarkdown components={{
-                                  h1: ({ children }) => <h1 className="text-base font-bold text-slate-900 mb-1">{children}</h1>,
-                                  h2: ({ children }) => <h2 className="text-sm font-semibold text-slate-900 mb-1 mt-3">{children}</h2>,
-                                  h3: ({ children }) => <h3 className="text-sm font-medium text-slate-800 mb-1 mt-2">{children}</h3>,
-                                  p: ({ children }) => <p className="leading-relaxed mb-2 last:mb-0">{children}</p>,
-                                  ul: ({ children }) => <ul className="list-disc ml-4 space-y-1 mb-2">{children}</ul>,
-                                  ol: ({ children }) => <ol className="list-decimal ml-4 space-y-1 mb-2">{children}</ol>,
-                                  li: ({ children }) => <li className="leading-relaxed">{children}</li>,
-                                  strong: ({ children }) => <strong className="font-semibold text-slate-900">{children}</strong>,
-                                  em: ({ children }) => <em className="italic text-slate-600">{children}</em>,
-                                  code: ({ children }) => <code className="rounded bg-slate-200 px-1 py-0.5 font-mono text-xs text-slate-800">{children}</code>,
-                                  blockquote: ({ children }) => <blockquote className="border-l-2 border-slate-300 pl-3 italic text-slate-500 my-2">{children}</blockquote>,
-                                  hr: () => <hr className="border-slate-200 my-3" />,
-                                  a: ({ href, children }) => <a href={href} target="_blank" rel="noopener noreferrer" className="text-indigo-500 underline underline-offset-2 hover:text-indigo-700">{children}</a>,
-                                }}>{idea.description}</ReactMarkdown>
-                              ) : (
-                                <p className="text-slate-400">편집 버튼을 눌러 내용을 작성하세요.</p>
+                            <div className="relative rounded-xl border border-slate-100 bg-slate-50">
+                              <div className={`px-5 pt-4 pb-14 text-sm text-slate-700 space-y-2 ${isIdeaExpanded ? "max-h-[60vh] overflow-y-auto" : "max-h-56 overflow-hidden"}`}>
+                                {idea.description ? (
+                                  <ReactMarkdown components={{
+                                    h1: ({ children }) => <h1 className="text-base font-bold text-slate-900 mb-1">{children}</h1>,
+                                    h2: ({ children }) => <h2 className="text-sm font-semibold text-slate-900 mb-1 mt-3">{children}</h2>,
+                                    h3: ({ children }) => <h3 className="text-sm font-medium text-slate-800 mb-1 mt-2">{children}</h3>,
+                                    p: ({ children }) => <p className="leading-relaxed mb-2 last:mb-0">{children}</p>,
+                                    ul: ({ children }) => <ul className="list-disc ml-4 space-y-1 mb-2">{children}</ul>,
+                                    ol: ({ children }) => <ol className="list-decimal ml-4 space-y-1 mb-2">{children}</ol>,
+                                    li: ({ children }) => <li className="leading-relaxed">{children}</li>,
+                                    strong: ({ children }) => <strong className="font-semibold text-slate-900">{children}</strong>,
+                                    em: ({ children }) => <em className="italic text-slate-600">{children}</em>,
+                                    code: ({ children }) => <code className="rounded bg-slate-200 px-1 py-0.5 font-mono text-xs text-slate-800">{children}</code>,
+                                    blockquote: ({ children }) => <blockquote className="border-l-2 border-slate-300 pl-3 italic text-slate-500 my-2">{children}</blockquote>,
+                                    hr: () => <hr className="border-slate-200 my-3" />,
+                                    a: ({ href, children }) => <a href={href} target="_blank" rel="noopener noreferrer" className="text-indigo-500 underline underline-offset-2 hover:text-indigo-700">{children}</a>,
+                                  }}>{idea.description}</ReactMarkdown>
+                                ) : (
+                                  <p className="text-slate-400">편집 버튼을 눌러 내용을 작성하세요.</p>
+                                )}
+                              </div>
+                              {!isIdeaExpanded && (
+                                <div className="pointer-events-none absolute inset-x-0 bottom-0 h-20 bg-gradient-to-t from-slate-50 via-slate-50 to-transparent" />
                               )}
+                              <div className="absolute inset-x-0 bottom-3 z-10 flex justify-center">
+                                <button
+                                  onClick={() => setIsIdeaExpanded(p => !p)}
+                                  className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-3 py-1 text-xs text-slate-500 shadow-sm transition hover:bg-slate-50"
+                                >
+                                  {isIdeaExpanded ? <CaretUpIcon size={12} /> : <CaretDownIcon size={12} />}
+                                  {isIdeaExpanded ? "접기" : "펼치기"}
+                                </button>
+                              </div>
                             </div>
                           )}
                         </section>
@@ -1114,8 +1765,8 @@ export default function MainScreenPage() {
                               {editMode ? "편집 중" : "편집"}
                             </button>
                             <button onClick={fitToCanvas} className="rounded border border-slate-200 px-2 py-1 text-xs text-slate-500 hover:bg-slate-50">Fit</button>
-                            <button onClick={() => setCanvasScale(s => Math.min(s * 1.2, 4))} className="rounded border border-slate-200 px-2 py-1 text-xs text-slate-600 hover:bg-slate-50">+</button>
-                            <button onClick={() => setCanvasScale(s => Math.max(s * 0.8, 0.1))} className="rounded border border-slate-200 px-2 py-1 text-xs text-slate-600 hover:bg-slate-50">−</button>
+                            <button onClick={() => setCanvasScale(s => Math.min(s * 1.2, MAX_CANVAS_SCALE))} className="rounded border border-slate-200 px-2 py-1 text-xs text-slate-600 hover:bg-slate-50">+</button>
+                            <button onClick={() => setCanvasScale(s => Math.max(s * 0.8, MIN_CANVAS_SCALE))} className="rounded border border-slate-200 px-2 py-1 text-xs text-slate-600 hover:bg-slate-50">−</button>
                             <span className="w-10 text-center text-xs text-slate-400">{Math.round(canvasScale * 100)}%</span>
                             <button onClick={() => { const html = activeArtboard?.html; if (!html) return; const blob = new Blob([html], { type: "text/html" }); const url = URL.createObjectURL(blob); const a = document.createElement("a"); a.href = url; a.download = `${activeArtboard?.label ?? "mockup"}.html`; a.click(); URL.revokeObjectURL(url); }} className="text-xs font-semibold text-slate-600 hover:text-slate-900">Export</button>
                             <button onClick={() => setIsMockupExpanded(true)} className="rounded border border-slate-200 p-1 text-slate-500 hover:bg-slate-50" title="확대"><ArrowsOutIcon size={14} /></button>
@@ -1123,30 +1774,10 @@ export default function MainScreenPage() {
                         )}
                       </div>
                       {ideaArtboards.length > 0 ? (
-                        <div ref={canvasRef} className="relative h-150 w-full overflow-hidden rounded-2xl select-none" style={{ backgroundColor: "#1a1a1a", backgroundImage: "radial-gradient(circle, #383838 1px, transparent 1px)", backgroundSize: "20px 20px", cursor: isDragging ? "grabbing" : "grab" }} onMouseDown={handleCanvasMouseDown} onMouseMove={handleCanvasMouseMove} onMouseUp={handleCanvasMouseUp} onMouseLeave={handleCanvasMouseUp}>
-                          {isGeneratingMockup && (
-                            <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-black/60 rounded-2xl">
-                              <div className="h-8 w-8 animate-spin rounded-full border-2 border-white/30 border-t-white" />
-                              <p className="text-sm text-white/80">Stitch로 목업 생성 중...</p>
-                            </div>
-                          )}
-                          {ideaArtboards.map(artboard => {
-                            const screenX = canvasOffset.x + artboard.x * canvasScale;
-                            const screenY = canvasOffset.y + artboard.y * canvasScale;
-                            const isActive = artboard.id === activeArtboardId;
-                            return (
-                              <div key={artboard.id} style={{ pointerEvents: isDragging ? "none" : "auto" }}>
-                                <div style={{ position: "absolute", left: screenX, top: screenY - 22, color: isActive ? "#a5b4fc" : "#888", fontSize: 11, fontWeight: isActive ? 600 : 400, whiteSpace: "nowrap", userSelect: "none" }}>{artboard.label}</div>
-                                <div style={{ position: "absolute", left: screenX, top: screenY, transform: `scale(${canvasScale})`, transformOrigin: "0 0", width: DEVICE_SIZE[artboard.device ?? "desktop"].width, height: DEVICE_SIZE[artboard.device ?? "desktop"].height, borderRadius: artboard.device === "mobile" ? 24 : 12, overflow: "hidden", outline: isActive ? "2px solid #6366f1" : "2px solid transparent", outlineOffset: 3, boxShadow: "0 8px 40px rgba(0,0,0,0.5)" }} onClick={() => setActiveArtboardId(artboard.id)}>
-                                  <iframe srcDoc={injectNoNavigation(editMode ? injectSelectionScript(artboard.html, artboard.id) : artboard.html)} sandbox="allow-scripts" style={{ width: DEVICE_SIZE[artboard.device ?? "desktop"].width, height: DEVICE_SIZE[artboard.device ?? "desktop"].height, border: "none", display: "block" }} title={artboard.label} />
-                                </div>
-                              </div>
-                            );
-                          })}
-                        </div>
+                        renderMockupCanvas()
                       ) : (
                         <div className="flex h-64 flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-slate-300 bg-white/70 text-sm text-slate-400">
-                          {isGeneratingMockup ? (
+                          {isGeneratingCurrentIdeaMockup ? (
                             <><div className="h-7 w-7 animate-spin rounded-full border-2 border-slate-300 border-t-slate-600" /><p className="text-slate-500">Stitch로 목업 생성 중...</p></>
                           ) : (
                             <p>{'에이전트에게 "목업 만들어줘"라고 말하면 여기에 표시됩니다.'}</p>
@@ -1158,26 +1789,85 @@ export default function MainScreenPage() {
                     {/* Presentation — per-idea */}
                     {(() => {
                       const activeIdea = ideas.find(i => i.id === activeIdeaId);
-                      const slides = activeIdea?.presentationSlides ?? [];
-                      const html = activeIdea?.presentationHtml ?? "";
+                      const presentations = activeIdea ? normalizePresentations(activeIdea) : [];
+                      const selectedPresentation = presentations.find(p => p.id === activePresentationId) ?? presentations.at(-1) ?? null;
+                      const deletePresentation = (presentationId: string) => {
+                        if (!activeIdea) return;
+                        const nextPresentations = normalizePresentations(activeIdea).filter(p => p.id !== presentationId);
+                        updateIdea(activeIdea.id, {
+                          presentations: nextPresentations,
+                          presentationSlides: nextPresentations.at(-1)?.slides ?? [],
+                          presentationHtml: nextPresentations.at(-1)?.html,
+                        });
+                        if (activePresentationId === presentationId) {
+                          setActivePresentationId(nextPresentations.at(-1)?.id ?? null);
+                        }
+                      };
                       return (
                         <section ref={presentationSectionRef} className="space-y-3 scroll-mt-4">
-                          <p className="text-base font-semibold text-slate-900">Presentation</p>
+                          <div className="flex items-center justify-between">
+                            <p className="text-base font-semibold text-slate-900">Presentation</p>
+                            {presentations.length > 0 && (
+                              <span className="text-xs text-slate-400">{presentations.length}개</span>
+                            )}
+                          </div>
                           {isGeneratingPresentation ? (
                             <div className="flex h-64 flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-slate-300 bg-white/70 text-sm text-slate-400">
                               <div className="h-7 w-7 animate-spin rounded-full border-2 border-slate-300 border-t-slate-600" />
                               <p className="text-slate-500">피치덱 이미지 생성 중...</p>
                             </div>
-                          ) : slides.length > 0 ? (
-                            <div className="overflow-hidden rounded-2xl border border-slate-200 bg-black">
-                              {slides[0]?.imageUrl ? (
-                                <img src={slides[0].imageUrl} alt={slides[0].title} className="w-full object-contain" />
+                          ) : presentations.length > 0 ? (
+                            <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
+                              <div className="flex items-center justify-between gap-3 border-b border-slate-100 px-3 py-2">
+                                <div className="flex min-w-0 flex-1 gap-1 overflow-x-auto">
+                                  {presentations.map((presentation, index) => {
+                                    const isActive = presentation.id === selectedPresentation?.id;
+                                    return (
+                                      <button
+                                        key={presentation.id}
+                                        onClick={() => setActivePresentationId(presentation.id)}
+                                        className={`max-w-44 shrink-0 truncate rounded-lg px-3 py-1.5 text-xs font-medium transition ${
+                                          isActive
+                                            ? "bg-slate-900 text-white"
+                                            : "text-slate-500 hover:bg-slate-100 hover:text-slate-900"
+                                        }`}
+                                        title={presentation.title}
+                                      >
+                                        {presentation.title || `P${index + 1}`}
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                              {selectedPresentation && (
+                                <div className="flex items-center justify-between gap-3 border-b border-slate-100 px-4 py-3">
+                                  <div className="min-w-0">
+                                    <p className="truncate text-sm font-semibold text-slate-800">{selectedPresentation.title}</p>
+                                    <p className="text-xs text-slate-400">
+                                      {selectedPresentation.createdAt ? new Date(selectedPresentation.createdAt).toLocaleString("ko-KR") : "이전 프레젠테이션"}
+                                    </p>
+                                  </div>
+                                  <button
+                                    onClick={() => {
+                                      if (confirm("이 프레젠테이션을 삭제할까요?")) deletePresentation(selectedPresentation.id);
+                                    }}
+                                    className="shrink-0 rounded-full p-1.5 text-slate-400 transition hover:bg-red-50 hover:text-red-500"
+                                    title="프레젠테이션 삭제"
+                                  >
+                                    <XIcon size={14} />
+                                  </button>
+                                </div>
+                              )}
+                              {selectedPresentation?.slides?.[0]?.imageUrl ? (
+                                <div className="bg-black">
+                                  <img src={selectedPresentation.slides[0].imageUrl} alt={selectedPresentation.slides[0].title} className="w-full object-contain" />
+                                </div>
+                              ) : selectedPresentation?.html ? (
+                                <iframe srcDoc={selectedPresentation.html} sandbox="allow-scripts allow-same-origin" className="h-125 w-full bg-white" title={selectedPresentation.title || "Presentation preview"} />
                               ) : (
                                 <div className="flex h-64 items-center justify-center text-sm text-slate-500">이미지 생성 실패</div>
                               )}
                             </div>
-                          ) : html ? (
-                            <iframe srcDoc={html} sandbox="allow-scripts allow-same-origin" className="h-125 w-full rounded-2xl border border-slate-200 bg-white" title="Presentation preview" />
                           ) : (
                             <div className="flex h-64 items-center justify-center rounded-2xl border border-dashed border-slate-300 bg-white/70 text-sm text-slate-400">
                               {ideaArtboards.length === 0 ? "목업을 먼저 생성하면 피치덱을 만들 수 있습니다." : '에이전트에게 "피치덱 만들어줘"라고 말하면 여기에 표시됩니다.'}
@@ -1354,7 +2044,7 @@ export default function MainScreenPage() {
                 {isGeneratingMockup ? (
                   <span className="flex items-center gap-1.5 rounded-full bg-slate-100 px-4 py-2 text-xs text-slate-500">
                     <span className="h-2 w-2 animate-spin rounded-full border border-slate-400 border-t-transparent" />
-                    Stitch 생성 중
+                    {generatingMockupIdeaId === activeIdeaId ? "Stitch 생성 중" : "다른 아이디어 생성 중"}
                   </span>
                 ) : isLoading ? (
                   <button
@@ -1378,15 +2068,15 @@ export default function MainScreenPage() {
         </aside>
       </main>
 
-      {/* Mockup fullscreen overlay */}
+      {/* Mockup expanded canvas: keep the chat panel visible */}
       {isMockupExpanded && (
-        <div className="fixed inset-0 z-50 flex flex-col bg-[#1a1a1a]" style={{ backgroundImage: "radial-gradient(circle, #383838 1px, transparent 1px)", backgroundSize: "20px 20px" }}>
+        <div className="fixed inset-y-0 left-0 right-0 z-40 flex flex-col bg-[#1a1a1a] md:right-[28rem]" style={{ backgroundImage: "radial-gradient(circle, #383838 1px, transparent 1px)", backgroundSize: "20px 20px" }}>
           {/* Overlay header */}
           <div className="flex items-center justify-between bg-slate-900/80 px-5 py-3 backdrop-blur">
             <div className="flex items-center gap-3">
               <button onClick={fitToCanvas} className="rounded border border-white/20 px-2 py-1 text-xs text-white/70 hover:bg-white/10">Fit</button>
-              <button onClick={() => setCanvasScale(s => Math.min(s * 1.2, 4))} className="rounded border border-white/20 px-2 py-1 text-xs text-white/70 hover:bg-white/10">+</button>
-              <button onClick={() => setCanvasScale(s => Math.max(s * 0.8, 0.1))} className="rounded border border-white/20 px-2 py-1 text-xs text-white/70 hover:bg-white/10">−</button>
+              <button onClick={() => setCanvasScale(s => Math.min(s * 1.2, MAX_CANVAS_SCALE))} className="rounded border border-white/20 px-2 py-1 text-xs text-white/70 hover:bg-white/10">+</button>
+              <button onClick={() => setCanvasScale(s => Math.max(s * 0.8, MIN_CANVAS_SCALE))} className="rounded border border-white/20 px-2 py-1 text-xs text-white/70 hover:bg-white/10">−</button>
               <span className="text-xs text-white/40">{Math.round(canvasScale * 100)}%</span>
             </div>
             <button onClick={() => setIsMockupExpanded(false)} className="flex items-center gap-1.5 rounded-full bg-white/10 px-3 py-1.5 text-xs text-white hover:bg-white/20">
@@ -1395,32 +2085,7 @@ export default function MainScreenPage() {
           </div>
 
           {/* Canvas */}
-          <div
-            ref={canvasRef}
-            className="flex-1 overflow-hidden select-none"
-            style={{ cursor: isDragging ? "grabbing" : "grab" }}
-            onMouseDown={handleCanvasMouseDown}
-            onMouseMove={handleCanvasMouseMove}
-            onMouseUp={handleCanvasMouseUp}
-            onMouseLeave={handleCanvasMouseUp}
-          >
-            {ideaArtboards.map(artboard => {
-              const screenX = canvasOffset.x + artboard.x * canvasScale;
-              const screenY = canvasOffset.y + artboard.y * canvasScale;
-              const isActive = artboard.id === activeArtboardId;
-              return (
-                <div key={artboard.id} style={{ pointerEvents: isDragging ? "none" : "auto" }}>
-                  <div style={{ position: "absolute", left: screenX, top: screenY - 22, color: isActive ? "#a5b4fc" : "#888", fontSize: 11, fontWeight: isActive ? 600 : 400, whiteSpace: "nowrap", userSelect: "none" }}>{artboard.label}</div>
-                  <div
-                    style={{ position: "absolute", left: screenX, top: screenY, transform: `scale(${canvasScale})`, transformOrigin: "0 0", width: DEVICE_SIZE[artboard.device ?? "desktop"].width, height: DEVICE_SIZE[artboard.device ?? "desktop"].height, borderRadius: artboard.device === "mobile" ? 24 : 12, overflow: "hidden", outline: isActive ? "2px solid #6366f1" : "2px solid transparent", outlineOffset: 3, boxShadow: "0 8px 40px rgba(0,0,0,0.5)" }}
-                    onClick={() => setActiveArtboardId(artboard.id)}
-                  >
-                    <iframe srcDoc={injectNoNavigation(editMode ? injectSelectionScript(artboard.html, artboard.id) : artboard.html)} sandbox="allow-scripts" style={{ width: DEVICE_SIZE[artboard.device ?? "desktop"].width, height: DEVICE_SIZE[artboard.device ?? "desktop"].height, border: "none", display: "block" }} title={artboard.label} />
-                  </div>
-                </div>
-              );
-            })}
-          </div>
+          {renderMockupCanvas(true)}
         </div>
       )}
     </div>

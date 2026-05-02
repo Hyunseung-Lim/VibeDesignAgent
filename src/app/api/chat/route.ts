@@ -11,7 +11,9 @@ const SYSTEM_PROMPT = `You are a UI/UX design agent. You help designers by:
 
 OUTPUT RULES:
 - To create a NEW UI mockup: write 1–2 sentences explaining the concept and key design decisions. Then output [GENERATE_MOCKUP: {prompt}] on its own line. Then 1–2 sentences describing what will be created.
-  - The prompt (write in English) should cover: target device, main layout and sections, key UI components, visual style and color direction, and any specific elements from cited references.
+  - The prompt (write in English) should be a detailed production prompt, not a short summary. It should cover: target device, main layout and sections, key UI components, exact visible copy, visual style and color direction, typography, spacing, interaction states, and any specific elements from cited references.
+  - If an active idea is provided, you MUST incorporate the active idea's detailed requirements and style reference into the prompt. Preserve concrete tokens such as colors, fonts, spacing, border radius, shadows, brand tone, and component rules. Do not collapse a long style guide into generic phrases like "consistent brand identity".
+  - Aim for 900–1800 characters inside [GENERATE_MOCKUP: ...] when the idea contains a detailed design/style guide.
   - Example: [GENERATE_MOCKUP: Mobile onboarding screen with 3-step progress indicator at top, central illustration area, bold headline, subtitle text, and a prominent CTA button at bottom. Clean minimal style with indigo/white palette.]
 - To EDIT/MODIFY the current mockup: write 1 sentence explaining what you're changing. Then output [EDIT_MOCKUP: {prompt}] on its own line. Then 1 sentence confirming what changed.
   - The prompt (write in English) should describe specifically what to change and how.
@@ -21,6 +23,7 @@ OUTPUT RULES:
 - To create a presentation/pitch deck: write 1–2 sentences explaining the structure you're preparing, then output a JSON structure wrapped in \`\`\`presentation\n{json}\n\`\`\`, then 1 sentence saying that the presentation image is being generated now. Do not say the presentation was already created.
   JSON format: {"title": "Deck Title", "slides": [{"title": "Slide Title", "content": "3-5 key points as plain text (newline-separated)", "imagePrompt": "Vivid visual description for AI image generation of this slide"}]}
   Generate exactly 1 slide that summarizes the entire pitch: title, core problem, solution, key design decisions, and next steps all on one compelling visual.
+  If Current mockup HTML is provided, the imagePrompt MUST explicitly describe the mockup's actual visible layout, key sections, UI components, text hierarchy, colors, and device frame. Do not invent an unrelated generic landing page.
   imagePrompt must be highly specific and visual: describe the background color/gradient, main visual elements (illustrations, icons, charts), text placement, color palette, and overall style. Example: "Clean white slide, large bold navy title at top, split layout with problem/solution sections, coral accent colors, minimal sans-serif typography".
 - When the user asks about a specific website, app, brand, or product — especially one visible in a reference image — use the web_search tool to look it up and provide accurate, up-to-date information.
 - For anything else: plain text reply.
@@ -52,7 +55,7 @@ export async function POST(request: Request) {
   if (activeIdea) {
     systemMessages.push({
       role: "system",
-      content: `The user is currently working on this idea:\nTitle: ${activeIdea.title}\nContent: ${activeIdea.description || "(내용 없음)"}\n\nAll mockups and presentations generated in this conversation should be designed for this idea.`,
+      content: `The user is currently working on this idea:\nTitle: ${activeIdea.title}\nContent: ${activeIdea.description || "(내용 없음)"}\n\nAll mockups and presentations generated in this conversation should be designed for this idea.\n\nFor [GENERATE_MOCKUP], treat the Content above as a binding product brief and visual style guide. Include the most important details directly in the generated mockup prompt so the downstream design generator receives them.`,
     });
   }
 
