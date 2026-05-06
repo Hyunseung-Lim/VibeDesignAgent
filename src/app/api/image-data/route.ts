@@ -22,7 +22,8 @@ export async function GET(request: Request) {
   try {
     const res = await fetch(parsed.toString(), {
       headers: {
-        Accept: "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+        Accept:
+          "text/css,font/woff2,font/woff,font/ttf,font/otf,image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
         "User-Agent": "Mozilla/5.0 VibeDesignAgent image capture",
       },
       signal: AbortSignal.timeout(8000),
@@ -32,17 +33,36 @@ export async function GET(request: Request) {
       return Response.json({ error: `fetch failed: ${res.status}` }, { status: 502 });
     }
 
-    const contentType = res.headers.get("content-type")?.split(";")[0] || "image/png";
-    if (!contentType.startsWith("image/")) {
-      return Response.json({ error: "not an image" }, { status: 415 });
-    }
-
+    const contentType =
+      res.headers.get("content-type")?.split(";")[0] ||
+      "application/octet-stream";
     const buffer = Buffer.from(await res.arrayBuffer());
     if (buffer.length > 8 * 1024 * 1024) {
-      return Response.json({ error: "image too large" }, { status: 413 });
+      return Response.json({ error: "asset too large" }, { status: 413 });
+    }
+
+    if (contentType === "text/css") {
+      return Response.json({
+        contentType,
+        text: buffer.toString("utf8"),
+      });
+    }
+
+    const isAllowedBinary =
+      contentType.startsWith("image/") ||
+      contentType.startsWith("font/") ||
+      contentType === "application/font-woff" ||
+      contentType === "application/font-woff2" ||
+      contentType === "application/x-font-ttf" ||
+      contentType === "application/x-font-opentype" ||
+      contentType === "application/octet-stream";
+
+    if (!isAllowedBinary) {
+      return Response.json({ error: "unsupported asset type" }, { status: 415 });
     }
 
     return Response.json({
+      contentType,
       dataUrl: `data:${contentType};base64,${buffer.toString("base64")}`,
     });
   } catch (err) {

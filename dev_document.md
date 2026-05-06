@@ -2,7 +2,7 @@
 
 ## 1. 서비스 개요
 - **목표**: UI/UX 디자이너가 AI 에이전트와의 대화만으로 디자인 과업을 진행할 수 있게 해주는 협업 연구 도구.
-- **핵심 경험**: 사용자는 과업 브리핑 및 피드백을 텍스트 대화로 전달하면 에이전트가 레퍼런스 탐색 → 아이디어 기록 → 목업 생성 → 피치덱 제작까지 수행.
+- **핵심 경험**: 사용자는 과업 브리핑 및 피드백을 텍스트 대화로 전달하면 에이전트가 레퍼런스 탐색 → 아이디어 기록 → 목업 생성 → 프레젠테이션 제작까지 수행.
 - **연구 목적**: HCI 연구 맥락에서 AI-인간 협업 시 공유 멘탈 모델(shared mental model) 형성 과정 연구.
 
 ---
@@ -15,10 +15,10 @@
 | 스타일링 | Tailwind CSS v4, @phosphor-icons/react |
 | 인증 | Firebase Authentication (Google OAuth) |
 | 데이터베이스 | Firebase Firestore |
-| 파일 저장소 | Firebase Storage (피치덱 이미지) |
+| 파일 저장소 | Firebase Storage (프레젠테이션 이미지) |
 | AI 채팅 | OpenAI Responses API (gpt-4o) + web_search_preview 툴 |
 | 목업 생성 | Google Stitch SDK |
-| 피치덱 이미지 | OpenAI gpt-image-2 (조직 인증 필요) / gpt-image-1 |
+| 프레젠테이션 이미지 | OpenAI gpt-image-2 (조직 인증 필요) / gpt-image-1 |
 | 이미지 검색 | Serper API (Google 이미지 검색) |
 | 마크다운 렌더링 | react-markdown |
 
@@ -79,7 +79,7 @@
 - HTML Export 지원
 - Stitch 프로젝트 ID Firestore 저장 (재연결/수정 지원)
 
-### 4.5 피치덱 (Presentation)
+### 4.5 프레젠테이션 (Presentation)
 - **생성 조건**: 해당 아이디어의 목업이 1개 이상 있을 때만 생성 가능
 - **생성 흐름**: GPT-4o가 ` ```presentation\n{JSON}\n``` ` 출력 → `/api/presentation` 호출 → gpt-image-2로 1장 이미지 생성 → Firebase Storage 업로드 → URL을 Firestore에 저장
 - 1장 이미지로 모든 핵심 내용(문제/해결/디자인/다음 단계) 담음
@@ -96,7 +96,7 @@
   - `[GENERATE_MOCKUP: ...]` → Stitch 목업 생성
   - `[EDIT_MOCKUP: ...]` → 목업 수정
   - `[FETCH_REFERENCES: ...]` → Serper 이미지 검색
-  - ` ```presentation ... ``` ` → gpt-image-2 피치덱 생성
+  - ` ```presentation ... ``` ` → gpt-image-2 프레젠테이션 생성
   - `[WEB_SEARCHED]` → 웹 검색 배지
 
 ---
@@ -149,7 +149,7 @@ type PresentationSlide = {
 | `POST /api/stitch` | Google Stitch 목업 생성/편집 |
 | `GET /api/stitch/html` | Stitch 스크린 HTML 재조회 |
 | `POST /api/references` | Serper 이미지 검색 (3개 반환) |
-| `POST /api/presentation` | gpt-image-2/gpt-image-1로 피치덱 이미지 생성 |
+| `POST /api/presentation` | gpt-image-2/gpt-image-1로 프레젠테이션 이미지 생성 |
 
 ---
 
@@ -157,7 +157,7 @@ type PresentationSlide = {
 
 | 스크립트 | 기능 |
 |----------|------|
-| `export_sessions.py` | 전체 참가자 세션 데이터 + 피치덱 이미지 내보내기 |
+| `export_sessions.py` | 전체 참가자 세션 데이터 + 프레젠테이션 이미지 내보내기 |
 | `delete_user_sessions.py` | 특정 사용자 세션 전체 삭제 |
 
 - Firebase Admin SDK 사용 (`vibedesignagent-key.json` 서비스 계정 키 필요)

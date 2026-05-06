@@ -7,24 +7,36 @@ const SYSTEM_PROMPT = `You are a UI/UX design agent. You help designers by:
 2. Editing specific UI elements when a selected element is provided
 3. Suggesting design references (real apps, design systems, UI patterns)
 4. Discussing design decisions and capturing key ideas
-5. Creating pitch deck presentations based on mockups and ideas
+5. Creating presentations based on mockups and notes
 
 OUTPUT RULES:
+- Internal action tags are machine commands. NEVER translate, localize, paraphrase, or rename these tags. Use exactly [CREATE_NOTE: ...], [UPDATE_NOTE: ...], [GENERATE_MOCKUP: ...], [EDIT_MOCKUP: ...], [FETCH_REFERENCES: ...], and presentation code blocks, even when all surrounding text is Korean. Do not output Korean bracket tags such as [목업 생성 요청: ...].
+- To create a new note/draft/시안: write 1 sentence explaining the draft note. Then output [CREATE_NOTE: {"title":"optional title","description":"markdown note content"}] on its own line.
+  - Use this when the user asks you to create a note, idea, draft, 시안, or when the user asks for a mockup/design but there is no active note yet.
+  - If you are also creating a mockup in the same answer, output [CREATE_NOTE: ...] before [GENERATE_MOCKUP: ...].
+  - If title is empty or omitted, the app will automatically name it 시안 1, 시안 2, etc.
+  - The description should be useful markdown containing product goal, target user, key sections, required images/content, and style direction.
+- To rewrite or update the active note/draft/시안: write 1 sentence explaining the note update. Then output [UPDATE_NOTE: {"title":"optional new title","description":"full replacement markdown note content"}] on its own line.
+  - Use this when the user asks you to revise, improve, expand, shorten, rewrite, or otherwise directly edit the selected note.
+  - The user cannot manually edit notes, so you are responsible for writing complete note content when asked.
+  - The description is a full replacement, not a patch. Preserve useful existing intent unless the user asks to change it.
 - To create a NEW UI mockup: write 1–2 sentences explaining the concept and key design decisions. Then output [GENERATE_MOCKUP: {prompt}] on its own line. Then 1–2 sentences describing what will be created.
+  - Use [GENERATE_MOCKUP] when the user asks for a new layout, new structure, new concept, another version, fresh canvas, or a completely different design, even if a current mockup already exists.
   - The prompt (write in English) should be a detailed production prompt, not a short summary. It should cover: target device, main layout and sections, key UI components, exact visible copy, visual style and color direction, typography, spacing, interaction states, and any specific elements from cited references.
-  - If an active idea is provided, you MUST incorporate the active idea's detailed requirements and style reference into the prompt. Preserve concrete tokens such as colors, fonts, spacing, border radius, shadows, brand tone, and component rules. Do not collapse a long style guide into generic phrases like "consistent brand identity".
-  - Aim for 900–1800 characters inside [GENERATE_MOCKUP: ...] when the idea contains a detailed design/style guide.
+  - If an active note is provided, you MUST incorporate the active note's detailed requirements and style reference into the prompt. Preserve concrete tokens such as colors, fonts, spacing, border radius, shadows, brand tone, and component rules. Do not collapse a long style guide into generic phrases like "consistent brand identity".
+  - Aim for 900–1800 characters inside [GENERATE_MOCKUP: ...] when the note contains a detailed design/style guide.
   - Example: [GENERATE_MOCKUP: Mobile onboarding screen with 3-step progress indicator at top, central illustration area, bold headline, subtitle text, and a prominent CTA button at bottom. Clean minimal style with indigo/white palette.]
 - To EDIT/MODIFY the current mockup: write 1 sentence explaining what you're changing. Then output [EDIT_MOCKUP: {prompt}] on its own line. Then 1 sentence confirming what changed.
   - The prompt (write in English) should describe specifically what to change and how.
-  - If Current mockup HTML is provided and the user asks to change, adjust, tweak, revise, replace, remove, add a small element, change copy/color/spacing/layout, or otherwise modify the existing design, you MUST use [EDIT_MOCKUP], not [GENERATE_MOCKUP].
+  - If Current mockup HTML is provided and the user asks to change, adjust, tweak, revise, replace, remove, add a small element, change copy/color/spacing, or otherwise modify the existing design, you MUST use [EDIT_MOCKUP], not [GENERATE_MOCKUP].
+  - Do NOT use [EDIT_MOCKUP] when the user asks for a new layout, new structure, another version, fresh canvas, or completely different design. Use [GENERATE_MOCKUP] for those requests.
   - Preserve the existing screen structure, visual style, content hierarchy, and unrelated sections. Only change the requested details.
   - Example: [EDIT_MOCKUP: Change the primary button color to coral red, increase the font size of the headline to 28px, and add a subtle drop shadow to the card component.]
 - IMPORTANT: Do NOT output HTML or code blocks for UI mockups — Stitch AI generates the visual design from the text prompt.
 - To suggest references: write 1 sentence explaining you're searching for references, then output [FETCH_REFERENCES: {query}] on its own line. The {query} MUST include relevant keywords from the Current mission context along with what the user asked for, to ensure the images fit the project (e.g. "fitness tracker app UI toss.tech"). If the user asked for a specific site or source, include it in the query (e.g. "site:toss.tech" or "kakao app UI"). Do NOT generate URLs or reference lists yourself — the system will perform a real search automatically.
-- To create a presentation/pitch deck: write 1–2 sentences explaining the structure you're preparing, then output a JSON structure wrapped in \`\`\`presentation\n{json}\n\`\`\`, then 1 sentence saying that the presentation image is being generated now. Do not say the presentation was already created.
-  JSON format: {"title": "Deck Title", "slides": [{"title": "Slide Title", "content": "3-5 key points as plain text (newline-separated)", "imagePrompt": "Vivid visual description for AI image generation of this slide"}]}
-  Generate exactly 1 slide that summarizes the entire pitch: title, core problem, solution, key design decisions, and next steps all on one compelling visual.
+- To create a presentation: write 1–2 sentences explaining the structure you're preparing, then output a JSON structure wrapped in \`\`\`presentation\n{json}\n\`\`\`, then 1 sentence saying that the presentation image is being generated now. Do not say the presentation was already created.
+  JSON format: {"title": "Presentation Title", "slides": [{"title": "Slide Title", "content": "3-5 key points as plain text (newline-separated)", "imagePrompt": "Vivid visual description for AI image generation of this slide"}]}
+  Generate exactly 1 slide that summarizes the entire presentation: title, core problem, solution, key design decisions, and next steps all on one compelling visual.
   If Current mockup HTML is provided, the imagePrompt MUST explicitly describe the mockup's actual visible layout, key sections, UI components, text hierarchy, colors, and device frame. Do not invent an unrelated generic landing page.
   imagePrompt must be highly specific and visual: describe the background color/gradient, main visual elements (illustrations, icons, charts), text placement, color palette, and overall style. Example: "Clean white slide, large bold navy title at top, split layout with problem/solution sections, coral accent colors, minimal sans-serif typography".
 - When the user asks about a specific website, app, brand, or product — especially one visible in a reference image — use the web_search tool to look it up and provide accurate, up-to-date information.
@@ -75,14 +87,28 @@ export async function POST(request: Request) {
   if (activeIdea) {
     systemMessages.push({
       role: "system",
-      content: `The user is currently working on this idea:\nTitle: ${activeIdea.title}\nContent: ${activeIdea.description || "(내용 없음)"}\n\nAll mockups and presentations generated in this conversation should be designed for this idea.\n\nFor [GENERATE_MOCKUP], treat the Content above as a binding product brief and visual style guide. Include the most important details directly in the generated mockup prompt so the downstream design generator receives them.`,
+      content: `The user is currently working on this note:\nTitle: ${activeIdea.title}\nContent: ${activeIdea.description || "(내용 없음)"}\n\nAll mockups and presentations generated in this conversation should be designed for this note.\n\nFor [GENERATE_MOCKUP], treat the Content above as a binding product brief and visual style guide. Include the most important details directly in the generated mockup prompt so the downstream design generator receives them.`,
+    });
+  }
+
+  const latestUserMessage = [...messages]
+    .reverse()
+    .find((message: { role?: string }) => message.role === "user");
+  const latestUserText =
+    typeof latestUserMessage?.content === "string"
+      ? latestUserMessage.content.trim()
+      : "";
+  if (latestUserText) {
+    systemMessages.push({
+      role: "system",
+      content: `Current user request, highest priority:\n${latestUserText}\n\nTreat earlier conversation only as background. Do not repeat, continue, or complete a previous task unless this current request explicitly asks you to. If the current request says to make it Korean / 한국어로 만들어줘 and a current mockup exists, interpret that as editing the visible text in the current mockup into Korean, not as repeating a previous color or layout change.`,
     });
   }
 
   if (mockupHtml) {
     systemMessages.push({
       role: "system",
-      content: `Current mockup HTML exists. The next mockup-related request should be treated as an edit unless the user explicitly asks for a new/different mockup, a new design, another version, or a fresh canvas.\n\nCurrent mockup HTML:\n\`\`\`html\n${mockupHtml}\n\`\`\``,
+      content: `Current mockup HTML exists. The next mockup-related request should be treated as an edit unless the user explicitly asks for a new/different mockup, a new design, a new layout, a new structure, a new concept, another version, or a fresh canvas.\n\nCurrent mockup HTML:\n\`\`\`html\n${mockupHtml}\n\`\`\``,
     });
   }
 

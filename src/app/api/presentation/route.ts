@@ -32,6 +32,13 @@ type MockupStyle = {
   notes: string;
 };
 
+type MockupSection = {
+  label: string;
+  description: string;
+  yRatio: number;
+  kind?: string;
+};
+
 let accessTokenCache: { token: string; expiresAt: number } | null = null;
 let serviceAccountCache: ServiceAccount | null = null;
 
@@ -196,7 +203,63 @@ type Callout = {
   yRatio: number;
 };
 
-function buildPresentationCallouts(slide: SlideInput): Callout[] {
+function normalizeMockupSections(sections: unknown): MockupSection[] {
+  if (!Array.isArray(sections)) return [];
+  return sections
+    .map((section) => {
+      const record = section as Partial<MockupSection>;
+      return {
+        label: String(record.label ?? "").trim(),
+        description: String(record.description ?? "").trim(),
+        yRatio: Number(record.yRatio),
+        kind: record.kind ? String(record.kind) : undefined,
+      };
+    })
+    .filter(
+      (section) =>
+        section.label &&
+        Number.isFinite(section.yRatio) &&
+        section.yRatio >= 0 &&
+        section.yRatio <= 1,
+    )
+    .sort((a, b) => a.yRatio - b.yRatio)
+    .slice(0, 9);
+}
+
+function sectionDescription(section: MockupSection) {
+  const actualText = section.description || section.label;
+  const kind = section.kind ?? "";
+  if (kind === "navigation") {
+    return actualText === section.label
+      ? "Top navigation and primary entry actions from the actual mockup."
+      : `Navigation contains: ${actualText}`;
+  }
+  if (kind === "footer") {
+    return actualText === section.label
+      ? "Footer area from the captured page."
+      : `Footer content includes: ${actualText}`;
+  }
+  if (kind === "features") return `Feature section content: ${actualText}`;
+  if (kind === "reviews") return `Social proof shown here: ${actualText}`;
+  if (kind === "faq") return `Objection-handling content: ${actualText}`;
+  if (kind === "trust") return `Credibility signals in this area: ${actualText}`;
+  if (kind === "conversion") return `Conversion-focused content: ${actualText}`;
+  return `Actual mockup content: ${actualText}`;
+}
+
+function buildPresentationCallouts(
+  slide: SlideInput,
+  mockupSections?: MockupSection[],
+): Callout[] {
+  if (mockupSections?.length) {
+    return mockupSections.map((section, index) => ({
+      label: section.label.slice(0, 58),
+      description: sectionDescription(section).slice(0, 180),
+      side: index % 2 === 0 ? "left" : "right",
+      yRatio: Math.max(0.04, Math.min(0.96, section.yRatio)),
+    }));
+  }
+
   const source = [slide.content, slide.imagePrompt].filter(Boolean).join("\n");
   const lines = source
     .split(/\n+/)
@@ -239,6 +302,7 @@ function composePresentationSlide(
   style: MockupStyle,
   screenshotWidth?: number,
   screenshotHeight?: number,
+  mockupSections?: MockupSection[],
 ) {
   const isMobile = device === "mobile";
   const pageW = 1536;
@@ -254,7 +318,7 @@ function composePresentationSlide(
   const leftTextX = 42;
   const rightTextX = mockupX + mockupW + 58;
   const titleText = slide.title || title || "Landing Page Breakdown";
-  const callouts = buildPresentationCallouts(slide);
+  const callouts = buildPresentationCallouts(slide, mockupSections);
   const labelFont = escapeXml(style.fontFamily);
   const calloutEls = callouts.map((callout) => {
     const textX = callout.side === "left" ? leftTextX : rightTextX;
@@ -408,7 +472,18 @@ async function uploadPresentationImage(dataUrl: string, objectName: string) {
 }
 
 export async function POST(request: Request) {
-  const { title, slides, uid = "anonymous", missionId = "unknown", mockupHtml, mockupScreenshot, mockupScreenshotWidth, mockupScreenshotHeight, device } = await request.json();
+  const {
+    title,
+    slides,
+    uid = "anonymous",
+    missionId = "unknown",
+    mockupHtml,
+    mockupScreenshot,
+    mockupScreenshotWidth,
+    mockupScreenshotHeight,
+    mockupSections,
+    device,
+  } = await request.json();
 
   if (!slides || !Array.isArray(slides) || slides.length === 0) {
     return Response.json({ error: "slides array required" }, { status: 400 });
@@ -416,6 +491,7 @@ export async function POST(request: Request) {
 
   const mockupContext = compactMockupHtml(mockupHtml);
   const mockupStyle = extractMockupStyle(mockupHtml);
+  const normalizedMockupSections = normalizeMockupSections(mockupSections);
   const deviceContext = device === "mobile" ? "mobile app/landing mockup in a 390x844 phone frame" : "desktop landing page mockup in a 1280x900 browser frame";
 
   // Always generate exactly one slide
@@ -430,6 +506,7 @@ export async function POST(request: Request) {
           mockupStyle,
           Number(mockupScreenshotWidth),
           Number(mockupScreenshotHeight),
+          normalizedMockupSections,
         );
         try {
           const objectName = `presentations/${uid}/${missionId}/slide-${Date.now()}-${randomUUID()}.svg`;
@@ -443,11 +520,11 @@ export async function POST(request: Request) {
       }
 
       const prompt = [
-        `Presentation slide for "${title || "Pitch Deck"}".`,
+        `Presentation slide for "${title || "Presentation"}".`,
         `Slide: "${slide.title}".`,
         `The presentation must faithfully showcase the actual generated mockup as a central visual artifact, not a generic replacement.`,
         `Use a ${deviceContext}. Reflect the mockup's real layout, visible copy, sections, color palette, typography feel, cards/buttons/navigation, and visual hierarchy.`,
-        `Match the generated presentation's background, typography, spacing, border radius, accent colors, and UI detailing to the mockup style. Do not use a generic pitch deck theme if it conflicts with the mockup.`,
+        `Match the generated presentation's background, typography, spacing, border radius, accent colors, and UI detailing to the mockup style. Do not use a generic presentation theme if it conflicts with the mockup.`,
         mockupStyle.notes,
         mockupContext,
         slide.imagePrompt,

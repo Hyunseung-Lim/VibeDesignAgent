@@ -105,6 +105,30 @@ type PresentationData = {
   slides: { title: string; content: string; imagePrompt: string }[];
 };
 
+type MockupCaptureSection = {
+  label: string;
+  description: string;
+  yRatio: number;
+  kind: string;
+};
+
+type MockupCapture = {
+  dataUrl: string;
+  width: number;
+  height: number;
+  sections: MockupCaptureSection[];
+};
+
+type CreateNoteData = {
+  title?: string;
+  description?: string;
+};
+
+type UpdateNoteData = {
+  title?: string;
+  description?: string;
+};
+
 function parsePresentationBlock(
   text: string,
 ):
@@ -135,10 +159,10 @@ function normalizePresentationStatusText(text: string): string {
       /프레젠테이션이 생성되었습니다\./g,
       "프레젠테이션 이미지를 생성하고 있습니다.",
     )
-    .replace(/피치덱을 생성했습니다\./g, "피치덱 이미지를 생성하고 있습니다.")
+    .replace(/피치덱을 생성했습니다\./g, "프레젠테이션 이미지를 생성하고 있습니다.")
     .replace(
       /피치덱이 생성되었습니다\./g,
-      "피치덱 이미지를 생성하고 있습니다.",
+      "프레젠테이션 이미지를 생성하고 있습니다.",
     );
 }
 
@@ -242,8 +266,195 @@ async function fetchAssetDataUrl(url: string, baseUrl: string) {
   }
 }
 
+async function fetchAssetText(url: string, baseUrl: string) {
+  if (isInlineOrLocalAsset(url)) return "";
+  try {
+    const absoluteUrl = new URL(url, baseUrl).toString();
+    const res = await fetch(
+      `/api/image-data?url=${encodeURIComponent(absoluteUrl)}`,
+    );
+    if (!res.ok) return "";
+    const data = (await res.json()) as { text?: string };
+    return data.text ?? "";
+  } catch {
+    return "";
+  }
+}
+
+function parseCreateNoteBlock(text: string): CreateNoteData | null {
+  const match = text.match(/\[CREATE_NOTE:\s*([\s\S]*?)\]/);
+  if (!match) return null;
+  try {
+    return JSON.parse(match[1].trim()) as CreateNoteData;
+  } catch {
+    return { description: match[1].trim() };
+  }
+}
+
+function parseUpdateNoteBlock(text: string): UpdateNoteData | null {
+  const match = text.match(/\[UPDATE_NOTE:\s*([\s\S]*?)\]/);
+  if (!match) return null;
+  try {
+    return JSON.parse(match[1].trim()) as UpdateNoteData;
+  } catch {
+    return { description: match[1].trim() };
+  }
+}
+
+function compactText(value: string, maxLength = 180) {
+  const normalized = value.replace(/\s+/g, " ").trim();
+  return normalized.length > maxLength
+    ? `${normalized.slice(0, maxLength - 1).trim()}...`
+    : normalized;
+}
+
+function elementText(el: Element, maxLength = 180) {
+  return compactText((el.textContent ?? "").replace(/\s+/g, " "), maxLength);
+}
+
+function nearestSectionElement(el: Element) {
+  return (
+    el.closest("section, article, header, nav, footer, main > div") ?? el
+  );
+}
+
+function sectionKind(label: string, tagName: string) {
+  const text = label.toLowerCase();
+  if (tagName === "nav" || tagName === "header") return "navigation";
+  if (tagName === "footer") return "footer";
+  if (/faq|question|문의|질문/.test(text)) return "faq";
+  if (/review|testimonial|rating|후기|리뷰|추천/.test(text)) return "reviews";
+  if (/feature|benefit|특징|혜택|기능/.test(text)) return "features";
+  if (/logo|partner|press|media|trusted|신뢰|매체|파트너/.test(text))
+    return "trust";
+  if (/cta|subscribe|sign|download|구독|가입|시작|문의/.test(text))
+    return "conversion";
+  return "section";
+}
+
+function extractMockupCaptureSections(
+  doc: Document,
+  fullHeight: number,
+): MockupCaptureSection[] {
+  const sections: MockupCaptureSection[] = [];
+  const seen = new Set<string>();
+
+  const addSection = (
+    source: Element | null | undefined,
+    label: string,
+    kind = "section",
+  ) => {
+    if (!source || !label.trim()) return;
+    const rect = source.getBoundingClientRect();
+    if (rect.width < 20 || rect.height < 12) return;
+    const yRatio = Math.max(
+      0.03,
+      Math.min(0.97, (rect.top + rect.height * 0.45) / fullHeight),
+    );
+    const normalizedLabel = compactText(label, 72);
+    const dedupeKey = `${Math.round(yRatio * 20)}:${normalizedLabel.toLowerCase()}`;
+    if (seen.has(dedupeKey)) return;
+    seen.add(dedupeKey);
+
+    const sourceText = elementText(source, 260);
+    const description =
+      compactText(sourceText.replace(normalizedLabel, "").trim(), 170) ||
+      sourceText ||
+      normalizedLabel;
+    sections.push({
+      label: normalizedLabel,
+      description,
+      yRatio,
+      kind,
+    });
+  };
+
+  const nav = doc.querySelector("header, nav, [role='banner']");
+  addSection(nav, "Navigation", "navigation");
+
+  const headings = Array.from(
+    doc.querySelectorAll<HTMLElement>("h1, h2, h3, [role='heading']"),
+  ).filter((heading) => elementText(heading, 90).length > 0);
+
+  for (const heading of headings) {
+    const section = nearestSectionElement(heading);
+    const label = elementText(heading, 90);
+    addSection(section, label, sectionKind(label, section.tagName.toLowerCase()));
+  }
+
+  const footer = doc.querySelector("footer, [role='contentinfo']");
+  addSection(footer, "Footer", "footer");
+
+  return sections
+    .sort((a, b) => a.yRatio - b.yRatio)
+    .filter((section, index, all) => {
+      const previous = all[index - 1];
+      return !previous || Math.abs(section.yRatio - previous.yRatio) > 0.045;
+    })
+    .slice(0, 9);
+}
+
 async function inlineCaptureAssets(doc: Document) {
   const baseUrl = doc.baseURI || window.location.href;
+  const cssUrlPattern = /url\((['"]?)(.*?)\1\)/g;
+
+  const inlineCssUrls = async (css: string, cssBaseUrl: string) => {
+    let nextCss = css;
+    const importMatches = Array.from(
+      nextCss.matchAll(/@import\s+(?:url\()?['"]?([^'")]+)['"]?\)?[^;]*;/g),
+    );
+    for (const match of importMatches) {
+      const importedCss = await fetchAssetText(match[1], cssBaseUrl);
+      if (!importedCss) continue;
+      const importedBaseUrl = new URL(match[1], cssBaseUrl).toString();
+      const inlinedImport = await inlineCssUrls(importedCss, importedBaseUrl);
+      nextCss = nextCss.replace(match[0], inlinedImport);
+    }
+
+    const replacements = await Promise.all(
+      Array.from(nextCss.matchAll(cssUrlPattern)).map(async (match) => {
+        const originalUrl = match[2];
+        const dataUrl = await fetchAssetDataUrl(originalUrl, cssBaseUrl);
+        return { raw: match[0], value: `url("${dataUrl}")` };
+      }),
+    );
+
+    return replacements.reduce(
+      (acc, item) => acc.replace(item.raw, item.value),
+      nextCss,
+    );
+  };
+
+  await Promise.all(
+    Array.from(
+      doc.querySelectorAll<HTMLLinkElement>('link[rel~="stylesheet"][href]'),
+    ).map(async (link) => {
+      const href = link.getAttribute("href");
+      if (!href) return;
+      const css = await fetchAssetText(href, baseUrl);
+      if (!css) return;
+      const cssBaseUrl = new URL(href, baseUrl).toString();
+      const style = doc.createElement("style");
+      style.setAttribute("data-vda-inlined-stylesheet", href);
+      style.textContent = await inlineCssUrls(css, cssBaseUrl);
+      link.replaceWith(style);
+    }),
+  );
+
+  await Promise.all(
+    Array.from(doc.querySelectorAll<HTMLStyleElement>("style")).map(
+      async (style) => {
+        if (!style.textContent?.includes("url(") && !style.textContent?.includes("@import")) return;
+        style.textContent = await inlineCssUrls(style.textContent, baseUrl);
+      },
+    ),
+  );
+
+  if ("fonts" in doc) {
+    await (doc as Document & { fonts: FontFaceSet }).fonts.ready.catch(
+      () => undefined,
+    );
+  }
 
   await Promise.all(
     Array.from(doc.images).map(async (img) => {
@@ -267,7 +478,18 @@ async function inlineCaptureAssets(doc: Document) {
     }),
   );
 
-  const cssUrlPattern = /url\((['"]?)(.*?)\1\)/g;
+  await Promise.all(
+    Array.from(doc.querySelectorAll("svg use")).map(async (use) => {
+      const href = use.getAttribute("href") || use.getAttribute("xlink:href");
+      if (!href || isInlineOrLocalAsset(href)) return;
+      const [assetUrl, fragment = ""] = href.split("#");
+      const dataUrl = await fetchAssetDataUrl(assetUrl, baseUrl);
+      const nextHref = fragment ? `${dataUrl}#${fragment}` : dataUrl;
+      use.setAttribute("href", nextHref);
+      use.setAttribute("xlink:href", nextHref);
+    }),
+  );
+
   await Promise.all(
     Array.from(doc.querySelectorAll<HTMLElement>("*")).map(async (el) => {
       const computed = doc.defaultView?.getComputedStyle(el);
@@ -394,7 +616,7 @@ function cloneWithComputedStyles(doc: Document) {
 async function captureMockupScreenshot(
   html: string,
   device: Device,
-): Promise<{ dataUrl: string; width: number; height: number } | null> {
+): Promise<MockupCapture | null> {
   if (typeof window === "undefined") return null;
 
   const { width, height } = DEVICE_SIZE[device];
@@ -438,6 +660,7 @@ async function captureMockupScreenshot(
     doc.documentElement.style.overflow = "hidden";
     if (doc.body) doc.body.style.overflow = "hidden";
     await new Promise((resolve) => window.setTimeout(resolve, 100));
+    const sections = extractMockupCaptureSections(doc, fullHeight);
 
     const clonedRoot = cloneWithComputedStyles(doc);
     const serialized = new XMLSerializer().serializeToString(clonedRoot);
@@ -457,7 +680,8 @@ async function captureMockupScreenshot(
       canvas.width = width;
       canvas.height = fullHeight;
       const ctx = canvas.getContext("2d");
-      if (!ctx) return { dataUrl: svgDataUrl, width, height: fullHeight };
+      if (!ctx)
+        return { dataUrl: svgDataUrl, width, height: fullHeight, sections };
       ctx.fillStyle = "#ffffff";
       ctx.fillRect(0, 0, width, fullHeight);
       ctx.drawImage(image, 0, 0, width, fullHeight);
@@ -465,9 +689,10 @@ async function captureMockupScreenshot(
         dataUrl: canvas.toDataURL("image/png"),
         width,
         height: fullHeight,
+        sections,
       };
     } catch {
-      return { dataUrl: svgDataUrl, width, height: fullHeight };
+      return { dataUrl: svgDataUrl, width, height: fullHeight, sections };
     }
   } finally {
     iframe.remove();
@@ -513,6 +738,16 @@ function injectHeightReporter(html: string, artboardId: string): string {
   }
   if (document.documentElement) document.documentElement.style.overflow = 'hidden';
   if (document.body) document.body.style.overflow = 'hidden';
+  document.addEventListener('contextmenu', function(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    window.parent.postMessage({
+      type: 'vda-artboard-context-menu',
+      artboardId: '${artboardId}',
+      clientX: e.clientX,
+      clientY: e.clientY
+    }, '*');
+  }, { capture: true });
   window.addEventListener('load', measure);
   window.addEventListener('resize', measure);
   if (typeof ResizeObserver !== 'undefined') {
@@ -538,6 +773,18 @@ type ContentPart =
 
 const BLOCK_RULES = [
   {
+    complete: /\[CREATE_NOTE:[\s\S]*?\]/,
+    partial: /\[CREATE_NOTE:[\s\S]*$/,
+    doneLabel: "노트 생성됨",
+    pendingLabel: "노트 작성 중...",
+  },
+  {
+    complete: /\[UPDATE_NOTE:[\s\S]*?\]/,
+    partial: /\[UPDATE_NOTE:[\s\S]*$/,
+    doneLabel: "노트 수정됨",
+    pendingLabel: "노트 수정 중...",
+  },
+  {
     complete: /\[GENERATE_MOCKUP:[^\]]+\]/,
     partial: /\[GENERATE_MOCKUP:[\s\S]*$/,
     doneLabel: "새 목업 생성 요청",
@@ -552,8 +799,8 @@ const BLOCK_RULES = [
   {
     complete: /```presentation\s*\n[\s\S]*?\n?\s*```/,
     partial: /```presentation[\s\S]*$/,
-    doneLabel: "피치덱 프롬프트 준비됨",
-    pendingLabel: "피치덱 프롬프트 작성 중...",
+    doneLabel: "프레젠테이션 프롬프트 준비됨",
+    pendingLabel: "프레젠테이션 프롬프트 작성 중...",
   },
   {
     complete: /\[FETCH_REFERENCES(?::[^\]]+)?\]/,
@@ -620,6 +867,44 @@ function processMessageContent(content: string): ContentPart[] {
   }
 
   return parts;
+}
+
+function splitPendingMockupCompletionText(content: string) {
+  const match = content.match(/\[(?:GENERATE|EDIT)_MOCKUP:\s*[\s\S]*?\]/);
+  if (!match || match.index === undefined) {
+    return { visibleText: content, completionText: "" };
+  }
+
+  const blockEnd = match.index + match[0].length;
+  const completionText = content.slice(blockEnd).trim();
+  if (!completionText) return { visibleText: content, completionText: "" };
+
+  return {
+    visibleText: content.slice(0, blockEnd).trimEnd(),
+    completionText,
+  };
+}
+
+function normalizeActionBlockAliases(content: string) {
+  return content
+    .replace(/\[(?:목업\s*)?생성\s*요청\s*:\s*([\s\S]*?)\]/g, "[GENERATE_MOCKUP: $1]")
+    .replace(/\[목업\s*생성\s*:\s*([\s\S]*?)\]/g, "[GENERATE_MOCKUP: $1]")
+    .replace(/\[(?:목업\s*)?수정\s*요청\s*:\s*([\s\S]*?)\]/g, "[EDIT_MOCKUP: $1]")
+    .replace(/\[목업\s*수정\s*:\s*([\s\S]*?)\]/g, "[EDIT_MOCKUP: $1]")
+    .replace(/\[레퍼런스\s*검색\s*:\s*([\s\S]*?)\]/g, "[FETCH_REFERENCES: $1]");
+}
+
+function cleanMessageContentForModel(content: string) {
+  return content
+    .replace(/\[CREATE_NOTE:[\s\S]*?\]/g, "[노트 생성]")
+    .replace(/\[UPDATE_NOTE:[\s\S]*?\]/g, "[노트 수정]")
+    .replace(/\[GENERATE_MOCKUP:[\s\S]*?\]/g, "이전 액션: mockup generation requested.")
+    .replace(/\[EDIT_MOCKUP:[\s\S]*?\]/g, "이전 액션: mockup edit requested.")
+    .replace(/```presentation\s*\n[\s\S]*?\n?\s*```/g, "이전 액션: presentation requested.")
+    .replace(/\[FETCH_REFERENCES(?::[^\]]+)?\]/g, "이전 액션: reference search requested.")
+    .replace(/\[WEB_SEARCHED\]/g, "이전 액션: web search completed.")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
 }
 
 function CodeChip({
@@ -746,14 +1031,23 @@ function buildMockupPrompt(basePrompt: string, idea?: Idea | null) {
   return [
     basePrompt,
     "",
-    "Use the following active idea as the authoritative product brief and visual style guide. Preserve concrete requirements, visual tokens, typography, layout, components, and do/don't constraints instead of summarizing them away.",
-    `Idea title: ${idea.title}`,
-    `Idea content:\n${idea.description.slice(0, 12000)}`,
+    "Use the following active note as the authoritative product brief and visual style guide. Preserve concrete requirements, visual tokens, typography, layout, components, and do/don't constraints instead of summarizing them away.",
+    `Note title: ${idea.title}`,
+    `Note content:\n${idea.description.slice(0, 12000)}`,
   ].join("\n");
 }
 
+function nextDraftTitle(ideas: Idea[]) {
+  const usedNumbers = ideas
+    .map((idea) => idea.title.match(/^시안\s*(\d+)$/)?.[1])
+    .filter(Boolean)
+    .map(Number);
+  const maxNumber = usedNumbers.length > 0 ? Math.max(...usedNumbers) : ideas.length;
+  return `시안 ${maxNumber + 1}`;
+}
+
 function isExplicitNewMockupRequest(text: string) {
-  return /새(로운|로)?\s*(목업|디자인|버전|시안|화면|캔버스)|처음부터|다시\s*(만들|생성)|완전(히)?\s*(새|다른)|another\s+(mockup|version|design)|new\s+(mockup|version|design)|fresh\s+(mockup|canvas|design)/i.test(
+  return /아예\s*(새|새로운|다른)|새(로운|로)?\s*(목업|디자인|버전|시안|화면|캔버스|레이아웃|구조|컨셉|콘셉트)|새\s*레이아웃|다른\s*(목업|디자인|버전|시안|화면|캔버스|레이아웃|구조|컨셉|콘셉트)|처음부터|다시\s*(만들|생성)|완전(히)?\s*(새|다른)|another\s+(mockup|version|design|layout|concept)|new\s+(mockup|version|design|layout|concept)|fresh\s+(mockup|canvas|design|layout|concept)/i.test(
     text,
   );
 }
@@ -832,11 +1126,18 @@ export default function MainScreenPage() {
   const [viewAsName, setViewAsName] = useState<string | null>(null);
   const [stitchProjectId, setStitchProjectId] = useState<string>("");
   const [isGeneratingMockup, setIsGeneratingMockup] = useState(false);
+  const [mockupOperation, setMockupOperation] = useState<
+    "generate" | "edit" | null
+  >(null);
   const [generatingMockupIdeaId, setGeneratingMockupIdeaId] = useState<
     string | null
   >(null);
-  const [ideaEditMode, setIdeaEditMode] = useState(false);
   const [isMockupExpanded, setIsMockupExpanded] = useState(false);
+  const [designContextMenu, setDesignContextMenu] = useState<{
+    artboardId: string;
+    x: number;
+    y: number;
+  } | null>(null);
 
   const isReadOnly = !!(viewAs && isAdmin);
 
@@ -867,6 +1168,8 @@ export default function MainScreenPage() {
   const selectedOptionIdRef = useRef<string | null>(null);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
+  const stitchAbortControllerRef = useRef<AbortController | null>(null);
+  const stitchCancelRequestedRef = useRef(false);
 
   const [canvasOffset, setCanvasOffset] = useState({ x: 40, y: 40 });
   const [canvasScale, setCanvasScale] = useState(0.5);
@@ -895,6 +1198,19 @@ export default function MainScreenPage() {
   useEffect(() => {
     selectedOptionIdRef.current = selectedOptionId;
   }, [selectedOptionId]);
+
+  useEffect(() => {
+    if (!designContextMenu) return;
+    const closeMenu = () => setDesignContextMenu(null);
+    window.addEventListener("click", closeMenu);
+    window.addEventListener("keydown", closeMenu);
+    window.addEventListener("scroll", closeMenu, true);
+    return () => {
+      window.removeEventListener("click", closeMenu);
+      window.removeEventListener("keydown", closeMenu);
+      window.removeEventListener("scroll", closeMenu, true);
+    };
+  }, [designContextMenu]);
 
   const applyCanvasViewDirectly = useCallback(
     (scale: number, offset: { x: number; y: number }) => {
@@ -1282,6 +1598,28 @@ export default function MainScreenPage() {
       if (e.data?.type === "vda-canvas-gesture-start") {
         gestureStartScaleRef.current = canvasScaleRef.current;
       }
+      if (e.data?.type === "vda-artboard-context-menu") {
+        if (isReadOnly) return;
+        const canvas = canvasRef.current;
+        if (!canvas) return;
+        const artboard = artboardsRef.current.find(
+          (a) => a.id === e.data.artboardId,
+        );
+        if (!artboard) return;
+
+        const rect = canvas.getBoundingClientRect();
+        const scale = canvasScaleRef.current;
+        const x =
+          rect.left +
+          canvasOffsetRef.current.x +
+          (artboard.x + (e.data.clientX ?? 0)) * scale;
+        const y =
+          rect.top +
+          canvasOffsetRef.current.y +
+          (artboard.y + (e.data.clientY ?? 0)) * scale;
+        setActiveArtboardId(artboard.id);
+        setDesignContextMenu({ artboardId: artboard.id, x, y });
+      }
       if (
         e.data?.type === "vda-canvas-wheel" ||
         e.data?.type === "vda-canvas-gesture-change"
@@ -1330,7 +1668,7 @@ export default function MainScreenPage() {
     };
     window.addEventListener("message", handler);
     return () => window.removeEventListener("message", handler);
-  }, [applyCanvasViewDirectly, commitCanvasViewSoon]);
+  }, [applyCanvasViewDirectly, commitCanvasViewSoon, isReadOnly]);
 
   // Trackpad and mouse zoom toward cursor
   useEffect(() => {
@@ -1471,29 +1809,12 @@ export default function MainScreenPage() {
     if (artboards.length === 1) setTimeout(fitToCanvas, 0);
   }, [artboards.length, fitToCanvas]);
 
-  const addIdea = () => {
-    const newIdea: Idea = {
-      id: crypto.randomUUID(),
-      title: "새 아이디어",
-      description: "",
-    };
-    setIdeas((prev) => [...prev, newIdea]);
-    setActiveIdeaId(newIdea.id);
-    setActiveArtboardId(null);
-    setCurrentSlideIndex(0);
-    setActivePresentationId(null);
-    setIsIdeaExpanded(false);
-    setActiveIdeaTab("idea");
-    setIdeaEditMode(true);
-  };
-
   const switchIdea = (ideaId: string) => {
     setActiveIdeaId(ideaId);
     setCurrentSlideIndex(0);
     setActivePresentationId(null);
     setIsIdeaExpanded(false);
     setActiveIdeaTab("idea");
-    setIdeaEditMode(false);
     const ideaBoards = artboardsRef.current.filter((a) => a.ideaId === ideaId);
     setActiveArtboardId(ideaBoards.at(-1)?.id ?? null);
     setTimeout(() => fitToCanvasForIdea(ideaId), 0);
@@ -1503,15 +1824,6 @@ export default function MainScreenPage() {
     setIdeas((prev) =>
       prev.map((i) => (i.id === id ? { ...i, ...changes } : i)),
     );
-  };
-
-  const deleteIdea = (id: string) => {
-    setIdeas((prev) => {
-      const next = prev.filter((i) => i.id !== id);
-      if (activeIdeaId === id)
-        setActiveIdeaId(next[next.length - 1]?.id ?? null);
-      return next;
-    });
   };
 
   const handleCanvasMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
@@ -1551,6 +1863,11 @@ export default function MainScreenPage() {
 
   const cancelMessage = useCallback(() => {
     abortControllerRef.current?.abort();
+  }, []);
+
+  const cancelMockupGeneration = useCallback(() => {
+    stitchCancelRequestedRef.current = true;
+    stitchAbortControllerRef.current?.abort();
   }, []);
 
   const sendMessage = useCallback(async () => {
@@ -1607,10 +1924,13 @@ export default function MainScreenPage() {
         headers: { "Content-Type": "application/json" },
         signal: controller.signal,
         body: JSON.stringify({
-          messages: [...messages, userMsg].map(({ role, content }) => ({
-            role,
-            content,
-          })),
+          messages: [...messages, userMsg]
+            .slice(-12)
+            .map(({ role, content }) => ({
+              role,
+              content: cleanMessageContentForModel(content),
+            }))
+            .filter((message) => message.content),
           mockupHtml: activeBoard?.html || undefined,
           selectedElement: selectedElement || undefined,
           citedReferences:
@@ -1648,20 +1968,27 @@ export default function MainScreenPage() {
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
       let fullText = "";
+      let deferredMockupCompletionText = "";
 
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
         const chunk = decoder.decode(value, { stream: true });
         fullText += chunk;
+        const normalizedText = normalizeActionBlockAliases(fullText);
+        const displayText = splitPendingMockupCompletionText(normalizedText);
+        deferredMockupCompletionText = displayText.completionText;
         setMessages((prev) =>
           prev.map((m) =>
-            m.id === assistantId ? { ...m, content: fullText } : m,
+            m.id === assistantId
+              ? { ...m, content: displayText.visibleText }
+              : m,
           ),
         );
       }
 
       fullText = normalizePresentationStatusText(fullText);
+      fullText = normalizeActionBlockAliases(fullText);
 
       // Convert web search citation domains (domain.com) to clickable markdown links
       fullText = fullText.replace(
@@ -1671,13 +1998,51 @@ export default function MainScreenPage() {
             ? `([${domain}](https://${domain}))`
             : match,
       );
+      const finalDisplayText = splitPendingMockupCompletionText(fullText);
+      deferredMockupCompletionText = finalDisplayText.completionText;
       setMessages((prev) =>
         prev.map((m) =>
-          m.id === assistantId ? { ...m, content: fullText } : m,
+          m.id === assistantId
+            ? { ...m, content: finalDisplayText.visibleText }
+            : m,
         ),
       );
 
       // Parse special blocks from completed response
+      let createdNote: Idea | null = null;
+      const createNoteBlock = parseCreateNoteBlock(fullText);
+      if (createNoteBlock) {
+        createdNote = {
+          id: crypto.randomUUID(),
+          title: createNoteBlock.title?.trim() || nextDraftTitle(ideas),
+          description: createNoteBlock.description?.trim() || "",
+        };
+        setIdeas((prev) => [...prev, createdNote as Idea]);
+        setActiveIdeaId(createdNote.id);
+        setActiveArtboardId(null);
+        setCurrentSlideIndex(0);
+        setActivePresentationId(null);
+        setIsIdeaExpanded(false);
+        setActiveIdeaTab("idea");
+      }
+
+      const updateNoteBlock = parseUpdateNoteBlock(fullText);
+      if (updateNoteBlock && (createdNote?.id ?? activeIdeaId)) {
+        const targetNoteId = createdNote?.id ?? activeIdeaId;
+        setIdeas((prev) =>
+          prev.map((idea) =>
+            idea.id === targetNoteId
+              ? {
+                  ...idea,
+                  title: updateNoteBlock.title?.trim() || idea.title,
+                  description:
+                    updateNoteBlock.description?.trim() ?? idea.description,
+                }
+              : idea,
+          ),
+        );
+      }
+
       const fetchRefMatch = fullText.match(
         /\[FETCH_REFERENCES(?::\s*(.*?))?\]/,
       );
@@ -1693,20 +2058,29 @@ export default function MainScreenPage() {
 
       if (generateMatch || editMatch) {
         const prompt = (generateMatch ?? editMatch)![1].trim();
+        const userRequestedNewMockup = isExplicitNewMockupRequest(text);
+        const effectiveIdeas = createdNote ? [...ideas, createdNote] : ideas;
+        const effectiveActiveIdeaId = createdNote?.id ?? activeIdeaId;
         const hasExistingMockup =
-          !!activeBoard?.stitchScreenId || currentIdeaBoards.length > 0;
+          !createdNote &&
+          (!!activeBoard?.stitchScreenId || currentIdeaBoards.length > 0);
         const forceEditExisting =
           !!generateMatch &&
           hasExistingMockup &&
-          !isExplicitNewMockupRequest(text);
-        const isNew = !!generateMatch && !forceEditExisting;
-        const activeIdea = ideas.find((i) => i.id === activeIdeaId) ?? null;
-        const mockupIdeaId = activeIdeaId;
+          !userRequestedNewMockup;
+        const isNew =
+          (!!generateMatch && !forceEditExisting) ||
+          (!!editMatch && userRequestedNewMockup);
+        const activeIdea =
+          createdNote ??
+          ideas.find((i) => i.id === effectiveActiveIdeaId) ??
+          null;
+        const mockupIdeaId = effectiveActiveIdeaId;
         const stitchPrompt = isNew
           ? buildMockupPrompt(prompt, activeIdea)
           : buildEditMockupPrompt(prompt);
 
-        if (isNew && ideas.length === 0) {
+        if (isNew && effectiveIdeas.length === 0) {
           setMessages((prev) =>
             prev.map((m) =>
               m.id === assistantId
@@ -1714,7 +2088,7 @@ export default function MainScreenPage() {
                     ...m,
                     content:
                       m.content +
-                      "\n\n⚠️ 아이디어를 먼저 저장해야 목업을 생성할 수 있습니다. 아이디어를 정리한 후 다시 시도해 주세요.",
+                      "\n\n⚠️ 노트를 먼저 저장해야 목업을 생성할 수 있습니다. 노트를 정리한 후 다시 시도해 주세요.",
                   }
                 : m,
             ),
@@ -1722,9 +2096,12 @@ export default function MainScreenPage() {
           return;
         }
 
+        const effectiveIdeaBoards = createdNote
+          ? []
+          : artboards.filter((a) => a.ideaId === effectiveActiveIdeaId);
         const targetArtboard = !isNew
-          ? (currentIdeaBoards.find((a) => a.id === activeArtboardId) ??
-            currentIdeaBoards.at(-1) ??
+          ? (effectiveIdeaBoards.find((a) => a.id === activeArtboardId) ??
+            effectiveIdeaBoards.at(-1) ??
             null)
           : null;
 
@@ -1745,9 +2122,12 @@ export default function MainScreenPage() {
         }
 
         setIsGeneratingMockup(true);
+        setMockupOperation(isNew ? "generate" : "edit");
         setGeneratingMockupIdeaId(mockupIdeaId);
         try {
           const stitchController = new AbortController();
+          stitchAbortControllerRef.current = stitchController;
+          stitchCancelRequestedRef.current = false;
           const stitchTimeout = setTimeout(
             () => stitchController.abort(),
             115_000,
@@ -1791,7 +2171,7 @@ export default function MainScreenPage() {
               const newExtra = extraScreenIds.filter(
                 (sid: string) => !existingScreenIds.has(sid),
               );
-              const ideaId = activeIdeaId ?? "";
+              const ideaId = effectiveActiveIdeaId ?? "";
               const ideaBoards = prev.filter((a) => a.ideaId === ideaId);
               const last = ideaBoards[ideaBoards.length - 1];
               let offsetX = last
@@ -1827,7 +2207,7 @@ export default function MainScreenPage() {
               return [...prev, primaryBoard, ...extraBoards];
             });
             setActiveArtboardId(primaryId);
-            setTimeout(() => fitToCanvasForIdea(activeIdeaId ?? ""), 0);
+            setTimeout(() => fitToCanvasForIdea(effectiveActiveIdeaId ?? ""), 0);
 
             // Lazy-load HTML for extra screens
             extraScreenIds.forEach((sid: string) => {
@@ -1857,7 +2237,20 @@ export default function MainScreenPage() {
           }
           setActiveIdeaTab("mockup");
           setSelectedElement(null);
+          if (deferredMockupCompletionText) {
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.id === assistantId
+                  ? {
+                      ...m,
+                      content: `${m.content}\n\n${deferredMockupCompletionText}`,
+                    }
+                  : m,
+              ),
+            );
+          }
         } catch (err) {
+          const wasCanceled = stitchCancelRequestedRef.current;
           const errMsg =
             err instanceof Error ? err.message : "Stitch 생성 실패";
           setMessages((prev) =>
@@ -1865,13 +2258,20 @@ export default function MainScreenPage() {
               m.id === assistantId
                 ? {
                     ...m,
-                    content: m.content + `\n\n⚠️ 목업 생성 실패: ${errMsg}`,
+                    content:
+                      m.content +
+                      (wasCanceled
+                        ? "\n\n목업 작업을 취소했습니다."
+                        : `\n\n⚠️ 목업 생성 실패: ${errMsg}`),
                   }
                 : m,
             ),
           );
         } finally {
+          stitchAbortControllerRef.current = null;
+          stitchCancelRequestedRef.current = false;
           setIsGeneratingMockup(false);
+          setMockupOperation(null);
           setGeneratingMockupIdeaId(null);
         }
       }
@@ -1894,7 +2294,7 @@ export default function MainScreenPage() {
                     ...m,
                     content:
                       m.content +
-                      "\n\n⚠️ 목업이 먼저 만들어져야 피치덱을 생성할 수 있습니다.",
+                      "\n\n⚠️ 목업이 먼저 만들어져야 프레젠테이션을 생성할 수 있습니다.",
                   }
                 : m,
             ),
@@ -1930,6 +2330,7 @@ export default function MainScreenPage() {
                 mockupScreenshot: mockupScreenshot?.dataUrl || undefined,
                 mockupScreenshotWidth: mockupScreenshot?.width,
                 mockupScreenshotHeight: mockupScreenshot?.height,
+                mockupSections: mockupScreenshot?.sections,
               }),
             });
             const presData = await presRes.json();
@@ -2062,7 +2463,7 @@ export default function MainScreenPage() {
                   ? {
                       ...m,
                       content:
-                        m.content + `\n\n⚠️ 피치덱 이미지 생성 실패: ${msg}`,
+                        m.content + `\n\n⚠️ 프레젠테이션 이미지 생성 실패: ${msg}`,
                     }
                   : m,
               ),
@@ -2182,6 +2583,32 @@ export default function MainScreenPage() {
     ideaArtboards.find((a) => a.id === activeArtboardId) ??
     ideaArtboards[ideaArtboards.length - 1] ??
     null;
+  const deleteDesign = (artboardId: string) => {
+    if (isReadOnly) return;
+    const target = artboards.find((artboard) => artboard.id === artboardId);
+    if (!target) return;
+    if (!confirm("이 디자인을 삭제할까요?")) return;
+    setDesignContextMenu(null);
+
+    setArtboards((prev) => {
+      const next = prev.filter((artboard) => artboard.id !== artboardId);
+      if (activeArtboardId === artboardId) {
+        const nextActive =
+          next.filter((artboard) => artboard.ideaId === target.ideaId).at(-1) ??
+          null;
+        setActiveArtboardId(nextActive?.id ?? null);
+      }
+      return next;
+    });
+    setArtboardHeights((prev) => {
+      const next = { ...prev };
+      delete next[artboardId];
+      return next;
+    });
+    setSelectedElement((prev) =>
+      prev?.artboardId === artboardId ? null : prev,
+    );
+  };
   const chooseMissionOption = async (option: MissionOption) => {
     const now = Date.now();
     setSelectedOptionId(option.id);
@@ -2228,13 +2655,32 @@ export default function MainScreenPage() {
       onMouseMove={handleCanvasMouseMove}
       onMouseUp={handleCanvasMouseUp}
       onMouseLeave={handleCanvasMouseUp}
+      onClick={(e) => {
+        if (e.target !== e.currentTarget) return;
+        setActiveArtboardId(null);
+        setSelectedElement(null);
+        setDesignContextMenu(null);
+      }}
     >
       {isGeneratingCurrentIdeaMockup && (
         <div
-          className={`absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-black/60 ${expanded ? "" : "rounded-2xl"}`}
+          className="pointer-events-none absolute left-1/2 top-4 z-20 flex -translate-x-1/2 items-center gap-3 rounded-full border border-white/10 bg-black/75 px-4 py-2 text-white shadow-lg backdrop-blur"
         >
-          <div className="h-8 w-8 animate-spin rounded-full border-2 border-white/30 border-t-white" />
-          <p className="text-sm text-white/80">Stitch로 목업 생성 중...</p>
+          <div className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
+          <p className="text-xs font-medium text-white/85">
+            Stitch로 목업 {mockupOperation === "edit" ? "수정" : "생성"} 중...
+          </p>
+          {!isReadOnly && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                cancelMockupGeneration();
+              }}
+              className="pointer-events-auto rounded-full bg-white px-3 py-1 text-xs font-semibold text-slate-900 transition hover:bg-slate-100"
+            >
+              취소
+            </button>
+          )}
         </div>
       )}
       <div
@@ -2265,6 +2711,9 @@ export default function MainScreenPage() {
                   position: "absolute",
                   left: artboard.x,
                   top: artboard.y - 22,
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 6,
                   color: isActive ? "#a5b4fc" : "#888",
                   fontSize: 11,
                   fontWeight: isActive ? 600 : 400,
@@ -2272,7 +2721,7 @@ export default function MainScreenPage() {
                   userSelect: "none",
                 }}
               >
-                {artboard.label}
+                <span>{artboard.label}</span>
               </div>
               <div
                 style={{
@@ -2290,6 +2739,17 @@ export default function MainScreenPage() {
                   boxShadow: "0 8px 40px rgba(0,0,0,0.5)",
                 }}
                 onClick={() => setActiveArtboardId(artboard.id)}
+                onContextMenu={(e) => {
+                  if (isReadOnly) return;
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setActiveArtboardId(artboard.id);
+                  setDesignContextMenu({
+                    artboardId: artboard.id,
+                    x: e.clientX,
+                    y: e.clientY,
+                  });
+                }}
               >
                 <iframe
                   srcDoc={artboardHtml}
@@ -2313,8 +2773,29 @@ export default function MainScreenPage() {
     </div>
   );
 
+  const contextMenuArtboard = designContextMenu
+    ? artboards.find((artboard) => artboard.id === designContextMenu.artboardId)
+    : null;
+
   return (
     <div className="flex h-screen flex-col bg-[#f5f5f5] text-slate-900">
+      {designContextMenu && contextMenuArtboard && !isReadOnly && (
+        <div
+          className="fixed z-50 min-w-36 overflow-hidden rounded-xl border border-slate-200 bg-white py-1 text-sm shadow-xl"
+          style={{ left: designContextMenu.x, top: designContextMenu.y }}
+          onClick={(e) => e.stopPropagation()}
+          onContextMenu={(e) => e.preventDefault()}
+        >
+          <button
+            type="button"
+            onClick={() => deleteDesign(contextMenuArtboard.id)}
+            className="flex w-full items-center gap-2 px-3 py-2 text-left text-red-500 transition hover:bg-red-50"
+          >
+            <XIcon size={14} />
+            디자인 삭제
+          </button>
+        </div>
+      )}
       {/* Read-only banner */}
       {isReadOnly && (
         <div className="flex items-center justify-between bg-amber-50 border-b border-amber-200 px-6 py-2 text-xs text-amber-700">
@@ -2891,21 +3372,15 @@ export default function MainScreenPage() {
               )}
             </div>
 
-            {/* Idea / Mockup / Presentation */}
+            {/* Note / Mockup / Presentation */}
             <div className="rounded-3xl border border-slate-200 bg-white p-6">
               {ideas.length === 0 ? (
                 <div className="flex flex-col items-center gap-4 rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-8 text-center text-sm text-slate-400">
-                  <p>아이디어를 직접 작성해보세요.</p>
-                  <button
-                    onClick={addIdea}
-                    className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm text-slate-700 hover:bg-slate-50 transition"
-                  >
-                    + 새 아이디어
-                  </button>
+                  <p>에이전트에게 시안을 작성해달라고 요청하세요.</p>
                 </div>
               ) : (
                 <>
-                  {/* Top: idea tabs */}
+                  {/* Top: note tabs */}
                   <div className="flex gap-2 overflow-x-auto pb-4 mb-6 border-b border-slate-100">
                     {ideas.map((idea) => (
                       <button
@@ -2920,19 +3395,13 @@ export default function MainScreenPage() {
                         {idea.title}
                       </button>
                     ))}
-                    <button
-                      onClick={addIdea}
-                      className="shrink-0 rounded-xl border border-dashed border-slate-300 px-4 py-2 text-sm text-slate-400 hover:bg-slate-50 transition"
-                    >
-                      +
-                    </button>
                   </div>
 
                   <div className="flex gap-4">
                     {/* Sub-tab sidebar */}
                     <div className="sticky top-4 flex flex-col space-y-2 self-start text-sm text-slate-600">
                       {[
-                        { id: "idea", label: "Idea", ref: ideaSectionRef },
+                        { id: "idea", label: "Note", ref: ideaSectionRef },
                         {
                           id: "mockup",
                           label: "Mockup",
@@ -2970,7 +3439,7 @@ export default function MainScreenPage() {
 
                     {/* Content — all sections always visible */}
                     <div className="flex-1 min-w-0 space-y-10">
-                      {/* Idea */}
+                      {/* Note */}
                       {(() => {
                         const idea =
                           ideas.find((i) => i.id === activeIdeaId) ?? null;
@@ -2981,53 +3450,10 @@ export default function MainScreenPage() {
                             className="space-y-3 scroll-mt-4"
                           >
                             <div className="flex items-center justify-between">
-                              {ideaEditMode ? (
-                                <input
-                                  className="flex-1 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-base font-semibold text-slate-900 outline-none focus:border-slate-400"
-                                  value={idea.title}
-                                  onChange={(e) =>
-                                    updateIdea(idea.id, {
-                                      title: e.target.value,
-                                    })
-                                  }
-                                />
-                              ) : (
-                                <p className="text-base font-semibold text-slate-900">
-                                  {idea.title}
-                                </p>
-                              )}
-                              <div className="ml-3 flex items-center gap-2">
-                                <button
-                                  onClick={() => setIdeaEditMode((p) => !p)}
-                                  className="rounded border border-slate-200 px-2 py-1 text-xs text-slate-500 hover:bg-slate-50 transition"
-                                >
-                                  {ideaEditMode ? "완료" : "편집"}
-                                </button>
-                                <button
-                                  onClick={() => {
-                                    if (confirm("이 아이디어를 삭제할까요?"))
-                                      deleteIdea(idea.id);
-                                  }}
-                                  className="rounded border border-red-100 px-2 py-1 text-xs text-red-400 hover:bg-red-50 transition"
-                                >
-                                  삭제
-                                </button>
-                              </div>
+                              <p className="text-base font-semibold text-slate-900">
+                                {idea.title}
+                              </p>
                             </div>
-                            {ideaEditMode ? (
-                              <textarea
-                                className="w-full min-h-64 resize-y rounded-xl border border-slate-200 bg-white px-4 py-3 font-mono text-sm text-slate-700 outline-none focus:border-slate-400"
-                                placeholder={
-                                  "마크다운으로 아이디어를 작성하세요.\n\n## 목표\n- ...\n\n## 핵심 기능\n- ..."
-                                }
-                                value={idea.description}
-                                onChange={(e) =>
-                                  updateIdea(idea.id, {
-                                    description: e.target.value,
-                                  })
-                                }
-                              />
-                            ) : (
                               <div className="relative rounded-xl border border-slate-100 bg-slate-50">
                                 <div
                                   className={`px-5 pt-4 pb-14 text-sm text-slate-700 space-y-2 ${isIdeaExpanded ? "max-h-[60vh] overflow-y-auto" : "max-h-56 overflow-hidden"}`}
@@ -3109,7 +3535,7 @@ export default function MainScreenPage() {
                                     </ReactMarkdown>
                                   ) : (
                                     <p className="text-slate-400">
-                                      편집 버튼을 눌러 내용을 작성하세요.
+                                      에이전트가 아직 노트 내용을 작성하지 않았습니다.
                                     </p>
                                   )}
                                 </div>
@@ -3130,7 +3556,6 @@ export default function MainScreenPage() {
                                   </button>
                                 </div>
                               </div>
-                            )}
                           </section>
                         );
                       })()}
@@ -3240,8 +3665,18 @@ export default function MainScreenPage() {
                               <>
                                 <div className="h-7 w-7 animate-spin rounded-full border-2 border-slate-300 border-t-slate-600" />
                                 <p className="text-slate-500">
-                                  Stitch로 목업 생성 중...
+                                  Stitch로 목업{" "}
+                                  {mockupOperation === "edit" ? "수정" : "생성"}{" "}
+                                  중...
                                 </p>
+                                {!isReadOnly && (
+                                  <button
+                                    onClick={cancelMockupGeneration}
+                                    className="rounded-full bg-slate-900 px-4 py-2 text-xs font-semibold text-white transition hover:bg-slate-700"
+                                  >
+                                    취소
+                                  </button>
+                                )}
                               </>
                             ) : (
                               <p>
@@ -3304,7 +3739,7 @@ export default function MainScreenPage() {
                               <div className="flex h-64 flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-slate-300 bg-white/70 text-sm text-slate-400">
                                 <div className="h-7 w-7 animate-spin rounded-full border-2 border-slate-300 border-t-slate-600" />
                                 <p className="text-slate-500">
-                                  피치덱 이미지 생성 중...
+                                  프레젠테이션 이미지 생성 중...
                                 </p>
                               </div>
                             ) : presentations.length > 0 ? (
@@ -3400,8 +3835,8 @@ export default function MainScreenPage() {
                             ) : (
                               <div className="flex h-64 items-center justify-center rounded-2xl border border-dashed border-slate-300 bg-white/70 text-sm text-slate-400">
                                 {ideaArtboards.length === 0
-                                  ? "목업을 먼저 생성하면 피치덱을 만들 수 있습니다."
-                                  : '에이전트에게 "피치덱 만들어줘"라고 말하면 여기에 표시됩니다.'}
+                                  ? "목업을 먼저 생성하면 프레젠테이션을 만들 수 있습니다."
+                                  : '에이전트에게 "프레젠테이션 만들어줘"라고 말하면 여기에 표시됩니다.'}
                               </div>
                             )}
                           </section>
@@ -3738,12 +4173,15 @@ export default function MainScreenPage() {
                     className="max-h-24 flex-1 resize-none bg-transparent text-sm text-slate-700 outline-none placeholder:text-slate-400"
                   />
                   {isGeneratingMockup ? (
-                    <span className="flex items-center gap-1.5 rounded-full bg-slate-100 px-4 py-2 text-xs text-slate-500">
-                      <span className="h-2 w-2 animate-spin rounded-full border border-slate-400 border-t-transparent" />
+                    <button
+                      onClick={cancelMockupGeneration}
+                      className="flex items-center gap-1.5 rounded-full bg-red-500 px-4 py-2 text-xs font-semibold text-white transition hover:bg-red-600"
+                    >
+                      <span className="h-2 w-2 animate-spin rounded-full border border-white/60 border-t-transparent" />
                       {generatingMockupIdeaId === activeIdeaId
-                        ? "Stitch 생성 중"
-                        : "다른 아이디어 생성 중"}
-                    </span>
+                        ? `${mockupOperation === "edit" ? "수정" : "생성"} 취소`
+                        : "작업 취소"}
+                    </button>
                   ) : isLoading ? (
                     <button
                       onClick={cancelMessage}
