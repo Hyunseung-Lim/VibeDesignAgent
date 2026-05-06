@@ -6,7 +6,7 @@ import { useEffect, useRef, useState } from "react";
 import { ArrowLeftIcon, ArrowRightIcon, DeviceMobileIcon, MonitorIcon, XIcon, PencilSimpleIcon, UsersThreeIcon, UploadSimpleIcon } from "@phosphor-icons/react";
 import { ref as storageRef, uploadBytes, getDownloadURL } from "firebase/storage";
 import { storage } from "@/lib/firebase";
-import { onAuthStateChanged } from "firebase/auth";
+import { getIdToken, onAuthStateChanged } from "firebase/auth";
 import {
   collection,
   onSnapshot,
@@ -29,6 +29,13 @@ type Participant = {
   email: string | null;
   photoURL: string | null;
   updatedAt: number;
+  onboardingStatus?: "completed" | "required" | "unknown";
+  isAdmin?: boolean;
+};
+
+type AdminUser = Participant & {
+  missionIds: string[];
+  sessionMissionIds: string[];
 };
 
 type MissionOption = {
@@ -102,6 +109,8 @@ export default function AdminPage() {
   const [editFields, setEditFields] = useState<Partial<Mission>>({});
   const [participantsMissionId, setParticipantsMissionId] = useState<string | null>(null);
   const [participants, setParticipants] = useState<Participant[]>([]);
+  const [adminUsers, setAdminUsers] = useState<AdminUser[]>([]);
+  const [isLoadingUsers, setIsLoadingUsers] = useState(false);
   const [editUploadingIds, setEditUploadingIds] = useState<Set<string>>(new Set());
   const editImageInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
 
@@ -162,10 +171,228 @@ export default function AdminPage() {
     const snap = await getDocs(
       collection(db, "missions", missionId, "participants"),
     );
-    setParticipants(
-      snap.docs.map((d) => ({ id: d.id, ...d.data() }) as Participant),
+    const participantRows = snap.docs.map((d) => {
+      const participant = { id: d.id, ...d.data() } as Participant;
+      participant.isAdmin = ADMIN_EMAILS.includes(participant.email ?? "");
+      return participant;
+    });
+    const statuses = await fetchOnboardingStatuses(
+      participantRows.map((participant) => participant.id),
     );
+    participantRows.forEach((participant) => {
+      participant.onboardingStatus =
+        statuses[participant.id]?.onboardingStatus ?? "unknown";
+    });
+    setParticipants(participantRows);
   };
+
+  const deleteUserData = async (participant: Participant) => {
+    if (participant.isAdmin || ADMIN_EMAILS.includes(participant.email ?? "")) {
+      alert("관리자 계정은 여기서 삭제하지 않습니다.");
+      return;
+    }
+
+    const label = participant.displayName ?? participant.email ?? participant.id;
+    if (
+      !confirm(
+        `${label} 사용자의 세션, 참여 기록, 온보딩 상태를 삭제할까요? 이 작업은 되돌릴 수 없습니다.`,
+      )
+    )
+      return;
+
+    try {
+      const currentUser = firebaseAuth.currentUser;
+      if (!currentUser) {
+        alert("관리자 인증 정보가 없습니다. 다시 로그인해주세요.");
+        return;
+      }
+      const token = await getIdToken(currentUser, true);
+      const res = await fetch(
+        `/api/admin/users/${encodeURIComponent(participant.id)}`,
+        {
+          method: "DELETE",
+          headers: { Authorization: `Bearer ${token}` },
+        },
+      );
+      if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        alert(data?.error ?? "유저 데이터 삭제에 실패했습니다.");
+        return;
+      }
+    } catch (error) {
+      console.error("[admin] user delete failed", error);
+      alert("유저 데이터 삭제 중 오류가 발생했습니다.");
+      return;
+    }
+
+    setParticipants((prev) => prev.filter((p) => p.id !== participant.id));
+    setAdminUsers((prev) => prev.filter((p) => p.id !== participant.id));
+  };
+
+  const onboardingBadge = (status?: Participant["onboardingStatus"]) => {
+    if (status === "completed") {
+      return { label: "온보딩 완료", style: "bg-emerald-50 text-emerald-700" };
+    }
+    if (status === "required") {
+      return { label: "온보딩 필요", style: "bg-amber-50 text-amber-700" };
+    }
+    return { label: "온보딩 확인 불가", style: "bg-slate-100 text-slate-500" };
+  };
+
+  const missionTitle = (missionId: string) =>
+    missions.find((mission) => mission.id === missionId)?.title ?? missionId;
+
+  const getAdminToken = async () => {
+    const currentUser = firebaseAuth.currentUser;
+    if (!currentUser) return null;
+    return getIdToken(currentUser);
+  };
+
+  const fetchOnboardingStatuses = async (uids: string[]) => {
+    const token = await getAdminToken();
+    if (!token || uids.length === 0) {
+      return {} as Record<string, { onboardingStatus: Participant["onboardingStatus"] }>;
+    }
+    const res = await fetch("/api/admin/users/status", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ uids }),
+    });
+    if (!res.ok) {
+      return {} as Record<string, { onboardingStatus: Participant["onboardingStatus"] }>;
+    }
+    const data = (await res.json()) as {
+      statuses?: Record<
+        string,
+        { onboardingStatus: Participant["onboardingStatus"] }
+      >;
+    };
+    return data.statuses ?? {};
+  };
+
+  const fetchRegisteredUsers = async () => {
+    const token = await getAdminToken();
+    if (!token) return [] as AdminUser[];
+    const res = await fetch("/api/admin/users", {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) return [] as AdminUser[];
+    const data = (await res.json()) as { users?: AdminUser[] };
+    return data.users ?? [];
+  };
+
+  const loadUsers = async () => {
+    if (!ready) return;
+    setIsLoadingUsers(true);
+    const users = new Map<string, AdminUser>();
+    const upsertUser = (id: string, changes: Partial<AdminUser> = {}) => {
+      const prev = users.get(id);
+      users.set(id, {
+        id,
+        displayName: changes.displayName ?? prev?.displayName ?? null,
+        email: changes.email ?? prev?.email ?? null,
+        photoURL: changes.photoURL ?? prev?.photoURL ?? null,
+        updatedAt: changes.updatedAt ?? prev?.updatedAt ?? 0,
+        onboardingStatus:
+          changes.onboardingStatus ?? prev?.onboardingStatus ?? "unknown",
+        isAdmin:
+          changes.isAdmin ??
+          prev?.isAdmin ??
+          ADMIN_EMAILS.includes(changes.email ?? prev?.email ?? ""),
+        missionIds: changes.missionIds ?? prev?.missionIds ?? [],
+        sessionMissionIds:
+          changes.sessionMissionIds ?? prev?.sessionMissionIds ?? [],
+      });
+    };
+
+    const registeredUsers = await fetchRegisteredUsers();
+    registeredUsers.forEach((user) => {
+      upsertUser(user.id, {
+        displayName: user.displayName,
+        email: user.email,
+        photoURL: user.photoURL,
+        updatedAt: user.updatedAt,
+        onboardingStatus: user.onboardingStatus,
+        isAdmin: user.isAdmin,
+      });
+    });
+
+    await Promise.all(
+      missions.map(async (mission) => {
+        const snap = await getDocs(
+          collection(db, "missions", mission.id, "participants"),
+        ).catch(() => null);
+        snap?.docs.forEach((participantDoc) => {
+          const data = participantDoc.data() as Partial<Participant>;
+          const existing = users.get(participantDoc.id);
+          upsertUser(participantDoc.id, {
+            displayName: data.displayName ?? existing?.displayName ?? null,
+            email: data.email ?? existing?.email ?? null,
+            photoURL: data.photoURL ?? existing?.photoURL ?? null,
+            updatedAt: data.updatedAt ?? existing?.updatedAt ?? 0,
+            isAdmin: ADMIN_EMAILS.includes(
+              data.email ?? existing?.email ?? "",
+            ),
+            missionIds: Array.from(
+              new Set([...(existing?.missionIds ?? []), mission.id]),
+            ),
+          });
+        });
+      }),
+    );
+
+    const sessionsSnap = await getDocs(collection(db, "sessions")).catch(
+      () => null,
+    );
+    await Promise.all(
+      (sessionsSnap?.docs ?? []).map(async (userDoc) => {
+        const existing = users.get(userDoc.id);
+        const sessionMissionSnap = await getDocs(
+          collection(db, "sessions", userDoc.id, "missions"),
+        ).catch(() => null);
+        const sessionMissionIds =
+          sessionMissionSnap?.docs.map((missionDoc) => missionDoc.id) ?? [];
+        upsertUser(userDoc.id, {
+          missionIds: Array.from(
+            new Set([...(existing?.missionIds ?? []), ...sessionMissionIds]),
+          ),
+          sessionMissionIds: Array.from(
+            new Set([
+              ...(existing?.sessionMissionIds ?? []),
+              ...sessionMissionIds,
+            ]),
+          ),
+        });
+      }),
+    );
+
+    const rawUsers = Array.from(users.values());
+    const statuses = await fetchOnboardingStatuses(rawUsers.map((user) => user.id));
+    const enrichedUsers = rawUsers.map((user) => ({
+      ...user,
+      isAdmin: ADMIN_EMAILS.includes(user.email ?? ""),
+      onboardingStatus:
+        statuses[user.id]?.onboardingStatus ?? user.onboardingStatus,
+    }));
+
+    setAdminUsers(
+      enrichedUsers.sort((a, b) =>
+        (a.displayName ?? a.email ?? a.id).localeCompare(
+          b.displayName ?? b.email ?? b.id,
+        ),
+      ),
+    );
+    setIsLoadingUsers(false);
+  };
+
+  useEffect(() => {
+    if (!ready) return;
+    loadUsers();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ready, missions]);
 
   const closeParticipants = () => {
     setParticipantsMissionId(null);
@@ -223,7 +450,115 @@ export default function AdminPage() {
         </div>
       </div>
 
-      <div className="mx-auto max-w-3xl space-y-4 px-4 py-10 lg:px-10">
+      <div className="mx-auto max-w-5xl space-y-8 px-4 py-10 lg:px-10">
+        <section className="space-y-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 className="text-lg font-semibold text-slate-900">유저 목록</h2>
+              <p className="text-sm text-slate-400">
+                미션 참여 기록과 세션 데이터를 유저별로 모아봅니다.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={loadUsers}
+              disabled={isLoadingUsers}
+              className="rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-600 transition hover:bg-slate-50 disabled:opacity-50"
+            >
+              {isLoadingUsers ? "불러오는 중..." : "새로고침"}
+            </button>
+          </div>
+
+          {adminUsers.length === 0 ? (
+            <div className="flex h-32 items-center justify-center rounded-3xl border border-dashed border-slate-200 bg-white text-sm text-slate-400">
+              {isLoadingUsers ? "유저 데이터를 불러오는 중입니다." : "아직 유저 데이터가 없습니다."}
+            </div>
+          ) : (
+            <div className="grid gap-3 lg:grid-cols-2">
+              {adminUsers.map((user) => {
+                const badge = onboardingBadge(user.onboardingStatus);
+                const missionIds = Array.from(new Set(user.missionIds));
+                return (
+                  <div
+                    key={user.id}
+                    className="rounded-3xl border border-slate-100 bg-white p-5 shadow-sm"
+                  >
+                    <div className="flex items-start gap-3">
+                      {user.photoURL ? (
+                        <img
+                          src={user.photoURL}
+                          alt=""
+                          className="h-10 w-10 rounded-full object-cover"
+                        />
+                      ) : (
+                        <div className="flex h-10 w-10 items-center justify-center rounded-full bg-slate-900 text-sm font-semibold text-white">
+                          {(user.displayName ?? user.email ?? "?")
+                            .charAt(0)
+                            .toUpperCase()}
+                        </div>
+                      )}
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <p className="truncate text-sm font-semibold text-slate-900">
+                            {user.displayName ?? user.email ?? user.id}
+                          </p>
+                          <span
+                            className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${badge.style}`}
+                          >
+                            {badge.label}
+                          </span>
+                          {user.isAdmin && (
+                            <span className="rounded-full bg-indigo-50 px-2 py-0.5 text-[11px] font-semibold text-indigo-700">
+                              관리자
+                            </span>
+                          )}
+                        </div>
+                        {user.displayName && user.email && (
+                          <p className="truncate text-xs text-slate-400">
+                            {user.email}
+                          </p>
+                        )}
+                        <p className="mt-1 text-[11px] text-slate-300">
+                          {user.id}
+                        </p>
+                      </div>
+                      {!user.isAdmin && (
+                        <button
+                          type="button"
+                          onClick={() => deleteUserData(user)}
+                          className="rounded-full p-1.5 text-slate-300 transition hover:bg-red-50 hover:text-red-500"
+                          title="유저 데이터 삭제"
+                        >
+                          <XIcon size={15} />
+                        </button>
+                      )}
+                    </div>
+
+                    <div className="mt-4 flex flex-wrap gap-2">
+                      {missionIds.length === 0 ? (
+                        <span className="text-xs text-slate-400">
+                          연결된 미션 없음
+                        </span>
+                      ) : (
+                        missionIds.map((missionId) => (
+                          <Link
+                            key={missionId}
+                            href={`/main/${missionId}?viewAs=${user.id}`}
+                            className="rounded-full border border-slate-200 px-3 py-1 text-xs font-semibold text-slate-500 transition hover:bg-slate-50 hover:text-slate-900"
+                          >
+                            {missionTitle(missionId)}
+                          </Link>
+                        ))
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </section>
+
+        <section className="space-y-4">
         <div className="flex items-center justify-between">
           <h2 className="text-lg font-semibold text-slate-900">미션 목록</h2>
           <span className="text-sm text-slate-400">{missions.length}개</span>
@@ -498,6 +833,7 @@ export default function AdminPage() {
             })}
           </div>
         )}
+        </section>
       </div>
 
       {/* Participants modal */}
@@ -525,12 +861,12 @@ export default function AdminPage() {
                   아직 참여자가 없습니다.
                 </p>
               ) : (
-                participants.map((p) => (
-                  <Link
+                participants.map((p) => {
+                  const badge = onboardingBadge(p.onboardingStatus);
+                  return (
+                  <div
                     key={p.id}
-                    href={`/main/${participantsMissionId}?viewAs=${p.id}`}
-                    className="flex items-center gap-3 rounded-2xl border border-slate-100 px-4 py-3 transition hover:bg-slate-50"
-                    onClick={closeParticipants}
+                    className="flex items-center gap-3 rounded-2xl border border-slate-100 px-4 py-3"
                   >
                     {p.photoURL ? (
                       <img
@@ -545,7 +881,7 @@ export default function AdminPage() {
                           .toUpperCase()}
                       </div>
                     )}
-                    <div className="min-w-0">
+                    <div className="min-w-0 flex-1">
                       <p className="truncate text-sm font-semibold text-slate-900">
                         {p.displayName ?? p.email ?? p.id}
                       </p>
@@ -554,10 +890,40 @@ export default function AdminPage() {
                           {p.email}
                         </p>
                       )}
+                      <span
+                        className={`mt-1 inline-flex rounded-full px-2 py-0.5 text-[11px] font-semibold ${badge.style}`}
+                      >
+                        {badge.label}
+                      </span>
+                      {p.isAdmin && (
+                        <span className="ml-1 mt-1 inline-flex rounded-full bg-indigo-50 px-2 py-0.5 text-[11px] font-semibold text-indigo-700">
+                          관리자
+                        </span>
+                      )}
                     </div>
-                    <ArrowRightIcon size={14} className="ml-auto text-slate-400" />
-                  </Link>
-                ))
+                    <div className="ml-auto flex items-center gap-1">
+                      <Link
+                        href={`/main/${participantsMissionId}?viewAs=${p.id}`}
+                        className="rounded-full p-1.5 text-slate-400 transition hover:bg-slate-50 hover:text-slate-700"
+                        onClick={closeParticipants}
+                        title="세션 보기"
+                      >
+                        <ArrowRightIcon size={14} />
+                      </Link>
+                      {!p.isAdmin && (
+                        <button
+                          type="button"
+                          onClick={() => deleteUserData(p)}
+                          className="rounded-full p-1.5 text-slate-300 transition hover:bg-red-50 hover:text-red-500"
+                          title="유저 데이터 삭제"
+                        >
+                          <XIcon size={14} />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                );
+                })
               )}
             </div>
           </div>

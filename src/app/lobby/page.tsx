@@ -3,9 +3,9 @@
 import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { onAuthStateChanged, signOut } from "firebase/auth";
+import { getIdToken, onAuthStateChanged, signOut } from "firebase/auth";
 import { useEffect, useRef, useState } from "react";
-import { collection, onSnapshot, query, orderBy } from "firebase/firestore";
+import { collection, onSnapshot, orderBy, query } from "firebase/firestore";
 import { firebaseAuth, db } from "@/lib/firebase";
 import { DeviceMobileIcon, MonitorIcon } from "@phosphor-icons/react";
 
@@ -40,6 +40,8 @@ export default function LobbyPage() {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
   const [missions, setMissions] = useState<Mission[]>([]);
+  const [isOnboardingRequired, setIsOnboardingRequired] = useState(false);
+  const [isCheckingOnboarding, setIsCheckingOnboarding] = useState(true);
   const menuRef = useRef<HTMLDivElement>(null);
 
   const handleLogout = async () => {
@@ -53,6 +55,37 @@ export default function LobbyPage() {
       setUserName(user.displayName ?? user.email?.split("@")[0] ?? "사용자");
       setUserPhoto(user.photoURL ?? null);
       setIsAdmin(ADMIN_EMAILS.includes(user.email ?? ""));
+      setIsCheckingOnboarding(true);
+      getIdToken(user)
+        .then((token) =>
+          fetch("/api/users/me", {
+            headers: { Authorization: `Bearer ${token}` },
+          }),
+        )
+        .then((res) => (res.ok ? res.json() : null))
+        .then((profile) => {
+          const completed = profile?.onboardingCompleted === true;
+          if (completed) {
+            window.localStorage.setItem(
+              `vda:onboarding-completed:${user.uid}`,
+              "true",
+            );
+            window.localStorage.removeItem(`vda:onboarding-required:${user.uid}`);
+          } else {
+            window.localStorage.removeItem(
+              `vda:onboarding-completed:${user.uid}`,
+            );
+          }
+          setIsOnboardingRequired(!completed);
+        })
+        .catch(() => {
+          const localOnboardingCompleted =
+            window.localStorage.getItem(
+              `vda:onboarding-completed:${user.uid}`,
+            ) === "true";
+          setIsOnboardingRequired(!localOnboardingCompleted);
+        })
+        .finally(() => setIsCheckingOnboarding(false));
     });
   }, [router]);
 
@@ -128,12 +161,22 @@ export default function LobbyPage() {
       <div className="mx-auto flex max-w-6xl flex-col gap-10 px-4 py-12 lg:px-10">
         {/* Agent Actions */}
         <header className="rounded-3xl bg-white p-8 shadow-lg shadow-slate-900/5">
-          <div className="flex items-center justify-between">
+          <div className="flex flex-wrap items-center justify-between gap-3">
             <p className="text-2xl font-semibold text-slate-900">Agent Actions</p>
-            <Link href="/agent" className="rounded-2xl border border-slate-200 px-5 py-3 text-sm font-semibold text-slate-700 transition hover:border-slate-400">
-              에이전트 메모리 평가하기
-            </Link>
+            <div className="flex flex-wrap gap-2">
+              <Link href="/onboarding" className="rounded-2xl border border-slate-200 px-5 py-3 text-sm font-semibold text-slate-700 transition hover:border-slate-400">
+                {isOnboardingRequired ? "온보딩하기" : "나의 온보딩 보기"}
+              </Link>
+              <Link href="/agent" className="rounded-2xl border border-slate-200 px-5 py-3 text-sm font-semibold text-slate-700 transition hover:border-slate-400">
+                에이전트 메모리 평가하기
+              </Link>
+            </div>
           </div>
+          {isOnboardingRequired && (
+            <p className="mt-4 text-sm text-slate-500">
+              온보딩을 완료해야 오늘의 미션을 시작할 수 있습니다.
+            </p>
+          )}
         </header>
 
         {/* Missions */}
@@ -154,8 +197,19 @@ export default function LobbyPage() {
                 return (
                   <article
                     key={mission.id}
-                    onClick={() => router.push(`/main/${mission.id}`)}
-                    className="cursor-pointer rounded-3xl border border-slate-100 bg-white p-6 shadow-sm transition hover:bg-slate-50"
+                    onClick={() => {
+                      if (isCheckingOnboarding) return;
+                      if (isOnboardingRequired) {
+                        router.push("/onboarding");
+                        return;
+                      }
+                      router.push(`/main/${mission.id}`);
+                    }}
+                    className={`rounded-3xl border border-slate-100 bg-white p-6 shadow-sm transition ${
+                      isOnboardingRequired || isCheckingOnboarding
+                        ? "cursor-not-allowed opacity-60"
+                        : "cursor-pointer hover:bg-slate-50"
+                    }`}
                   >
                     <div className="flex flex-wrap items-start gap-3">
                       <p className="flex-1 text-base font-semibold text-slate-900 leading-snug">{mission.title}</p>
@@ -167,6 +221,11 @@ export default function LobbyPage() {
                       <p className="mt-2 text-sm text-slate-500 leading-relaxed line-clamp-2">{mission.description}</p>
                     )}
                     <p className="mt-3 text-xs text-slate-400">옵션 {mission.options?.length ?? 0}개 중 선택</p>
+                    {isOnboardingRequired && (
+                      <p className="mt-2 rounded-xl bg-amber-50 px-3 py-2 text-xs font-medium text-amber-700">
+                        온보딩 완료 후 시작할 수 있습니다.
+                      </p>
+                    )}
                     <div className="mt-3 flex items-center gap-2">
                       <p className="text-xs text-slate-400">{mission.startDate} – {mission.endDate}</p>
                       <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-500">

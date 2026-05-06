@@ -1,0 +1,256 @@
+import { createSign } from "crypto";
+import { readFile } from "fs/promises";
+import path from "path";
+
+type ServiceAccount = {
+  client_email: string;
+  private_key: string;
+  token_uri: string;
+};
+
+type FirestoreValue =
+  | { stringValue: string }
+  | { booleanValue: boolean }
+  | { integerValue: string }
+  | { doubleValue: number }
+  | { nullValue: "NULL_VALUE" }
+  | { timestampValue: string };
+
+let accessTokenCache: { token: string; expiresAt: number } | null = null;
+let serviceAccountCache: ServiceAccount | null = null;
+
+function base64Url(input: string | Buffer) {
+  return Buffer.from(input)
+    .toString("base64")
+    .replace(/=/g, "")
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_");
+}
+
+function normalizeServiceAccount(account: ServiceAccount): ServiceAccount {
+  return {
+    ...account,
+    private_key: account.private_key.replace(/\\n/g, "\n"),
+    token_uri: account.token_uri || "https://oauth2.googleapis.com/token",
+  };
+}
+
+async function getServiceAccount() {
+  if (serviceAccountCache) return serviceAccountCache;
+  const rawKey =
+    process.env.FIREBASE_SERVICE_ACCOUNT_KEY ||
+    process.env.GOOGLE_SERVICE_ACCOUNT_KEY;
+  if (rawKey) {
+    const decoded = rawKey.trim().startsWith("{")
+      ? rawKey
+      : Buffer.from(rawKey, "base64").toString("utf8");
+    serviceAccountCache = normalizeServiceAccount(
+      JSON.parse(decoded) as ServiceAccount,
+    );
+    return serviceAccountCache;
+  }
+
+  if (process.env.FIREBASE_CLIENT_EMAIL && process.env.FIREBASE_PRIVATE_KEY) {
+    serviceAccountCache = normalizeServiceAccount({
+      client_email: process.env.FIREBASE_CLIENT_EMAIL,
+      private_key: process.env.FIREBASE_PRIVATE_KEY,
+      token_uri:
+        process.env.FIREBASE_TOKEN_URI || "https://oauth2.googleapis.com/token",
+    });
+    return serviceAccountCache;
+  }
+
+  const keyPath =
+    process.env.GOOGLE_APPLICATION_CREDENTIALS ||
+    path.join(process.cwd(), "vibedesignagent-key.json");
+  serviceAccountCache = normalizeServiceAccount(
+    JSON.parse(await readFile(keyPath, "utf8")) as ServiceAccount,
+  );
+  return serviceAccountCache;
+}
+
+export async function getFirebaseAccessToken() {
+  if (accessTokenCache && accessTokenCache.expiresAt > Date.now() + 60_000) {
+    return accessTokenCache.token;
+  }
+
+  const serviceAccount = await getServiceAccount();
+  const now = Math.floor(Date.now() / 1000);
+  const unsignedJwt = `${base64Url(JSON.stringify({ alg: "RS256", typ: "JWT" }))}.${base64Url(
+    JSON.stringify({
+      iss: serviceAccount.client_email,
+      scope: "https://www.googleapis.com/auth/datastore",
+      aud: serviceAccount.token_uri,
+      exp: now + 3600,
+      iat: now,
+    }),
+  )}`;
+  const assertion = `${unsignedJwt}.${base64Url(
+    createSign("RSA-SHA256").update(unsignedJwt).sign(serviceAccount.private_key),
+  )}`;
+
+  const res = await fetch(serviceAccount.token_uri, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
+      assertion,
+    }),
+  });
+  if (!res.ok) throw new Error(`Service account auth failed: ${res.status}`);
+  const data = (await res.json()) as {
+    access_token: string;
+    expires_in: number;
+  };
+  accessTokenCache = {
+    token: data.access_token,
+    expiresAt: Date.now() + data.expires_in * 1000,
+  };
+  return data.access_token;
+}
+
+export async function verifyFirebaseIdToken(request: Request) {
+  const idToken = request.headers
+    .get("authorization")
+    ?.replace(/^Bearer\s+/i, "");
+  if (!idToken) return null;
+  const apiKey =
+    process.env.FIREBASE_API_KEY || process.env.NEXT_PUBLIC_FIREBASE_API_KEY;
+  if (!apiKey) return null;
+
+  const res = await fetch(
+    `https://identitytoolkit.googleapis.com/v1/accounts:lookup?key=${apiKey}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ idToken }),
+    },
+  );
+  if (!res.ok) return null;
+  const data = (await res.json()) as {
+    users?: Array<{
+      localId: string;
+      email?: string;
+      displayName?: string;
+      photoUrl?: string;
+    }>;
+  };
+  return data.users?.[0] ?? null;
+}
+
+export function firestoreBase() {
+  const projectId = process.env.FIREBASE_PROJECT_ID;
+  if (!projectId) throw new Error("FIREBASE_PROJECT_ID missing");
+  return `https://firestore.googleapis.com/v1/projects/${projectId}/databases/(default)/documents`;
+}
+
+export async function listFirestoreDocumentIds(
+  collectionPath: string,
+  token: string,
+) {
+  const ids: string[] = [];
+  let pageToken: string | undefined;
+
+  do {
+    const url = new URL(`${firestoreBase()}/${collectionPath}`);
+    if (pageToken) url.searchParams.set("pageToken", pageToken);
+    const res = await fetch(url, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (res.status === 404) return ids;
+    if (!res.ok) throw new Error(`List ${collectionPath} failed: ${res.status}`);
+    const data = (await res.json()) as {
+      documents?: Array<{ name: string }>;
+      nextPageToken?: string;
+    };
+    ids.push(
+      ...(data.documents ?? []).map(
+        (document) => document.name.split("/").at(-1) ?? "",
+      ),
+    );
+    pageToken = data.nextPageToken;
+  } while (pageToken);
+
+  return ids;
+}
+
+export async function deleteFirestoreDocument(documentPath: string, token: string) {
+  const res = await fetch(`${firestoreBase()}/${documentPath}`, {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok && res.status !== 404) {
+    throw new Error(`Delete ${documentPath} failed: ${res.status}`);
+  }
+}
+
+function encodeFirestoreValue(value: unknown): FirestoreValue {
+  if (typeof value === "boolean") return { booleanValue: value };
+  if (typeof value === "number" && Number.isInteger(value)) {
+    return { integerValue: String(value) };
+  }
+  if (typeof value === "number") return { doubleValue: value };
+  if (value === null || value === undefined) return { nullValue: "NULL_VALUE" };
+  if (value instanceof Date) return { timestampValue: value.toISOString() };
+  return { stringValue: String(value) };
+}
+
+function decodeFirestoreValue(value: FirestoreValue | undefined) {
+  if (!value) return undefined;
+  if ("stringValue" in value) return value.stringValue;
+  if ("booleanValue" in value) return value.booleanValue;
+  if ("integerValue" in value) return Number(value.integerValue);
+  if ("doubleValue" in value) return value.doubleValue;
+  if ("timestampValue" in value) return value.timestampValue;
+  return null;
+}
+
+export function decodeFirestoreFields(
+  fields: Record<string, FirestoreValue> | undefined,
+) {
+  return Object.fromEntries(
+    Object.entries(fields ?? {}).map(([key, value]) => [
+      key,
+      decodeFirestoreValue(value),
+    ]),
+  );
+}
+
+export async function getFirestoreDocument(documentPath: string, token: string) {
+  const res = await fetch(`${firestoreBase()}/${documentPath}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`Get ${documentPath} failed: ${res.status}`);
+  const data = (await res.json()) as {
+    fields?: Record<string, FirestoreValue>;
+  };
+  return decodeFirestoreFields(data.fields);
+}
+
+export async function patchFirestoreDocument(
+  documentPath: string,
+  data: Record<string, unknown>,
+  token: string,
+) {
+  const url = new URL(`${firestoreBase()}/${documentPath}`);
+  Object.keys(data).forEach((field) =>
+    url.searchParams.append("updateMask.fieldPaths", field),
+  );
+  const res = await fetch(url, {
+    method: "PATCH",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      fields: Object.fromEntries(
+        Object.entries(data).map(([key, value]) => [
+          key,
+          encodeFirestoreValue(value),
+        ]),
+      ),
+    }),
+  });
+  if (!res.ok) throw new Error(`Patch ${documentPath} failed: ${res.status}`);
+}

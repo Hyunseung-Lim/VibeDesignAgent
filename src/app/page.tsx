@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { signInWithPopup } from "firebase/auth";
+import { getAdditionalUserInfo, getIdToken, signInWithPopup } from "firebase/auth";
 import { firebaseAuth, googleProvider } from "@/lib/firebase";
 import { GoogleLogoIcon } from "@phosphor-icons/react";
 
@@ -16,7 +16,31 @@ export default function Home() {
     setErrorMessage(null);
     setIsLoading(true);
     try {
-      await signInWithPopup(firebaseAuth, googleProvider);
+      const result = await signInWithPopup(firebaseAuth, googleProvider);
+      const userInfo = getAdditionalUserInfo(result);
+      if (userInfo?.isNewUser) {
+        window.localStorage.setItem(
+          `vda:onboarding-required:${result.user.uid}`,
+          "true",
+        );
+        window.localStorage.removeItem(
+          `vda:onboarding-completed:${result.user.uid}`,
+        );
+      }
+      const token = await getIdToken(result.user, true);
+      const profileRes = await fetch("/api/users/me", {
+        method: "PATCH",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(
+          userInfo?.isNewUser ? { onboardingCompleted: false } : {},
+        ),
+      });
+      if (!profileRes.ok) {
+        throw new Error(`User profile sync failed: ${profileRes.status}`);
+      }
       router.push("/lobby");
     } catch (error) {
       console.error("Failed to sign in with Google", error);

@@ -1,11 +1,11 @@
 "use client";
 
 import Link from "next/link";
-import { useParams, useSearchParams } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import { firebaseAuth, db, storage } from "@/lib/firebase";
-import { onAuthStateChanged } from "firebase/auth";
+import { getIdToken, onAuthStateChanged } from "firebase/auth";
 import { doc, getDoc, setDoc, onSnapshot } from "firebase/firestore";
 import {
   ref as storageRef,
@@ -1076,6 +1076,7 @@ function normalizeArtboardPositionsByIdea(boards: Artboard[]) {
 
 export default function MainScreenPage() {
   const { missionId } = useParams<{ missionId: string }>();
+  const router = useRouter();
   const searchParams = useSearchParams();
   const viewAs = searchParams.get("viewAs"); // admin: view another user's session
 
@@ -1256,8 +1257,37 @@ export default function MainScreenPage() {
     return onAuthStateChanged(firebaseAuth, (user) => {
       setUserId(user?.uid ?? null);
       setIsAdmin(ADMIN_EMAILS.includes(user?.email ?? ""));
+      if (!user) return;
+      getIdToken(user)
+        .then((token) =>
+          fetch("/api/users/me", {
+            headers: { Authorization: `Bearer ${token}` },
+          }),
+        )
+        .then((res) => (res.ok ? res.json() : null))
+        .then((profile) => {
+          if (profile?.onboardingCompleted === true) {
+            window.localStorage.setItem(
+              `vda:onboarding-completed:${user.uid}`,
+              "true",
+            );
+            window.localStorage.removeItem(`vda:onboarding-required:${user.uid}`);
+            return;
+          }
+          window.localStorage.removeItem(`vda:onboarding-completed:${user.uid}`);
+          router.replace("/onboarding");
+        })
+        .catch(() => {
+          const localOnboardingCompleted =
+            window.localStorage.getItem(
+              `vda:onboarding-completed:${user.uid}`,
+            ) === "true";
+          if (!localOnboardingCompleted) {
+            router.replace("/onboarding");
+          }
+        });
     });
-  }, []);
+  }, [router]);
 
   // Load session from Firestore + fallback to global mission data
   useEffect(() => {
