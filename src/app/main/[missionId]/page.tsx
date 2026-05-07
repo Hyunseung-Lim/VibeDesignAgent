@@ -27,6 +27,7 @@ import {
 } from "@phosphor-icons/react";
 
 const ADMIN_EMAILS = ["03leesun@gmail.com", "charlie9807@gmail.com"];
+const ONBOARDING_MISSION_ID = "onboarding";
 
 type Message = {
   id: string;
@@ -62,6 +63,7 @@ type MissionOption = {
   description: string;
   imageUrls: string[];
   content: string;
+  device?: Device;
 };
 
 type Artboard = {
@@ -205,6 +207,7 @@ function normalizeMissionOptions(
       id: option.id || crypto.randomUUID(),
       title: option.title ?? "",
       description: option.description ?? "",
+      device: option.device,
       // backward compat: old data has imageUrl (string), new data has imageUrls (string[])
       imageUrls:
         option.imageUrls ??
@@ -236,6 +239,142 @@ function optionBrief(option: MissionOption | null) {
       ? `웹/앱에 들어가야 하는 이미지:\n${option.imageUrls.join("\n")}`
       : "",
     option.content ? `웹/앱에 들어가야 하는 콘텐츠:\n${option.content}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+}
+
+function proxiedImageSrc(url: string) {
+  return url;
+}
+
+function fallbackImageSrc(url: string) {
+  if (!url || url.startsWith("data:") || url.startsWith("blob:")) return url;
+  return `/api/image-proxy?url=${encodeURIComponent(url)}`;
+}
+
+function formatLocalDate(date: Date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function createDefaultOnboardingMissionData() {
+  const today = formatLocalDate(new Date());
+  return {
+    title: "온보딩 미션",
+    description:
+      "자유주제로 PC 또는 모바일 화면을 선택해 노트, 목업, 프레젠테이션 생성 흐름을 연습합니다.",
+    startDate: today,
+    endDate: today,
+    durationMinutes: 20,
+    options: [
+      {
+        id: "onboarding-desktop",
+        title: "PC 자유주제",
+        description: "PC 화면 기준으로 자유롭게 웹/앱 아이디어를 진행합니다.",
+        device: "desktop" as Device,
+        imageUrls: [],
+        content:
+          "자유주제로 랜딩 페이지, 서비스 화면, 포트폴리오, 커머스 등 원하는 웹/앱 화면을 만들어보세요.",
+      },
+      {
+        id: "onboarding-mobile",
+        title: "모바일 자유주제",
+        description: "모바일 화면 기준으로 자유롭게 앱/웹 아이디어를 진행합니다.",
+        device: "mobile" as Device,
+        imageUrls: [],
+        content:
+          "자유주제로 온보딩, 홈 화면, 상세 화면, 예약/구독/커머스 등 원하는 모바일 화면을 만들어보세요.",
+      },
+    ],
+  };
+}
+
+async function fetchOnboardingMissionData() {
+  const fallback = createDefaultOnboardingMissionData();
+  try {
+    const res = await fetch("/api/onboarding");
+    if (!res.ok) return fallback;
+    const settings = (await res.json()) as {
+      startDate?: string;
+      endDate?: string;
+      durationMinutes?: number;
+    };
+    return {
+      ...fallback,
+      startDate: settings.startDate || fallback.startDate,
+      endDate: settings.endDate || fallback.endDate,
+      durationMinutes: Number(settings.durationMinutes) || 20,
+    };
+  } catch {
+    return fallback;
+  }
+}
+
+function buildOnboardingMemory(input: {
+  device: Device;
+  selectedOptionTitle?: string;
+  messages: Message[];
+  ideas: Idea[];
+  artboards: Artboard[];
+  references: Reference[];
+}) {
+  const userMessages = input.messages.filter((message) => message.role === "user");
+  const citedReferenceCount = input.messages.filter(
+    (message) => (message.citedReferences?.length ?? 0) > 0,
+  ).length;
+  const citedElementCount = input.messages.filter(
+    (message) => message.citedElement,
+  ).length;
+  const mockupCount = input.artboards.length;
+  const presentationCount = input.ideas.reduce(
+    (count, idea) => count + normalizePresentations(idea).length,
+    0,
+  );
+  const noteSummaries = input.ideas
+    .slice(0, 5)
+    .map((idea, index) => {
+      const description = (idea.description || "")
+        .replace(/\s+/g, " ")
+        .trim()
+        .slice(0, 240);
+      return `${index + 1}. ${idea.title}${description ? ` - ${description}` : ""}`;
+    })
+    .join("\n");
+  const recentRequests = userMessages
+    .slice(-8)
+    .map((message) => `- ${message.content.replace(/\s+/g, " ").trim().slice(0, 220)}`)
+    .join("\n");
+  const behaviorSignals = [
+    input.device === "mobile"
+      ? "모바일 화면을 선택해 작은 화면 정보 구조와 앱형 흐름을 연습했다."
+      : "PC 화면을 선택해 넓은 화면 레이아웃과 웹형 구성을 연습했다.",
+    input.references.length > 0 || citedReferenceCount > 0
+      ? "레퍼런스를 활용해 방향을 잡는 편이다."
+      : "레퍼런스보다 직접 요청/대화로 방향을 잡는 편이다.",
+    mockupCount > 1
+      ? "여러 목업 버전을 비교/탐색하는 방식에 익숙하다."
+      : mockupCount === 1
+        ? "하나의 목업을 만든 뒤 구체화하는 방식으로 진행했다."
+        : "아직 목업 생성 전 단계의 설명/노트 중심으로 작업했다.",
+    citedElementCount > 0
+      ? "특정 UI 요소를 집어 수정하는 방식도 사용했다."
+      : "화면 전체 방향이나 요구사항 중심으로 요청했다.",
+    presentationCount > 0
+      ? "목업을 프레젠테이션으로 정리하는 단계까지 진행했다."
+      : "프레젠테이션 전 단계의 노트/목업 작업이 중심이었다.",
+  ];
+
+  return [
+    "온보딩에서 관찰된 사용자 작업 메모리",
+    `선택한 온보딩 유형: ${input.selectedOptionTitle || "자유주제"} / ${input.device === "mobile" ? "모바일" : "PC"}`,
+    `작업량: 사용자 메시지 ${userMessages.length}개, 노트 ${input.ideas.length}개, 목업 ${mockupCount}개, 레퍼런스 ${input.references.length}개, 프레젠테이션 ${presentationCount}개`,
+    `작업 성향:\n${behaviorSignals.map((signal) => `- ${signal}`).join("\n")}`,
+    noteSummaries ? `작성/선택된 노트 요약:\n${noteSummaries}` : "",
+    recentRequests ? `최근 사용자 요청 패턴:\n${recentRequests}` : "",
+    "이후 미션에서는 위 성향을 고려해 노트 구조, 목업 제안 방식, 설명 밀도, 레퍼런스 제안 여부를 조정한다.",
   ]
     .filter(Boolean)
     .join("\n\n");
@@ -894,6 +1033,33 @@ function normalizeActionBlockAliases(content: string) {
     .replace(/\[레퍼런스\s*검색\s*:\s*([\s\S]*?)\]/g, "[FETCH_REFERENCES: $1]");
 }
 
+function normalizeMockupActionPrompt(rawPrompt: string) {
+  const prompt = rawPrompt.trim();
+  if (!prompt.startsWith("{") || !prompt.endsWith("}")) return prompt;
+
+  try {
+    const parsed = JSON.parse(prompt) as { prompt?: unknown };
+    if (typeof parsed.prompt === "string" && parsed.prompt.trim()) {
+      return parsed.prompt.trim();
+    }
+  } catch {
+    return prompt;
+  }
+
+  return prompt;
+}
+
+function mockupImageDeliveryStatus(imageUrls?: string[], isNew?: boolean) {
+  const count = imageUrls?.filter(Boolean).length ?? 0;
+  if (count === 0) {
+    return "참고: 현재 선택한 미션 옵션에 등록된 이미지가 없어 Stitch에 전달할 이미지가 없습니다.";
+  }
+  if (isNew && count >= 1) {
+    return `확인: 미션 이미지 1개를 Stitch에 직접 업로드합니다${count > 1 ? ` (나머지 ${count - 1}개는 URL로 전달)` : ""}.`;
+  }
+  return `확인: 미션 이미지 ${count}개 URL을 Stitch에 함께 전달합니다.`;
+}
+
 function cleanMessageContentForModel(content: string) {
   return content
     .replace(/\[CREATE_NOTE:[\s\S]*?\]/g, "[노트 생성]")
@@ -1079,6 +1245,7 @@ export default function MainScreenPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const viewAs = searchParams.get("viewAs"); // admin: view another user's session
+  const isOnboardingMission = missionId === ONBOARDING_MISSION_ID;
 
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputText, setInputText] = useState("");
@@ -1093,6 +1260,7 @@ export default function MainScreenPage() {
   const [selectedElement, setSelectedElement] =
     useState<SelectedElement | null>(null);
   const [selectedReferences, setSelectedReferences] = useState<Reference[]>([]);
+  const [userMemory, setUserMemory] = useState("");
   const [editMode, setEditMode] = useState(false);
   const [device, setDevice] = useState<Device>("desktop");
   const [missionTitle, setMissionTitle] = useState("");
@@ -1154,6 +1322,8 @@ export default function MainScreenPage() {
   const canvasRef = useRef<HTMLDivElement>(null);
   const canvasWorldRef = useRef<HTMLDivElement>(null);
   const canvasViewCommitTimerRef = useRef<number | null>(null);
+  const onboardingMemorySaveTimerRef = useRef<number | null>(null);
+  const lastSavedOnboardingMemoryRef = useRef("");
   const dragStartRef = useRef<{
     mouseX: number;
     mouseY: number;
@@ -1167,6 +1337,7 @@ export default function MainScreenPage() {
   const artboardsRef = useRef<Artboard[]>([]);
   const activeIdeaIdRef = useRef<string | null>(null);
   const selectedOptionIdRef = useRef<string | null>(null);
+  const missionOptionsRef = useRef<MissionOption[]>([]);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
   const stitchAbortControllerRef = useRef<AbortController | null>(null);
@@ -1199,6 +1370,28 @@ export default function MainScreenPage() {
   useEffect(() => {
     selectedOptionIdRef.current = selectedOptionId;
   }, [selectedOptionId]);
+  useEffect(() => {
+    missionOptionsRef.current = missionOptions;
+  }, [missionOptions]);
+
+  const getMissionReferenceImageUrls = useCallback(() => {
+    const options =
+      missionOptionsRef.current.length > 0
+        ? missionOptionsRef.current
+        : missionOptions;
+    const selectedId = selectedOptionIdRef.current ?? selectedOptionId;
+    const selected =
+      (selectedId ? options.find((option) => option.id === selectedId) : null) ??
+      activeOption;
+
+    if (selected) {
+      return Array.from(new Set((selected.imageUrls ?? []).filter(Boolean)));
+    }
+
+    return Array.from(
+      new Set(options.flatMap((option) => option.imageUrls ?? []).filter(Boolean)),
+    );
+  }, [activeOption, missionOptions, selectedOptionId]);
 
   useEffect(() => {
     if (!designContextMenu) return;
@@ -1266,6 +1459,12 @@ export default function MainScreenPage() {
         )
         .then((res) => (res.ok ? res.json() : null))
         .then((profile) => {
+          setUserMemory(
+            typeof profile?.onboardingMemory === "string"
+              ? profile.onboardingMemory
+              : "",
+          );
+          if (isOnboardingMission) return;
           if (profile?.onboardingCompleted === true) {
             window.localStorage.setItem(
               `vda:onboarding-completed:${user.uid}`,
@@ -1275,7 +1474,7 @@ export default function MainScreenPage() {
             return;
           }
           window.localStorage.removeItem(`vda:onboarding-completed:${user.uid}`);
-          router.replace("/onboarding");
+          router.replace(`/main/${ONBOARDING_MISSION_ID}`);
         })
         .catch(() => {
           const localOnboardingCompleted =
@@ -1283,11 +1482,11 @@ export default function MainScreenPage() {
               `vda:onboarding-completed:${user.uid}`,
             ) === "true";
           if (!localOnboardingCompleted) {
-            router.replace("/onboarding");
+            router.replace(`/main/${ONBOARDING_MISSION_ID}`);
           }
         });
     });
-  }, [router]);
+  }, [isOnboardingMission, router]);
 
   // Load session from Firestore + fallback to global mission data
   useEffect(() => {
@@ -1298,7 +1497,7 @@ export default function MainScreenPage() {
     const missionRef = doc(db, "missions", missionId);
 
     // Register current user as participant (skip if viewing as someone else)
-    if (!viewAs) {
+    if (!viewAs && !isOnboardingMission) {
       const user = firebaseAuth.currentUser;
       setDoc(
         doc(db, "missions", missionId, "participants", userId),
@@ -1313,7 +1512,7 @@ export default function MainScreenPage() {
     }
 
     // If viewAs, fetch participant display name
-    if (viewAs && isAdmin) {
+    if (viewAs && isAdmin && !isOnboardingMission) {
       getDoc(doc(db, "missions", missionId, "participants", viewAs))
         .then((snap) => {
           if (snap.exists())
@@ -1358,7 +1557,11 @@ export default function MainScreenPage() {
       setMissionBrief(session?.missionBrief || pBrief);
       if (missionData?.startDate && missionData?.endDate)
         setMissionPeriod(`${missionData.startDate} – ${missionData.endDate}`);
-      if (missionData?.device) setDevice(missionData.device as Device);
+      const sessionDevice = session?.selectedDevice as Device | undefined;
+      const optionDevice = selectedOption?.device;
+      if (sessionDevice) setDevice(sessionDevice);
+      else if (optionDevice) setDevice(optionDevice);
+      else if (missionData?.device) setDevice(missionData.device as Device);
       if (missionData?.durationMinutes)
         setMissionDurationMinutes(Number(missionData.durationMinutes));
     };
@@ -1470,7 +1673,14 @@ export default function MainScreenPage() {
         setSelectedOptionId(session.selectedOptionId as string);
         selectedOptionIdRef.current = session.selectedOptionId as string;
       }
+      if (isOnboardingMission) {
+        fetchOnboardingMissionData().then(applyMission);
+      }
     });
+
+    if (isOnboardingMission) {
+      return;
+    }
 
     // Real-time mission listener — picks up admin edits immediately
     const unsubMission = onSnapshot(missionRef, (snap) => {
@@ -1478,7 +1688,7 @@ export default function MainScreenPage() {
     });
 
     return () => unsubMission();
-  }, [userId, missionId, viewAs, isAdmin]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [userId, missionId, viewAs, isAdmin, isOnboardingMission]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Save session to Firestore (debounced to avoid write storms during streaming)
   useEffect(() => {
@@ -1530,6 +1740,7 @@ export default function MainScreenPage() {
           missionTitle,
           missionBrief,
           selectedOptionId,
+          selectedDevice: device,
           stitchProjectId: stitchProjectId || null,
           updatedAt: Date.now(),
         }),
@@ -1549,7 +1760,73 @@ export default function MainScreenPage() {
     missionTitle,
     missionBrief,
     selectedOptionId,
+    device,
     stitchProjectId,
+  ]);
+
+  useEffect(() => {
+    if (!isOnboardingMission || isReadOnly || !userId) return;
+    if (!selectedOptionId && messages.length === 0 && ideas.length === 0) return;
+
+    const memory = buildOnboardingMemory({
+      device,
+      selectedOptionTitle: activeOption?.title,
+      messages,
+      ideas,
+      artboards,
+      references,
+    });
+    if (memory === lastSavedOnboardingMemoryRef.current) return;
+
+    if (onboardingMemorySaveTimerRef.current !== null) {
+      window.clearTimeout(onboardingMemorySaveTimerRef.current);
+    }
+    onboardingMemorySaveTimerRef.current = window.setTimeout(async () => {
+      const currentUser = firebaseAuth.currentUser;
+      if (!currentUser) return;
+      try {
+        const token = await getIdToken(currentUser, true);
+        const res = await fetch("/api/users/me", {
+          method: "PATCH",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            onboardingMemory: memory,
+            onboardingCompleted: true,
+          }),
+        });
+        if (res.ok) {
+          lastSavedOnboardingMemoryRef.current = memory;
+          setUserMemory(memory);
+          window.localStorage.removeItem(`vda:onboarding-required:${userId}`);
+          window.localStorage.setItem(
+            `vda:onboarding-completed:${userId}`,
+            "true",
+          );
+        }
+      } catch (error) {
+        console.warn("Unable to persist onboarding memory", error);
+      }
+    }, 2000);
+
+    return () => {
+      if (onboardingMemorySaveTimerRef.current !== null) {
+        window.clearTimeout(onboardingMemorySaveTimerRef.current);
+      }
+    };
+  }, [
+    isOnboardingMission,
+    isReadOnly,
+    userId,
+    selectedOptionId,
+    activeOption?.title,
+    device,
+    messages,
+    ideas,
+    artboards,
+    references,
   ]);
 
   // Countdown / count-up timer
@@ -1929,6 +2206,7 @@ export default function MainScreenPage() {
       role: "assistant",
       content: "",
     };
+    const missionReferenceImageUrls = getMissionReferenceImageUrls();
 
     setMessages((prev) => [...prev, userMsg, assistantMsg]);
     setInputText("");
@@ -1985,11 +2263,16 @@ export default function MainScreenPage() {
             ]
               .filter(Boolean)
               .join("\n\n") || undefined,
-          missionImageUrls: activeOption?.imageUrls?.length
-            ? activeOption.imageUrls
-            : undefined,
+          missionImageUrls:
+            missionReferenceImageUrls.length > 0
+              ? missionReferenceImageUrls
+              : undefined,
           device,
           activeIdea: ideas.find((i) => i.id === activeIdeaId) ?? undefined,
+          userMemory:
+            !isOnboardingMission && userMemory.trim()
+              ? userMemory.trim()
+              : undefined,
         }),
       });
 
@@ -2087,7 +2370,9 @@ export default function MainScreenPage() {
         : null;
 
       if (generateMatch || editMatch) {
-        const prompt = (generateMatch ?? editMatch)![1].trim();
+        const prompt = normalizeMockupActionPrompt(
+          (generateMatch ?? editMatch)![1],
+        );
         const userRequestedNewMockup = isExplicitNewMockupRequest(text);
         const effectiveIdeas = createdNote ? [...ideas, createdNote] : ideas;
         const effectiveActiveIdeaId = createdNote?.id ?? activeIdeaId;
@@ -2151,6 +2436,20 @@ export default function MainScreenPage() {
           return;
         }
 
+        const referenceImageUrls = getMissionReferenceImageUrls();
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === assistantId
+              ? {
+                  ...m,
+                  content:
+                    m.content +
+                    `\n\n${mockupImageDeliveryStatus(referenceImageUrls, isNew)}`,
+                }
+              : m,
+          ),
+        );
+
         setIsGeneratingMockup(true);
         setMockupOperation(isNew ? "generate" : "edit");
         setGeneratingMockupIdeaId(mockupIdeaId);
@@ -2173,6 +2472,8 @@ export default function MainScreenPage() {
                 device,
                 projectId: stitchProjectId || undefined,
                 screenId: targetArtboard?.stitchScreenId || undefined,
+                referenceImageUrls:
+                  referenceImageUrls.length > 0 ? referenceImageUrls : undefined,
               }),
             });
           } finally {
@@ -2184,6 +2485,27 @@ export default function MainScreenPage() {
           }
           const data = await res.json();
           if (data.error) throw new Error(data.error);
+          const receivedReferenceImageCount =
+            typeof data.referenceImageCount === "number"
+              ? data.referenceImageCount
+              : null;
+          if (
+            receivedReferenceImageCount !== null &&
+            receivedReferenceImageCount !== referenceImageUrls.length
+          ) {
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.id === assistantId
+                  ? {
+                      ...m,
+                      content:
+                        m.content +
+                        `\n\n⚠️ 이미지 URL 전달 확인값이 다릅니다. 클라이언트 ${referenceImageUrls.length}개 / 서버 ${receivedReferenceImageCount}개`,
+                    }
+                  : m,
+              ),
+            );
+          }
 
           if (data.projectId) setStitchProjectId(data.projectId);
 
@@ -2560,10 +2882,13 @@ export default function MainScreenPage() {
     missionTitle,
     missionBrief,
     userId,
+    userMemory,
     isReadOnly,
+    isOnboardingMission,
     missionId,
     fitToCanvasForIdea,
     activeOption,
+    getMissionReferenceImageUrls,
     parentMissionTitle,
     parentMissionBrief,
   ]);
@@ -2641,7 +2966,9 @@ export default function MainScreenPage() {
   };
   const chooseMissionOption = async (option: MissionOption) => {
     const now = Date.now();
+    const nextDevice = option.device ?? device;
     setSelectedOptionId(option.id);
+    setDevice(nextDevice);
 
     setMissionTitle(option.title);
     setMissionBrief(optionBrief(option));
@@ -2654,15 +2981,38 @@ export default function MainScreenPage() {
           selectedOptionId: option.id,
           missionTitle: option.title,
           missionBrief: optionBrief(option),
+          selectedDevice: nextDevice,
           timerStartedAt: now,
           updatedAt: now,
         },
         { merge: true },
       );
+      if (isOnboardingMission) {
+        const currentUser = firebaseAuth.currentUser;
+        if (currentUser) {
+          const token = await getIdToken(currentUser, true);
+          const res = await fetch("/api/users/me", {
+            method: "PATCH",
+            headers: {
+              Authorization: `Bearer ${token}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ onboardingCompleted: true }),
+          });
+          if (res.ok) {
+            window.localStorage.removeItem(`vda:onboarding-required:${userId}`);
+            window.localStorage.setItem(
+              `vda:onboarding-completed:${userId}`,
+              "true",
+            );
+          }
+        }
+      }
     }
   };
   const isGeneratingCurrentIdeaMockup =
     isGeneratingMockup && generatingMockupIdeaId === activeIdeaId;
+  const activeMissionImageCount = getMissionReferenceImageUrls().length;
   const gridSize = 20 * canvasScale;
   const getArtboardRenderHeight = (artboard: Artboard) =>
     Math.max(
@@ -2700,6 +3050,11 @@ export default function MainScreenPage() {
           <p className="text-xs font-medium text-white/85">
             Stitch로 목업 {mockupOperation === "edit" ? "수정" : "생성"} 중...
           </p>
+          {activeMissionImageCount > 0 && (
+            <p className="text-xs font-medium text-sky-100">
+              이미지 {activeMissionImageCount}개 URL 전달됨
+            </p>
+          )}
           {!isReadOnly && (
             <button
               onClick={(e) => {
@@ -2889,7 +3244,13 @@ export default function MainScreenPage() {
                       미션
                     </p>
                     <span className="flex items-center gap-1 rounded-full bg-slate-100 px-2.5 py-0.5 text-xs text-slate-500">
-                      {device === "mobile" ? (
+                      {isOnboardingMission ? (
+                        <>
+                          <MonitorIcon size={11} className="inline" /> PC ·{" "}
+                          <DeviceMobileIcon size={11} className="inline" />{" "}
+                          모바일 선택
+                        </>
+                      ) : device === "mobile" ? (
                         <>
                           <DeviceMobileIcon size={11} className="inline" />{" "}
                           모바일
@@ -2905,6 +3266,11 @@ export default function MainScreenPage() {
                         {missionPeriod}
                       </span>
                     )}
+                    <span className="rounded-full bg-slate-100 px-2.5 py-0.5 text-xs text-slate-500">
+                      {missionDurationMinutes
+                        ? `제한 시간 ${missionDurationMinutes}분`
+                        : "시간 제한 없음"}
+                    </span>
                   </div>
                   {parentMissionTitle && (
                     <h2 className="mt-2 text-lg font-semibold text-slate-900">
@@ -2931,7 +3297,14 @@ export default function MainScreenPage() {
                       onClick={() => setActiveOptionPreviewId(o.id)}
                       className={`shrink-0 rounded-xl border px-4 py-2 text-sm font-semibold transition ${isActive ? "border-slate-900 bg-slate-900 text-white" : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"}`}
                     >
-                      {o.title}
+                      <span className="inline-flex items-center gap-1">
+                        {o.device === "mobile" ? (
+                          <DeviceMobileIcon size={13} />
+                        ) : o.device === "desktop" ? (
+                          <MonitorIcon size={13} />
+                        ) : null}
+                        {o.title}
+                      </span>
                     </button>
                   );
                 })}
@@ -2964,7 +3337,7 @@ export default function MainScreenPage() {
                                 <div className="h-72 w-64 rounded-2xl bg-slate-200 animate-pulse" />
                               )}
                               <img
-                                src={url}
+                                src={proxiedImageSrc(url)}
                                 alt={`image ${i + 1}`}
                                 onClick={() => setLightboxUrl(url)}
                                 onLoad={() =>
@@ -2973,6 +3346,12 @@ export default function MainScreenPage() {
                                   )
                                 }
                                 className={`h-72 w-auto rounded-2xl border border-slate-100 object-contain cursor-zoom-in transition-opacity duration-300 ${loadedImageUrls.has(url) ? "opacity-100" : "opacity-0 absolute inset-0"}`}
+                                onError={(e) => {
+                                  const img = e.currentTarget;
+                                  if (img.dataset.fallback === "1") return;
+                                  img.dataset.fallback = "1";
+                                  img.src = fallbackImageSrc(url);
+                                }}
                               />
                             </div>
                           ))}
@@ -3269,7 +3648,7 @@ export default function MainScreenPage() {
                                     <div className="h-48 w-48 rounded-2xl bg-slate-200 animate-pulse" />
                                   )}
                                   <img
-                                    src={url}
+                                    src={proxiedImageSrc(url)}
                                     alt=""
                                     onClick={() => setLightboxUrl(url)}
                                     onLoad={() =>
@@ -3278,6 +3657,12 @@ export default function MainScreenPage() {
                                       )
                                     }
                                     className={`h-48 w-auto rounded-2xl border border-slate-100 object-contain cursor-zoom-in transition-opacity duration-300 ${loadedImageUrls.has(url) ? "opacity-100" : "opacity-0 absolute inset-0"}`}
+                                    onError={(e) => {
+                                      const img = e.currentTarget;
+                                      if (img.dataset.fallback === "1") return;
+                                      img.dataset.fallback = "1";
+                                      img.src = fallbackImageSrc(url);
+                                    }}
                                   />
                                 </div>
                               ))}
@@ -3698,6 +4083,11 @@ export default function MainScreenPage() {
                                   Stitch로 목업{" "}
                                   {mockupOperation === "edit" ? "수정" : "생성"}{" "}
                                   중...
+                                </p>
+                                <p className="text-xs text-slate-400">
+                                  {activeMissionImageCount > 0
+                                    ? `미션 이미지 ${activeMissionImageCount}개 URL 전달됨`
+                                    : "전달할 미션 이미지 없음"}
                                 </p>
                                 {!isReadOnly && (
                                   <button

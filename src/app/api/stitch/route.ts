@@ -2,6 +2,7 @@ import { Stitch, StitchToolClient } from "@google/stitch-sdk";
 
 export const maxDuration = 120; // 2 minutes — Stitch generation can be slow
 
+
 const client = new StitchToolClient({ apiKey: process.env.STITCH_API_KEY! });
 const stitchSdk = new Stitch(client);
 
@@ -162,12 +163,61 @@ async function recoverGeneratedScreen(
   return null;
 }
 
+
+
+function promptWithReferenceImages(prompt: string, referenceImageUrls?: string[]) {
+  const count = (referenceImageUrls ?? []).filter(Boolean).length;
+  if (count === 0) return prompt;
+  return [
+    prompt,
+    "",
+    `Include exactly ${count} prominent <img> element(s) in the design for real content imagery (hero, feature sections, etc.). Do not use CSS background-image — use <img> tags so they can be replaced with real assets.`,
+  ].join("\n");
+}
+
+function injectReferenceImages(html: string, imageUrls: string[]): string {
+  if (imageUrls.length === 0) return html;
+
+  let urlIndex = 0;
+  return html.replace(/<img\b([^>]*)>/gi, (match, attrs) => {
+    if (urlIndex >= imageUrls.length) return match;
+
+    const srcMatch = attrs.match(/\bsrc="([^"]*)"/i);
+    if (!srcMatch) return match;
+    if (srcMatch[1].startsWith("data:")) return match;
+
+    // Skip icon/logo/avatar images
+    const alt = (attrs.match(/\balt="([^"]*)"/i)?.[1] ?? "").toLowerCase();
+    const cls = (attrs.match(/\bclass="([^"]*)"/i)?.[1] ?? "").toLowerCase();
+    if (
+      alt.includes("icon") || alt.includes("logo") || alt.includes("avatar") ||
+      cls.includes("icon") || cls.includes("logo") || cls.includes("avatar")
+    ) {
+      return match;
+    }
+
+    const newSrc = imageUrls[urlIndex++];
+    console.log("[stitch] injecting reference image", urlIndex, "→", newSrc.slice(0, 60));
+    return match.replace(/\bsrc="[^"]*"/i, `src="${newSrc}"`);
+  });
+}
+
 export async function POST(request: Request) {
-  const { prompt, device, projectId, screenId } = await request.json();
+  const {
+    prompt,
+    device,
+    projectId,
+    screenId,
+    referenceImageUrls,
+  } = await request.json();
 
   if (!prompt) {
     return Response.json({ error: "prompt is required" }, { status: 400 });
   }
+  const referenceImageCount = Array.isArray(referenceImageUrls)
+    ? referenceImageUrls.filter(Boolean).length
+    : 0;
+  const effectivePrompt = promptWithReferenceImages(prompt, referenceImageUrls);
 
   const deviceType: DeviceType = device === "mobile" ? "MOBILE" : "DESKTOP";
 
@@ -187,19 +237,30 @@ export async function POST(request: Request) {
     const beforeScreens = await listScreens(project);
     const beforeScreenIds = new Set(beforeScreens.map((candidate) => candidate.id).filter(Boolean));
     let screen;
+
     if (screenId) {
-      console.log("[stitch] editing screen:", screenId);
+      console.log(
+        "[stitch] editing screen:",
+        screenId,
+        "reference images:",
+        referenceImageCount,
+      );
       try {
-        screen = await editScreen(project, screenId, prompt, deviceType, beforeScreenIds);
+        screen = await editScreen(project, screenId, effectivePrompt, deviceType, beforeScreenIds);
       } catch (editErr) {
         const message = errorMessage(editErr);
         console.warn("[stitch] edit failed:", message);
         return Response.json({ error: `Existing mockup edit failed: ${message}` }, { status: 500 });
       }
     } else {
-      console.log("[stitch] generating screen for prompt:", prompt.slice(0, 80));
+      console.log(
+        "[stitch] generating screen for prompt:",
+        effectivePrompt.slice(0, 80),
+        "reference images:",
+        referenceImageCount,
+      );
       try {
-        screen = await generateScreen(project, prompt, deviceType, beforeScreenIds);
+        screen = await generateScreen(project, effectivePrompt, deviceType, beforeScreenIds);
       } catch (generateErr) {
         if (!isIncompleteResponseError(generateErr)) throw generateErr;
         console.warn("[stitch] generation returned incomplete response; checking project screens...");
@@ -230,6 +291,13 @@ export async function POST(request: Request) {
       console.log("[stitch] fetched html length:", html.length);
     }
 
+    const refUrls = Array.isArray(referenceImageUrls)
+      ? referenceImageUrls.filter(Boolean)
+      : [];
+    if (refUrls.length > 0) {
+      html = injectReferenceImages(html, refUrls);
+    }
+
     // Get all screens in the project to capture any additional screens Stitch created
     const allScreens = await project.screens().catch(() => []);
     const allScreenIds = allScreens.map(s => s.id);
@@ -241,6 +309,7 @@ export async function POST(request: Request) {
       projectId: actualProjectId,
       screenId: screen.id,
       allScreenIds,
+      referenceImageCount,
     });
   } catch (err) {
     const message = errorMessage(err);

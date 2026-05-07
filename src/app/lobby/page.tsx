@@ -10,6 +10,7 @@ import { firebaseAuth, db } from "@/lib/firebase";
 import { DeviceMobileIcon, MonitorIcon } from "@phosphor-icons/react";
 
 const ADMIN_EMAILS = ["03leesun@gmail.com"];
+const ONBOARDING_MISSION_ID = "onboarding";
 
 type Mission = {
   id: string;
@@ -18,18 +19,80 @@ type Mission = {
   startDate: string;
   endDate: string;
   device?: "desktop" | "mobile";
+  durationMinutes?: number;
   options?: { id: string; title: string; description: string; imageUrl: string; content: string }[];
   createdAt: number;
 };
 
-function derivedStatus(startDate: string, endDate: string): { label: string; style: string } {
+type OnboardingSettings = {
+  startDate: string;
+  endDate: string;
+  durationMinutes: number;
+};
+
+type MissionProgress = {
+  hasActivity: boolean;
+  timerStartedAt: number | null;
+};
+
+function missionProgress(data: Record<string, unknown>): MissionProgress {
+  const timerStartedAt =
+    typeof data.timerStartedAt === "number" ? data.timerStartedAt : null;
+  return {
+    timerStartedAt,
+    hasActivity: Boolean(
+    data.selectedOptionId ||
+      data.timerStartedAt ||
+      (Array.isArray(data.messages) && data.messages.length > 0) ||
+      (Array.isArray(data.ideas) && data.ideas.length > 0) ||
+      (Array.isArray(data.artboards) && data.artboards.length > 0) ||
+      (Array.isArray(data.references) && data.references.length > 0),
+    ),
+  };
+}
+
+function derivedStatus(
+  startDate: string,
+  endDate: string,
+  progress: MissionProgress | null,
+  durationMinutes?: number,
+): { label: string; style: string } {
+  if (progress?.hasActivity) {
+    if (
+      progress.timerStartedAt &&
+      durationMinutes &&
+      Date.now() - progress.timerStartedAt < durationMinutes * 60 * 1000
+    ) {
+      return { label: "진행중", style: "bg-amber-100 text-amber-700" };
+    }
+    return { label: "완료", style: "bg-emerald-100 text-emerald-700" };
+  }
+
   const now = new Date();
   now.setHours(0, 0, 0, 0);
-  const start = new Date(startDate);
-  const end = new Date(endDate);
+  const start = parseLocalDate(startDate);
+  const end = parseLocalDate(endDate);
   if (now < start) return { label: "대기", style: "bg-slate-100 text-slate-600" };
-  if (now > end) return { label: "완료", style: "bg-emerald-100 text-emerald-700" };
+  if (now > end) return { label: "미완료", style: "bg-rose-100 text-rose-700" };
   return { label: "진행중", style: "bg-amber-100 text-amber-700" };
+}
+
+function parseLocalDate(value: string) {
+  const [year, month, day] = value.split("-").map(Number);
+  if (!year || !month || !day) return new Date(value);
+  return new Date(year, month - 1, day);
+}
+
+function formatLocalDate(date: Date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function defaultOnboardingSettings(): OnboardingSettings {
+  const today = formatLocalDate(new Date());
+  return { startDate: today, endDate: today, durationMinutes: 20 };
 }
 
 export default function LobbyPage() {
@@ -37,9 +100,17 @@ export default function LobbyPage() {
   const [userEmail, setUserEmail] = useState("");
   const [userName, setUserName] = useState("");
   const [userPhoto, setUserPhoto] = useState<string | null>(null);
+  const [userId, setUserId] = useState<string | null>(null);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
   const [missions, setMissions] = useState<Mission[]>([]);
+  const [missionProgressById, setMissionProgressById] = useState<
+    Record<string, MissionProgress>
+  >(
+    {},
+  );
+  const [onboardingSettings, setOnboardingSettings] =
+    useState<OnboardingSettings>(defaultOnboardingSettings);
   const [isOnboardingRequired, setIsOnboardingRequired] = useState(false);
   const [isCheckingOnboarding, setIsCheckingOnboarding] = useState(true);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -51,6 +122,7 @@ export default function LobbyPage() {
   useEffect(() => {
     return onAuthStateChanged(firebaseAuth, (user) => {
       if (!user) { router.replace("/"); return; }
+      setUserId(user.uid);
       setUserEmail(user.email ?? "");
       setUserName(user.displayName ?? user.email?.split("@")[0] ?? "사용자");
       setUserPhoto(user.photoURL ?? null);
@@ -90,10 +162,45 @@ export default function LobbyPage() {
   }, [router]);
 
   useEffect(() => {
+    if (!userId) {
+      setMissionProgressById({});
+      return;
+    }
+    return onSnapshot(
+      collection(db, "sessions", userId, "missions"),
+      (snap) => {
+        setMissionProgressById(
+          Object.fromEntries(
+            snap.docs.map((missionDoc) => [
+              missionDoc.id,
+              missionProgress(missionDoc.data() as Record<string, unknown>),
+            ]),
+          ),
+        );
+      },
+      () => setMissionProgressById({}),
+    );
+  }, [userId]);
+
+  useEffect(() => {
     const q = query(collection(db, "missions"), orderBy("createdAt", "asc"));
     return onSnapshot(q, (snap) => {
       setMissions(snap.docs.map((d) => ({ id: d.id, ...d.data() }) as Mission));
     });
+  }, []);
+
+  useEffect(() => {
+    fetch("/api/onboarding")
+      .then((res) => (res.ok ? res.json() : null))
+      .then((settings) => {
+        if (!settings?.startDate || !settings?.endDate) return;
+        setOnboardingSettings({
+          startDate: settings.startDate,
+          endDate: settings.endDate,
+          durationMinutes: Number(settings.durationMinutes) || 20,
+        });
+      })
+      .catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -108,12 +215,42 @@ export default function LobbyPage() {
   const userInitial = (userName?.trim()?.charAt(0) || "U").toUpperCase();
   const todayDate = new Date();
   todayDate.setHours(0, 0, 0, 0);
+  const onboardingMission: Mission = {
+    id: ONBOARDING_MISSION_ID,
+    title: "온보딩 미션",
+    description:
+      "자유주제로 PC 또는 모바일 화면을 선택해 노트, 목업, 프레젠테이션 생성 흐름을 연습합니다.",
+    startDate: onboardingSettings.startDate,
+    endDate: onboardingSettings.endDate,
+    durationMinutes: onboardingSettings.durationMinutes,
+    options: [
+      {
+        id: "onboarding-desktop",
+        title: "PC 자유주제",
+        description: "PC 화면 기준으로 자유롭게 웹/앱 아이디어를 진행합니다.",
+        imageUrl: "",
+        content:
+          "자유주제로 랜딩 페이지, 서비스 화면, 포트폴리오, 커머스 등 원하는 웹/앱 화면을 만들어보세요.",
+      },
+      {
+        id: "onboarding-mobile",
+        title: "모바일 자유주제",
+        description: "모바일 화면 기준으로 자유롭게 앱/웹 아이디어를 진행합니다.",
+        imageUrl: "",
+        content:
+          "자유주제로 온보딩, 홈 화면, 상세 화면, 예약/구독/커머스 등 원하는 모바일 화면을 만들어보세요.",
+      },
+    ],
+    createdAt: -1,
+  };
   const todayMissions = missions.filter((mission) => {
-    const start = new Date(mission.startDate);
-    const end = new Date(mission.endDate);
+    const start = parseLocalDate(mission.startDate);
+    const end = parseLocalDate(mission.endDate);
     return todayDate >= start && todayDate <= end;
   });
-  const visibleMissions = todayMissions.length > 0 ? todayMissions.slice(0, 1) : missions;
+  const regularVisibleMissions =
+    todayMissions.length > 0 ? todayMissions.slice(0, 1) : missions;
+  const visibleMissions = [onboardingMission, ...regularVisibleMissions];
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900">
@@ -164,9 +301,6 @@ export default function LobbyPage() {
           <div className="flex flex-wrap items-center justify-between gap-3">
             <p className="text-2xl font-semibold text-slate-900">Agent Actions</p>
             <div className="flex flex-wrap gap-2">
-              <Link href="/onboarding" className="rounded-2xl border border-slate-200 px-5 py-3 text-sm font-semibold text-slate-700 transition hover:border-slate-400">
-                {isOnboardingRequired ? "온보딩하기" : "나의 온보딩 보기"}
-              </Link>
               <Link href="/agent" className="rounded-2xl border border-slate-200 px-5 py-3 text-sm font-semibold text-slate-700 transition hover:border-slate-400">
                 에이전트 메모리 평가하기
               </Link>
@@ -174,7 +308,7 @@ export default function LobbyPage() {
           </div>
           {isOnboardingRequired && (
             <p className="mt-4 text-sm text-slate-500">
-              온보딩을 완료해야 오늘의 미션을 시작할 수 있습니다.
+              먼저 오늘의 미션 섹션에 있는 온보딩 미션을 완료해주세요.
             </p>
           )}
         </header>
@@ -193,20 +327,36 @@ export default function LobbyPage() {
           ) : (
             <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
               {visibleMissions.map((mission) => {
-                const status = derivedStatus(mission.startDate, mission.endDate);
+                const isOnboardingMission =
+                  mission.id === ONBOARDING_MISSION_ID;
+                const progress =
+                  missionProgressById[mission.id] ??
+                  (isOnboardingMission && !isOnboardingRequired
+                    ? { hasActivity: true, timerStartedAt: null }
+                    : null);
+                const status = derivedStatus(
+                  mission.startDate,
+                  mission.endDate,
+                  progress,
+                  mission.durationMinutes,
+                );
                 return (
                   <article
                     key={mission.id}
                     onClick={() => {
                       if (isCheckingOnboarding) return;
+                      if (isOnboardingMission) {
+                        router.push(`/main/${ONBOARDING_MISSION_ID}`);
+                        return;
+                      }
                       if (isOnboardingRequired) {
-                        router.push("/onboarding");
+                        router.push(`/main/${ONBOARDING_MISSION_ID}`);
                         return;
                       }
                       router.push(`/main/${mission.id}`);
                     }}
                     className={`rounded-3xl border border-slate-100 bg-white p-6 shadow-sm transition ${
-                      isOnboardingRequired || isCheckingOnboarding
+                      (!isOnboardingMission && isOnboardingRequired) || isCheckingOnboarding
                         ? "cursor-not-allowed opacity-60"
                         : "cursor-pointer hover:bg-slate-50"
                     }`}
@@ -220,16 +370,40 @@ export default function LobbyPage() {
                     {mission.description && (
                       <p className="mt-2 text-sm text-slate-500 leading-relaxed line-clamp-2">{mission.description}</p>
                     )}
-                    <p className="mt-3 text-xs text-slate-400">옵션 {mission.options?.length ?? 0}개 중 선택</p>
+                    <p className="mt-3 text-xs text-slate-400">
+                      {isOnboardingMission
+                        ? `PC/모바일 중 선택 · 제한 시간 ${mission.durationMinutes ?? 20}분`
+                        : `옵션 ${mission.options?.length ?? 0}개 중 선택${
+                            mission.durationMinutes
+                              ? ` · 제한 시간 ${mission.durationMinutes}분`
+                              : " · 제한 시간 없음"
+                          }`}
+                    </p>
                     {isOnboardingRequired && (
                       <p className="mt-2 rounded-xl bg-amber-50 px-3 py-2 text-xs font-medium text-amber-700">
-                        온보딩 완료 후 시작할 수 있습니다.
+                        {isOnboardingMission
+                          ? "이 미션을 완료하면 오늘의 미션을 시작할 수 있습니다."
+                          : "온보딩 완료 후 시작할 수 있습니다."}
                       </p>
                     )}
                     <div className="mt-3 flex items-center gap-2">
                       <p className="text-xs text-slate-400">{mission.startDate} – {mission.endDate}</p>
                       <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-500">
-                        {(mission.device ?? "desktop") === "mobile" ? <><DeviceMobileIcon size={12} className="inline" /> 모바일</> : <><MonitorIcon size={12} className="inline" /> PC</>}
+                        {mission.device === "mobile" ? (
+                          <><DeviceMobileIcon size={12} className="inline" /> 모바일</>
+                        ) : mission.device === "desktop" ? (
+                          <><MonitorIcon size={12} className="inline" /> PC</>
+                        ) : (
+                          <>
+                            <MonitorIcon size={12} className="inline" /> PC ·{" "}
+                            <DeviceMobileIcon size={12} className="inline" /> 모바일
+                          </>
+                        )}
+                      </span>
+                      <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-500">
+                        {mission.durationMinutes
+                          ? `${mission.durationMinutes}분`
+                          : "시간 제한 없음"}
                       </span>
                     </div>
                   </article>

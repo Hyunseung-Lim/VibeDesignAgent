@@ -46,6 +46,14 @@ async function uploadOptionImage(optionId: string, file: File): Promise<string> 
   return getDownloadURL(imgRef);
 }
 
+function imageSrc(url: string) {
+  return url;
+}
+
+function fallbackImageSrc(url: string) {
+  if (!url || url.startsWith("data:") || url.startsWith("blob:")) return url;
+  return `/api/image-proxy?url=${encodeURIComponent(url)}`;
+}
 
 export default function NewMissionPage() {
   const router = useRouter();
@@ -279,7 +287,17 @@ export default function NewMissionPage() {
                   <div className="grid grid-cols-3 gap-2">
                     {option.imageUrls.map((url, i) => (
                       <div key={i} className="relative group">
-                        <img src={url} alt="" className="h-24 w-full rounded-xl object-cover border border-slate-100" />
+                        <img
+                          src={imageSrc(url)}
+                          alt=""
+                          className="h-24 w-full rounded-xl object-cover border border-slate-100"
+                          onError={(e) => {
+                            const img = e.currentTarget;
+                            if (img.dataset.fallback === "1") return;
+                            img.dataset.fallback = "1";
+                            img.src = fallbackImageSrc(url);
+                          }}
+                        />
                         <button
                           type="button"
                           onClick={() => updateOption(option.id, { imageUrls: option.imageUrls.filter((_, j) => j !== i) })}

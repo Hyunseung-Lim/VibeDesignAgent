@@ -58,6 +58,12 @@ type Mission = {
   createdAt: number;
 };
 
+type OnboardingSettings = {
+  startDate: string;
+  endDate: string;
+  durationMinutes: number;
+};
+
 function derivedStatus(
   startDate: string,
   endDate: string,
@@ -74,7 +80,16 @@ function derivedStatus(
 }
 
 function today() {
-  return new Date().toISOString().slice(0, 10);
+  const date = new Date();
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function defaultOnboardingSettings(): OnboardingSettings {
+  const date = today();
+  return { startDate: date, endDate: date, durationMinutes: 20 };
 }
 
 function createEmptyOption(): MissionOption {
@@ -90,6 +105,15 @@ function normalizeOptions(options?: MissionOption[]) {
     imageUrls: (option as any).imageUrls ?? ((option as any).imageUrl ? [(option as any).imageUrl] : []),
     content: option.content ?? "",
   }));
+}
+
+function imageSrc(url: string) {
+  return url;
+}
+
+function fallbackImageSrc(url: string) {
+  if (!url || url.startsWith("data:") || url.startsWith("blob:")) return url;
+  return `/api/image-proxy?url=${encodeURIComponent(url)}`;
 }
 
 const EMPTY_FORM = {
@@ -111,6 +135,10 @@ export default function AdminPage() {
   const [participants, setParticipants] = useState<Participant[]>([]);
   const [adminUsers, setAdminUsers] = useState<AdminUser[]>([]);
   const [isLoadingUsers, setIsLoadingUsers] = useState(false);
+  const [onboardingSettings, setOnboardingSettings] =
+    useState<OnboardingSettings>(defaultOnboardingSettings);
+  const [isSavingOnboardingSettings, setIsSavingOnboardingSettings] =
+    useState(false);
   const [editUploadingIds, setEditUploadingIds] = useState<Set<string>>(new Set());
   const editImageInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
 
@@ -284,6 +312,46 @@ export default function AdminPage() {
     return data.users ?? [];
   };
 
+  const loadOnboardingSettings = async () => {
+    const res = await fetch("/api/onboarding");
+    if (!res.ok) return;
+    const data = (await res.json()) as Partial<OnboardingSettings>;
+    setOnboardingSettings({
+      startDate: data.startDate || today(),
+      endDate: data.endDate || data.startDate || today(),
+      durationMinutes: Number(data.durationMinutes) || 20,
+    });
+  };
+
+  const saveOnboardingSettings = async () => {
+    const token = await getAdminToken();
+    if (!token) {
+      alert("관리자 인증 정보가 없습니다. 다시 로그인해주세요.");
+      return;
+    }
+    setIsSavingOnboardingSettings(true);
+    try {
+      const res = await fetch("/api/onboarding", {
+        method: "PATCH",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(onboardingSettings),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        throw new Error(data?.error ?? `온보딩 설정 저장 실패 (${res.status})`);
+      }
+      await loadOnboardingSettings();
+    } catch (error) {
+      console.error("[admin] onboarding settings save failed", error);
+      alert("온보딩 설정 저장에 실패했습니다.");
+    } finally {
+      setIsSavingOnboardingSettings(false);
+    }
+  };
+
   const loadUsers = async () => {
     if (!ready) return;
     setIsLoadingUsers(true);
@@ -394,6 +462,11 @@ export default function AdminPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready, missions]);
 
+  useEffect(() => {
+    if (!ready) return;
+    loadOnboardingSettings();
+  }, [ready]);
+
   const closeParticipants = () => {
     setParticipantsMissionId(null);
     setParticipants([]);
@@ -451,6 +524,78 @@ export default function AdminPage() {
       </div>
 
       <div className="mx-auto max-w-5xl space-y-8 px-4 py-10 lg:px-10">
+        <section className="space-y-4 rounded-3xl border border-slate-100 bg-white p-6 shadow-sm">
+          <div>
+            <h2 className="text-lg font-semibold text-slate-900">
+              온보딩 설정
+            </h2>
+            <p className="text-sm text-slate-400">
+              로비의 온보딩 미션 기간과 제한 시간을 설정합니다.
+            </p>
+          </div>
+          <div className="flex flex-wrap items-end gap-3">
+            <label className="space-y-1 text-xs font-semibold text-slate-500">
+              시작일
+              <input
+                type="date"
+                value={onboardingSettings.startDate}
+                onChange={(e) =>
+                  setOnboardingSettings((prev) => ({
+                    ...prev,
+                    startDate: e.target.value,
+                    endDate:
+                      prev.endDate < e.target.value
+                        ? e.target.value
+                        : prev.endDate,
+                  }))
+                }
+                className="block rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-700 outline-none focus:border-slate-400"
+              />
+            </label>
+            <label className="space-y-1 text-xs font-semibold text-slate-500">
+              종료일
+              <input
+                type="date"
+                value={onboardingSettings.endDate}
+                min={onboardingSettings.startDate}
+                onChange={(e) =>
+                  setOnboardingSettings((prev) => ({
+                    ...prev,
+                    endDate: e.target.value,
+                  }))
+                }
+                className="block rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-700 outline-none focus:border-slate-400"
+              />
+            </label>
+            <label className="space-y-1 text-xs font-semibold text-slate-500">
+              제한 시간
+              <div className="flex items-center gap-2">
+                <input
+                  type="number"
+                  min={1}
+                  value={onboardingSettings.durationMinutes}
+                  onChange={(e) =>
+                    setOnboardingSettings((prev) => ({
+                      ...prev,
+                      durationMinutes: Number(e.target.value) || 20,
+                    }))
+                  }
+                  className="block w-24 rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-700 outline-none focus:border-slate-400"
+                />
+                <span className="text-sm font-normal text-slate-400">분</span>
+              </div>
+            </label>
+            <button
+              type="button"
+              onClick={saveOnboardingSettings}
+              disabled={isSavingOnboardingSettings}
+              className="rounded-2xl bg-slate-900 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-slate-700 disabled:opacity-50"
+            >
+              {isSavingOnboardingSettings ? "저장 중..." : "온보딩 설정 저장"}
+            </button>
+          </div>
+        </section>
+
         <section className="space-y-4">
           <div className="flex items-center justify-between">
             <div>
@@ -733,7 +878,17 @@ export default function AdminPage() {
                                     <div className="grid grid-cols-3 gap-1.5">
                                       {option.imageUrls.map((url: string, i: number) => (
                                         <div key={i} className="relative group">
-                                          <img src={url} alt="" className="h-20 w-full rounded-lg object-cover border border-slate-100" />
+                                          <img
+                                            src={imageSrc(url)}
+                                            alt=""
+                                            className="h-20 w-full rounded-lg object-cover border border-slate-100"
+                                            onError={(e) => {
+                                              const img = e.currentTarget;
+                                              if (img.dataset.fallback === "1") return;
+                                              img.dataset.fallback = "1";
+                                              img.src = fallbackImageSrc(url);
+                                            }}
+                                          />
                                           <button type="button" onClick={() => updateEditOption(option.id, { imageUrls: option.imageUrls.filter((_: string, j: number) => j !== i) })}
                                             className="absolute top-0.5 right-0.5 hidden group-hover:flex h-4 w-4 items-center justify-center rounded-full bg-black/60 text-white text-xs">✕</button>
                                         </div>
@@ -772,6 +927,35 @@ export default function AdminPage() {
                         </>
                       ) : (
                         <>
+                          {(() => {
+                            const options = normalizeOptions(mission.options);
+                            const imageUrls = options.flatMap(
+                              (option) => option.imageUrls,
+                            );
+                            return imageUrls.length > 0 ? (
+                              <div className="flex gap-2 overflow-x-auto pb-1">
+                                {imageUrls.slice(0, 8).map((url, index) => (
+                                  <img
+                                    key={`${url}-${index}`}
+                                    src={imageSrc(url)}
+                                    alt=""
+                                    className="h-16 w-20 shrink-0 rounded-xl border border-slate-100 object-cover"
+                                    onError={(e) => {
+                                      const img = e.currentTarget;
+                                      if (img.dataset.fallback === "1") return;
+                                      img.dataset.fallback = "1";
+                                      img.src = fallbackImageSrc(url);
+                                    }}
+                                  />
+                                ))}
+                                {imageUrls.length > 8 && (
+                                  <div className="flex h-16 w-20 shrink-0 items-center justify-center rounded-xl border border-slate-100 bg-slate-50 text-xs font-semibold text-slate-400">
+                                    +{imageUrls.length - 8}
+                                  </div>
+                                )}
+                              </div>
+                            ) : null;
+                          })()}
                           <div className="flex items-center gap-3">
                             <p className="text-sm font-semibold text-slate-900 truncate">
                               {mission.title}
@@ -793,7 +977,13 @@ export default function AdminPage() {
                             </p>
                           )}
                           <p className="text-xs text-slate-400">
-                            옵션 {mission.options?.length ?? 0}개
+                            옵션 {mission.options?.length ?? 0}개 · 이미지{" "}
+                            {normalizeOptions(mission.options).reduce(
+                              (count, option) =>
+                                count + option.imageUrls.length,
+                              0,
+                            )}
+                            개
                           </p>
                           <p className="text-xs text-slate-400">
                             {mission.startDate} – {mission.endDate}

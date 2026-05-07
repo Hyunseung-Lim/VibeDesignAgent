@@ -20,13 +20,13 @@ OUTPUT RULES:
   - Use this when the user asks you to revise, improve, expand, shorten, rewrite, or otherwise directly edit the selected note.
   - The user cannot manually edit notes, so you are responsible for writing complete note content when asked.
   - The description is a full replacement, not a patch. Preserve useful existing intent unless the user asks to change it.
-- To create a NEW UI mockup: write 1–2 sentences explaining the concept and key design decisions. Then output [GENERATE_MOCKUP: {prompt}] on its own line. Then 1–2 sentences describing what will be created.
+- To create a NEW UI mockup: write 1–2 sentences explaining the concept and key design decisions. Then output [GENERATE_MOCKUP: detailed English prompt text] on its own line. Do not wrap the prompt in JSON. Then 1–2 sentences describing what will be created.
   - Use [GENERATE_MOCKUP] when the user asks for a new layout, new structure, new concept, another version, fresh canvas, or a completely different design, even if a current mockup already exists.
   - The prompt (write in English) should be a detailed production prompt, not a short summary. It should cover: target device, main layout and sections, key UI components, exact visible copy, visual style and color direction, typography, spacing, interaction states, and any specific elements from cited references.
   - If an active note is provided, you MUST incorporate the active note's detailed requirements and style reference into the prompt. Preserve concrete tokens such as colors, fonts, spacing, border radius, shadows, brand tone, and component rules. Do not collapse a long style guide into generic phrases like "consistent brand identity".
   - Aim for 900–1800 characters inside [GENERATE_MOCKUP: ...] when the note contains a detailed design/style guide.
   - Example: [GENERATE_MOCKUP: Mobile onboarding screen with 3-step progress indicator at top, central illustration area, bold headline, subtitle text, and a prominent CTA button at bottom. Clean minimal style with indigo/white palette.]
-- To EDIT/MODIFY the current mockup: write 1 sentence explaining what you're changing. Then output [EDIT_MOCKUP: {prompt}] on its own line. Then 1 sentence confirming what changed.
+- To EDIT/MODIFY the current mockup: write 1 sentence explaining what you're changing. Then output [EDIT_MOCKUP: detailed English edit instruction] on its own line. Do not wrap the prompt in JSON. Then 1 sentence confirming what changed.
   - The prompt (write in English) should describe specifically what to change and how.
   - If Current mockup HTML is provided and the user asks to change, adjust, tweak, revise, replace, remove, add a small element, change copy/color/spacing, or otherwise modify the existing design, you MUST use [EDIT_MOCKUP], not [GENERATE_MOCKUP].
   - Do NOT use [EDIT_MOCKUP] when the user asks for a new layout, new structure, another version, fresh canvas, or completely different design. Use [GENERATE_MOCKUP] for those requests.
@@ -57,6 +57,7 @@ export async function POST(request: Request) {
     missionImageUrls,
     device,
     activeIdea,
+    userMemory,
   } = await request.json();
   const deviceLabel =
     device === "mobile" ? "모바일 (390×844px)" : "PC (1280×900px)";
@@ -74,6 +75,13 @@ export async function POST(request: Request) {
     systemMessages.push({
       role: "system",
       content: `Current mission context:\nTitle: ${missionTitle || "(없음)"}\nBrief: ${missionBrief || "(없음)"}`,
+    });
+  }
+
+  if (userMemory) {
+    systemMessages.push({
+      role: "system",
+      content: `User memory from onboarding. Consider this when deciding how much guidance to give, how to structure notes, what design process to encourage, and what defaults to choose. Do not mention this memory unless it is directly useful.\n${userMemory}`,
     });
   }
 
