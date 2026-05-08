@@ -169,6 +169,35 @@ async function deleteDocument(documentPath: string, token: string) {
   }
 }
 
+async function resetOnboardingRecord(uid: string, token: string) {
+  const url = new URL(`${firestoreBase()}/users/${uid}`);
+  [
+    "onboardingCompleted",
+    "onboardingCompletedAt",
+    "onboardingMemory",
+    "onboardingMemoryUpdatedAt",
+  ].forEach((field) => url.searchParams.append("updateMask.fieldPaths", field));
+
+  const res = await fetch(url, {
+    method: "PATCH",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      fields: {
+        onboardingCompleted: { booleanValue: false },
+        onboardingCompletedAt: { nullValue: "NULL_VALUE" },
+        onboardingMemory: { stringValue: "" },
+        onboardingMemoryUpdatedAt: { nullValue: "NULL_VALUE" },
+      },
+    }),
+  });
+  if (!res.ok && res.status !== 404) {
+    throw new Error(`Reset onboarding ${uid} failed: ${res.status}`);
+  }
+}
+
 export async function DELETE(
   request: Request,
   { params }: { params: Promise<{ uid: string }> },
@@ -179,8 +208,42 @@ export async function DELETE(
 
   const { uid } = await params;
   if (!uid) return Response.json({ error: "uid required" }, { status: 400 });
+  const searchParams = new URL(request.url).searchParams;
+  const recordsOnly = searchParams.get("recordsOnly") === "1";
+  const targetMissionId = searchParams.get("missionId") ?? "";
+  const confirmFullDelete = searchParams.get("confirmFullDelete") === "1";
 
   const token = await getAccessToken();
+  if (recordsOnly) {
+    if (!targetMissionId) {
+      return Response.json({ error: "missionId required" }, { status: 400 });
+    }
+
+    await Promise.all([
+      deleteDocument(`sessions/${uid}/missions/${targetMissionId}`, token),
+      targetMissionId === "onboarding"
+        ? resetOnboardingRecord(uid, token)
+        : deleteDocument(
+            `missions/${targetMissionId}/participants/${uid}`,
+            token,
+          ),
+    ]);
+
+    return Response.json({
+      ok: true,
+      recordsOnly: true,
+      deletedSessionMissions: 1,
+      deletedParticipantRecords: targetMissionId === "onboarding" ? 0 : 1,
+    });
+  }
+
+  if (!confirmFullDelete) {
+    return Response.json(
+      { error: "confirmFullDelete required" },
+      { status: 400 },
+    );
+  }
+
   const [missionIds, sessionMissionIds] = await Promise.all([
     listDocumentIds("missions", token),
     listDocumentIds(`sessions/${uid}/missions`, token),
@@ -199,6 +262,7 @@ export async function DELETE(
 
   return Response.json({
     ok: true,
+    recordsOnly: false,
     deletedSessionMissions: sessionMissionIds.length,
     deletedParticipantRecords: missionIds.length,
   });

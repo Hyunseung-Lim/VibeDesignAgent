@@ -23,6 +23,7 @@ import {
   DeviceMobileIcon,
   MonitorIcon,
   EyeIcon,
+  DownloadSimpleIcon,
   XIcon,
 } from "@phosphor-icons/react";
 
@@ -33,8 +34,23 @@ type Message = {
   id: string;
   role: "user" | "assistant";
   content: string;
+  createdAt?: number;
   citedElement?: { selector: string; artboardId: string } | null;
   citedReferences?: { id: string; title: string; imageUrl?: string }[] | null;
+};
+
+type ActivityLogEvent = {
+  id: string;
+  createdAt: number;
+  section: "reference" | "note" | "mockup" | "presentation";
+  action: "add" | "delete" | "create" | "update" | "stitch_prompt";
+  input?: string;
+  output?: string;
+  outputTitle?: string;
+  link?: string;
+  imageUrl?: string;
+  html?: string;
+  stitchPrompt?: string;
 };
 
 type Reference = {
@@ -50,6 +66,8 @@ type Idea = {
   id: string;
   title: string;
   description: string;
+  createdAt?: number;
+  updatedAt?: number;
   presentations?: Presentation[];
   presentationSlides?: PresentationSlide[];
   presentationHtml?: string;
@@ -70,6 +88,7 @@ type Artboard = {
   id: string;
   html: string;
   label: string;
+  createdAt?: number;
   x: number;
   y: number;
   device: Device;
@@ -420,23 +439,58 @@ async function fetchAssetText(url: string, baseUrl: string) {
   }
 }
 
+function extractJsonActionPayload(text: string, tag: "CREATE_NOTE" | "UPDATE_NOTE") {
+  const start = text.indexOf(`[${tag}:`);
+  if (start === -1) return null;
+
+  const payloadStart = text.indexOf("{", start);
+  if (payloadStart === -1) return null;
+
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let i = payloadStart; i < text.length; i += 1) {
+    const char = text[i];
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (char === "\\") {
+      escaped = true;
+      continue;
+    }
+    if (char === '"') {
+      inString = !inString;
+      continue;
+    }
+    if (inString) continue;
+    if (char === "{") depth += 1;
+    if (char === "}") {
+      depth -= 1;
+      if (depth === 0) return text.slice(payloadStart, i + 1);
+    }
+  }
+
+  return null;
+}
+
 function parseCreateNoteBlock(text: string): CreateNoteData | null {
-  const match = text.match(/\[CREATE_NOTE:\s*([\s\S]*?)\]/);
-  if (!match) return null;
+  const payload = extractJsonActionPayload(text, "CREATE_NOTE");
+  if (!payload) return null;
   try {
-    return JSON.parse(match[1].trim()) as CreateNoteData;
+    return JSON.parse(payload) as CreateNoteData;
   } catch {
-    return { description: match[1].trim() };
+    return { description: payload.trim() };
   }
 }
 
 function parseUpdateNoteBlock(text: string): UpdateNoteData | null {
-  const match = text.match(/\[UPDATE_NOTE:\s*([\s\S]*?)\]/);
-  if (!match) return null;
+  const payload = extractJsonActionPayload(text, "UPDATE_NOTE");
+  if (!payload) return null;
   try {
-    return JSON.parse(match[1].trim()) as UpdateNoteData;
+    return JSON.parse(payload) as UpdateNoteData;
   } catch {
-    return { description: match[1].trim() };
+    return { description: payload.trim() };
   }
 }
 
@@ -855,7 +909,10 @@ function injectNoNavigation(html: string): string {
 }
 
 function injectHeightReporter(html: string, artboardId: string): string {
-  const script = `<script>
+  const script = `<style>
+html, body { min-height: 0 !important; height: auto !important; }
+</style>
+<script>
 (function(){
   var lastHeight = 0;
   function measure(){
@@ -888,15 +945,10 @@ function injectHeightReporter(html: string, artboardId: string): string {
     }, '*');
   }, { capture: true });
   window.addEventListener('load', measure);
-  window.addEventListener('resize', measure);
-  if (typeof ResizeObserver !== 'undefined') {
-    var observer = new ResizeObserver(measure);
-    if (document.body) observer.observe(document.body);
-    if (document.documentElement) observer.observe(document.documentElement);
-  }
   setTimeout(measure, 0);
-  setTimeout(measure, 300);
-  setTimeout(measure, 1000);
+  setTimeout(measure, 500);
+  setTimeout(measure, 1500);
+  setTimeout(measure, 3000);
 })();
 </script>`;
   const idx = html.lastIndexOf("</body>");
@@ -912,25 +964,25 @@ type ContentPart =
 
 const BLOCK_RULES = [
   {
-    complete: /\[CREATE_NOTE:[\s\S]*?\]/,
+    complete: /\[CREATE_NOTE:\s*\{[\s\S]*?\}\]/,
     partial: /\[CREATE_NOTE:[\s\S]*$/,
     doneLabel: "노트 생성됨",
     pendingLabel: "노트 작성 중...",
   },
   {
-    complete: /\[UPDATE_NOTE:[\s\S]*?\]/,
+    complete: /\[UPDATE_NOTE:\s*\{[\s\S]*?\}\]/,
     partial: /\[UPDATE_NOTE:[\s\S]*$/,
     doneLabel: "노트 수정됨",
     pendingLabel: "노트 수정 중...",
   },
   {
-    complete: /\[GENERATE_MOCKUP:[^\]]+\]/,
+    complete: /\[GENERATE_MOCKUP(?::[^\]]*)?\]/,
     partial: /\[GENERATE_MOCKUP:[\s\S]*$/,
     doneLabel: "새 목업 생성 요청",
     pendingLabel: "목업 설명 작성 중...",
   },
   {
-    complete: /\[EDIT_MOCKUP:[^\]]+\]/,
+    complete: /\[EDIT_MOCKUP(?::[^\]]*)?\]/,
     partial: /\[EDIT_MOCKUP:[\s\S]*$/,
     doneLabel: "목업 수정 요청",
     pendingLabel: "수정 내용 작성 중...",
@@ -1026,11 +1078,25 @@ function splitPendingMockupCompletionText(content: string) {
 
 function normalizeActionBlockAliases(content: string) {
   return content
+    .replace(/\[(?:목업\s*)?생성\s*요청\s*\]/g, "[GENERATE_MOCKUP: ]")
     .replace(/\[(?:목업\s*)?생성\s*요청\s*:\s*([\s\S]*?)\]/g, "[GENERATE_MOCKUP: $1]")
     .replace(/\[목업\s*생성\s*:\s*([\s\S]*?)\]/g, "[GENERATE_MOCKUP: $1]")
+    .replace(/\[(?:목업\s*)?수정\s*요청\s*\]/g, "[EDIT_MOCKUP: ]")
     .replace(/\[(?:목업\s*)?수정\s*요청\s*:\s*([\s\S]*?)\]/g, "[EDIT_MOCKUP: $1]")
     .replace(/\[목업\s*수정\s*:\s*([\s\S]*?)\]/g, "[EDIT_MOCKUP: $1]")
     .replace(/\[레퍼런스\s*검색\s*:\s*([\s\S]*?)\]/g, "[FETCH_REFERENCES: $1]");
+}
+
+function defaultMockupPromptForIdea(idea: Idea | null, targetDevice: Device) {
+  const deviceLabel = targetDevice === "mobile" ? "mobile app screen" : "desktop web page";
+  return [
+    `Create a high-fidelity ${deviceLabel} UI mockup based on the active note.`,
+    idea?.title ? `Note title: ${idea.title}` : "",
+    idea?.description ? `Note content:\n${idea.description}` : "",
+    "Use polished visual hierarchy, realistic content, strong spacing, and a complete usable first screen.",
+  ]
+    .filter(Boolean)
+    .join("\n\n");
 }
 
 function normalizeMockupActionPrompt(rawPrompt: string) {
@@ -1062,8 +1128,8 @@ function mockupImageDeliveryStatus(imageUrls?: string[], isNew?: boolean) {
 
 function cleanMessageContentForModel(content: string) {
   return content
-    .replace(/\[CREATE_NOTE:[\s\S]*?\]/g, "[노트 생성]")
-    .replace(/\[UPDATE_NOTE:[\s\S]*?\]/g, "[노트 수정]")
+    .replace(/\[CREATE_NOTE:\s*\{[\s\S]*?\}\]/g, "[노트 생성]")
+    .replace(/\[UPDATE_NOTE:\s*\{[\s\S]*?\}\]/g, "[노트 수정]")
     .replace(/\[GENERATE_MOCKUP:[\s\S]*?\]/g, "이전 액션: mockup generation requested.")
     .replace(/\[EDIT_MOCKUP:[\s\S]*?\]/g, "이전 액션: mockup edit requested.")
     .replace(/```presentation\s*\n[\s\S]*?\n?\s*```/g, "이전 액션: presentation requested.")
@@ -1071,6 +1137,73 @@ function cleanMessageContentForModel(content: string) {
     .replace(/\[WEB_SEARCHED\]/g, "이전 액션: web search completed.")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
+}
+
+function csvCell(value: unknown) {
+  const text = String(value ?? "");
+  return `"${text.replace(/"/g, '""')}"`;
+}
+
+function safeFilenamePart(value: string) {
+  return value
+    .trim()
+    .replace(/[^a-zA-Z0-9가-힣_-]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "");
+}
+
+function parseManualReferencePrompt(text: string): Reference | null {
+  if (!/레퍼런스(?:로|에)?\s*(?:넣|추가|등록)/i.test(text)) return null;
+
+  const match = text.match(
+    /(?:https?:\/\/|www\.)[^\s"'<>]+|[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}(?:\/[^\s"'<>]*)?/,
+  );
+  if (!match) return null;
+
+  const rawUrl = match[0].replace(/[),.，。]+$/g, "");
+  const url = /^https?:\/\//i.test(rawUrl) ? rawUrl : `https://${rawUrl}`;
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return null;
+  }
+
+  const hostname = parsed.hostname.replace(/^www\./, "");
+  const isImageUrl = /\.(?:avif|gif|jpe?g|png|svg|webp)$/i.test(
+    parsed.pathname,
+  );
+
+  return {
+    id: `manual-ref-${Date.now()}`,
+    title: hostname,
+    description: "사용자가 직접 추가한 레퍼런스",
+    tag: hostname,
+    url: parsed.toString(),
+    imageUrl: isImageUrl ? parsed.toString() : undefined,
+  };
+}
+
+async function hydrateManualReference(reference: Reference): Promise<Reference> {
+  if (reference.imageUrl) return reference;
+
+  try {
+    const res = await fetch(
+      `/api/reference-metadata?url=${encodeURIComponent(reference.url ?? "")}`,
+    );
+    if (!res.ok) return reference;
+    const data = (await res.json()) as {
+      title?: string | null;
+      imageUrl?: string | null;
+    };
+    return {
+      ...reference,
+      title: data.title?.trim() || reference.title,
+      imageUrl: data.imageUrl || reference.imageUrl,
+    };
+  } catch {
+    return reference;
+  }
 }
 
 function CodeChip({
@@ -1256,6 +1389,7 @@ export default function MainScreenPage() {
   const [isGeneratingPresentation, setIsGeneratingPresentation] =
     useState(false);
   const [references, setReferences] = useState<Reference[]>([]);
+  const [activityLog, setActivityLog] = useState<ActivityLogEvent[]>([]);
   const [ideas, setIdeas] = useState<Idea[]>([]);
   const [selectedElement, setSelectedElement] =
     useState<SelectedElement | null>(null);
@@ -1307,12 +1441,30 @@ export default function MainScreenPage() {
     x: number;
     y: number;
   } | null>(null);
+  const [pendingArtboardSkeleton, setPendingArtboardSkeleton] = useState<{
+    ideaId: string;
+    label: string;
+    x: number;
+    y: number;
+    device: Device;
+  } | null>(null);
+  const [mockupProgress, setMockupProgress] = useState<{
+    percent: number;
+    label: string;
+  } | null>(null);
 
   const isReadOnly = !!(viewAs && isAdmin);
 
   const activeOption =
     missionOptions.find((option) => option.id === selectedOptionId) ??
     (missionOptions.length === 1 ? missionOptions[0] : null);
+
+  const appendActivityLog = useCallback((event: Omit<ActivityLogEvent, "id" | "createdAt">) => {
+    setActivityLog((prev) => [
+      ...prev,
+      { id: crypto.randomUUID(), createdAt: Date.now(), ...event },
+    ].slice(-500));
+  }, []);
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const chatBottomRef = useRef<HTMLDivElement>(null);
@@ -1617,6 +1769,7 @@ export default function MainScreenPage() {
           id: crypto.randomUUID(),
           html: session.mockupHtml,
           label: "Design 1",
+          createdAt: Date.now(),
           x: 0,
           y: 0,
           device: "desktop",
@@ -1664,6 +1817,7 @@ export default function MainScreenPage() {
         setActiveIdeaId(ideasWithPresentation[0].id);
       }
       if (session?.references) setReferences(session.references);
+      if (session?.activityLog) setActivityLog(session.activityLog);
       if (session?.stitchProjectId) setStitchProjectId(session.stitchProjectId);
 
       if (session?.timerStartedAt)
@@ -1700,6 +1854,7 @@ export default function MainScreenPage() {
         artboards.length === 0 &&
         references.length === 0 &&
         ideas.length === 0 &&
+        activityLog.length === 0 &&
         !missionTitle &&
         !missionBrief)
     )
@@ -1736,6 +1891,7 @@ export default function MainScreenPage() {
           messages,
           artboards: artboardsToSave,
           references,
+          activityLog: activityLog.slice(-500),
           ideas: ideasToSave,
           missionTitle,
           missionBrief,
@@ -1756,6 +1912,7 @@ export default function MainScreenPage() {
     messages,
     artboards,
     references,
+    activityLog,
     ideas,
     missionTitle,
     missionBrief,
@@ -2127,6 +2284,21 @@ export default function MainScreenPage() {
     setTimeout(() => fitToCanvasForIdea(ideaId), 0);
   };
 
+  const deleteIdea = (ideaId: string) => {
+    if (!confirm("이 시안과 연결된 목업을 모두 삭제할까요?")) return;
+    setIdeas((prev) => {
+      const remaining = prev.filter((i) => i.id !== ideaId);
+      const wasActive = activeIdeaId === ideaId;
+      if (wasActive) {
+        const next = remaining[0] ?? null;
+        setActiveIdeaId(next?.id ?? null);
+        if (next) setTimeout(() => fitToCanvasForIdea(next.id), 0);
+      }
+      return remaining;
+    });
+    setArtboards((prev) => prev.filter((a) => a.ideaId !== ideaId));
+  };
+
   const updateIdea = (id: string, changes: Partial<Omit<Idea, "id">>) => {
     setIdeas((prev) =>
       prev.map((i) => (i.id === id ? { ...i, ...changes } : i)),
@@ -2185,6 +2357,7 @@ export default function MainScreenPage() {
       id: crypto.randomUUID(),
       role: "user",
       content: text,
+      createdAt: Date.now(),
       citedElement: selectedElement
         ? {
             selector: selectedElement.selector,
@@ -2205,13 +2378,64 @@ export default function MainScreenPage() {
       id: assistantId,
       role: "assistant",
       content: "",
+      createdAt: Date.now(),
     };
     const missionReferenceImageUrls = getMissionReferenceImageUrls();
+    const manualReference = parseManualReferencePrompt(text);
 
     setMessages((prev) => [...prev, userMsg, assistantMsg]);
     setInputText("");
     if (textareaRef.current) textareaRef.current.style.height = "auto";
     setSelectedReferences([]);
+
+    if (manualReference) {
+      const alreadyExists = references.some(
+        (reference) =>
+          reference.url === manualReference.url ||
+          (manualReference.imageUrl &&
+            reference.imageUrl === manualReference.imageUrl),
+      );
+      const hydratedReference = alreadyExists
+        ? manualReference
+        : await hydrateManualReference(manualReference);
+      setReferences((prev) => {
+        const exists = prev.some(
+          (reference) =>
+            reference.url === hydratedReference.url ||
+            (hydratedReference.imageUrl &&
+              reference.imageUrl === hydratedReference.imageUrl),
+        );
+        if (exists) return prev;
+        return [...prev, hydratedReference];
+      });
+      if (!alreadyExists) {
+        appendActivityLog({
+          section: "reference",
+          action: "add",
+          input: text,
+          output: hydratedReference.title,
+          outputTitle: hydratedReference.title,
+          link: hydratedReference.url,
+          imageUrl: hydratedReference.imageUrl,
+        });
+      }
+      setMessages((prev) =>
+        prev.map((message) =>
+          message.id === assistantId
+            ? {
+                ...message,
+                content: alreadyExists
+                  ? `이미 레퍼런스에 있는 링크입니다: ${manualReference.url}`
+                  : hydratedReference.imageUrl
+                    ? `레퍼런스에 썸네일과 함께 추가했습니다: ${hydratedReference.url}`
+                    : `레퍼런스에 추가했습니다. 썸네일은 찾지 못했습니다: ${hydratedReference.url}`,
+              }
+            : message,
+        ),
+      );
+      return;
+    }
+
     setIsLoading(true);
 
     const controller = new AbortController();
@@ -2327,9 +2551,17 @@ export default function MainScreenPage() {
       if (createNoteBlock) {
         createdNote = {
           id: crypto.randomUUID(),
-          title: createNoteBlock.title?.trim() || nextDraftTitle(ideas),
+          title: nextDraftTitle(ideas),
           description: createNoteBlock.description?.trim() || "",
+          createdAt: Date.now(),
         };
+        appendActivityLog({
+          section: "note",
+          action: "create",
+          input: text,
+          output: createdNote.description,
+          outputTitle: createdNote.title,
+        });
         setIdeas((prev) => [...prev, createdNote as Idea]);
         setActiveIdeaId(createdNote.id);
         setActiveArtboardId(null);
@@ -2347,13 +2579,23 @@ export default function MainScreenPage() {
             idea.id === targetNoteId
               ? {
                   ...idea,
-                  title: updateNoteBlock.title?.trim() || idea.title,
+                  title: idea.title,
                   description:
                     updateNoteBlock.description?.trim() ?? idea.description,
+                  updatedAt: Date.now(),
                 }
               : idea,
           ),
         );
+        appendActivityLog({
+          section: "note",
+          action: "update",
+          input: text,
+          output: updateNoteBlock.description?.trim() ?? "",
+          outputTitle:
+            (createdNote ?? ideas.find((idea) => idea.id === targetNoteId))
+              ?.title ?? "",
+        });
       }
 
       const fetchRefMatch = fullText.match(
@@ -2364,15 +2606,12 @@ export default function MainScreenPage() {
         fetchReferences(missionTitle, missionBrief, customQuery);
       }
 
-      const generateMatch = fullText.match(/\[GENERATE_MOCKUP:\s*([\s\S]*?)\]/);
+      const generateMatch = fullText.match(/\[GENERATE_MOCKUP(?::\s*([\s\S]*?))?\]/);
       const editMatch = !generateMatch
-        ? fullText.match(/\[EDIT_MOCKUP:\s*([\s\S]*?)\]/)
+        ? fullText.match(/\[EDIT_MOCKUP(?::\s*([\s\S]*?))?\]/)
         : null;
 
       if (generateMatch || editMatch) {
-        const prompt = normalizeMockupActionPrompt(
-          (generateMatch ?? editMatch)![1],
-        );
         const userRequestedNewMockup = isExplicitNewMockupRequest(text);
         const effectiveIdeas = createdNote ? [...ideas, createdNote] : ideas;
         const effectiveActiveIdeaId = createdNote?.id ?? activeIdeaId;
@@ -2390,10 +2629,26 @@ export default function MainScreenPage() {
           createdNote ??
           ideas.find((i) => i.id === effectiveActiveIdeaId) ??
           null;
+        const parsedPrompt = normalizeMockupActionPrompt(
+          (generateMatch ?? editMatch)?.[1] ?? "",
+        );
+        const prompt =
+          parsedPrompt ||
+          (generateMatch
+            ? defaultMockupPromptForIdea(activeIdea, device)
+            : "Refine the current mockup according to the latest user request while preserving the existing structure.");
         const mockupIdeaId = effectiveActiveIdeaId;
         const stitchPrompt = isNew
           ? buildMockupPrompt(prompt, activeIdea)
           : buildEditMockupPrompt(prompt);
+        appendActivityLog({
+          section: "mockup",
+          action: "stitch_prompt",
+          input: text,
+          output: stitchPrompt,
+          outputTitle: isNew ? "새 목업 생성 프롬프트" : "목업 수정 프롬프트",
+          stitchPrompt,
+        });
 
         if (isNew && effectiveIdeas.length === 0) {
           setMessages((prev) =>
@@ -2453,10 +2708,51 @@ export default function MainScreenPage() {
         setIsGeneratingMockup(true);
         setMockupOperation(isNew ? "generate" : "edit");
         setGeneratingMockupIdeaId(mockupIdeaId);
+        setMockupProgress({
+          percent: 8,
+          label: isNew ? "새 아트보드 자리 잡는 중" : "수정 대상 화면 준비 중",
+        });
+        if (isNew) {
+          const last = effectiveIdeaBoards[effectiveIdeaBoards.length - 1];
+          setPendingArtboardSkeleton({
+            ideaId: effectiveActiveIdeaId ?? "",
+            label: `Design ${effectiveIdeaBoards.length + 1}`,
+            x: last
+              ? last.x +
+                DEVICE_SIZE[last.device ?? "desktop"].width +
+                ARTBOARD_GAP
+              : 0,
+            y: 0,
+            device,
+          });
+        } else {
+          setPendingArtboardSkeleton(null);
+        }
         try {
           const stitchController = new AbortController();
           stitchAbortControllerRef.current = stitchController;
           stitchCancelRequestedRef.current = false;
+          const progressStartedAt = Date.now();
+          const progressTimer = window.setInterval(() => {
+            const elapsed = Date.now() - progressStartedAt;
+            const estimated = Math.min(
+              88,
+              18 + Math.floor((elapsed / 115_000) * 70),
+            );
+            setMockupProgress((prev) =>
+              prev
+                ? {
+                    percent: Math.max(prev.percent, estimated),
+                    label:
+                      elapsed > 70_000
+                        ? "Stitch가 화면을 다듬는 중"
+                        : elapsed > 30_000
+                          ? "레이아웃과 비주얼 생성 중"
+                          : "Stitch에 요청 전달 중",
+                  }
+                : prev,
+            );
+          }, 1000);
           const stitchTimeout = setTimeout(
             () => stitchController.abort(),
             115_000,
@@ -2477,14 +2773,17 @@ export default function MainScreenPage() {
               }),
             });
           } finally {
+            window.clearInterval(progressTimer);
             clearTimeout(stitchTimeout);
           }
           if (!res.ok) {
             const errText = await res.text().catch(() => `HTTP ${res.status}`);
             throw new Error(errText);
           }
+          setMockupProgress({ percent: 92, label: "응답 처리 중" });
           const data = await res.json();
           if (data.error) throw new Error(data.error);
+          setMockupProgress({ percent: 96, label: "아트보드 배치 중" });
           const receivedReferenceImageCount =
             typeof data.referenceImageCount === "number"
               ? data.referenceImageCount
@@ -2535,6 +2834,7 @@ export default function MainScreenPage() {
                 id: primaryId,
                 html: data.html,
                 label: `Design ${ideaBoards.length + 1}`,
+                createdAt: Date.now(),
                 x: offsetX,
                 y: 0,
                 device,
@@ -2548,6 +2848,7 @@ export default function MainScreenPage() {
                   id: crypto.randomUUID(),
                   html: "",
                   label: `Design ${ideaBoards.length + 2 + i}`,
+                  createdAt: Date.now(),
                   x: offsetX + i * (DEVICE_SIZE[device].width + ARTBOARD_GAP),
                   y: 0,
                   device,
@@ -2563,6 +2864,10 @@ export default function MainScreenPage() {
 
             // Lazy-load HTML for extra screens
             extraScreenIds.forEach((sid: string) => {
+              setMockupProgress({
+                percent: 98,
+                label: "추가 화면 불러오는 중",
+              });
               fetch(
                 `/api/stitch/html?projectId=${data.projectId}&screenId=${sid}`,
               )
@@ -2587,6 +2892,7 @@ export default function MainScreenPage() {
               ),
             );
           }
+          setMockupProgress({ percent: 100, label: "완료" });
           setActiveIdeaTab("mockup");
           setSelectedElement(null);
           if (deferredMockupCompletionText) {
@@ -2625,6 +2931,8 @@ export default function MainScreenPage() {
           setIsGeneratingMockup(false);
           setMockupOperation(null);
           setGeneratingMockupIdeaId(null);
+          setPendingArtboardSkeleton(null);
+          setMockupProgress(null);
         }
       }
 
@@ -2891,6 +3199,7 @@ export default function MainScreenPage() {
     getMissionReferenceImageUrls,
     parentMissionTitle,
     parentMissionBrief,
+    appendActivityLog,
   ]);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -2923,6 +3232,17 @@ export default function MainScreenPage() {
             const newRefs = data.references.filter(
               (r: Reference) => !existingIds.has(r.id),
             );
+            newRefs.forEach((reference: Reference) => {
+              appendActivityLog({
+                section: "reference",
+                action: "add",
+                input: customQuery ?? title ?? brief,
+                output: reference.description,
+                outputTitle: reference.title,
+                link: reference.url,
+                imageUrl: reference.imageUrl,
+              });
+            });
             return [...prev, ...newRefs];
           });
         }
@@ -2930,7 +3250,7 @@ export default function MainScreenPage() {
         setIsFetchingRefs(false);
       }
     },
-    [isFetchingRefs, isReadOnly],
+    [isFetchingRefs, isReadOnly, appendActivityLog],
   );
 
   const ideaArtboards = artboards.filter((a) => a.ideaId === activeIdeaId);
@@ -3013,6 +3333,261 @@ export default function MainScreenPage() {
   const isGeneratingCurrentIdeaMockup =
     isGeneratingMockup && generatingMockupIdeaId === activeIdeaId;
   const activeMissionImageCount = getMissionReferenceImageUrls().length;
+  const exportMessageLogCsv = () => {
+    const exportedAt = new Date().toISOString();
+    const selectedOption = missionOptions.find(
+      (option) => option.id === selectedOptionId,
+    );
+    const sessionMeta = {
+      missionId,
+      missionTitle:
+        parentMissionTitle || missionTitle || selectedOption?.title || "",
+      missionOptionId: selectedOptionId ?? "",
+      missionOptionTitle: selectedOption?.title ?? "",
+      viewedUserId: viewAs ?? userId ?? "",
+      viewedUserName: viewAsName ?? "",
+      device,
+      stitchProjectId,
+      timerStartedAt: timerStartedAt
+        ? new Date(timerStartedAt).toISOString()
+        : "",
+      timerElapsedSeconds: timerStartedAt
+        ? String(Math.max(0, Math.floor((Date.now() - timerStartedAt) / 1000)))
+        : "",
+      exportedAt,
+    };
+    const outputRows = [
+      ...ideas.map((idea) => ({
+        eventType: "note",
+        section: "note",
+        action: "snapshot",
+        role: "",
+        input: "",
+        output: [idea.title, idea.description].filter(Boolean).join("\n\n"),
+        outputType: "note",
+        outputTitle: idea.title,
+        link: "",
+        referenceLinks: "",
+        content: idea.description,
+        html: "",
+        imageUrl: "",
+        createdAt: idea.createdAt
+          ? new Date(idea.createdAt).toISOString()
+          : "",
+        stitchScreenId: "",
+        stitchPrompt: "",
+      })),
+      ...references.map((reference) => ({
+        eventType: "reference",
+        section: "reference",
+        action: "snapshot",
+        role: "",
+        input: "",
+        output: [reference.title, reference.description, reference.url]
+          .filter(Boolean)
+          .join("\n"),
+        outputType: "reference",
+        outputTitle: reference.title,
+        link: reference.url ?? "",
+        referenceLinks: reference.url ?? "",
+        content: reference.description,
+        html: "",
+        imageUrl: reference.imageUrl ?? "",
+        createdAt: "",
+        stitchScreenId: "",
+        stitchPrompt: "",
+      })),
+      ...artboards.map((artboard) => ({
+        eventType: "mockup",
+        section: "mockup",
+        action: "snapshot",
+        role: "",
+        input: "",
+        output: artboard.html || artboard.label,
+        outputType: "mockup",
+        outputTitle: artboard.label,
+        link: "",
+        referenceLinks: "",
+        content: artboard.label,
+        html: artboard.html,
+        imageUrl: "",
+        createdAt: artboard.createdAt
+          ? new Date(artboard.createdAt).toISOString()
+          : "",
+        stitchScreenId: artboard.stitchScreenId ?? "",
+        stitchPrompt: "",
+      })),
+      ...ideas.flatMap((idea) =>
+        normalizePresentations(idea).map((presentation) => ({
+          eventType: "presentation",
+          section: "presentation",
+          action: "snapshot",
+          role: "",
+          input: "",
+          output:
+            presentation.html ||
+            presentation.slides
+              .map((slide) => `${slide.title}\n${slide.content}`)
+              .join("\n\n"),
+          outputType: "presentation",
+          outputTitle: presentation.title,
+          link: presentation.slides[0]?.imageUrl ?? "",
+          referenceLinks: "",
+          content: presentation.title,
+          html: presentation.html ?? "",
+          imageUrl: presentation.slides[0]?.imageUrl ?? "",
+          createdAt: presentation.createdAt
+            ? new Date(presentation.createdAt).toISOString()
+            : "",
+          stitchScreenId: "",
+          stitchPrompt: "",
+        })),
+      ),
+    ];
+    const eventRows = [
+      ...activityLog.map((event) => ({
+        eventType: `${event.section}:${event.action}`,
+        section: event.section,
+        action: event.action,
+        role: "",
+        input: event.input ?? "",
+        output: event.output ?? "",
+        outputType: event.section,
+        outputTitle: event.outputTitle ?? "",
+        link: event.link ?? "",
+        referenceLinks: event.section === "reference" ? event.link ?? "" : "",
+        content: event.output ?? "",
+        html: event.html ?? "",
+        imageUrl: event.imageUrl ?? "",
+        createdAt: new Date(event.createdAt).toISOString(),
+        stitchScreenId: "",
+        stitchPrompt: event.stitchPrompt ?? "",
+        messageIndex: "",
+        citedElement: "",
+        citedReferences: "",
+      })),
+      ...messages.map((message, index) => ({
+        eventType: "message",
+        section: "chat",
+        action: message.role,
+        role: message.role,
+        input: message.role === "user" ? message.content : "",
+        output: message.role === "assistant" ? message.content : "",
+        outputType: message.role === "assistant" ? "message" : "",
+        outputTitle: "",
+        link: "",
+        referenceLinks: (message.citedReferences ?? [])
+          .map((reference) => reference.imageUrl)
+          .filter(Boolean)
+          .join("; "),
+        content: message.content,
+        html: "",
+        imageUrl: "",
+        createdAt: message.createdAt
+          ? new Date(message.createdAt).toISOString()
+          : "",
+        stitchScreenId: "",
+        stitchPrompt: "",
+        messageIndex: String(index + 1),
+        citedElement: message.citedElement
+          ? `${message.citedElement.artboardId}:${message.citedElement.selector}`
+          : "",
+        citedReferences: (message.citedReferences ?? [])
+          .map((reference) =>
+            [reference.title, reference.imageUrl].filter(Boolean).join(" - "),
+          )
+          .join("; "),
+      })),
+      ...outputRows.map((row) => ({
+        ...row,
+        messageIndex: "",
+        citedElement: "",
+        citedReferences: "",
+      })),
+    ];
+    const csvRows = [
+      [
+        "event_index",
+        "event_type",
+        "section",
+        "action",
+        "role",
+        "message_index",
+        "input",
+        "output",
+        "output_type",
+        "output_title",
+        "link",
+        "reference_links",
+        "content",
+        "html",
+        "image_url",
+        "created_at",
+        "cited_element",
+        "cited_references",
+        "mission_id",
+        "mission_title",
+        "mission_option_id",
+        "mission_option_title",
+        "viewed_user_id",
+        "viewed_user_name",
+        "device",
+        "stitch_project_id",
+        "stitch_screen_id",
+        "stitch_prompt",
+        "timer_started_at",
+        "timer_elapsed_seconds",
+        "exported_at",
+      ],
+      ...eventRows.map((row, index) => [
+        String(index + 1),
+        row.eventType,
+        row.section,
+        row.action,
+        row.role,
+        row.messageIndex,
+        row.input,
+        row.output,
+        row.outputType,
+        row.outputTitle,
+        row.link,
+        row.referenceLinks,
+        row.content,
+        row.html,
+        row.imageUrl,
+        row.createdAt,
+        row.citedElement,
+        row.citedReferences,
+        sessionMeta.missionId,
+        sessionMeta.missionTitle,
+        sessionMeta.missionOptionId,
+        sessionMeta.missionOptionTitle,
+        sessionMeta.viewedUserId,
+        sessionMeta.viewedUserName,
+        sessionMeta.device,
+        sessionMeta.stitchProjectId,
+        row.stitchScreenId,
+        row.stitchPrompt,
+        sessionMeta.timerStartedAt,
+        sessionMeta.timerElapsedSeconds,
+        sessionMeta.exportedAt,
+      ]),
+    ];
+    const csv = csvRows.map((row) => row.map(csvCell).join(",")).join("\n");
+    const blob = new Blob(["\uFEFF", csv], {
+      type: "text/csv;charset=utf-8",
+    });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    const sessionName = safeFilenamePart(viewAsName ?? viewAs ?? userId ?? "user");
+    const missionName = safeFilenamePart(missionId ?? "mission");
+    link.href = url;
+    link.download = `${missionName}-${sessionName}-log.csv`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  };
   const gridSize = 20 * canvasScale;
   const getArtboardRenderHeight = (artboard: Artboard) =>
     Math.max(
@@ -3042,6 +3617,12 @@ export default function MainScreenPage() {
         setDesignContextMenu(null);
       }}
     >
+      <style>{`
+        @keyframes vda-skeleton-shimmer {
+          0% { background-position: 200% 0; }
+          100% { background-position: -200% 0; }
+        }
+      `}</style>
       {isGeneratingCurrentIdeaMockup && (
         <div
           className="pointer-events-none absolute left-1/2 top-4 z-20 flex -translate-x-1/2 items-center gap-3 rounded-full border border-white/10 bg-black/75 px-4 py-2 text-white shadow-lg backdrop-blur"
@@ -3050,6 +3631,11 @@ export default function MainScreenPage() {
           <p className="text-xs font-medium text-white/85">
             Stitch로 목업 {mockupOperation === "edit" ? "수정" : "생성"} 중...
           </p>
+          {mockupProgress && (
+            <p className="text-xs font-semibold text-white/75">
+              {mockupProgress.percent}% · {mockupProgress.label}
+            </p>
+          )}
           {activeMissionImageCount > 0 && (
             <p className="text-xs font-medium text-sky-100">
               이미지 {activeMissionImageCount}개 URL 전달됨
@@ -3154,6 +3740,138 @@ export default function MainScreenPage() {
             </div>
           );
         })}
+        {pendingArtboardSkeleton?.ideaId === activeIdeaId && (
+          <div>
+            <div
+              style={{
+                position: "absolute",
+                left: pendingArtboardSkeleton.x,
+                top: pendingArtboardSkeleton.y - 22,
+                color: "#94a3b8",
+                fontSize: 11,
+                fontWeight: 600,
+                whiteSpace: "nowrap",
+                userSelect: "none",
+              }}
+            >
+              {pendingArtboardSkeleton.label}
+            </div>
+            <div
+              style={{
+                position: "absolute",
+                left: pendingArtboardSkeleton.x,
+                top: pendingArtboardSkeleton.y,
+                width: DEVICE_SIZE[pendingArtboardSkeleton.device].width,
+                height: DEVICE_SIZE[pendingArtboardSkeleton.device].height,
+                borderRadius:
+                  pendingArtboardSkeleton.device === "mobile" ? 24 : 12,
+                overflow: "hidden",
+                outline: "2px dashed rgba(148, 163, 184, 0.55)",
+                outlineOffset: 3,
+                boxShadow: "0 8px 40px rgba(0,0,0,0.35)",
+                background:
+                  "linear-gradient(110deg, #27272a 8%, #3f3f46 18%, #27272a 33%)",
+                backgroundSize: "200% 100%",
+                animation: "vda-skeleton-shimmer 1.25s linear infinite",
+              }}
+            >
+              <div
+                style={{
+                  display: "flex",
+                  height: "100%",
+                  flexDirection: "column",
+                  gap: 24,
+                  padding: pendingArtboardSkeleton.device === "mobile" ? 24 : 40,
+                }}
+              >
+                <div
+                  style={{
+                    height: 18,
+                    width: "32%",
+                    borderRadius: 999,
+                    background: "rgba(255,255,255,0.18)",
+                  }}
+                />
+                <div
+                  style={{
+                    height:
+                      pendingArtboardSkeleton.device === "mobile" ? 180 : 260,
+                    borderRadius:
+                      pendingArtboardSkeleton.device === "mobile" ? 20 : 24,
+                    background: "rgba(255,255,255,0.14)",
+                  }}
+                />
+                <div style={{ display: "grid", gap: 14 }}>
+                  {[0, 1, 2].map((row) => (
+                    <div
+                      key={row}
+                      style={{
+                        height: row === 0 ? 28 : 14,
+                        width: row === 2 ? "56%" : row === 1 ? "82%" : "68%",
+                        borderRadius: 999,
+                        background: "rgba(255,255,255,0.16)",
+                      }}
+                    />
+                  ))}
+                </div>
+                <div
+                  style={{
+                    marginTop: "auto",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 10,
+                    color: "rgba(255,255,255,0.72)",
+                    fontSize: 13,
+                    fontWeight: 600,
+                  }}
+                >
+                  <span
+                    style={{
+                      height: 14,
+                      width: 14,
+                      borderRadius: 999,
+                      border: "2px solid rgba(255,255,255,0.3)",
+                      borderTopColor: "rgba(255,255,255,0.85)",
+                      animation: "spin 0.8s linear infinite",
+                    }}
+                  />
+                  새 아트보드 생성 중...
+                </div>
+                {mockupProgress && (
+                  <div style={{ display: "grid", gap: 8 }}>
+                    <div
+                      style={{
+                        height: 6,
+                        overflow: "hidden",
+                        borderRadius: 999,
+                        background: "rgba(255,255,255,0.14)",
+                      }}
+                    >
+                      <div
+                        style={{
+                          height: "100%",
+                          width: `${mockupProgress.percent}%`,
+                          borderRadius: 999,
+                          background: "rgba(255,255,255,0.74)",
+                          transition: "width 0.35s ease",
+                        }}
+                      />
+                    </div>
+                    <div
+                      style={{
+                        color: "rgba(255,255,255,0.58)",
+                        fontSize: 12,
+                        fontWeight: 600,
+                      }}
+                    >
+                      {mockupProgress.percent}% · {mockupProgress.label}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -3188,12 +3906,24 @@ export default function MainScreenPage() {
             <EyeIcon size={14} /> 읽기 전용 —
             <strong>{viewAsName ?? viewAs}</strong>의 세션을 보고 있습니다
           </span>
-          <Link
-            href={`/admin`}
-            className="font-semibold underline underline-offset-2"
-          >
-            어드민으로 돌아가기
-          </Link>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={exportMessageLogCsv}
+              disabled={messages.length === 0}
+              className="inline-flex items-center gap-1.5 rounded-full border border-amber-200 bg-white/70 px-3 py-1 font-semibold text-amber-700 transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-45"
+              title="로그 CSV 내보내기"
+            >
+              <DownloadSimpleIcon size={14} />
+              로그 CSV
+            </button>
+            <Link
+              href={`/admin`}
+              className="font-semibold underline underline-offset-2"
+            >
+              어드민으로 돌아가기
+            </Link>
+          </div>
         </div>
       )}
       {/* Header */}
@@ -3760,6 +4490,14 @@ export default function MainScreenPage() {
                                   e.stopPropagation();
                                   if (!confirm("이 레퍼런스를 삭제할까요?"))
                                     return;
+                                  appendActivityLog({
+                                    section: "reference",
+                                    action: "delete",
+                                    output: card.description,
+                                    outputTitle: card.title,
+                                    link: card.url,
+                                    imageUrl: card.imageUrl,
+                                  });
                                   setReferences((prev) =>
                                     prev.filter((r) => r.id !== card.id),
                                   );
@@ -3798,17 +4536,36 @@ export default function MainScreenPage() {
                   {/* Top: note tabs */}
                   <div className="flex gap-2 overflow-x-auto pb-4 mb-6 border-b border-slate-100">
                     {ideas.map((idea) => (
-                      <button
+                      <div
                         key={idea.id}
-                        onClick={() => switchIdea(idea.id)}
-                        className={`shrink-0 rounded-xl border px-4 py-2 text-sm transition ${
+                        className={`group shrink-0 flex items-center gap-1 rounded-xl border px-3 py-2 text-sm transition ${
                           activeIdeaId === idea.id
                             ? "border-slate-900 bg-slate-900 text-white"
                             : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
                         }`}
                       >
-                        {idea.title}
-                      </button>
+                        <button onClick={() => switchIdea(idea.id)}>
+                          {idea.title}
+                        </button>
+                        {!isReadOnly && (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              deleteIdea(idea.id);
+                            }}
+                            className={`ml-1 rounded-md p-0.5 opacity-0 group-hover:opacity-100 transition-opacity ${
+                              activeIdeaId === idea.id
+                                ? "hover:bg-white/20"
+                                : "hover:bg-slate-200"
+                            }`}
+                            title="시안 삭제"
+                          >
+                            <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor">
+                              <path d="M1 1l10 10M11 1L1 11" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+                            </svg>
+                          </button>
+                        )}
+                      </div>
                     ))}
                   </div>
 

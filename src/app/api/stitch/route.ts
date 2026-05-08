@@ -175,31 +175,64 @@ function promptWithReferenceImages(prompt: string, referenceImageUrls?: string[]
   ].join("\n");
 }
 
+function proxyImageUrl(url: string): string {
+  return `/api/image-proxy?url=${encodeURIComponent(url)}`;
+}
+
+const SKIP_IMG_PATTERN = /icon|logo|avatar/i;
+
 function injectReferenceImages(html: string, imageUrls: string[]): string {
   if (imageUrls.length === 0) return html;
 
+  // 1. Replace img src attributes in HTML
   let urlIndex = 0;
-  return html.replace(/<img\b([^>]*)>/gi, (match, attrs) => {
+  const result = html.replace(/<img\b([^>]*)>/gi, (match, attrs) => {
     if (urlIndex >= imageUrls.length) return match;
 
     const srcMatch = attrs.match(/\bsrc="([^"]*)"/i);
-    if (!srcMatch) return match;
-    if (srcMatch[1].startsWith("data:")) return match;
+    if (!srcMatch || srcMatch[1].startsWith("data:")) return match;
 
-    // Skip icon/logo/avatar images
-    const alt = (attrs.match(/\balt="([^"]*)"/i)?.[1] ?? "").toLowerCase();
-    const cls = (attrs.match(/\bclass="([^"]*)"/i)?.[1] ?? "").toLowerCase();
-    if (
-      alt.includes("icon") || alt.includes("logo") || alt.includes("avatar") ||
-      cls.includes("icon") || cls.includes("logo") || cls.includes("avatar")
-    ) {
-      return match;
-    }
+    const alt = attrs.match(/\balt="([^"]*)"/i)?.[1] ?? "";
+    const cls = attrs.match(/\bclass="([^"]*)"/i)?.[1] ?? "";
+    if (SKIP_IMG_PATTERN.test(alt) || SKIP_IMG_PATTERN.test(cls)) return match;
 
-    const newSrc = imageUrls[urlIndex++];
-    console.log("[stitch] injecting reference image", urlIndex, "→", newSrc.slice(0, 60));
-    return match.replace(/\bsrc="[^"]*"/i, `src="${newSrc}"`);
+    const newSrc = proxyImageUrl(imageUrls[urlIndex++]);
+    console.log("[stitch] injecting reference image", urlIndex, "→", newSrc.slice(0, 80));
+    // Also clear data-alt so Stitch scripts can't re-generate the image
+    return match
+      .replace(/\bsrc="[^"]*"/i, `src="${newSrc}"`)
+      .replace(/\bdata-alt="[^"]*"/i, "");
   });
+
+  // 2. Inject a late-running script to re-apply URLs after Stitch's own scripts
+  const urlsJson = JSON.stringify(imageUrls.map(proxyImageUrl));
+  const overrideScript = `<script>
+(function(){
+  var urls = ${urlsJson};
+  function applyImages() {
+    var idx = 0;
+    var imgs = document.querySelectorAll('img');
+    for (var i = 0; i < imgs.length && idx < urls.length; i++) {
+      var img = imgs[i];
+      var alt = (img.getAttribute('alt') || '').toLowerCase();
+      var cls = (img.className || '').toLowerCase();
+      if (/icon|logo|avatar/.test(alt) || /icon|logo|avatar/.test(cls)) continue;
+      img.src = urls[idx++];
+    }
+  }
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', applyImages);
+  } else {
+    applyImages();
+  }
+  window.addEventListener('load', applyImages);
+})();
+</script>`;
+
+  const bodyEnd = result.lastIndexOf("</body>");
+  return bodyEnd !== -1
+    ? result.slice(0, bodyEnd) + overrideScript + result.slice(bodyEnd)
+    : result + overrideScript;
 }
 
 export async function POST(request: Request) {
@@ -291,6 +324,19 @@ export async function POST(request: Request) {
       console.log("[stitch] fetched html length:", html.length);
     }
 
+    // Log image-related tags to diagnose how Stitch embeds images
+    const imgTagCount = (html.match(/<img\b/gi) ?? []).length;
+    const bgImageCount = (html.match(/background-image\s*:/gi) ?? []).length;
+    console.log("[stitch] html img tags:", imgTagCount, "background-image occurrences:", bgImageCount);
+    const imgTags = [...html.matchAll(/<img\b[^>]*>/gi)].map((m) => m[0].slice(0, 200));
+    imgTags.forEach((tag, i) => console.log(`[stitch] img[${i}]:`, tag));
+    const cspMeta = html.match(/<meta[^>]+http-equiv=["']?content-security-policy["']?[^>]*>/i)?.[0];
+    console.log("[stitch] csp meta:", cspMeta ?? "none");
+    const scriptSrcs = [...html.matchAll(/<script\b[^>]*>/gi)].map((m) => m[0]);
+    scriptSrcs.forEach((tag, i) => console.log(`[stitch] script[${i}]:`, tag));
+    const hasImageJs = /data-alt|generateImage|replaceImage|loadImage|fetchImage/i.test(html);
+    console.log("[stitch] image-related JS patterns found:", hasImageJs);
+
     const refUrls = Array.isArray(referenceImageUrls)
       ? referenceImageUrls.filter(Boolean)
       : [];
@@ -298,10 +344,14 @@ export async function POST(request: Request) {
       html = injectReferenceImages(html, refUrls);
     }
 
-    // Get all screens in the project to capture any additional screens Stitch created
+    // Only return screens created during this generation (not pre-existing ones)
     const allScreens = await project.screens().catch(() => []);
-    const allScreenIds = allScreens.map(s => s.id);
-    console.log("[stitch] total screens in project:", allScreenIds.length);
+    const freshIds = new Set(
+      allScreens.map(s => s.id).filter(id => !beforeScreenIds.has(id))
+    );
+    freshIds.add(screen.id); // always include the primary screen
+    const allScreenIds = Array.from(freshIds);
+    console.log("[stitch] new screens this generation:", allScreenIds.length);
 
     return Response.json({
       html,

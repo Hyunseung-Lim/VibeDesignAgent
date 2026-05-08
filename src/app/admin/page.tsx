@@ -20,6 +20,7 @@ import {
 import { firebaseAuth, db } from "@/lib/firebase";
 
 const ADMIN_EMAILS = ["03leesun@gmail.com", "charlie9807@gmail.com"];
+const ONBOARDING_MISSION_ID = "onboarding";
 
 type Device = "desktop" | "mobile";
 
@@ -214,16 +215,21 @@ export default function AdminPage() {
     setParticipants(participantRows);
   };
 
+  const openOnboardingParticipants = () => {
+    setParticipantsMissionId(ONBOARDING_MISSION_ID);
+    setParticipants(adminUsers);
+  };
+
   const deleteUserData = async (participant: Participant) => {
-    if (participant.isAdmin || ADMIN_EMAILS.includes(participant.email ?? "")) {
-      alert("관리자 계정은 여기서 삭제하지 않습니다.");
+    const targetMissionId = participantsMissionId;
+    if (!targetMissionId) {
+      alert("삭제할 미션 정보가 없습니다.");
       return;
     }
-
     const label = participant.displayName ?? participant.email ?? participant.id;
     if (
       !confirm(
-        `${label} 사용자의 세션, 참여 기록, 온보딩 상태를 삭제할까요? 이 작업은 되돌릴 수 없습니다.`,
+        `${label} 사용자의 ${missionTitle(targetMissionId)} 기록만 삭제할까요? 유저 정보와 다른 미션 기록은 유지됩니다.`,
       )
     )
       return;
@@ -236,7 +242,7 @@ export default function AdminPage() {
       }
       const token = await getIdToken(currentUser, true);
       const res = await fetch(
-        `/api/admin/users/${encodeURIComponent(participant.id)}`,
+        `/api/admin/users/${encodeURIComponent(participant.id)}?recordsOnly=1&missionId=${encodeURIComponent(targetMissionId)}`,
         {
           method: "DELETE",
           headers: { Authorization: `Bearer ${token}` },
@@ -253,8 +259,32 @@ export default function AdminPage() {
       return;
     }
 
-    setParticipants((prev) => prev.filter((p) => p.id !== participant.id));
-    setAdminUsers((prev) => prev.filter((p) => p.id !== participant.id));
+    const resetUser = (user: AdminUser) => ({
+      ...user,
+      missionIds:
+        targetMissionId !== ONBOARDING_MISSION_ID
+          ? user.missionIds.filter((missionId) => missionId !== targetMissionId)
+          : user.missionIds,
+      sessionMissionIds: user.sessionMissionIds.filter(
+        (missionId) => missionId !== targetMissionId,
+      ),
+      onboardingStatus:
+        targetMissionId === ONBOARDING_MISSION_ID
+          ? ("required" as const)
+          : user.onboardingStatus,
+    });
+    setAdminUsers((prev) =>
+      prev.map((p) => (p.id === participant.id ? resetUser(p) : p)),
+    );
+    setParticipants((prev) =>
+      targetMissionId === ONBOARDING_MISSION_ID
+        ? prev.map((p) =>
+            p.id === participant.id
+              ? { ...p, onboardingStatus: "required" as const }
+              : p,
+          )
+        : prev.filter((p) => p.id !== participant.id),
+    );
   };
 
   const onboardingBadge = (status?: Participant["onboardingStatus"]) => {
@@ -268,7 +298,9 @@ export default function AdminPage() {
   };
 
   const missionTitle = (missionId: string) =>
-    missions.find((mission) => mission.id === missionId)?.title ?? missionId;
+    missionId === ONBOARDING_MISSION_ID
+      ? "온보딩"
+      : missions.find((mission) => mission.id === missionId)?.title ?? missionId;
 
   const getAdminToken = async () => {
     const currentUser = firebaseAuth.currentUser;
@@ -524,79 +556,8 @@ export default function AdminPage() {
       </div>
 
       <div className="mx-auto max-w-5xl space-y-8 px-4 py-10 lg:px-10">
-        <section className="space-y-4 rounded-3xl border border-slate-100 bg-white p-6 shadow-sm">
-          <div>
-            <h2 className="text-lg font-semibold text-slate-900">
-              온보딩 설정
-            </h2>
-            <p className="text-sm text-slate-400">
-              로비의 온보딩 미션 기간과 제한 시간을 설정합니다.
-            </p>
-          </div>
-          <div className="flex flex-wrap items-end gap-3">
-            <label className="space-y-1 text-xs font-semibold text-slate-500">
-              시작일
-              <input
-                type="date"
-                value={onboardingSettings.startDate}
-                onChange={(e) =>
-                  setOnboardingSettings((prev) => ({
-                    ...prev,
-                    startDate: e.target.value,
-                    endDate:
-                      prev.endDate < e.target.value
-                        ? e.target.value
-                        : prev.endDate,
-                  }))
-                }
-                className="block rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-700 outline-none focus:border-slate-400"
-              />
-            </label>
-            <label className="space-y-1 text-xs font-semibold text-slate-500">
-              종료일
-              <input
-                type="date"
-                value={onboardingSettings.endDate}
-                min={onboardingSettings.startDate}
-                onChange={(e) =>
-                  setOnboardingSettings((prev) => ({
-                    ...prev,
-                    endDate: e.target.value,
-                  }))
-                }
-                className="block rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-700 outline-none focus:border-slate-400"
-              />
-            </label>
-            <label className="space-y-1 text-xs font-semibold text-slate-500">
-              제한 시간
-              <div className="flex items-center gap-2">
-                <input
-                  type="number"
-                  min={1}
-                  value={onboardingSettings.durationMinutes}
-                  onChange={(e) =>
-                    setOnboardingSettings((prev) => ({
-                      ...prev,
-                      durationMinutes: Number(e.target.value) || 20,
-                    }))
-                  }
-                  className="block w-24 rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-700 outline-none focus:border-slate-400"
-                />
-                <span className="text-sm font-normal text-slate-400">분</span>
-              </div>
-            </label>
-            <button
-              type="button"
-              onClick={saveOnboardingSettings}
-              disabled={isSavingOnboardingSettings}
-              className="rounded-2xl bg-slate-900 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-slate-700 disabled:opacity-50"
-            >
-              {isSavingOnboardingSettings ? "저장 중..." : "온보딩 설정 저장"}
-            </button>
-          </div>
-        </section>
-
         <section className="space-y-4">
+
           <div className="flex items-center justify-between">
             <div>
               <h2 className="text-lg font-semibold text-slate-900">유저 목록</h2>
@@ -667,16 +628,6 @@ export default function AdminPage() {
                           {user.id}
                         </p>
                       </div>
-                      {!user.isAdmin && (
-                        <button
-                          type="button"
-                          onClick={() => deleteUserData(user)}
-                          className="rounded-full p-1.5 text-slate-300 transition hover:bg-red-50 hover:text-red-500"
-                          title="유저 데이터 삭제"
-                        >
-                          <XIcon size={15} />
-                        </button>
-                      )}
                     </div>
 
                     <div className="mt-4 flex flex-wrap gap-2">
@@ -707,6 +658,88 @@ export default function AdminPage() {
         <div className="flex items-center justify-between">
           <h2 className="text-lg font-semibold text-slate-900">미션 목록</h2>
           <span className="text-sm text-slate-400">{missions.length}개</span>
+        </div>
+
+        <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
+          <div className="mb-3 flex items-center justify-between gap-3">
+            <div>
+              <p className="text-xs font-semibold text-slate-500">
+                온보딩 설정
+              </p>
+              <p className="mt-1 text-xs text-slate-400">
+                유저 {adminUsers.length}명
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={openOnboardingParticipants}
+              className="rounded-full p-1.5 text-slate-300 transition hover:bg-slate-50 hover:text-slate-600"
+              title="온보딩 유저 보기"
+            >
+              <UsersThreeIcon size={16} />
+            </button>
+          </div>
+          <div className="flex flex-wrap items-end gap-3">
+            <label className="space-y-1 text-xs font-semibold text-slate-500">
+              시작일
+              <input
+                type="date"
+                value={onboardingSettings.startDate}
+                onChange={(e) =>
+                  setOnboardingSettings((prev) => ({
+                    ...prev,
+                    startDate: e.target.value,
+                    endDate:
+                      prev.endDate < e.target.value
+                        ? e.target.value
+                        : prev.endDate,
+                  }))
+                }
+                className="block rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-700 outline-none focus:border-slate-400"
+              />
+            </label>
+            <label className="space-y-1 text-xs font-semibold text-slate-500">
+              종료일
+              <input
+                type="date"
+                value={onboardingSettings.endDate}
+                min={onboardingSettings.startDate}
+                onChange={(e) =>
+                  setOnboardingSettings((prev) => ({
+                    ...prev,
+                    endDate: e.target.value,
+                  }))
+                }
+                className="block rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-700 outline-none focus:border-slate-400"
+              />
+            </label>
+            <label className="space-y-1 text-xs font-semibold text-slate-500">
+              제한 시간
+              <div className="flex items-center gap-2">
+                <input
+                  type="number"
+                  min={1}
+                  value={onboardingSettings.durationMinutes}
+                  onChange={(e) =>
+                    setOnboardingSettings((prev) => ({
+                      ...prev,
+                      durationMinutes: Number(e.target.value) || 20,
+                    }))
+                  }
+                  className="block w-24 rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-700 outline-none focus:border-slate-400"
+                />
+                <span className="text-sm font-normal text-slate-400">분</span>
+              </div>
+            </label>
+            <button
+              type="button"
+              onClick={saveOnboardingSettings}
+              disabled={isSavingOnboardingSettings}
+              className="rounded-2xl bg-slate-900 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-slate-700 disabled:opacity-50"
+            >
+              {isSavingOnboardingSettings ? "저장 중..." : "저장"}
+            </button>
+          </div>
         </div>
 
         {missions.length === 0 ? (
@@ -1037,7 +1070,9 @@ export default function AdminPage() {
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between">
-              <h3 className="text-lg font-semibold text-slate-900">참여자</h3>
+              <h3 className="text-lg font-semibold text-slate-900">
+                {missionTitle(participantsMissionId)} 참여자
+              </h3>
               <button
                 onClick={closeParticipants}
                 className="text-slate-400 hover:text-slate-600"
@@ -1048,7 +1083,7 @@ export default function AdminPage() {
             <div className="mt-4 space-y-2">
               {participants.length === 0 ? (
                 <p className="text-sm text-slate-400">
-                  아직 참여자가 없습니다.
+                  아직 유저 데이터가 없습니다.
                 </p>
               ) : (
                 participants.map((p) => {
@@ -1100,16 +1135,14 @@ export default function AdminPage() {
                       >
                         <ArrowRightIcon size={14} />
                       </Link>
-                      {!p.isAdmin && (
-                        <button
-                          type="button"
-                          onClick={() => deleteUserData(p)}
-                          className="rounded-full p-1.5 text-slate-300 transition hover:bg-red-50 hover:text-red-500"
-                          title="유저 데이터 삭제"
-                        >
-                          <XIcon size={14} />
-                        </button>
-                      )}
+                      <button
+                        type="button"
+                        onClick={() => deleteUserData(p)}
+                        className="rounded-full p-1.5 text-slate-300 transition hover:bg-red-50 hover:text-red-500"
+                        title={p.isAdmin ? "관리자 기록 삭제" : "유저 데이터 삭제"}
+                      >
+                        <XIcon size={14} />
+                      </button>
                     </div>
                   </div>
                 );

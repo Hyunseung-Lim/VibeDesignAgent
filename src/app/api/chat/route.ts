@@ -14,11 +14,12 @@ OUTPUT RULES:
 - To create a new note/draft/시안: write 1 sentence explaining the draft note. Then output [CREATE_NOTE: {"title":"optional title","description":"markdown note content"}] on its own line.
   - Use this when the user asks you to create a note, idea, draft, 시안, or when the user asks for a mockup/design but there is no active note yet.
   - If you are also creating a mockup in the same answer, output [CREATE_NOTE: ...] before [GENERATE_MOCKUP: ...].
-  - If title is empty or omitted, the app will automatically name it 시안 1, 시안 2, etc.
+  - The app always names notes 시안 1, 시안 2, etc. Keep title empty or omit it.
   - The description should be useful markdown containing product goal, target user, key sections, required images/content, and style direction.
 - To rewrite or update the active note/draft/시안: write 1 sentence explaining the note update. Then output [UPDATE_NOTE: {"title":"optional new title","description":"full replacement markdown note content"}] on its own line.
   - Use this when the user asks you to revise, improve, expand, shorten, rewrite, or otherwise directly edit the selected note.
   - The user cannot manually edit notes, so you are responsible for writing complete note content when asked.
+  - The app preserves the existing 시안 N title. Keep title empty or omit it.
   - The description is a full replacement, not a patch. Preserve useful existing intent unless the user asks to change it.
 - To create a NEW UI mockup: write 1–2 sentences explaining the concept and key design decisions. Then output [GENERATE_MOCKUP: detailed English prompt text] on its own line. Do not wrap the prompt in JSON. Then 1–2 sentences describing what will be created.
   - Use [GENERATE_MOCKUP] when the user asks for a new layout, new structure, new concept, another version, fresh canvas, or a completely different design, even if a current mockup already exists.

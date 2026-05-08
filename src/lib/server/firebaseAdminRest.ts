@@ -16,7 +16,7 @@ type FirestoreValue =
   | { nullValue: "NULL_VALUE" }
   | { timestampValue: string };
 
-let accessTokenCache: { token: string; expiresAt: number } | null = null;
+const accessTokenCache = new Map<string, { token: string; expiresAt: number }>();
 let serviceAccountCache: ServiceAccount | null = null;
 
 function base64Url(input: string | Buffer) {
@@ -69,9 +69,10 @@ async function getServiceAccount() {
   return serviceAccountCache;
 }
 
-export async function getFirebaseAccessToken() {
-  if (accessTokenCache && accessTokenCache.expiresAt > Date.now() + 60_000) {
-    return accessTokenCache.token;
+export async function getGoogleAccessToken(scope: string) {
+  const cached = accessTokenCache.get(scope);
+  if (cached && cached.expiresAt > Date.now() + 60_000) {
+    return cached.token;
   }
 
   const serviceAccount = await getServiceAccount();
@@ -79,7 +80,7 @@ export async function getFirebaseAccessToken() {
   const unsignedJwt = `${base64Url(JSON.stringify({ alg: "RS256", typ: "JWT" }))}.${base64Url(
     JSON.stringify({
       iss: serviceAccount.client_email,
-      scope: "https://www.googleapis.com/auth/datastore",
+      scope,
       aud: serviceAccount.token_uri,
       exp: now + 3600,
       iat: now,
@@ -102,11 +103,15 @@ export async function getFirebaseAccessToken() {
     access_token: string;
     expires_in: number;
   };
-  accessTokenCache = {
+  accessTokenCache.set(scope, {
     token: data.access_token,
     expiresAt: Date.now() + data.expires_in * 1000,
-  };
+  });
   return data.access_token;
+}
+
+export async function getFirebaseAccessToken() {
+  return getGoogleAccessToken("https://www.googleapis.com/auth/datastore");
 }
 
 export async function verifyFirebaseIdToken(request: Request) {
