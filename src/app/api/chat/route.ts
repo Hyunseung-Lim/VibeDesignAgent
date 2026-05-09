@@ -15,17 +15,19 @@ OUTPUT RULES:
   - Use this when the user asks you to create a note, idea, draft, 시안, or when the user asks for a mockup/design but there is no active note yet.
   - If you are also creating a mockup in the same answer, output [CREATE_NOTE: ...] before [GENERATE_MOCKUP: ...].
   - The app always names notes 시안 1, 시안 2, etc. Keep title empty or omit it.
-  - The description should be useful markdown containing product goal, target user, key sections, required images/content, and style direction.
+  - The description should be useful markdown containing: product goal, target user, key screens/sections, required content and images, interaction flows, and specific UI requirements. Do NOT include color tokens, typography, or style rules — those belong in Design.md, not in notes.
 - To rewrite or update the active note/draft/시안: write 1 sentence explaining the note update. Then output [UPDATE_NOTE: {"title":"optional new title","description":"full replacement markdown note content"}] on its own line.
   - Use this when the user asks you to revise, improve, expand, shorten, rewrite, or otherwise directly edit the selected note.
   - The user cannot manually edit notes, so you are responsible for writing complete note content when asked.
   - The app preserves the existing 시안 N title. Keep title empty or omit it.
   - The description is a full replacement, not a patch. Preserve useful existing intent unless the user asks to change it.
+  - Keep notes focused on WHAT to build (product requirements, content, structure) — not HOW it looks (style, colors, fonts).
 - To create a NEW UI mockup: write 1–2 sentences explaining the concept and key design decisions. Then output [GENERATE_MOCKUP: detailed English prompt text] on its own line. Do not wrap the prompt in JSON. Then 1–2 sentences describing what will be created.
   - Use [GENERATE_MOCKUP] when the user asks for a new layout, new structure, new concept, another version, fresh canvas, or a completely different design, even if a current mockup already exists.
-  - The prompt (write in English) should be a detailed production prompt, not a short summary. It should cover: target device, main layout and sections, key UI components, exact visible copy, visual style and color direction, typography, spacing, interaction states, and any specific elements from cited references.
-  - If an active note is provided, you MUST incorporate the active note's detailed requirements and style reference into the prompt. Preserve concrete tokens such as colors, fonts, spacing, border radius, shadows, brand tone, and component rules. Do not collapse a long style guide into generic phrases like "consistent brand identity".
-  - Aim for 900–1800 characters inside [GENERATE_MOCKUP: ...] when the note contains a detailed design/style guide.
+  - The prompt (write in English) should be a detailed production prompt covering: target device, main layout and sections, key UI components, exact visible copy, interaction states, and any specific elements from cited references.
+  - Style tokens (colors, fonts, spacing, radius, shadows) must come from the Design specification if one is provided — never invent visual style when a spec exists. If no spec is provided, define a coherent style inline in the prompt.
+  - If an active note is provided, incorporate its product requirements, content structure, and UI specifics into the prompt.
+  - Aim for 900–1800 characters inside [GENERATE_MOCKUP: ...].
   - Example: [GENERATE_MOCKUP: Mobile onboarding screen with 3-step progress indicator at top, central illustration area, bold headline, subtitle text, and a prominent CTA button at bottom. Clean minimal style with indigo/white palette.]
 - To EDIT/MODIFY the current mockup: write 1 sentence explaining what you're changing. Then output [EDIT_MOCKUP: detailed English edit instruction] on its own line. Do not wrap the prompt in JSON. Then 1 sentence confirming what changed.
   - The prompt (write in English) should describe specifically what to change and how.
@@ -34,7 +36,12 @@ OUTPUT RULES:
   - Preserve the existing screen structure, visual style, content hierarchy, and unrelated sections. Only change the requested details.
   - Example: [EDIT_MOCKUP: Change the primary button color to coral red, increase the font size of the headline to 28px, and add a subtle drop shadow to the card component.]
 - IMPORTANT: Do NOT output HTML or code blocks for UI mockups — Stitch AI generates the visual design from the text prompt.
+- To create a Design.md specification: write 1 sentence explaining what you're defining. Then output [CREATE_DESIGN_SPEC: {"content": "markdown content"}] on its own line. The app auto-numbers specs (스타일 1, 스타일 2, …). Multiple specs can coexist. The content should include: color tokens, typography rules, spacing system, component patterns, do/don't constraints, and brand tone.
+  - Use this when the user asks to define a design system, set style rules, or create a new design spec variant.
+  - Keep the content concise and token-based (e.g. "Primary: #1E3A5F", "Font: Pretendard 16px/24px") — not prose.
+  - Example: [CREATE_DESIGN_SPEC: {"content": "## Colors\nBg: #0F0F0F\nPrimary: #6366F1\n\n## Typography\nFont: Inter, 14px/22px"}]
 - To suggest references: write 1 sentence explaining you're searching for references, then output [FETCH_REFERENCES: {query}] on its own line. The {query} MUST include relevant keywords from the Current mission context along with what the user asked for, to ensure the images fit the project (e.g. "fitness tracker app UI toss.tech"). If the user asked for a specific site or source, include it in the query (e.g. "site:toss.tech" or "kakao app UI"). Do NOT generate URLs or reference lists yourself — the system will perform a real search automatically.
+  - This applies even when the user is REFINING or CORRECTING a previous reference search (e.g. "아니 모바일 말고 PC로", "다른 스타일로 찾아줘", "그거 말고 다른 거"). Always respond with [FETCH_REFERENCES: {new query}], never output URLs or image links as text.
 - To create a presentation: write 1–2 sentences explaining the structure you're preparing, then output a JSON structure wrapped in \`\`\`presentation\n{json}\n\`\`\`, then 1 sentence saying that the presentation image is being generated now. Do not say the presentation was already created.
   JSON format: {"title": "Presentation Title", "slides": [{"title": "Slide Title", "content": "3-5 key points as plain text (newline-separated)", "imagePrompt": "Vivid visual description for AI image generation of this slide"}]}
   Generate exactly 1 slide that summarizes the entire presentation: title, core problem, solution, key design decisions, and next steps all on one compelling visual.
@@ -59,6 +66,8 @@ export async function POST(request: Request) {
     device,
     activeIdea,
     userMemory,
+    designSpec,
+    citedTexts,
   } = await request.json();
   const deviceLabel =
     device === "mobile" ? "모바일 (390×844px)" : "PC (1280×900px)";
@@ -83,6 +92,20 @@ export async function POST(request: Request) {
     systemMessages.push({
       role: "system",
       content: `User memory from onboarding. Consider this when deciding how much guidance to give, how to structure notes, what design process to encourage, and what defaults to choose. Do not mention this memory unless it is directly useful.\n${userMemory}`,
+    });
+  }
+
+  if (designSpec) {
+    systemMessages.push({
+      role: "system",
+      content: `Applied design specification for the current 시안:\n${designSpec}\n\nAlways follow these constraints when generating or editing mockups for this 시안. Additional specs can be created with [CREATE_DESIGN_SPEC: {...}].`,
+    });
+  }
+
+  if (Array.isArray(citedTexts) && citedTexts.length > 0) {
+    systemMessages.push({
+      role: "system",
+      content: `The user has cited the following text excerpts from the mission panel. Use them as direct context for your response:\n${citedTexts.map((t: string, i: number) => `[인용 ${i + 1}] ${t}`).join("\n\n")}`,
     });
   }
 

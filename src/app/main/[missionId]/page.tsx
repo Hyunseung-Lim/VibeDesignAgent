@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
-import { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import { firebaseAuth, db, storage } from "@/lib/firebase";
 import { getIdToken, onAuthStateChanged } from "firebase/auth";
@@ -62,10 +62,18 @@ type Reference = {
   imageUrl?: string;
 };
 
+type DesignSpec = {
+  id: string;
+  title: string;
+  content: string;
+  createdAt?: number;
+};
+
 type Idea = {
   id: string;
   title: string;
   description: string;
+  designSpecId?: string;
   createdAt?: number;
   updatedAt?: number;
   presentations?: Presentation[];
@@ -264,10 +272,6 @@ function optionBrief(option: MissionOption | null) {
 }
 
 function proxiedImageSrc(url: string) {
-  return url;
-}
-
-function fallbackImageSrc(url: string) {
   if (!url || url.startsWith("data:") || url.startsWith("blob:")) return url;
   return `/api/image-proxy?url=${encodeURIComponent(url)}`;
 }
@@ -492,6 +496,29 @@ function parseUpdateNoteBlock(text: string): UpdateNoteData | null {
   } catch {
     return { description: payload.trim() };
   }
+}
+
+function parseCreateDesignSpecBlock(text: string): { title: string; content: string } | null {
+  const tag = "[CREATE_DESIGN_SPEC:";
+  const start = text.indexOf(tag);
+  if (start === -1) return null;
+  const payloadStart = text.indexOf("{", start);
+  if (payloadStart === -1) return null;
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let i = payloadStart; i < text.length; i++) {
+    const char = text[i];
+    if (escaped) { escaped = false; continue; }
+    if (char === "\\") { escaped = true; continue; }
+    if (char === '"') { inString = !inString; continue; }
+    if (inString) continue;
+    if (char === "{") depth++;
+    if (char === "}") { depth--; if (depth === 0) {
+      try { return JSON.parse(text.slice(payloadStart, i + 1)); } catch { return null; }
+    }}
+  }
+  return null;
 }
 
 function compactText(value: string, maxLength = 180) {
@@ -1005,6 +1032,12 @@ const BLOCK_RULES = [
     doneLabel: "웹 검색 완료",
     pendingLabel: "웹 검색 중...",
   },
+  {
+    complete: /\[CREATE_DESIGN_SPEC:\s*\{[\s\S]*?\}\]/,
+    partial: /\[CREATE_DESIGN_SPEC:[\s\S]*$/,
+    doneLabel: "Design.md 추가됨",
+    pendingLabel: "Design.md 작성 중...",
+  },
 ];
 
 function processMessageContent(content: string): ContentPart[] {
@@ -1135,6 +1168,7 @@ function cleanMessageContentForModel(content: string) {
     .replace(/```presentation\s*\n[\s\S]*?\n?\s*```/g, "이전 액션: presentation requested.")
     .replace(/\[FETCH_REFERENCES(?::[^\]]+)?\]/g, "이전 액션: reference search requested.")
     .replace(/\[WEB_SEARCHED\]/g, "이전 액션: web search completed.")
+    .replace(/\[CREATE_DESIGN_SPEC:\s*\{[\s\S]*?\}\]/g, "[Design.md 추가]")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
 }
@@ -1325,15 +1359,24 @@ type WebKitGestureEvent = Event & {
   clientY?: number;
 };
 
-function buildMockupPrompt(basePrompt: string, idea?: Idea | null) {
-  if (!idea?.description?.trim()) return basePrompt;
-  return [
-    basePrompt,
-    "",
-    "Use the following active note as the authoritative product brief and visual style guide. Preserve concrete requirements, visual tokens, typography, layout, components, and do/don't constraints instead of summarizing them away.",
-    `Note title: ${idea.title}`,
-    `Note content:\n${idea.description.slice(0, 12000)}`,
-  ].join("\n");
+function buildMockupPrompt(basePrompt: string, idea?: Idea | null, appliedSpec?: DesignSpec) {
+  const parts: string[] = [basePrompt];
+  if (appliedSpec?.content.trim()) {
+    parts.push(
+      "",
+      `Design specification "${appliedSpec.title}" (stable style reference — always follow these constraints):`,
+      appliedSpec.content.slice(0, 4000),
+    );
+  }
+  if (idea?.description?.trim()) {
+    parts.push(
+      "",
+      "Use the following active note as the current idea brief. It describes what to build for this specific 시안.",
+      `Note title: ${idea.title}`,
+      `Note content:\n${idea.description.slice(0, 8000)}`,
+    );
+  }
+  return parts.join("\n");
 }
 
 function nextDraftTitle(ideas: Idea[]) {
@@ -1343,6 +1386,54 @@ function nextDraftTitle(ideas: Idea[]) {
     .map(Number);
   const maxNumber = usedNumbers.length > 0 ? Math.max(...usedNumbers) : ideas.length;
   return `시안 ${maxNumber + 1}`;
+}
+
+const HEX_COLOR_RE = /(#[0-9A-Fa-f]{6}|#[0-9A-Fa-f]{3})\b/g;
+
+function parseColorTokens(text: string): React.ReactNode[] {
+  const parts: React.ReactNode[] = [];
+  let last = 0;
+  let match: RegExpExecArray | null;
+  HEX_COLOR_RE.lastIndex = 0;
+  while ((match = HEX_COLOR_RE.exec(text)) !== null) {
+    if (match.index > last) parts.push(text.slice(last, match.index));
+    const hex = match[1];
+    parts.push(
+      <span key={match.index} className="inline-flex items-center gap-1 align-middle">
+        <span
+          className="inline-block h-3 w-3 flex-shrink-0 rounded-sm border border-black/10"
+          style={{ backgroundColor: hex }}
+        />
+        <code className="font-mono text-[10px] text-indigo-700">{hex}</code>
+      </span>
+    );
+    last = match.index + match[0].length;
+  }
+  if (last < text.length) parts.push(text.slice(last));
+  return parts;
+}
+
+function withColorTokens(children: React.ReactNode): React.ReactNode {
+  if (typeof children === "string") return parseColorTokens(children);
+  if (Array.isArray(children)) {
+    return children.map((child, i) =>
+      typeof child === "string"
+        ? parseColorTokens(child).map((n, j) =>
+            typeof n === "string" ? n : React.cloneElement(n as React.ReactElement, { key: `${i}-${j}` }),
+          )
+        : child,
+    );
+  }
+  return children;
+}
+
+function nextStyleTitle(specs: DesignSpec[]) {
+  const usedNumbers = specs
+    .map((s) => s.title.match(/^스타일\s*(\d+)$/)?.[1])
+    .filter(Boolean)
+    .map(Number);
+  const maxNumber = usedNumbers.length > 0 ? Math.max(...usedNumbers) : specs.length;
+  return `스타일 ${maxNumber + 1}`;
 }
 
 function isExplicitNewMockupRequest(text: string) {
@@ -1391,9 +1482,17 @@ export default function MainScreenPage() {
   const [references, setReferences] = useState<Reference[]>([]);
   const [activityLog, setActivityLog] = useState<ActivityLogEvent[]>([]);
   const [ideas, setIdeas] = useState<Idea[]>([]);
+  const [designSpecs, setDesignSpecs] = useState<DesignSpec[]>([]);
+  const [activeDesignSpecId, setActiveDesignSpecId] = useState<string | null>(null);
+  const [isDesignSpecOpen, setIsDesignSpecOpen] = useState(false);
   const [selectedElement, setSelectedElement] =
     useState<SelectedElement | null>(null);
   const [selectedReferences, setSelectedReferences] = useState<Reference[]>([]);
+  const [citedDesignSpecId, setCitedDesignSpecId] = useState<string | null>(null);
+  const [citedTexts, setCitedTexts] = useState<string[]>([]);
+  const missionPanelRef = useRef<HTMLElement>(null);
+  const citeMenuRef = useRef<HTMLDivElement>(null);
+  const pendingCiteTextRef = useRef<string>("");
   const [userMemory, setUserMemory] = useState("");
   const [editMode, setEditMode] = useState(false);
   const [device, setDevice] = useState<Device>("desktop");
@@ -1412,6 +1511,9 @@ export default function MainScreenPage() {
   >(null);
   const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
   const [loadedImageUrls, setLoadedImageUrls] = useState<Set<string>>(
+    new Set(),
+  );
+  const [failedImageUrls, setFailedImageUrls] = useState<Set<string>>(
     new Set(),
   );
   const [timerStartedAt, setTimerStartedAt] = useState<number | null>(null);
@@ -1557,6 +1659,52 @@ export default function MainScreenPage() {
       window.removeEventListener("scroll", closeMenu, true);
     };
   }, [designContextMenu]);
+
+  useEffect(() => {
+    const panel = missionPanelRef.current;
+    if (!panel) return;
+
+    const showCiteMenu = (x: number, y: number, text: string) => {
+      const el = citeMenuRef.current;
+      if (!el) return;
+      pendingCiteTextRef.current = text;
+      el.style.left = `${x}px`;
+      el.style.top = `${y}px`;
+      el.style.display = "block";
+    };
+
+    const hideCiteMenu = () => {
+      const el = citeMenuRef.current;
+      if (el) el.style.display = "none";
+      pendingCiteTextRef.current = "";
+    };
+
+    const handleMouseUp = (e: MouseEvent) => {
+      if ((e.target as HTMLElement).closest("[data-cite-menu]")) return;
+      if (!panel.contains(e.target as Node)) { hideCiteMenu(); return; }
+      requestAnimationFrame(() => {
+        const selection = window.getSelection();
+        const text = selection?.toString().trim();
+        if (!text || text.length < 2) { hideCiteMenu(); return; }
+        const range = selection!.getRangeAt(0);
+        const rect = range.getBoundingClientRect();
+        if (!rect.width && !rect.height) return;
+        showCiteMenu(rect.left + rect.width / 2, rect.top, text);
+      });
+    };
+
+    const handleSelectionChange = () => {
+      const text = window.getSelection()?.toString().trim();
+      if (!text) hideCiteMenu();
+    };
+
+    document.addEventListener("mouseup", handleMouseUp);
+    document.addEventListener("selectionchange", handleSelectionChange);
+    return () => {
+      document.removeEventListener("mouseup", handleMouseUp);
+      document.removeEventListener("selectionchange", handleSelectionChange);
+    };
+  }, []);
 
   const applyCanvasViewDirectly = useCallback(
     (scale: number, offset: { x: number; y: number }) => {
@@ -1723,6 +1871,10 @@ export default function MainScreenPage() {
       sessionData = session ?? null;
 
       if (session?.messages) setMessages(session.messages);
+      if (session?.designSpecs?.length) {
+        setDesignSpecs(session.designSpecs);
+        setActiveDesignSpecId(session.designSpecs[0].id);
+      }
       // Load ideas first so we can reference their IDs
       const loadedIdeas: Idea[] = session?.ideas ?? [];
       const firstIdeaId = loadedIdeas[0]?.id ?? "";
@@ -1898,6 +2050,7 @@ export default function MainScreenPage() {
           selectedOptionId,
           selectedDevice: device,
           stitchProjectId: stitchProjectId || null,
+          designSpecs: designSpecs.length ? designSpecs : null,
           updatedAt: Date.now(),
         }),
         { merge: true },
@@ -1914,6 +2067,7 @@ export default function MainScreenPage() {
     references,
     activityLog,
     ideas,
+    designSpecs,
     missionTitle,
     missionBrief,
     selectedOptionId,
@@ -2387,6 +2541,8 @@ export default function MainScreenPage() {
     setInputText("");
     if (textareaRef.current) textareaRef.current.style.height = "auto";
     setSelectedReferences([]);
+    setCitedDesignSpecId(null);
+    setCitedTexts([]);
 
     if (manualReference) {
       const alreadyExists = references.some(
@@ -2497,6 +2653,18 @@ export default function MainScreenPage() {
             !isOnboardingMission && userMemory.trim()
               ? userMemory.trim()
               : undefined,
+          citedTexts: citedTexts.length > 0 ? citedTexts : undefined,
+          designSpec: (() => {
+            const citedSpec = citedDesignSpecId
+              ? designSpecs.find((s) => s.id === citedDesignSpecId)
+              : null;
+            if (citedSpec) return `# ${citedSpec.title}\n${citedSpec.content}`;
+            const idea = ideas.find((i) => i.id === activeIdeaId);
+            const appliedSpec = idea?.designSpecId
+              ? designSpecs.find((s) => s.id === idea.designSpecId)
+              : undefined;
+            return appliedSpec ? `# ${appliedSpec.title}\n${appliedSpec.content}` : undefined;
+          })(),
         }),
       });
 
@@ -2598,6 +2766,19 @@ export default function MainScreenPage() {
         });
       }
 
+      const designSpecBlock = parseCreateDesignSpecBlock(fullText);
+      if (designSpecBlock?.content) {
+        const newSpec: DesignSpec = {
+          id: crypto.randomUUID(),
+          title: nextStyleTitle(designSpecs),
+          content: designSpecBlock.content,
+          createdAt: Date.now(),
+        };
+        setDesignSpecs((prev) => [...prev, newSpec]);
+        setActiveDesignSpecId(newSpec.id);
+        setIsDesignSpecOpen(true);
+      }
+
       const fetchRefMatch = fullText.match(
         /\[FETCH_REFERENCES(?::\s*(.*?))?\]/,
       );
@@ -2639,7 +2820,13 @@ export default function MainScreenPage() {
             : "Refine the current mockup according to the latest user request while preserving the existing structure.");
         const mockupIdeaId = effectiveActiveIdeaId;
         const stitchPrompt = isNew
-          ? buildMockupPrompt(prompt, activeIdea)
+          ? buildMockupPrompt(
+              prompt,
+              activeIdea,
+              activeIdea?.designSpecId
+                ? designSpecs.find((s) => s.id === activeIdea.designSpecId)
+                : undefined,
+            )
           : buildEditMockupPrompt(prompt);
         appendActivityLog({
           section: "mockup",
@@ -3882,6 +4069,32 @@ export default function MainScreenPage() {
 
   return (
     <div className="flex h-screen flex-col bg-[#f5f5f5] text-slate-900">
+      <div
+        ref={citeMenuRef}
+        data-cite-menu="1"
+        className="fixed z-50 -translate-x-1/2 -translate-y-full"
+        style={{ display: "none" }}
+      >
+        <button
+          type="button"
+          onMouseDown={(e) => {
+            e.preventDefault();
+            const text = pendingCiteTextRef.current;
+            if (text) setCitedTexts((prev) => [...prev, text]);
+            if (citeMenuRef.current) citeMenuRef.current.style.display = "none";
+            pendingCiteTextRef.current = "";
+            window.getSelection()?.removeAllRanges();
+          }}
+          className="flex items-center gap-1.5 rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white shadow-lg hover:bg-slate-700"
+        >
+          <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+            <path d="M1 3h10M1 6h6M1 9h8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+          </svg>
+          인용하기
+        </button>
+        <div className="mx-auto mt-1 h-1.5 w-1.5 rotate-45 bg-slate-900" />
+      </div>
+
       {designContextMenu && contextMenuArtboard && !isReadOnly && (
         <div
           className="fixed z-50 min-w-36 overflow-hidden rounded-xl border border-slate-200 bg-white py-1 text-sm shadow-xl"
@@ -4070,19 +4283,33 @@ export default function MainScreenPage() {
                                 src={proxiedImageSrc(url)}
                                 alt={`image ${i + 1}`}
                                 onClick={() => setLightboxUrl(url)}
-                                onLoad={() =>
+                                onLoad={() => {
                                   setLoadedImageUrls((prev) =>
                                     new Set(prev).add(url),
-                                  )
-                                }
+                                  );
+                                  setFailedImageUrls((prev) => {
+                                    const next = new Set(prev);
+                                    next.delete(url);
+                                    return next;
+                                  });
+                                }}
                                 className={`h-72 w-auto rounded-2xl border border-slate-100 object-contain cursor-zoom-in transition-opacity duration-300 ${loadedImageUrls.has(url) ? "opacity-100" : "opacity-0 absolute inset-0"}`}
                                 onError={(e) => {
                                   const img = e.currentTarget;
-                                  if (img.dataset.fallback === "1") return;
-                                  img.dataset.fallback = "1";
-                                  img.src = fallbackImageSrc(url);
+                                  setLoadedImageUrls((prev) =>
+                                    new Set(prev).add(url),
+                                  );
+                                  setFailedImageUrls((prev) =>
+                                    new Set(prev).add(url),
+                                  );
+                                  img.style.display = "none";
                                 }}
                               />
+                              {failedImageUrls.has(url) && (
+                                <div className="flex h-72 w-64 items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 text-center text-xs text-slate-400">
+                                  이미지를 불러오지 못했습니다.
+                                </div>
+                              )}
                             </div>
                           ))}
                         </div>
@@ -4189,7 +4416,7 @@ export default function MainScreenPage() {
       ) : (
         <main className="flex flex-1 overflow-hidden">
           {/* Left panel: content */}
-          <section className="flex-1 space-y-6 overflow-y-auto pb-32 pt-8 pl-10 pr-6">
+          <section ref={missionPanelRef} className="flex-1 space-y-6 overflow-y-auto pb-32 pt-8 pl-10 pr-6">
             {/* Mission */}
             <div className="rounded-3xl border border-slate-200 bg-white p-6">
               <div className="flex items-center justify-between">
@@ -4381,19 +4608,33 @@ export default function MainScreenPage() {
                                     src={proxiedImageSrc(url)}
                                     alt=""
                                     onClick={() => setLightboxUrl(url)}
-                                    onLoad={() =>
+                                    onLoad={() => {
                                       setLoadedImageUrls((prev) =>
                                         new Set(prev).add(url),
-                                      )
-                                    }
+                                      );
+                                      setFailedImageUrls((prev) => {
+                                        const next = new Set(prev);
+                                        next.delete(url);
+                                        return next;
+                                      });
+                                    }}
                                     className={`h-48 w-auto rounded-2xl border border-slate-100 object-contain cursor-zoom-in transition-opacity duration-300 ${loadedImageUrls.has(url) ? "opacity-100" : "opacity-0 absolute inset-0"}`}
                                     onError={(e) => {
                                       const img = e.currentTarget;
-                                      if (img.dataset.fallback === "1") return;
-                                      img.dataset.fallback = "1";
-                                      img.src = fallbackImageSrc(url);
+                                      setLoadedImageUrls((prev) =>
+                                        new Set(prev).add(url),
+                                      );
+                                      setFailedImageUrls((prev) =>
+                                        new Set(prev).add(url),
+                                      );
+                                      img.style.display = "none";
                                     }}
                                   />
+                                  {failedImageUrls.has(url) && (
+                                    <div className="flex h-48 w-48 items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 text-center text-xs text-slate-400">
+                                      이미지를 불러오지 못했습니다.
+                                    </div>
+                                  )}
                                 </div>
                               ))}
                             </div>
@@ -4525,6 +4766,114 @@ export default function MainScreenPage() {
               )}
             </div>
 
+            {/* Design.md */}
+            <div className="rounded-3xl border border-slate-200 bg-white overflow-hidden">
+              <button
+                type="button"
+                onClick={() => setIsDesignSpecOpen((v) => !v)}
+                className="flex w-full items-center justify-between px-5 py-4 text-left"
+              >
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Design.md</span>
+                  {designSpecs.length > 0 ? (
+                    <span className="rounded-full bg-indigo-50 px-2 py-0.5 text-xs text-indigo-600">{designSpecs.length}개</span>
+                  ) : (
+                    <span className="text-xs text-slate-400">미정의</span>
+                  )}
+                </div>
+                <svg width="14" height="14" viewBox="0 0 14 14" fill="none"
+                  className={`text-slate-400 transition-transform ${isDesignSpecOpen ? "rotate-180" : ""}`}>
+                  <path d="M2 5l5 5 5-5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                </svg>
+              </button>
+
+              {isDesignSpecOpen && (
+                <div className="border-t border-slate-100">
+                  {designSpecs.length === 0 ? (
+                    <p className="px-5 py-4 text-xs text-slate-400">
+                      에이전트에게 디자인 시스템을 정의해달라고 요청하세요.
+                    </p>
+                  ) : (
+                    <>
+                      {/* Spec tabs — navigate only */}
+                      <div className="flex gap-1 overflow-x-auto px-4 pt-3">
+                        {designSpecs.map((spec) => (
+                          <button
+                            key={spec.id}
+                            type="button"
+                            onClick={() => setActiveDesignSpecId(spec.id)}
+                            className={`shrink-0 rounded-lg px-3 py-1.5 text-xs font-medium transition ${
+                              activeDesignSpecId === spec.id
+                                ? "bg-slate-900 text-white"
+                                : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                            }`}
+                          >
+                            {spec.title}
+                          </button>
+                        ))}
+                      </div>
+
+                      {/* Active spec content */}
+                      {(() => {
+                        const spec = designSpecs.find((s) => s.id === activeDesignSpecId);
+                        if (!spec) return null;
+                        const isCited = citedDesignSpecId === spec.id;
+                        return (
+                          <div className="px-5 pb-5 pt-3">
+                            <div className="max-h-56 overflow-y-auto text-xs text-slate-600">
+                              <ReactMarkdown
+                                components={{
+                                  h1: ({ children }) => <h1 className="text-sm font-bold text-slate-900 mb-2 mt-3 first:mt-0">{children}</h1>,
+                                  h2: ({ children }) => <h2 className="text-xs font-semibold text-slate-800 mb-1.5 mt-3 first:mt-0 uppercase tracking-wide">{children}</h2>,
+                                  h3: ({ children }) => <h3 className="text-xs font-semibold text-slate-700 mb-1 mt-2">{children}</h3>,
+                                  p: ({ children }) => <p className="mb-1.5 last:mb-0 leading-relaxed">{withColorTokens(children)}</p>,
+                                  ul: ({ children }) => <ul className="list-disc ml-4 space-y-0.5 mb-1.5">{children}</ul>,
+                                  ol: ({ children }) => <ol className="list-decimal ml-4 space-y-0.5 mb-1.5">{children}</ol>,
+                                  li: ({ children }) => <li className="leading-relaxed">{withColorTokens(children)}</li>,
+                                  code: ({ children }) => {
+                                    const text = String(children ?? "");
+                                    const isHex = /^#([0-9A-Fa-f]{6}|[0-9A-Fa-f]{3})$/.test(text.trim());
+                                    return (
+                                      <span className="inline-flex items-center gap-1 align-middle">
+                                        {isHex && (
+                                          <span
+                                            className="inline-block h-3 w-3 flex-shrink-0 rounded-sm border border-black/10"
+                                            style={{ backgroundColor: text.trim() }}
+                                          />
+                                        )}
+                                        <code className="rounded bg-indigo-50 px-1.5 py-0.5 font-mono text-[10px] text-indigo-700">{text}</code>
+                                      </span>
+                                    );
+                                  },
+                                  strong: ({ children }) => <strong className="font-semibold text-slate-900">{children}</strong>,
+                                  hr: () => <hr className="border-slate-200 my-2" />,
+                                }}
+                              >
+                                {spec.content}
+                              </ReactMarkdown>
+                            </div>
+                            {!isReadOnly && (
+                              <button
+                                type="button"
+                                onClick={() => setCitedDesignSpecId(isCited ? null : spec.id)}
+                                className={`mt-3 rounded-xl border px-3 py-1.5 text-xs font-semibold transition ${
+                                  isCited
+                                    ? "border-indigo-300 bg-indigo-50 text-indigo-600 hover:bg-indigo-100"
+                                    : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+                                }`}
+                              >
+                                {isCited ? "✓ 대화에 인용 중" : "대화에 인용"}
+                              </button>
+                            )}
+                          </div>
+                        );
+                      })()}
+                    </>
+                  )}
+                </div>
+              )}
+            </div>
+
             {/* Note / Mockup / Presentation */}
             <div className="rounded-3xl border border-slate-200 bg-white p-6">
               {ideas.length === 0 ? (
@@ -4625,6 +4974,22 @@ export default function MainScreenPage() {
                               <p className="text-base font-semibold text-slate-900">
                                 {idea.title}
                               </p>
+                              {designSpecs.length > 0 && !isReadOnly && (
+                                <select
+                                  value={idea.designSpecId ?? ""}
+                                  onChange={(e) =>
+                                    updateIdea(idea.id, {
+                                      designSpecId: e.target.value || undefined,
+                                    })
+                                  }
+                                  className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs text-slate-600 outline-none focus:border-slate-400"
+                                >
+                                  <option value="">스타일 없음</option>
+                                  {designSpecs.map((s) => (
+                                    <option key={s.id} value={s.id}>{s.title}</option>
+                                  ))}
+                                </select>
+                              )}
                             </div>
                               <div className="relative rounded-xl border border-slate-100 bg-slate-50">
                                 <div
@@ -5296,6 +5661,45 @@ export default function MainScreenPage() {
                   </button>
                 </div>
               )}
+              {!isReadOnly && citedTexts.length > 0 && (
+                <div className="mb-2 rounded-xl bg-slate-50 px-3 py-2 text-xs">
+                  <div className="flex items-center justify-between mb-1.5">
+                    <span className="font-medium text-slate-600">텍스트 인용 ({citedTexts.length})</span>
+                    <button onClick={() => setCitedTexts([])} className="text-slate-400 hover:text-slate-600">전체 해제</button>
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    {citedTexts.map((t, i) => (
+                      <span key={i} className="flex items-start gap-1 rounded-lg bg-white border border-slate-200 px-2 py-1 text-slate-600">
+                        <span className="mt-0.5 shrink-0 text-slate-300">"</span>
+                        <span className="line-clamp-1 flex-1">{t}</span>
+                        <button
+                          onClick={() => setCitedTexts((prev) => prev.filter((_, j) => j !== i))}
+                          className="shrink-0 text-slate-300 hover:text-slate-500"
+                        >
+                          <XIcon size={10} />
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {!isReadOnly && citedDesignSpecId && (() => {
+                const spec = designSpecs.find((s) => s.id === citedDesignSpecId);
+                return spec ? (
+                  <div className="mb-2 flex items-center gap-2 rounded-xl bg-indigo-50 px-3 py-2 text-xs">
+                    <span className="font-medium text-indigo-600">Design.md 인용</span>
+                    <span className="flex items-center gap-1 rounded-full bg-indigo-100 px-2 py-0.5 text-indigo-700">
+                      {spec.title}
+                      <button
+                        onClick={() => setCitedDesignSpecId(null)}
+                        className="ml-0.5 text-indigo-400 hover:text-indigo-600"
+                      >
+                        <XIcon size={12} />
+                      </button>
+                    </span>
+                  </div>
+                ) : null;
+              })()}
               {!isReadOnly && selectedReferences.length > 0 && (
                 <div className="mb-2 rounded-xl bg-violet-50 px-3 py-2 text-xs">
                   <div className="flex items-center justify-between mb-1.5">

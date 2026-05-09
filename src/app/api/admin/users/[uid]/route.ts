@@ -198,6 +198,43 @@ async function resetOnboardingRecord(uid: string, token: string) {
   }
 }
 
+async function clearMemoryOnly(uid: string, token: string) {
+  const url = new URL(`${firestoreBase()}/users/${uid}`);
+  url.searchParams.append("updateMask.fieldPaths", "onboardingMemory");
+  const res = await fetch(url, {
+    method: "PATCH",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      fields: { onboardingMemory: { stringValue: "" } },
+    }),
+  });
+  if (!res.ok && res.status !== 404) {
+    throw new Error(`Clear memory ${uid} failed: ${res.status}`);
+  }
+}
+
+export async function PATCH(
+  request: Request,
+  { params }: { params: Promise<{ uid: string }> },
+) {
+  if (!(await assertAdmin(request))) {
+    return Response.json({ error: "forbidden" }, { status: 403 });
+  }
+  const { uid } = await params;
+  if (!uid) return Response.json({ error: "uid required" }, { status: 400 });
+
+  const body = (await request.json().catch(() => ({}))) as { action?: string };
+  if (body.action === "clearMemory") {
+    const token = await getAccessToken();
+    await clearMemoryOnly(uid, token);
+    return Response.json({ ok: true });
+  }
+  return Response.json({ error: "unknown action" }, { status: 400 });
+}
+
 export async function DELETE(
   request: Request,
   { params }: { params: Promise<{ uid: string }> },

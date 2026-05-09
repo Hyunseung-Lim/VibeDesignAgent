@@ -35,6 +35,9 @@ export async function GET(request: Request) {
             : "required"
           : "unknown",
         isAdmin: ADMIN_EMAILS.includes(String(profile?.email ?? "")),
+        onboardingMemory: typeof profile?.onboardingMemory === "string"
+          ? profile.onboardingMemory
+          : null,
       };
     }),
   );

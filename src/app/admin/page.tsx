@@ -37,6 +37,7 @@ type Participant = {
 type AdminUser = Participant & {
   missionIds: string[];
   sessionMissionIds: string[];
+  onboardingMemory?: string | null;
 };
 
 type MissionOption = {
@@ -136,6 +137,8 @@ export default function AdminPage() {
   const [participants, setParticipants] = useState<Participant[]>([]);
   const [adminUsers, setAdminUsers] = useState<AdminUser[]>([]);
   const [isLoadingUsers, setIsLoadingUsers] = useState(false);
+  const [memoryModal, setMemoryModal] = useState<{ userId: string; userName: string; memory: string } | null>(null);
+  const [isDeletingMemory, setIsDeletingMemory] = useState(false);
   const [onboardingSettings, setOnboardingSettings] =
     useState<OnboardingSettings>(defaultOnboardingSettings);
   const [isSavingOnboardingSettings, setIsSavingOnboardingSettings] =
@@ -384,6 +387,32 @@ export default function AdminPage() {
     }
   };
 
+  const deleteMemory = async (userId: string) => {
+    const token = await getAdminToken();
+    if (!token) return;
+    setIsDeletingMemory(true);
+    try {
+      const res = await fetch(`/api/admin/users/${userId}`, {
+        method: "PATCH",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ action: "clearMemory" }),
+      });
+      if (!res.ok) throw new Error("삭제 실패");
+      setAdminUsers((prev) =>
+        prev.map((u) => (u.id === userId ? { ...u, onboardingMemory: null } : u)),
+      );
+      setMemoryModal(null);
+    } catch (e) {
+      alert("메모리 삭제에 실패했습니다.");
+      console.error(e);
+    } finally {
+      setIsDeletingMemory(false);
+    }
+  };
+
   const loadUsers = async () => {
     if (!ready) return;
     setIsLoadingUsers(true);
@@ -405,6 +434,7 @@ export default function AdminPage() {
         missionIds: changes.missionIds ?? prev?.missionIds ?? [],
         sessionMissionIds:
           changes.sessionMissionIds ?? prev?.sessionMissionIds ?? [],
+        onboardingMemory: changes.onboardingMemory ?? prev?.onboardingMemory ?? null,
       });
     };
 
@@ -417,6 +447,7 @@ export default function AdminPage() {
         updatedAt: user.updatedAt,
         onboardingStatus: user.onboardingStatus,
         isAdmin: user.isAdmin,
+        onboardingMemory: (user as AdminUser).onboardingMemory ?? null,
       });
     });
 
@@ -532,6 +563,48 @@ export default function AdminPage() {
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900">
+      {/* Memory modal */}
+      {memoryModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+          onClick={() => setMemoryModal(null)}
+        >
+          <div
+            className="w-full max-w-lg rounded-3xl bg-white shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4">
+              <div>
+                <p className="text-sm font-semibold text-slate-900">유저 메모리</p>
+                <p className="text-xs text-slate-400">{memoryModal.userName}</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setMemoryModal(null)}
+                className="rounded-full p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+              >
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                  <path d="M3 3l10 10M13 3L3 13" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+                </svg>
+              </button>
+            </div>
+            <pre className="max-h-80 overflow-y-auto whitespace-pre-wrap px-6 py-4 font-mono text-xs leading-relaxed text-slate-700">
+              {memoryModal.memory || "(비어 있음)"}
+            </pre>
+            <div className="flex justify-end border-t border-slate-100 px-6 py-4">
+              <button
+                type="button"
+                onClick={() => deleteMemory(memoryModal.userId)}
+                disabled={isDeletingMemory}
+                className="rounded-2xl bg-red-50 px-4 py-2 text-xs font-semibold text-red-600 transition hover:bg-red-100 disabled:opacity-50"
+              >
+                {isDeletingMemory ? "삭제 중..." : "메모리 삭제"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Header */}
       <div className="sticky top-0 z-10 border-b border-slate-200 bg-white">
         <div className="flex items-center justify-between px-6 py-4 lg:px-10">
@@ -647,6 +720,20 @@ export default function AdminPage() {
                         ))
                       )}
                     </div>
+
+                    {user.onboardingMemory && (
+                      <button
+                        type="button"
+                        onClick={() => setMemoryModal({
+                          userId: user.id,
+                          userName: user.displayName ?? user.email ?? user.id,
+                          memory: user.onboardingMemory!,
+                        })}
+                        className="mt-3 text-[11px] font-semibold text-indigo-500 hover:text-indigo-700"
+                      >
+                        유저 메모리 보기 →
+                      </button>
+                    )}
                   </div>
                 );
               })}
