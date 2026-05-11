@@ -3,8 +3,10 @@ import { Stitch, StitchToolClient } from "@google/stitch-sdk";
 export const maxDuration = 120; // 2 minutes — Stitch generation can be slow
 
 
-const client = new StitchToolClient({ apiKey: process.env.STITCH_API_KEY! });
-const stitchSdk = new Stitch(client);
+function createStitchClient() {
+  const client = new StitchToolClient({ apiKey: process.env.STITCH_API_KEY! });
+  return { client, sdk: new Stitch(client) };
+}
 
 type DeviceType = "MOBILE" | "DESKTOP";
 type StitchProject = ReturnType<Stitch["project"]>;
@@ -95,7 +97,7 @@ async function screenFromRawResponse(project: StitchProject, raw: unknown): Prom
   };
 }
 
-async function generateScreen(project: StitchProject, prompt: string, deviceType: DeviceType, previousScreenIds: Set<string>) {
+async function generateScreen(client: StitchToolClient, project: StitchProject, prompt: string, deviceType: DeviceType, previousScreenIds: Set<string>) {
   const raw = await client.callTool("generate_screen_from_text", {
     projectId: project.id,
     prompt,
@@ -112,6 +114,7 @@ async function generateScreen(project: StitchProject, prompt: string, deviceType
 }
 
 async function editScreen(
+  client: StitchToolClient,
   project: StitchProject,
   screenId: string,
   prompt: string,
@@ -254,17 +257,18 @@ export async function POST(request: Request) {
 
   const deviceType: DeviceType = device === "mobile" ? "MOBILE" : "DESKTOP";
 
+  const { client, sdk } = createStitchClient();
   try {
     let project;
     let actualProjectId: string = projectId;
 
     if (!projectId) {
       console.log("[stitch] creating project...");
-      project = await stitchSdk.createProject("VibeDesign");
+      project = await sdk.createProject("VibeDesign");
       actualProjectId = project.id;
       console.log("[stitch] project created:", actualProjectId);
     } else {
-      project = stitchSdk.project(projectId);
+      project = sdk.project(projectId);
     }
 
     const beforeScreens = await listScreens(project);
@@ -279,7 +283,7 @@ export async function POST(request: Request) {
         referenceImageCount,
       );
       try {
-        screen = await editScreen(project, screenId, effectivePrompt, deviceType, beforeScreenIds);
+        screen = await editScreen(client, project, screenId, effectivePrompt, deviceType, beforeScreenIds);
       } catch (editErr) {
         const message = errorMessage(editErr);
         console.warn("[stitch] edit failed:", message);
@@ -293,7 +297,7 @@ export async function POST(request: Request) {
         referenceImageCount,
       );
       try {
-        screen = await generateScreen(project, effectivePrompt, deviceType, beforeScreenIds);
+        screen = await generateScreen(client, project, effectivePrompt, deviceType, beforeScreenIds);
       } catch (generateErr) {
         if (!isIncompleteResponseError(generateErr)) throw generateErr;
         console.warn("[stitch] generation returned incomplete response; checking project screens...");

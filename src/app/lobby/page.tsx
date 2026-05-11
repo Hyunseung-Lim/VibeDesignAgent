@@ -20,7 +20,13 @@ type Mission = {
   endDate: string;
   device?: "desktop" | "mobile";
   durationMinutes?: number;
-  options?: { id: string; title: string; description: string; imageUrl: string; content: string }[];
+  options?: {
+    id: string;
+    title: string;
+    description: string;
+    imageUrl: string;
+    content: string;
+  }[];
   createdAt: number;
 };
 
@@ -41,7 +47,7 @@ function missionProgress(data: Record<string, unknown>): MissionProgress {
   return {
     timerStartedAt,
     hasActivity: Boolean(
-    data.selectedOptionId ||
+      data.selectedOptionId ||
       data.timerStartedAt ||
       (Array.isArray(data.messages) && data.messages.length > 0) ||
       (Array.isArray(data.ideas) && data.ideas.length > 0) ||
@@ -72,7 +78,8 @@ function derivedStatus(
   now.setHours(0, 0, 0, 0);
   const start = parseLocalDate(startDate);
   const end = parseLocalDate(endDate);
-  if (now < start) return { label: "대기", style: "bg-slate-100 text-slate-600" };
+  if (now < start)
+    return { label: "대기", style: "bg-slate-100 text-slate-600" };
   if (now > end) return { label: "미완료", style: "bg-rose-100 text-rose-700" };
   return { label: "진행중", style: "bg-amber-100 text-amber-700" };
 }
@@ -106,9 +113,7 @@ export default function LobbyPage() {
   const [missions, setMissions] = useState<Mission[]>([]);
   const [missionProgressById, setMissionProgressById] = useState<
     Record<string, MissionProgress>
-  >(
-    {},
-  );
+  >({});
   const [onboardingSettings, setOnboardingSettings] =
     useState<OnboardingSettings>(defaultOnboardingSettings);
   const [isOnboardingRequired, setIsOnboardingRequired] = useState(false);
@@ -116,12 +121,19 @@ export default function LobbyPage() {
   const menuRef = useRef<HTMLDivElement>(null);
 
   const handleLogout = async () => {
-    try { await signOut(firebaseAuth); } finally { router.push("/"); }
+    try {
+      await signOut(firebaseAuth);
+    } finally {
+      router.push("/");
+    }
   };
 
   useEffect(() => {
     return onAuthStateChanged(firebaseAuth, (user) => {
-      if (!user) { router.replace("/"); return; }
+      if (!user) {
+        router.replace("/");
+        return;
+      }
       setUserId(user.uid);
       setUserEmail(user.email ?? "");
       setUserName(user.displayName ?? user.email?.split("@")[0] ?? "사용자");
@@ -142,7 +154,9 @@ export default function LobbyPage() {
               `vda:onboarding-completed:${user.uid}`,
               "true",
             );
-            window.localStorage.removeItem(`vda:onboarding-required:${user.uid}`);
+            window.localStorage.removeItem(
+              `vda:onboarding-required:${user.uid}`,
+            );
           } else {
             window.localStorage.removeItem(
               `vda:onboarding-completed:${user.uid}`,
@@ -206,7 +220,8 @@ export default function LobbyPage() {
   useEffect(() => {
     if (!isMenuOpen) return;
     const handler = (e: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setIsMenuOpen(false);
+      if (menuRef.current && !menuRef.current.contains(e.target as Node))
+        setIsMenuOpen(false);
     };
     window.addEventListener("click", handler);
     return () => window.removeEventListener("click", handler);
@@ -235,7 +250,8 @@ export default function LobbyPage() {
       {
         id: "onboarding-mobile",
         title: "모바일 자유주제",
-        description: "모바일 화면 기준으로 자유롭게 앱/웹 아이디어를 진행합니다.",
+        description:
+          "모바일 화면 기준으로 자유롭게 앱/웹 아이디어를 진행합니다.",
         imageUrl: "",
         content:
           "자유주제로 온보딩, 홈 화면, 상세 화면, 예약/구독/커머스 등 원하는 모바일 화면을 만들어보세요.",
@@ -257,35 +273,71 @@ export default function LobbyPage() {
       {/* Topbar */}
       <div className="sticky top-0 z-10 border-b border-slate-200 bg-white">
         <div className="flex w-full items-center justify-between px-6 py-3 lg:px-10">
-          <p className="text-lg font-semibold text-slate-800">Vibe Design Agent</p>
+          <p className="text-lg font-semibold text-slate-800">
+            Vibe Design Agent
+          </p>
           <div className="relative" ref={menuRef}>
-            <button type="button" onClick={() => setIsMenuOpen((p) => !p)} className="flex items-center gap-2 rounded-full">
+            <button
+              type="button"
+              onClick={() => setIsMenuOpen((p) => !p)}
+              className="flex items-center gap-2 rounded-full"
+            >
               {userPhoto ? (
-                <Image src={userPhoto} alt={userName} width={36} height={36} className="h-9 w-9 rounded-full object-cover" unoptimized priority />
+                <Image
+                  src={userPhoto}
+                  alt={userName}
+                  width={36}
+                  height={36}
+                  className="h-9 w-9 rounded-full object-cover"
+                  unoptimized
+                  priority
+                />
               ) : (
-                <span className="flex h-9 w-9 items-center justify-center rounded-full bg-slate-900 text-sm font-semibold text-white">{userInitial}</span>
+                <span className="flex h-9 w-9 items-center justify-center rounded-full bg-slate-900 text-sm font-semibold text-white">
+                  {userInitial}
+                </span>
               )}
             </button>
             {isMenuOpen && (
               <div className="absolute right-0 mt-3 w-60 rounded-3xl bg-white/90 p-4 text-sm shadow-lg backdrop-blur">
                 <div className="flex items-center gap-3 border-b border-slate-100 pb-4">
                   {userPhoto ? (
-                    <Image src={userPhoto} alt={userName} width={40} height={40} className="h-10 w-10 rounded-full object-cover" unoptimized priority />
+                    <Image
+                      src={userPhoto}
+                      alt={userName}
+                      width={40}
+                      height={40}
+                      className="h-10 w-10 rounded-full object-cover"
+                      unoptimized
+                      priority
+                    />
                   ) : (
-                    <div className="flex h-10 w-10 items-center justify-center rounded-full bg-slate-900 text-white">{userInitial}</div>
+                    <div className="flex h-10 w-10 items-center justify-center rounded-full bg-slate-900 text-white">
+                      {userInitial}
+                    </div>
                   )}
                   <div>
-                    <p className="text-sm font-semibold text-slate-900">{userName}</p>
+                    <p className="text-sm font-semibold text-slate-900">
+                      {userName}
+                    </p>
                     <p className="text-xs text-slate-500">{userEmail}</p>
                   </div>
                 </div>
                 <div className="mt-3 space-y-1">
                   {isAdmin && (
-                    <Link href="/admin" onClick={() => setIsMenuOpen(false)} className="block w-full rounded-2xl px-4 py-2 text-left text-sm font-semibold text-slate-500 transition hover:bg-slate-50">
+                    <Link
+                      href="/admin"
+                      onClick={() => setIsMenuOpen(false)}
+                      className="block w-full rounded-2xl px-4 py-2 text-left text-sm font-semibold text-slate-500 transition hover:bg-slate-50"
+                    >
                       관리자 페이지
                     </Link>
                   )}
-                  <button type="button" onClick={handleLogout} className="w-full rounded-2xl px-4 py-2 text-left font-semibold text-slate-900 transition hover:bg-slate-50">
+                  <button
+                    type="button"
+                    onClick={handleLogout}
+                    className="w-full rounded-2xl px-4 py-2 text-left font-semibold text-slate-900 transition hover:bg-slate-50"
+                  >
                     로그아웃
                   </button>
                 </div>
@@ -299,16 +351,21 @@ export default function LobbyPage() {
         {/* Agent Actions */}
         <header className="rounded-3xl bg-white p-8 shadow-lg shadow-slate-900/5">
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <p className="text-2xl font-semibold text-slate-900">Agent Actions</p>
+            <p className="text-2xl font-semibold text-slate-900">
+              Agent Actions
+            </p>
             <div className="flex flex-wrap gap-2">
-              <Link href="/agent" className="rounded-2xl border border-slate-200 px-5 py-3 text-sm font-semibold text-slate-700 transition hover:border-slate-400">
+              <Link
+                href="/agent"
+                className="rounded-2xl border border-slate-200 px-5 py-3 text-sm font-semibold text-slate-700 transition hover:border-slate-400"
+              >
                 에이전트 메모리 평가하기
               </Link>
             </div>
           </div>
           {isOnboardingRequired && (
             <p className="mt-4 text-sm text-slate-500">
-              먼저 오늘의 미션 섹션에 있는 온보딩 미션을 완료해주세요.
+              먼저 미션 목록 섹션에 있는 온보딩 미션을 완료해주세요.
             </p>
           )}
         </header>
@@ -316,8 +373,10 @@ export default function LobbyPage() {
         {/* Missions */}
         <main className="space-y-4">
           <div className="flex items-center justify-between">
-            <h2 className="text-xl font-semibold text-slate-900">오늘의 미션</h2>
-            <span className="text-sm text-slate-400">{visibleMissions.length}개의 미션</span>
+            <h2 className="text-xl font-semibold text-slate-900">미션 목록</h2>
+            <span className="text-sm text-slate-400">
+              {visibleMissions.length}개의 미션
+            </span>
           </div>
 
           {visibleMissions.length === 0 ? (
@@ -356,19 +415,26 @@ export default function LobbyPage() {
                       router.push(`/main/${mission.id}`);
                     }}
                     className={`rounded-3xl border border-slate-100 bg-white p-6 shadow-sm transition ${
-                      (!isOnboardingMission && isOnboardingRequired) || isCheckingOnboarding
+                      (!isOnboardingMission && isOnboardingRequired) ||
+                      isCheckingOnboarding
                         ? "cursor-not-allowed opacity-60"
                         : "cursor-pointer hover:bg-slate-50"
                     }`}
                   >
                     <div className="flex flex-wrap items-start gap-3">
-                      <p className="flex-1 text-base font-semibold text-slate-900 leading-snug">{mission.title}</p>
-                      <span className={`shrink-0 rounded-full px-3 py-1 text-xs font-semibold ${status.style}`}>
+                      <p className="flex-1 text-base font-semibold text-slate-900 leading-snug">
+                        {mission.title}
+                      </p>
+                      <span
+                        className={`shrink-0 rounded-full px-3 py-1 text-xs font-semibold ${status.style}`}
+                      >
                         {status.label}
                       </span>
                     </div>
                     {mission.description && (
-                      <p className="mt-2 text-sm text-slate-500 leading-relaxed line-clamp-2">{mission.description}</p>
+                      <p className="mt-2 text-sm text-slate-500 leading-relaxed line-clamp-2">
+                        {mission.description}
+                      </p>
                     )}
                     <p className="mt-3 text-xs text-slate-400">
                       {isOnboardingMission
@@ -382,21 +448,29 @@ export default function LobbyPage() {
                     {isOnboardingRequired && (
                       <p className="mt-2 rounded-xl bg-amber-50 px-3 py-2 text-xs font-medium text-amber-700">
                         {isOnboardingMission
-                          ? "이 미션을 완료하면 오늘의 미션을 시작할 수 있습니다."
+                          ? "이 미션을 완료하면 본 미션에 접근할 수 있습니다."
                           : "온보딩 완료 후 시작할 수 있습니다."}
                       </p>
                     )}
                     <div className="mt-3 flex items-center gap-2">
-                      <p className="text-xs text-slate-400">{mission.startDate} – {mission.endDate}</p>
+                      <p className="text-xs text-slate-400">
+                        {mission.startDate} – {mission.endDate}
+                      </p>
                       <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-500">
                         {mission.device === "mobile" ? (
-                          <><DeviceMobileIcon size={12} className="inline" /> 모바일</>
+                          <>
+                            <DeviceMobileIcon size={12} className="inline" />{" "}
+                            모바일
+                          </>
                         ) : mission.device === "desktop" ? (
-                          <><MonitorIcon size={12} className="inline" /> PC</>
+                          <>
+                            <MonitorIcon size={12} className="inline" /> PC
+                          </>
                         ) : (
                           <>
                             <MonitorIcon size={12} className="inline" /> PC ·{" "}
-                            <DeviceMobileIcon size={12} className="inline" /> 모바일
+                            <DeviceMobileIcon size={12} className="inline" />{" "}
+                            모바일
                           </>
                         )}
                       </span>

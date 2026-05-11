@@ -49,8 +49,15 @@ export async function PATCH(request: Request) {
     data.onboardingMemoryUpdatedAt = now;
   }
 
-  const token = await getFirebaseAccessToken();
-  await patchFirestoreDocument(`users/${user.localId}`, data, token);
+  try {
+    const token = await getFirebaseAccessToken();
+    await patchFirestoreDocument(`users/${user.localId}`, data, token);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error("[users/me PATCH] failed for", user.email, ":", message);
+    return Response.json({ error: message }, { status: 500 });
+  }
+
   return Response.json({
     ok: true,
     uid: user.localId,
