@@ -88,6 +88,8 @@ type MissionOption = {
   title: string;
   description: string;
   imageUrls: string[];
+  imageAlts?: string[];
+  imageDimensions?: { w: number; h: number }[];
   content: string;
   device?: Device;
 };
@@ -1647,6 +1649,62 @@ export default function MainScreenPage() {
     );
   }, [activeOption, missionOptions, selectedOptionId]);
 
+  const getMissionReferenceImageAlts = useCallback(() => {
+    const options =
+      missionOptionsRef.current.length > 0
+        ? missionOptionsRef.current
+        : missionOptions;
+    const selectedId = selectedOptionIdRef.current ?? selectedOptionId;
+    const selected =
+      (selectedId ? options.find((option) => option.id === selectedId) : null) ??
+      activeOption;
+
+    const src = selected
+      ? { urls: selected.imageUrls ?? [], alts: selected.imageAlts ?? [] }
+      : {
+          urls: options.flatMap((o) => o.imageUrls ?? []),
+          alts: options.flatMap((o) => o.imageAlts ?? []),
+        };
+
+    const seen = new Set<string>();
+    const result: string[] = [];
+    src.urls.forEach((url, i) => {
+      if (url && !seen.has(url)) {
+        seen.add(url);
+        result.push(src.alts[i] ?? "");
+      }
+    });
+    return result;
+  }, [activeOption, missionOptions, selectedOptionId]);
+
+  const getMissionReferenceImageDimensions = useCallback(() => {
+    const options =
+      missionOptionsRef.current.length > 0
+        ? missionOptionsRef.current
+        : missionOptions;
+    const selectedId = selectedOptionIdRef.current ?? selectedOptionId;
+    const selected =
+      (selectedId ? options.find((option) => option.id === selectedId) : null) ??
+      activeOption;
+
+    const src = selected
+      ? { urls: selected.imageUrls ?? [], dims: selected.imageDimensions ?? [] }
+      : {
+          urls: options.flatMap((o) => o.imageUrls ?? []),
+          dims: options.flatMap((o) => o.imageDimensions ?? []),
+        };
+
+    const seen = new Set<string>();
+    const result: { w: number; h: number }[] = [];
+    src.urls.forEach((url, i) => {
+      if (url && !seen.has(url)) {
+        seen.add(url);
+        result.push(src.dims[i] ?? { w: 0, h: 0 });
+      }
+    });
+    return result;
+  }, [activeOption, missionOptions, selectedOptionId]);
+
   useEffect(() => {
     if (!designContextMenu) return;
     const closeMenu = () => setDesignContextMenu(null);
@@ -2879,6 +2937,8 @@ export default function MainScreenPage() {
         }
 
         const referenceImageUrls = getMissionReferenceImageUrls();
+        const referenceImageAlts = getMissionReferenceImageAlts();
+        const referenceImageDimensions = getMissionReferenceImageDimensions();
         setMessages((prev) =>
           prev.map((m) =>
             m.id === assistantId
@@ -2957,6 +3017,12 @@ export default function MainScreenPage() {
                 screenId: targetArtboard?.stitchScreenId || undefined,
                 referenceImageUrls:
                   referenceImageUrls.length > 0 ? referenceImageUrls : undefined,
+                referenceImageAlts:
+                  referenceImageAlts.some(Boolean) ? referenceImageAlts : undefined,
+                referenceImageDimensions:
+                  referenceImageDimensions.some((d) => d.w > 0)
+                    ? referenceImageDimensions
+                    : undefined,
               }),
             });
           } finally {

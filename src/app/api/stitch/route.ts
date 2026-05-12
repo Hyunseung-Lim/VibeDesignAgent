@@ -168,13 +168,37 @@ async function recoverGeneratedScreen(
 
 
 
-function promptWithReferenceImages(prompt: string, referenceImageUrls?: string[]) {
-  const count = (referenceImageUrls ?? []).filter(Boolean).length;
-  if (count === 0) return prompt;
+function formatAspectRatio(w: number, h: number): string {
+  if (!w || !h) return "";
+  const orientation = w >= h ? "landscape" : "portrait";
+  const ratio = (w / h).toFixed(2);
+  return `${w}×${h} (${orientation}, ratio ${ratio})`;
+}
+
+function promptWithReferenceImages(
+  prompt: string,
+  referenceImageUrls?: string[],
+  referenceImageAlts?: string[],
+  referenceImageDimensions?: { w: number; h: number }[],
+) {
+  const urls = (referenceImageUrls ?? []).filter(Boolean);
+  if (urls.length === 0) return prompt;
+
+  const imageLines = urls.map((url, i) => {
+    const alt = referenceImageAlts?.[i]?.trim();
+    const dim = referenceImageDimensions?.[i];
+    const dimStr = dim?.w ? formatAspectRatio(dim.w, dim.h) : "";
+    const desc = [dimStr, alt].filter(Boolean).join(" — ");
+    return desc
+      ? `  - Image ${i + 1}: ${desc} → use <img src="${url}" />`
+      : `  - Image ${i + 1}: use <img src="${url}" />`;
+  });
+
   return [
     prompt,
     "",
-    `Include exactly ${count} prominent <img> element(s) in the design for real content imagery (hero, feature sections, etc.). Do not use CSS background-image — use <img> tags so they can be replaced with real assets.`,
+    `Include exactly ${urls.length} prominent <img> element(s) for real content imagery. Do not use CSS background-image — use <img> tags. Match each container's aspect ratio to the image's actual dimensions.`,
+    ...imageLines,
   ].join("\n");
 }
 
@@ -245,6 +269,8 @@ export async function POST(request: Request) {
     projectId,
     screenId,
     referenceImageUrls,
+    referenceImageAlts,
+    referenceImageDimensions,
   } = await request.json();
 
   if (!prompt) {
@@ -253,7 +279,7 @@ export async function POST(request: Request) {
   const referenceImageCount = Array.isArray(referenceImageUrls)
     ? referenceImageUrls.filter(Boolean).length
     : 0;
-  const effectivePrompt = promptWithReferenceImages(prompt, referenceImageUrls);
+  const effectivePrompt = promptWithReferenceImages(prompt, referenceImageUrls, referenceImageAlts, referenceImageDimensions);
 
   const deviceType: DeviceType = device === "mobile" ? "MOBILE" : "DESKTOP";
 
@@ -308,12 +334,21 @@ export async function POST(request: Request) {
     }
     console.log("[stitch] screen id:", screen.id);
 
-    const [htmlUrlOrContent, imageUrl] = await Promise.all([
-      screen.getHtml(),
-      screen.getImage().catch(() => ""),
-    ]);
+    // getHtml() may return empty if the screen HTML isn't ready yet — retry a few times
+    let htmlUrlOrContent = "";
+    for (let attempt = 0; attempt < 5; attempt++) {
+      if (attempt > 0) await sleep(2000);
+      try {
+        htmlUrlOrContent = await screen.getHtml();
+      } catch {
+        // ignore and retry
+      }
+      if (htmlUrlOrContent) break;
+      console.warn("[stitch] getHtml() returned empty, retrying...", attempt + 1);
+    }
+    const imageUrl = await screen.getImage().catch(() => "");
 
-    console.log("[stitch] htmlUrlOrContent:", htmlUrlOrContent?.slice(0, 100));
+    console.log("[stitch] htmlUrlOrContent type:", htmlUrlOrContent?.startsWith("http") ? "URL" : "direct-content", "preview:", htmlUrlOrContent?.slice(0, 150));
 
     if (!htmlUrlOrContent) {
       return Response.json({ error: "Stitch returned empty HTML" }, { status: 500 });

@@ -45,6 +45,8 @@ type MissionOption = {
   title: string;
   description: string;
   imageUrls: string[];
+  imageAlts?: string[];
+  imageDimensions?: { w: number; h: number }[];
   content: string;
 };
 
@@ -105,6 +107,8 @@ function normalizeOptions(options?: MissionOption[]) {
     description: option.description ?? "",
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     imageUrls: (option as any).imageUrls ?? ((option as any).imageUrl ? [(option as any).imageUrl] : []),
+    imageAlts: (option.imageAlts ?? []).map((a) => a ?? ""),
+    imageDimensions: (option.imageDimensions ?? []).map((d) => d ?? { w: 0, h: 0 }),
     content: option.content ?? "",
   }));
 }
@@ -184,15 +188,17 @@ export default function AdminPage() {
 
   const saveEdit = async (id: string) => {
     if (editFields.title?.trim()) {
-      await updateDoc(doc(db, "missions", id), {
+      const clean = <T,>(v: T): T =>
+        JSON.parse(JSON.stringify(v, (_, val) => (val === undefined ? null : val)));
+      await updateDoc(doc(db, "missions", id), clean({
         title: editFields.title.trim(),
         description: editFields.description?.trim() ?? "",
-        startDate: editFields.startDate,
-        endDate: editFields.endDate,
+        startDate: editFields.startDate ?? "",
+        endDate: editFields.endDate ?? "",
         device: editFields.device ?? "desktop",
         durationMinutes: (editFields.durationMinutes as number) > 0 ? editFields.durationMinutes : null,
         options: normalizeOptions(editFields.options as MissionOption[]).filter((option) => option.title.trim()),
-      });
+      }));
     }
     setEditingId(null);
   };
@@ -987,7 +993,11 @@ export default function AdminPage() {
                                             await uploadBytes(imgRef, f);
                                             return getDownloadURL(imgRef);
                                           }));
-                                          updateEditOption(option.id, { imageUrls: [...option.imageUrls, ...urls] });
+                                          updateEditOption(option.id, {
+                                            imageUrls: [...option.imageUrls, ...urls],
+                                            imageAlts: [...(option.imageAlts ?? []), ...urls.map(() => "")],
+                                            imageDimensions: [...(option.imageDimensions ?? []), ...urls.map(() => ({ w: 0, h: 0 }))],
+                                          });
                                         } finally {
                                           setEditUploadingIds((s) => { const n = new Set(s); n.delete(option.id); return n; });
                                           e.target.value = "";
@@ -997,20 +1007,44 @@ export default function AdminPage() {
                                   {option.imageUrls.length > 0 && (
                                     <div className="grid grid-cols-3 gap-1.5">
                                       {option.imageUrls.map((url: string, i: number) => (
-                                        <div key={i} className="relative group">
-                                          <img
-                                            src={imageSrc(url)}
-                                            alt=""
-                                            className="h-20 w-full rounded-lg object-cover border border-slate-100"
-                                            onError={(e) => {
-                                              const img = e.currentTarget;
-                                              if (img.dataset.fallback === "1") return;
-                                              img.dataset.fallback = "1";
-                                              img.src = fallbackImageSrc(url);
+                                        <div key={i} className="relative group space-y-1">
+                                          <div className="relative">
+                                            <img
+                                              src={imageSrc(url)}
+                                              alt=""
+                                              className="h-20 w-full rounded-lg object-cover border border-slate-100"
+                                              onLoad={(e) => {
+                                                const { naturalWidth: w, naturalHeight: h } = e.currentTarget;
+                                                if (!w || !h) return;
+                                                const dims = [...(option.imageDimensions ?? option.imageUrls.map(() => ({ w: 0, h: 0 })))];
+                                                dims[i] = { w, h };
+                                                updateEditOption(option.id, { imageDimensions: dims });
+                                              }}
+                                              onError={(e) => {
+                                                const img = e.currentTarget;
+                                                if (img.dataset.fallback === "1") return;
+                                                img.dataset.fallback = "1";
+                                                img.src = fallbackImageSrc(url);
+                                              }}
+                                            />
+                                            <button type="button" onClick={() => updateEditOption(option.id, {
+                                              imageUrls: option.imageUrls.filter((_: string, j: number) => j !== i),
+                                              imageAlts: (option.imageAlts ?? []).filter((_: string, j: number) => j !== i),
+                                              imageDimensions: (option.imageDimensions ?? []).filter((_: { w: number; h: number }, j: number) => j !== i),
+                                            })}
+                                              className="absolute top-0.5 right-0.5 hidden group-hover:flex h-4 w-4 items-center justify-center rounded-full bg-black/60 text-white text-xs">✕</button>
+                                          </div>
+                                          <textarea
+                                            placeholder="이미지 설명 (alt)"
+                                            rows={3}
+                                            value={(option.imageAlts ?? [])[i] ?? ""}
+                                            onChange={(e) => {
+                                              const alts = [...(option.imageAlts ?? option.imageUrls.map(() => ""))];
+                                              alts[i] = e.target.value;
+                                              updateEditOption(option.id, { imageAlts: alts });
                                             }}
-                                          />
-                                          <button type="button" onClick={() => updateEditOption(option.id, { imageUrls: option.imageUrls.filter((_: string, j: number) => j !== i) })}
-                                            className="absolute top-0.5 right-0.5 hidden group-hover:flex h-4 w-4 items-center justify-center rounded-full bg-black/60 text-white text-xs">✕</button>
+                                            className="w-full resize-none rounded-md border border-slate-200 px-1.5 py-1 text-[11px] text-slate-600 outline-none focus:border-slate-400"
+                                          ></textarea>
                                         </div>
                                       ))}
                                     </div>
