@@ -174,8 +174,6 @@ async function resetOnboardingRecord(uid: string, token: string) {
   [
     "onboardingCompleted",
     "onboardingCompletedAt",
-    "onboardingMemory",
-    "onboardingMemoryUpdatedAt",
   ].forEach((field) => url.searchParams.append("updateMask.fieldPaths", field));
 
   const res = await fetch(url, {
@@ -188,31 +186,11 @@ async function resetOnboardingRecord(uid: string, token: string) {
       fields: {
         onboardingCompleted: { booleanValue: false },
         onboardingCompletedAt: { nullValue: "NULL_VALUE" },
-        onboardingMemory: { stringValue: "" },
-        onboardingMemoryUpdatedAt: { nullValue: "NULL_VALUE" },
       },
     }),
   });
   if (!res.ok && res.status !== 404) {
     throw new Error(`Reset onboarding ${uid} failed: ${res.status}`);
-  }
-}
-
-async function clearMemoryOnly(uid: string, token: string) {
-  const url = new URL(`${firestoreBase()}/users/${uid}`);
-  url.searchParams.append("updateMask.fieldPaths", "onboardingMemory");
-  const res = await fetch(url, {
-    method: "PATCH",
-    headers: {
-      Authorization: `Bearer ${token}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      fields: { onboardingMemory: { stringValue: "" } },
-    }),
-  });
-  if (!res.ok && res.status !== 404) {
-    throw new Error(`Clear memory ${uid} failed: ${res.status}`);
   }
 }
 
@@ -226,12 +204,6 @@ export async function PATCH(
   const { uid } = await params;
   if (!uid) return Response.json({ error: "uid required" }, { status: 400 });
 
-  const body = (await request.json().catch(() => ({}))) as { action?: string };
-  if (body.action === "clearMemory") {
-    const token = await getAccessToken();
-    await clearMemoryOnly(uid, token);
-    return Response.json({ ok: true });
-  }
   return Response.json({ error: "unknown action" }, { status: 400 });
 }
 

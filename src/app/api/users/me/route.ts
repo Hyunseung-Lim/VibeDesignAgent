@@ -19,8 +19,6 @@ export async function GET(request: Request) {
     email: profile?.email ?? user.email ?? null,
     photoURL: profile?.photoURL ?? user.photoUrl ?? null,
     onboardingCompleted: profile?.onboardingCompleted === true,
-    onboardingMemory: profile?.onboardingMemory ?? "",
-    onboardingMemoryUpdatedAt: profile?.onboardingMemoryUpdatedAt ?? null,
     exists: Boolean(profile),
   });
 }
@@ -31,7 +29,6 @@ export async function PATCH(request: Request) {
 
   const body = (await request.json().catch(() => ({}))) as {
     onboardingCompleted?: boolean;
-    onboardingMemory?: string;
   };
   const now = new Date();
   const data: Record<string, unknown> = {
@@ -44,11 +41,6 @@ export async function PATCH(request: Request) {
     data.onboardingCompleted = body.onboardingCompleted;
     if (body.onboardingCompleted) data.onboardingCompletedAt = now;
   }
-  if (typeof body.onboardingMemory === "string") {
-    data.onboardingMemory = body.onboardingMemory.slice(0, 4000);
-    data.onboardingMemoryUpdatedAt = now;
-  }
-
   try {
     const token = await getFirebaseAccessToken();
     await patchFirestoreDocument(`users/${user.localId}`, data, token);

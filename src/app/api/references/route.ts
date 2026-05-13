@@ -3,6 +3,34 @@ import OpenAI from "openai";
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const SERPER_API_KEY = process.env.SERPER_API_KEY;
 
+function metaContent(html: string, key: string) {
+  const escaped = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const p = new RegExp(
+    `<meta\\b(?=[^>]*(?:property|name)=["']${escaped}["'])(?=[^>]*content=["']([^"']+)["'])[^>]*>`,
+    "i",
+  );
+  return html.match(p)?.[1] ?? "";
+}
+
+async function fetchOgImage(link: string): Promise<string | null> {
+  try {
+    const res = await fetch(link, {
+      headers: { "User-Agent": "Mozilla/5.0 VibeDesignAgent reference crawler", Accept: "text/html" },
+      signal: AbortSignal.timeout(4000),
+    });
+    if (!res.ok) return null;
+    const html = (await res.text()).slice(0, 200_000);
+    const raw =
+      metaContent(html, "og:image") ||
+      metaContent(html, "twitter:image") ||
+      metaContent(html, "twitter:image:src");
+    if (!raw) return null;
+    return new URL(raw, link).toString();
+  } catch {
+    return null;
+  }
+}
+
 async function extractKeywords(
   missionTitle: string,
   missionBrief: string,
@@ -79,19 +107,17 @@ export async function POST(request: Request) {
     );
 
     const seen = new Set<string>();
-    const references: {
-      id: string;
-      title: string;
-      description: string;
-      tag: string;
-      url: string;
-      imageUrl: string;
+    const candidates: {
+      kwIdx: number;
+      i: number;
+      img: SerperImage;
+      domain: string;
     }[] = [];
 
     results.forEach((images, kwIdx) => {
       images.forEach((img, i) => {
-        if (!img.imageUrl || seen.has(img.imageUrl)) return;
-        seen.add(img.imageUrl);
+        if (!img.link || seen.has(img.link)) return;
+        seen.add(img.link);
         const domain = (() => {
           try {
             return new URL(img.link).hostname.replace("www.", "");
@@ -99,16 +125,27 @@ export async function POST(request: Request) {
             return img.source;
           }
         })();
-        references.push({
+        candidates.push({ kwIdx, i, img, domain });
+      });
+    });
+
+    const resolved = await Promise.all(
+      candidates.map(async ({ kwIdx, i, img, domain }) => {
+        const ogImage = await fetchOgImage(img.link);
+        const imageUrl = ogImage ?? img.imageUrl;
+        if (!imageUrl) return null;
+        return {
           id: `ref-${Date.now()}-${kwIdx}-${i}`,
           title: img.title || keywords[kwIdx],
           description: `${keywords[kwIdx]} 관련 UI 레퍼런스`,
           tag: domain,
           url: img.link,
-          imageUrl: img.imageUrl,
-        });
-      });
-    });
+          imageUrl,
+        };
+      }),
+    );
+
+    const references = resolved.filter(Boolean);
 
     return Response.json({ references: references.slice(0, 3) });
   } catch (err) {

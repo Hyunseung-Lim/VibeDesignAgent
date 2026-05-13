@@ -37,7 +37,6 @@ type Message = {
   createdAt?: number;
   citedElement?: { selector: string; artboardId: string } | null;
   citedReferences?: { id: string; title: string; imageUrl?: string }[] | null;
-  citedDesignSpecTitle?: string | null;
   citedTexts?: string[] | null;
 };
 
@@ -55,6 +54,22 @@ type ActivityLogEvent = {
   stitchPrompt?: string;
 };
 
+type MemoryRecord = {
+  id: string;
+  category?: string[];
+  subcategory?: string[];
+  keywords?: string[];
+  episode?: string;
+  semantic?: string;
+  timestamp?: number;
+  createdAt?: number;
+};
+
+type MemoryContext = {
+  episodic: MemoryRecord[];
+  semantic: MemoryRecord[];
+};
+
 type Reference = {
   id: string;
   title: string;
@@ -64,7 +79,7 @@ type Reference = {
   imageUrl?: string;
 };
 
-type DesignSpec = {
+type DesignStyle = {
   id: string;
   title: string;
   content: string;
@@ -75,7 +90,7 @@ type Idea = {
   id: string;
   title: string;
   description: string;
-  designSpecId?: string;
+  designStyle?: DesignStyle;
   createdAt?: number;
   updatedAt?: number;
   presentations?: Presentation[];
@@ -318,73 +333,6 @@ async function fetchOnboardingMissionData() {
   } catch {
     return fallback;
   }
-}
-
-function buildOnboardingMemory(input: {
-  device: Device;
-  selectedOptionTitle?: string;
-  messages: Message[];
-  ideas: Idea[];
-  artboards: Artboard[];
-  references: Reference[];
-}) {
-  const userMessages = input.messages.filter((message) => message.role === "user");
-  const citedReferenceCount = input.messages.filter(
-    (message) => (message.citedReferences?.length ?? 0) > 0,
-  ).length;
-  const citedElementCount = input.messages.filter(
-    (message) => message.citedElement,
-  ).length;
-  const mockupCount = input.artboards.length;
-  const presentationCount = input.ideas.reduce(
-    (count, idea) => count + normalizePresentations(idea).length,
-    0,
-  );
-  const noteSummaries = input.ideas
-    .slice(0, 5)
-    .map((idea, index) => {
-      const description = (idea.description || "")
-        .replace(/\s+/g, " ")
-        .trim()
-        .slice(0, 240);
-      return `${index + 1}. ${idea.title}${description ? ` - ${description}` : ""}`;
-    })
-    .join("\n");
-  const recentRequests = userMessages
-    .slice(-8)
-    .map((message) => `- ${message.content.replace(/\s+/g, " ").trim().slice(0, 220)}`)
-    .join("\n");
-  const behaviorSignals = [
-    input.device === "mobile"
-      ? "모바일 화면을 선택해 작은 화면 정보 구조와 앱형 흐름을 연습했다."
-      : "PC 화면을 선택해 넓은 화면 레이아웃과 웹형 구성을 연습했다.",
-    input.references.length > 0 || citedReferenceCount > 0
-      ? "레퍼런스를 활용해 방향을 잡는 편이다."
-      : "레퍼런스보다 직접 요청/대화로 방향을 잡는 편이다.",
-    mockupCount > 1
-      ? "여러 목업 버전을 비교/탐색하는 방식에 익숙하다."
-      : mockupCount === 1
-        ? "하나의 목업을 만든 뒤 구체화하는 방식으로 진행했다."
-        : "아직 목업 생성 전 단계의 설명/노트 중심으로 작업했다.",
-    citedElementCount > 0
-      ? "특정 UI 요소를 집어 수정하는 방식도 사용했다."
-      : "화면 전체 방향이나 요구사항 중심으로 요청했다.",
-    presentationCount > 0
-      ? "목업을 프레젠테이션으로 정리하는 단계까지 진행했다."
-      : "프레젠테이션 전 단계의 노트/목업 작업이 중심이었다.",
-  ];
-
-  return [
-    "온보딩에서 관찰된 사용자 작업 메모리",
-    `선택한 온보딩 유형: ${input.selectedOptionTitle || "자유주제"} / ${input.device === "mobile" ? "모바일" : "PC"}`,
-    `작업량: 사용자 메시지 ${userMessages.length}개, 노트 ${input.ideas.length}개, 목업 ${mockupCount}개, 레퍼런스 ${input.references.length}개, 프레젠테이션 ${presentationCount}개`,
-    `작업 성향:\n${behaviorSignals.map((signal) => `- ${signal}`).join("\n")}`,
-    noteSummaries ? `작성/선택된 노트 요약:\n${noteSummaries}` : "",
-    recentRequests ? `최근 사용자 요청 패턴:\n${recentRequests}` : "",
-    "이후 미션에서는 위 성향을 고려해 노트 구조, 목업 제안 방식, 설명 밀도, 레퍼런스 제안 여부를 조정한다.",
-  ]
-    .filter(Boolean)
-    .join("\n\n");
 }
 
 function isInlineOrLocalAsset(url: string) {
@@ -921,12 +869,21 @@ function injectNoNavigation(html: string): string {
 
 function injectHeightReporter(html: string, artboardId: string): string {
   const script = `<style>
+/* Prevent viewport-relative heights from creating feedback loop with iframe resize */
 html, body { min-height: 0 !important; height: auto !important; }
+.h-screen, .h-dvh, .h-svh, .h-lvh,
+.min-h-screen, .min-h-dvh, .min-h-svh, .min-h-lvh {
+  height: auto !important;
+  min-height: 0 !important;
+}
 </style>
 <script>
 (function(){
   var lastHeight = 0;
+  var reportCount = 0;
+  var MAX_REPORTS = 6;
   function measure(){
+    if (reportCount >= MAX_REPORTS) return;
     var body = document.body;
     var root = document.documentElement;
     var height = Math.max(
@@ -937,6 +894,7 @@ html, body { min-height: 0 !important; height: auto !important; }
     );
     if (Math.abs(height - lastHeight) < 2) return;
     lastHeight = height;
+    reportCount++;
     window.parent.postMessage({
       type: 'vda-artboard-height',
       artboardId: '${artboardId}',
@@ -1019,8 +977,8 @@ const BLOCK_RULES = [
   {
     complete: /\[CREATE_DESIGN_SPEC:\s*\{[\s\S]*?\}\]/,
     partial: /\[CREATE_DESIGN_SPEC:[\s\S]*$/,
-    doneLabel: "Design.md 추가됨",
-    pendingLabel: "Design.md 작성 중...",
+    doneLabel: "디자인 스타일 추가됨",
+    pendingLabel: "디자인 스타일 작성 중...",
   },
 ];
 
@@ -1141,7 +1099,7 @@ function cleanMessageContentForModel(content: string) {
     .replace(/```presentation\s*\n[\s\S]*?\n?\s*```/g, "이전 액션: presentation requested.")
     .replace(/\[FETCH_REFERENCES(?::[^\]]+)?\]/g, "이전 액션: reference search requested.")
     .replace(/\[WEB_SEARCHED\]/g, "이전 액션: web search completed.")
-    .replace(/\[CREATE_DESIGN_SPEC:\s*\{[\s\S]*?\}\]/g, "[Design.md 추가]")
+    .replace(/\[CREATE_DESIGN_SPEC:\s*\{[\s\S]*?\}\]/g, "[디자인 스타일 추가]")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
 }
@@ -1332,13 +1290,17 @@ type WebKitGestureEvent = Event & {
   clientY?: number;
 };
 
-function buildMockupPrompt(basePrompt: string, idea?: Idea | null, appliedSpec?: DesignSpec) {
+function activeDesignStyle(idea?: Idea | null) {
+  return idea?.designStyle ?? null;
+}
+
+function buildMockupPrompt(basePrompt: string, idea?: Idea | null, appliedStyle?: DesignStyle | null) {
   const parts: string[] = [basePrompt];
-  if (appliedSpec?.content.trim()) {
+  if (appliedStyle?.content.trim()) {
     parts.push(
       "",
-      `Design specification "${appliedSpec.title}" (stable style reference — always follow these constraints):`,
-      appliedSpec.content.slice(0, 4000),
+      `Design style "${appliedStyle.title}" for this note (stable style reference — always follow these constraints):`,
+      appliedStyle.content.slice(0, 4000),
     );
   }
   if (idea?.description?.trim()) {
@@ -1374,11 +1336,11 @@ function parseColorTokens(text: string): React.ReactNode[] {
     parts.push(
       <span key={match.index} className="inline-flex items-center gap-1 align-middle">
         <span
-          className="inline-block h-3 w-3 flex-shrink-0 rounded-sm border border-black/10"
+          className="inline-block h-3 w-3 shrink-0 rounded-sm border border-black/10"
           style={{ backgroundColor: hex }}
         />
         <code className="font-mono text-[10px] text-indigo-700">{hex}</code>
-      </span>
+      </span>,
     );
     last = match.index + match[0].length;
   }
@@ -1389,24 +1351,19 @@ function parseColorTokens(text: string): React.ReactNode[] {
 function withColorTokens(children: React.ReactNode): React.ReactNode {
   if (typeof children === "string") return parseColorTokens(children);
   if (Array.isArray(children)) {
-    return children.map((child, i) =>
+    return children.map((child, index) =>
       typeof child === "string"
-        ? parseColorTokens(child).map((n, j) =>
-            typeof n === "string" ? n : React.cloneElement(n as React.ReactElement, { key: `${i}-${j}` }),
+        ? parseColorTokens(child).map((node, nodeIndex) =>
+            typeof node === "string"
+              ? node
+              : React.cloneElement(node as React.ReactElement, {
+                  key: `${index}-${nodeIndex}`,
+                }),
           )
         : child,
     );
   }
   return children;
-}
-
-function nextStyleTitle(specs: DesignSpec[]) {
-  const usedNumbers = specs
-    .map((s) => s.title.match(/^스타일\s*(\d+)$/)?.[1])
-    .filter(Boolean)
-    .map(Number);
-  const maxNumber = usedNumbers.length > 0 ? Math.max(...usedNumbers) : specs.length;
-  return `스타일 ${maxNumber + 1}`;
 }
 
 function isExplicitNewMockupRequest(text: string) {
@@ -1455,18 +1412,20 @@ export default function MainScreenPage() {
   const [references, setReferences] = useState<Reference[]>([]);
   const [activityLog, setActivityLog] = useState<ActivityLogEvent[]>([]);
   const [ideas, setIdeas] = useState<Idea[]>([]);
-  const [designSpecs, setDesignSpecs] = useState<DesignSpec[]>([]);
-  const [activeDesignSpecId, setActiveDesignSpecId] = useState<string | null>(null);
   const [isDesignSpecOpen, setIsDesignSpecOpen] = useState(false);
   const [selectedElement, setSelectedElement] =
     useState<SelectedElement | null>(null);
   const [selectedReferences, setSelectedReferences] = useState<Reference[]>([]);
-  const [citedDesignSpecId, setCitedDesignSpecId] = useState<string | null>(null);
   const [citedTexts, setCitedTexts] = useState<string[]>([]);
   const missionPanelRef = useRef<HTMLElement>(null);
   const citeMenuRef = useRef<HTMLDivElement>(null);
   const pendingCiteTextRef = useRef<string>("");
-  const [userMemory, setUserMemory] = useState("");
+  const [memoryContext, setMemoryContext] = useState<MemoryContext>({
+    episodic: [],
+    semantic: [],
+  });
+  const [isCompletingSession, setIsCompletingSession] = useState(false);
+  const [sessionCompleted, setSessionCompleted] = useState(false);
   const [editMode, setEditMode] = useState(false);
   const [device, setDevice] = useState<Device>("desktop");
   const [missionTitle, setMissionTitle] = useState("");
@@ -1526,13 +1485,40 @@ export default function MainScreenPage() {
   const activeOption =
     missionOptions.find((option) => option.id === selectedOptionId) ??
     (missionOptions.length === 1 ? missionOptions[0] : null);
-
   const appendActivityLog = useCallback((event: Omit<ActivityLogEvent, "id" | "createdAt">) => {
     setActivityLog((prev) => [
       ...prev,
       { id: crypto.randomUUID(), createdAt: Date.now(), ...event },
     ].slice(-500));
   }, []);
+
+  const encodeMemoryDraft = useCallback(
+    async (interactionId: string, input: string, output: string, timestamp: number) => {
+      if (isReadOnly || !missionId || !input.trim() || !output.trim()) return;
+      const currentUser = firebaseAuth.currentUser;
+      if (!currentUser) return;
+      try {
+        const token = await getIdToken(currentUser);
+        await fetch("/api/memory/drafts", {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            missionId,
+            interactionId,
+            input,
+            output,
+            timestamp,
+          }),
+        });
+      } catch (error) {
+        console.warn("Unable to encode memory draft", error);
+      }
+    },
+    [isReadOnly, missionId],
+  );
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const chatBottomRef = useRef<HTMLDivElement>(null);
@@ -1542,8 +1528,6 @@ export default function MainScreenPage() {
   const canvasRef = useRef<HTMLDivElement>(null);
   const canvasWorldRef = useRef<HTMLDivElement>(null);
   const canvasViewCommitTimerRef = useRef<number | null>(null);
-  const onboardingMemorySaveTimerRef = useRef<number | null>(null);
-  const lastSavedOnboardingMemoryRef = useRef("");
   const dragStartRef = useRef<{
     mouseX: number;
     mouseY: number;
@@ -1706,11 +1690,6 @@ export default function MainScreenPage() {
         )
         .then((res) => (res.ok ? res.json() : null))
         .then((profile) => {
-          setUserMemory(
-            typeof profile?.onboardingMemory === "string"
-              ? profile.onboardingMemory
-              : "",
-          );
           if (isOnboardingMission) return;
           if (profile?.onboardingCompleted === true) {
             window.localStorage.setItem(
@@ -1732,6 +1711,21 @@ export default function MainScreenPage() {
             router.replace(`/main/${ONBOARDING_MISSION_ID}`);
           }
         });
+      getIdToken(user)
+        .then((token) =>
+          fetch("/api/memory/bootstrap", {
+            headers: { Authorization: `Bearer ${token}` },
+          }),
+        )
+        .then((res) => (res.ok ? res.json() : null))
+        .then((memory) => {
+          if (!memory) return;
+          setMemoryContext({
+            episodic: Array.isArray(memory.episodic) ? memory.episodic : [],
+            semantic: Array.isArray(memory.semantic) ? memory.semantic : [],
+          });
+        })
+        .catch(() => {});
     });
   }, [isOnboardingMission, router]);
 
@@ -1816,14 +1810,28 @@ export default function MainScreenPage() {
     getDoc(sessionRef).then((sessionSnap) => {
       const session = sessionSnap.exists() ? sessionSnap.data() : null;
       sessionData = session ?? null;
+      setSessionCompleted(session?.status === "completed");
 
       if (session?.messages) setMessages(session.messages);
-      if (session?.designSpecs?.length) {
-        setDesignSpecs(session.designSpecs);
-        setActiveDesignSpecId(session.designSpecs[0].id);
-      }
       // Load ideas first so we can reference their IDs
-      const loadedIdeas: Idea[] = session?.ideas ?? [];
+      const legacyDesignStyles = Array.isArray(session?.designSpecs)
+        ? (session.designSpecs as DesignStyle[])
+        : [];
+      const loadedIdeas: Idea[] = (session?.ideas ?? []).map(
+        (idea: Idea, index: number) => {
+          const legacyIdea = idea as Idea & {
+            designStyles?: DesignStyle[];
+          };
+          const migratedStyle =
+            idea.designStyle ??
+            legacyIdea.designStyles?.[0] ??
+            (index === 0 ? legacyDesignStyles[0] : undefined);
+          return {
+            ...idea,
+            designStyle: migratedStyle,
+          };
+        },
+      );
       const firstIdeaId = loadedIdeas[0]?.id ?? "";
 
       if (session?.artboards && session.artboards.length > 0) {
@@ -1997,7 +2005,6 @@ export default function MainScreenPage() {
           selectedOptionId,
           selectedDevice: device,
           stitchProjectId: stitchProjectId || null,
-          designSpecs: designSpecs.length ? designSpecs : null,
           updatedAt: Date.now(),
         }),
         { merge: true },
@@ -2014,77 +2021,11 @@ export default function MainScreenPage() {
     references,
     activityLog,
     ideas,
-    designSpecs,
     missionTitle,
     missionBrief,
     selectedOptionId,
     device,
     stitchProjectId,
-  ]);
-
-  useEffect(() => {
-    if (!isOnboardingMission || isReadOnly || !userId) return;
-    if (!selectedOptionId && messages.length === 0 && ideas.length === 0) return;
-
-    const memory = buildOnboardingMemory({
-      device,
-      selectedOptionTitle: activeOption?.title,
-      messages,
-      ideas,
-      artboards,
-      references,
-    });
-    if (memory === lastSavedOnboardingMemoryRef.current) return;
-
-    if (onboardingMemorySaveTimerRef.current !== null) {
-      window.clearTimeout(onboardingMemorySaveTimerRef.current);
-    }
-    onboardingMemorySaveTimerRef.current = window.setTimeout(async () => {
-      const currentUser = firebaseAuth.currentUser;
-      if (!currentUser) return;
-      try {
-        const token = await getIdToken(currentUser, true);
-        const res = await fetch("/api/users/me", {
-          method: "PATCH",
-          headers: {
-            Authorization: `Bearer ${token}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            onboardingMemory: memory,
-            onboardingCompleted: true,
-          }),
-        });
-        if (res.ok) {
-          lastSavedOnboardingMemoryRef.current = memory;
-          setUserMemory(memory);
-          window.localStorage.removeItem(`vda:onboarding-required:${userId}`);
-          window.localStorage.setItem(
-            `vda:onboarding-completed:${userId}`,
-            "true",
-          );
-        }
-      } catch (error) {
-        console.warn("Unable to persist onboarding memory", error);
-      }
-    }, 2000);
-
-    return () => {
-      if (onboardingMemorySaveTimerRef.current !== null) {
-        window.clearTimeout(onboardingMemorySaveTimerRef.current);
-      }
-    };
-  }, [
-    isOnboardingMission,
-    isReadOnly,
-    userId,
-    selectedOptionId,
-    activeOption?.title,
-    device,
-    messages,
-    ideas,
-    artboards,
-    references,
   ]);
 
   // Countdown / count-up timer
@@ -2462,9 +2403,6 @@ export default function MainScreenPage() {
               imageUrl: r.imageUrl,
             }))
           : null,
-      citedDesignSpecTitle: citedDesignSpecId
-        ? (designSpecs.find((s) => s.id === citedDesignSpecId)?.title ?? null)
-        : null,
       citedTexts: citedTexts.length > 0 ? [...citedTexts] : null,
     };
     const assistantId = crypto.randomUUID();
@@ -2480,7 +2418,6 @@ export default function MainScreenPage() {
     setInputText("");
     if (textareaRef.current) textareaRef.current.style.height = "auto";
     setSelectedReferences([]);
-    setCitedDesignSpecId(null);
     setCitedTexts([]);
 
     if (manualReference) {
@@ -2514,20 +2451,22 @@ export default function MainScreenPage() {
           imageUrl: hydratedReference.imageUrl,
         });
       }
+      const manualReferenceReply = alreadyExists
+        ? `이미 레퍼런스에 있는 링크입니다: ${manualReference.url}`
+        : hydratedReference.imageUrl
+          ? `레퍼런스에 썸네일과 함께 추가했습니다: ${hydratedReference.url}`
+          : `레퍼런스에 추가했습니다. 썸네일은 찾지 못했습니다: ${hydratedReference.url}`;
       setMessages((prev) =>
         prev.map((message) =>
           message.id === assistantId
             ? {
                 ...message,
-                content: alreadyExists
-                  ? `이미 레퍼런스에 있는 링크입니다: ${manualReference.url}`
-                  : hydratedReference.imageUrl
-                    ? `레퍼런스에 썸네일과 함께 추가했습니다: ${hydratedReference.url}`
-                    : `레퍼런스에 추가했습니다. 썸네일은 찾지 못했습니다: ${hydratedReference.url}`,
+                content: manualReferenceReply,
               }
             : message,
         ),
       );
+      void encodeMemoryDraft(assistantId, text, manualReferenceReply, userMsg.createdAt ?? Date.now());
       return;
     }
 
@@ -2584,21 +2523,15 @@ export default function MainScreenPage() {
               .join("\n\n") || undefined,
           device,
           activeIdea: ideas.find((i) => i.id === activeIdeaId) ?? undefined,
-          userMemory:
-            !isOnboardingMission && userMemory.trim()
-              ? userMemory.trim()
+          memoryContext:
+            memoryContext.episodic.length > 0 || memoryContext.semantic.length > 0
+              ? memoryContext
               : undefined,
           citedTexts: citedTexts.length > 0 ? citedTexts : undefined,
           designSpec: (() => {
-            const citedSpec = citedDesignSpecId
-              ? designSpecs.find((s) => s.id === citedDesignSpecId)
-              : null;
-            if (citedSpec) return `# ${citedSpec.title}\n${citedSpec.content}`;
             const idea = ideas.find((i) => i.id === activeIdeaId);
-            const appliedSpec = idea?.designSpecId
-              ? designSpecs.find((s) => s.id === idea.designSpecId)
-              : undefined;
-            return appliedSpec ? `# ${appliedSpec.title}\n${appliedSpec.content}` : undefined;
+            const appliedStyle = activeDesignStyle(idea);
+            return appliedStyle ? `# ${appliedStyle.title}\n${appliedStyle.content}` : undefined;
           })(),
         }),
       });
@@ -2647,6 +2580,7 @@ export default function MainScreenPage() {
             : m,
         ),
       );
+      void encodeMemoryDraft(assistantId, text, fullText, userMsg.createdAt ?? Date.now());
 
       // Parse special blocks from completed response
       let createdNote: Idea | null = null;
@@ -2703,14 +2637,27 @@ export default function MainScreenPage() {
 
       const designSpecBlock = parseCreateDesignSpecBlock(fullText);
       if (designSpecBlock?.content) {
-        const newSpec: DesignSpec = {
-          id: crypto.randomUUID(),
-          title: nextStyleTitle(designSpecs),
+        const targetIdeaId = createdNote?.id ?? activeIdeaId;
+        const targetIdea =
+          createdNote ?? ideas.find((idea) => idea.id === targetIdeaId);
+        const newSpec: DesignStyle = {
+          id: targetIdea?.designStyle?.id ?? crypto.randomUUID(),
+          title: "디자인 스타일",
           content: designSpecBlock.content,
-          createdAt: Date.now(),
+          createdAt: targetIdea?.designStyle?.createdAt ?? Date.now(),
         };
-        setDesignSpecs((prev) => [...prev, newSpec]);
-        setActiveDesignSpecId(newSpec.id);
+        if (targetIdeaId) {
+          setIdeas((prev) =>
+            prev.map((idea) =>
+              idea.id === targetIdeaId
+                ? {
+                    ...idea,
+                    designStyle: newSpec,
+                  }
+                : idea,
+            ),
+          );
+        }
         setIsDesignSpecOpen(true);
       }
 
@@ -2758,9 +2705,7 @@ export default function MainScreenPage() {
           ? buildMockupPrompt(
               prompt,
               activeIdea,
-              activeIdea?.designSpecId
-                ? designSpecs.find((s) => s.id === activeIdea.designSpecId)
-                : undefined,
+              activeDesignStyle(activeIdea),
             )
           : buildEditMockupPrompt(prompt);
         appendActivityLog({
@@ -2946,11 +2891,15 @@ export default function MainScreenPage() {
             setActiveArtboardId(primaryId);
             setTimeout(() => fitToCanvasForIdea(effectiveActiveIdeaId ?? ""), 0);
 
-            // Lazy-load HTML for extra screens
-            extraScreenIds.forEach((sid: string) => {
+            const screensNeedingHtml = [
+              ...(data.htmlPending ? [data.screenId] : []),
+              ...extraScreenIds,
+            ];
+            // Lazy-load HTML for pending or extra screens
+            screensNeedingHtml.forEach((sid: string) => {
               setMockupProgress({
                 percent: 98,
-                label: "추가 화면 불러오는 중",
+                label: sid === data.screenId ? "화면 HTML 준비 대기 중" : "추가 화면 불러오는 중",
               });
               fetch(
                 `/api/stitch/html?projectId=${data.projectId}&screenId=${sid}`,
@@ -2975,6 +2924,22 @@ export default function MainScreenPage() {
                   : a,
               ),
             );
+            if (data.htmlPending && targetId) {
+              fetch(
+                `/api/stitch/html?projectId=${data.projectId}&screenId=${data.screenId}`,
+              )
+                .then((r) => r.json())
+                .then((d) => {
+                  if (d.html) {
+                    setArtboards((prev) =>
+                      prev.map((a) =>
+                        a.id === targetId ? { ...a, html: d.html } : a,
+                      ),
+                    );
+                  }
+                })
+                .catch(() => {});
+            }
           }
           setMockupProgress({ percent: 100, label: "완료" });
           setActiveIdeaTab("mockup");
@@ -3274,7 +3239,7 @@ export default function MainScreenPage() {
     missionTitle,
     missionBrief,
     userId,
-    userMemory,
+    memoryContext,
     isReadOnly,
     isOnboardingMission,
     missionId,
@@ -3283,6 +3248,7 @@ export default function MainScreenPage() {
     parentMissionTitle,
     parentMissionBrief,
     appendActivityLog,
+    encodeMemoryDraft,
   ]);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -3390,31 +3356,58 @@ export default function MainScreenPage() {
         },
         { merge: true },
       );
-      if (isOnboardingMission) {
-        const currentUser = firebaseAuth.currentUser;
-        if (currentUser) {
-          const token = await getIdToken(currentUser, true);
-          const res = await fetch("/api/users/me", {
-            method: "PATCH",
-            headers: {
-              Authorization: `Bearer ${token}`,
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({ onboardingCompleted: true }),
-          });
-          if (res.ok) {
-            window.localStorage.removeItem(`vda:onboarding-required:${userId}`);
-            window.localStorage.setItem(
-              `vda:onboarding-completed:${userId}`,
-              "true",
-            );
-          }
-        }
-      }
     }
   };
   const isGeneratingCurrentIdeaMockup =
     isGeneratingMockup && generatingMockupIdeaId === activeIdeaId;
+  const completeSession = async () => {
+    if (isReadOnly || isCompletingSession || sessionCompleted || !missionId) return;
+    const currentUser = firebaseAuth.currentUser;
+    if (!currentUser) return;
+    setIsCompletingSession(true);
+    try {
+      const token = await getIdToken(currentUser, true);
+      const res = await fetch("/api/memory/complete-session", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ missionId }),
+      });
+      if (!res.ok) throw new Error(`Session completion failed: ${res.status}`);
+      if (isOnboardingMission) {
+        await fetch("/api/users/me", {
+          method: "PATCH",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ onboardingCompleted: true }),
+        });
+        if (userId) {
+          window.localStorage.removeItem(`vda:onboarding-required:${userId}`);
+          window.localStorage.setItem(`vda:onboarding-completed:${userId}`, "true");
+        }
+      }
+      const memoryRes = await fetch("/api/memory/bootstrap", {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (memoryRes.ok) {
+        const memory = await memoryRes.json();
+        setMemoryContext({
+          episodic: Array.isArray(memory.episodic) ? memory.episodic : [],
+          semantic: Array.isArray(memory.semantic) ? memory.semantic : [],
+        });
+      }
+      setSessionCompleted(true);
+    } catch (error) {
+      console.warn("Unable to complete session", error);
+      alert("세션 종료 및 메모리 확정에 실패했습니다. 잠시 후 다시 시도해주세요.");
+    } finally {
+      setIsCompletingSession(false);
+    }
+  };
   const exportMessageLogCsv = () => {
     const exportedAt = new Date().toISOString();
     const selectedOption = missionOptions.find(
@@ -4056,6 +4049,20 @@ export default function MainScreenPage() {
                 : `${timerDisplay} 경과`}
             </span>
           )}
+          {!isReadOnly && selectedOptionId && (
+            <button
+              type="button"
+              onClick={completeSession}
+              disabled={isCompletingSession || sessionCompleted}
+              className="rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-700 disabled:bg-slate-200 disabled:text-slate-500"
+            >
+              {sessionCompleted
+                ? "세션 종료됨"
+                : isCompletingSession
+                  ? "메모리 확정 중..."
+                  : "세션 종료"}
+            </button>
+          )}
           <Link
             href="/lobby"
             className="rounded-full border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-800"
@@ -4565,114 +4572,6 @@ export default function MainScreenPage() {
               )}
             </div>
 
-            {/* Design.md */}
-            <div className="rounded-3xl border border-slate-200 bg-white overflow-hidden">
-              <button
-                type="button"
-                onClick={() => setIsDesignSpecOpen((v) => !v)}
-                className="flex w-full items-center justify-between px-5 py-4 text-left"
-              >
-                <div className="flex items-center gap-2">
-                  <span className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Design.md</span>
-                  {designSpecs.length > 0 ? (
-                    <span className="rounded-full bg-indigo-50 px-2 py-0.5 text-xs text-indigo-600">{designSpecs.length}개</span>
-                  ) : (
-                    <span className="text-xs text-slate-400">미정의</span>
-                  )}
-                </div>
-                <svg width="14" height="14" viewBox="0 0 14 14" fill="none"
-                  className={`text-slate-400 transition-transform ${isDesignSpecOpen ? "rotate-180" : ""}`}>
-                  <path d="M2 5l5 5 5-5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-                </svg>
-              </button>
-
-              {isDesignSpecOpen && (
-                <div className="border-t border-slate-100">
-                  {designSpecs.length === 0 ? (
-                    <p className="px-5 py-4 text-xs text-slate-400">
-                      에이전트에게 디자인 시스템을 정의해달라고 요청하세요.
-                    </p>
-                  ) : (
-                    <>
-                      {/* Spec tabs — navigate only */}
-                      <div className="flex gap-1 overflow-x-auto px-4 pt-3">
-                        {designSpecs.map((spec) => (
-                          <button
-                            key={spec.id}
-                            type="button"
-                            onClick={() => setActiveDesignSpecId(spec.id)}
-                            className={`shrink-0 rounded-lg px-3 py-1.5 text-xs font-medium transition ${
-                              activeDesignSpecId === spec.id
-                                ? "bg-slate-900 text-white"
-                                : "bg-slate-100 text-slate-600 hover:bg-slate-200"
-                            }`}
-                          >
-                            {spec.title}
-                          </button>
-                        ))}
-                      </div>
-
-                      {/* Active spec content */}
-                      {(() => {
-                        const spec = designSpecs.find((s) => s.id === activeDesignSpecId);
-                        if (!spec) return null;
-                        const isCited = citedDesignSpecId === spec.id;
-                        return (
-                          <div className="px-5 pb-5 pt-3">
-                            <div className="max-h-56 overflow-y-auto text-xs text-slate-600">
-                              <ReactMarkdown
-                                components={{
-                                  h1: ({ children }) => <h1 className="text-sm font-bold text-slate-900 mb-2 mt-3 first:mt-0">{children}</h1>,
-                                  h2: ({ children }) => <h2 className="text-xs font-semibold text-slate-800 mb-1.5 mt-3 first:mt-0 uppercase tracking-wide">{children}</h2>,
-                                  h3: ({ children }) => <h3 className="text-xs font-semibold text-slate-700 mb-1 mt-2">{children}</h3>,
-                                  p: ({ children }) => <p className="mb-1.5 last:mb-0 leading-relaxed">{withColorTokens(children)}</p>,
-                                  ul: ({ children }) => <ul className="list-disc ml-4 space-y-0.5 mb-1.5">{children}</ul>,
-                                  ol: ({ children }) => <ol className="list-decimal ml-4 space-y-0.5 mb-1.5">{children}</ol>,
-                                  li: ({ children }) => <li className="leading-relaxed">{withColorTokens(children)}</li>,
-                                  code: ({ children }) => {
-                                    const text = String(children ?? "");
-                                    const isHex = /^#([0-9A-Fa-f]{6}|[0-9A-Fa-f]{3})$/.test(text.trim());
-                                    return (
-                                      <span className="inline-flex items-center gap-1 align-middle">
-                                        {isHex && (
-                                          <span
-                                            className="inline-block h-3 w-3 flex-shrink-0 rounded-sm border border-black/10"
-                                            style={{ backgroundColor: text.trim() }}
-                                          />
-                                        )}
-                                        <code className="rounded bg-indigo-50 px-1.5 py-0.5 font-mono text-[10px] text-indigo-700">{text}</code>
-                                      </span>
-                                    );
-                                  },
-                                  strong: ({ children }) => <strong className="font-semibold text-slate-900">{children}</strong>,
-                                  hr: () => <hr className="border-slate-200 my-2" />,
-                                }}
-                              >
-                                {spec.content}
-                              </ReactMarkdown>
-                            </div>
-                            {!isReadOnly && (
-                              <button
-                                type="button"
-                                onClick={() => setCitedDesignSpecId(isCited ? null : spec.id)}
-                                className={`mt-3 rounded-xl border px-3 py-1.5 text-xs font-semibold transition ${
-                                  isCited
-                                    ? "border-indigo-300 bg-indigo-50 text-indigo-600 hover:bg-indigo-100"
-                                    : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
-                                }`}
-                              >
-                                {isCited ? "✓ 대화에 인용 중" : "대화에 인용"}
-                              </button>
-                            )}
-                          </div>
-                        );
-                      })()}
-                    </>
-                  )}
-                </div>
-              )}
-            </div>
-
             {/* Note / Mockup / Presentation */}
             <div className="rounded-3xl border border-slate-200 bg-white p-6">
               {ideas.length === 0 ? (
@@ -4767,32 +4666,21 @@ export default function MainScreenPage() {
                         return (
                           <section
                             ref={ideaSectionRef}
-                            className="space-y-3 scroll-mt-4"
+                            className="space-y-4 scroll-mt-4"
                           >
                             <div className="flex items-center justify-between">
-                              <p className="text-base font-semibold text-slate-900">
-                                {idea.title}
-                              </p>
-                              {designSpecs.length > 0 && !isReadOnly && (
-                                <select
-                                  value={idea.designSpecId ?? ""}
-                                  onChange={(e) =>
-                                    updateIdea(idea.id, {
-                                      designSpecId: e.target.value || undefined,
-                                    })
-                                  }
-                                  className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs text-slate-600 outline-none focus:border-slate-400"
-                                >
-                                  <option value="">스타일 없음</option>
-                                  {designSpecs.map((s) => (
-                                    <option key={s.id} value={s.id}>{s.title}</option>
-                                  ))}
-                                </select>
-                              )}
+                              <div className="space-y-1">
+                                <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+                                  시안 노트
+                                </p>
+                                <p className="text-base font-semibold text-slate-900">
+                                  {idea.title}
+                                </p>
+                              </div>
                             </div>
-                              <div className="relative rounded-xl border border-slate-100 bg-slate-50">
+                            <div className="relative rounded-2xl border border-slate-100 bg-white shadow-sm">
                                 <div
-                                  className={`px-5 pt-4 pb-14 text-sm text-slate-700 space-y-2 ${isIdeaExpanded ? "max-h-[60vh] overflow-y-auto" : "max-h-56 overflow-hidden"}`}
+                                  className={`space-y-2 px-5 pb-14 pt-5 text-sm text-slate-700 ${isIdeaExpanded ? "max-h-[60vh] overflow-y-auto" : "max-h-64 overflow-hidden"}`}
                                 >
                                   {idea.description ? (
                                     <ReactMarkdown
@@ -4876,7 +4764,7 @@ export default function MainScreenPage() {
                                   )}
                                 </div>
                                 {!isIdeaExpanded && (
-                                  <div className="pointer-events-none absolute inset-x-0 bottom-0 h-20 bg-gradient-to-t from-slate-50 via-slate-50 to-transparent" />
+                                  <div className="pointer-events-none absolute inset-x-0 bottom-0 h-20 bg-gradient-to-t from-white via-white to-transparent" />
                                 )}
                                 <div className="absolute inset-x-0 bottom-3 z-10 flex justify-center">
                                   <button
@@ -4892,6 +4780,144 @@ export default function MainScreenPage() {
                                   </button>
                                 </div>
                               </div>
+                            <div className="overflow-hidden rounded-2xl border border-indigo-100 bg-indigo-50/40">
+                              <button
+                                type="button"
+                                onClick={() => setIsDesignSpecOpen((open) => !open)}
+                                className="flex w-full items-center justify-between px-4 py-3 text-left"
+                              >
+                                <span className="flex items-center gap-2">
+                                  <span className="flex h-7 w-7 items-center justify-center rounded-lg border border-indigo-100 bg-white text-xs font-semibold text-indigo-600">
+                                    Aa
+                                  </span>
+                                  <span className="space-y-0.5">
+                                    <span className="block text-xs font-semibold text-slate-800">
+                                      디자인 스타일
+                                    </span>
+                                    <span className="block text-[11px] text-slate-500">
+                                      {idea.designStyle ? "현재 시안의 시각 규칙" : "아직 정의되지 않음"}
+                                    </span>
+                                  </span>
+                                </span>
+                                <span className="flex items-center gap-2 text-xs text-slate-500">
+                                  <span className={`rounded-full px-2 py-0.5 font-semibold ${
+                                    idea.designStyle
+                                      ? "bg-indigo-100 text-indigo-700"
+                                      : "bg-white text-slate-400"
+                                  }`}>
+                                    {idea.designStyle ? "설정됨" : "미정의"}
+                                  </span>
+                                  {isDesignSpecOpen ? "접기" : "펼치기"}
+                                </span>
+                              </button>
+                              {isDesignSpecOpen && (
+                                <div className="space-y-3 border-t border-indigo-100 px-4 py-3">
+                                  {!idea.designStyle ? (
+                                    <p className="text-xs text-slate-500">
+                                      에이전트에게 이 시안의 디자인 스타일을 정의해달라고 요청하세요.
+                                    </p>
+                                  ) : (
+                                    (() => {
+                                      const style = idea.designStyle;
+                                      return (
+                                        <div className="space-y-3">
+                                          <div className="max-h-56 overflow-y-auto rounded-xl border border-indigo-100 bg-white px-4 py-3 text-xs text-slate-600">
+                                            <ReactMarkdown
+                                              components={{
+                                                h1: ({ children }) => (
+                                                  <h1 className="mb-2 mt-3 text-sm font-bold text-slate-900 first:mt-0">
+                                                    {children}
+                                                  </h1>
+                                                ),
+                                                h2: ({ children }) => (
+                                                  <h2 className="mb-1.5 mt-3 text-xs font-semibold uppercase text-slate-800 first:mt-0">
+                                                    {children}
+                                                  </h2>
+                                                ),
+                                                h3: ({ children }) => (
+                                                  <h3 className="mb-1 mt-2 text-xs font-semibold text-slate-700">
+                                                    {children}
+                                                  </h3>
+                                                ),
+                                                p: ({ children }) => (
+                                                  <p className="mb-1.5 leading-relaxed last:mb-0">
+                                                    {withColorTokens(children)}
+                                                  </p>
+                                                ),
+                                                ul: ({ children }) => (
+                                                  <ul className="mb-1.5 ml-4 list-disc space-y-0.5">
+                                                    {children}
+                                                  </ul>
+                                                ),
+                                                ol: ({ children }) => (
+                                                  <ol className="mb-1.5 ml-4 list-decimal space-y-0.5">
+                                                    {children}
+                                                  </ol>
+                                                ),
+                                                li: ({ children }) => (
+                                                  <li className="leading-relaxed">
+                                                    {withColorTokens(children)}
+                                                  </li>
+                                                ),
+                                                strong: ({ children }) => (
+                                                  <strong className="font-semibold text-slate-900">
+                                                    {children}
+                                                  </strong>
+                                                ),
+                                                em: ({ children }) => (
+                                                  <em className="italic text-slate-600">
+                                                    {children}
+                                                  </em>
+                                                ),
+                                                code: ({ children }) => {
+                                                  const text = String(children ?? "");
+                                                  const trimmed = text.trim();
+                                                  const isHex =
+                                                    /^#([0-9A-Fa-f]{6}|[0-9A-Fa-f]{3})$/.test(trimmed);
+                                                  return (
+                                                    <span className="inline-flex items-center gap-1 align-middle">
+                                                      {isHex && (
+                                                        <span
+                                                          className="inline-block h-3 w-3 shrink-0 rounded-sm border border-black/10"
+                                                          style={{ backgroundColor: trimmed }}
+                                                        />
+                                                      )}
+                                                      <code className="rounded bg-indigo-50 px-1.5 py-0.5 font-mono text-[10px] text-indigo-700">
+                                                        {text}
+                                                      </code>
+                                                    </span>
+                                                  );
+                                                },
+                                                blockquote: ({ children }) => (
+                                                  <blockquote className="my-2 border-l-2 border-indigo-200 pl-3 italic text-slate-500">
+                                                    {children}
+                                                  </blockquote>
+                                                ),
+                                                hr: () => (
+                                                  <hr className="my-2 border-indigo-100" />
+                                                ),
+                                                a: ({ href, children }) => (
+                                                  <a
+                                                    href={href}
+                                                    target="_blank"
+                                                    rel="noopener noreferrer"
+                                                    className="text-indigo-600 underline underline-offset-2 hover:text-indigo-800"
+                                                  >
+                                                    {children}
+                                                  </a>
+                                                ),
+                                              }}
+                                            >
+                                              {style.content}
+                                            </ReactMarkdown>
+                                          </div>
+                                        </div>
+                                      );
+                                    })()
+                                  )}
+                                </div>
+                              )}
+                            </div>
                           </section>
                         );
                       })()}
@@ -5258,14 +5284,6 @@ export default function MainScreenPage() {
                               ))}
                             </div>
                           )}
-                        {msg.citedDesignSpecTitle && (
-                          <div className="flex justify-end">
-                            <span className="flex items-center gap-1.5 rounded-full bg-white/20 px-2.5 py-0.5 text-xs text-white/80">
-                              <span className="h-1.5 w-1.5 rounded-full bg-indigo-300" />
-                              {msg.citedDesignSpecTitle}
-                            </span>
-                          </div>
-                        )}
                         {msg.citedTexts && msg.citedTexts.length > 0 && (
                           <div className="flex flex-wrap justify-end gap-1">
                             {msg.citedTexts.map((t, i) => (
@@ -5497,23 +5515,6 @@ export default function MainScreenPage() {
                   </div>
                 </div>
               )}
-              {!isReadOnly && citedDesignSpecId && (() => {
-                const spec = designSpecs.find((s) => s.id === citedDesignSpecId);
-                return spec ? (
-                  <div className="mb-2 flex items-center gap-2 rounded-xl bg-indigo-50 px-3 py-2 text-xs">
-                    <span className="font-medium text-indigo-600">Design.md 인용</span>
-                    <span className="flex items-center gap-1 rounded-full bg-indigo-100 px-2 py-0.5 text-indigo-700">
-                      {spec.title}
-                      <button
-                        onClick={() => setCitedDesignSpecId(null)}
-                        className="ml-0.5 text-indigo-400 hover:text-indigo-600"
-                      >
-                        <XIcon size={12} />
-                      </button>
-                    </span>
-                  </div>
-                ) : null;
-              })()}
               {!isReadOnly && selectedReferences.length > 0 && (
                 <div className="mb-2 rounded-xl bg-violet-50 px-3 py-2 text-xs">
                   <div className="flex items-center justify-between mb-1.5">

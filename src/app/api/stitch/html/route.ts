@@ -5,6 +5,10 @@ export const maxDuration = 60;
 const client = new StitchToolClient({ apiKey: process.env.STITCH_API_KEY! });
 const stitchSdk = new Stitch(client);
 
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const projectId = searchParams.get("projectId");
@@ -16,11 +20,19 @@ export async function GET(request: Request) {
 
   try {
     const project = stitchSdk.project(projectId);
-    const screen = await project.getScreen(screenId);
-    const htmlUrlOrContent = await screen.getHtml();
+    let htmlUrlOrContent = "";
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      if (attempt > 0) await sleep(2000);
+      const screen = await project.getScreen(screenId);
+      htmlUrlOrContent = await screen.getHtml().catch(() => "");
+      if (htmlUrlOrContent) break;
+    }
 
     if (!htmlUrlOrContent) {
-      return Response.json({ error: "Empty HTML from Stitch" }, { status: 500 });
+      return Response.json(
+        { error: "Empty HTML from Stitch", htmlPending: true },
+        { status: 202 },
+      );
     }
 
     let html = htmlUrlOrContent;

@@ -48,8 +48,10 @@ function getNestedScreenCandidates(raw: unknown): Record<string, unknown>[] {
       const hasScreenIdentity =
         typeof record.id === "string" ||
         (typeof record.name === "string" && record.name.includes("/screens/"));
+      // Prefer screens with htmlCode — IMAGE-type screens only have screenshot
       const hasScreenPayload = "htmlCode" in record || "screenshot" in record;
-      if (hasScreenIdentity && hasScreenPayload) candidates.push(record);
+      const isImageOnly = !("htmlCode" in record) && record.screenType === "IMAGE";
+      if (hasScreenIdentity && hasScreenPayload && !isImageOnly) candidates.push(record);
     }
 
     for (const child of Array.isArray(value) ? value : Object.values(value)) {
@@ -162,6 +164,31 @@ async function recoverGeneratedScreen(
   return null;
 }
 
+async function waitForScreenHtml(
+  project: StitchProject,
+  screen: StitchScreenHandle,
+) {
+  for (let attempt = 0; attempt < 12; attempt += 1) {
+    if (attempt > 0) await sleep(2500);
+    const currentScreen =
+      attempt === 0
+        ? screen
+        : await project.getScreen(screen.id).catch(() => screen);
+    try {
+      const htmlUrlOrContent = await currentScreen.getHtml();
+      if (htmlUrlOrContent) return htmlUrlOrContent;
+    } catch (err) {
+      console.warn(
+        "[stitch] getHtml() retry failed:",
+        attempt + 1,
+        errorMessage(err),
+      );
+    }
+    console.warn("[stitch] getHtml() returned empty, retrying...", attempt + 1);
+  }
+  return "";
+}
+
 export async function POST(request: Request) {
   const { prompt, device, projectId, screenId } = await request.json();
 
@@ -212,22 +239,27 @@ export async function POST(request: Request) {
     if (!screen) throw new Error("No screen was generated or edited.");
     console.log("[stitch] screen id:", screen.id);
 
-    // getHtml() may return empty if the screen HTML isn't ready yet — retry a few times
-    let htmlUrlOrContent = "";
-    for (let attempt = 0; attempt < 5; attempt++) {
-      if (attempt > 0) await sleep(2000);
-      try {
-        htmlUrlOrContent = await screen.getHtml();
-      } catch {
-        // ignore and retry
-      }
-      if (htmlUrlOrContent) break;
-      console.warn("[stitch] getHtml() returned empty, retrying...", attempt + 1);
-    }
+    // Stitch can return a valid screen before its HTML download URL is ready.
+    const htmlUrlOrContent = await waitForScreenHtml(project, screen);
     console.log("[stitch] htmlUrlOrContent type:", htmlUrlOrContent?.startsWith("http") ? "URL" : "direct-content", "preview:", htmlUrlOrContent?.slice(0, 150));
 
     if (!htmlUrlOrContent) {
-      return Response.json({ error: "Stitch returned empty HTML" }, { status: 500 });
+      const allScreens = await project.screens().catch(() => []);
+      const freshIds = new Set(
+        allScreens.map((candidate) => candidate.id).filter((id) => !beforeScreenIds.has(id)),
+      );
+      freshIds.add(screen.id);
+      console.warn("[stitch] HTML still pending; returning screen metadata for lazy recovery:", screen.id);
+      return Response.json(
+        {
+          html: "",
+          htmlPending: true,
+          projectId: actualProjectId,
+          screenId: screen.id,
+          allScreenIds: Array.from(freshIds),
+        },
+        { status: 202 },
+      );
     }
 
     // getHtml() returns a download URL, not the actual HTML — fetch the content

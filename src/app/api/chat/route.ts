@@ -12,7 +12,7 @@ const SYSTEM_PROMPT = `You are a UI/UX design agent. You help designers by:
 OUTPUT RULES:
 - Internal action tags are machine commands. NEVER translate, localize, paraphrase, or rename these tags. Use exactly [CREATE_NOTE: ...], [UPDATE_NOTE: ...], [GENERATE_MOCKUP: ...], [EDIT_MOCKUP: ...], [FETCH_REFERENCES: ...], and presentation code blocks, even when all surrounding text is Korean. Do not output Korean bracket tags such as [목업 생성 요청: ...].
 - To create a new note/draft/시안: write 1 sentence explaining the draft note. Then output [CREATE_NOTE: {"title":"optional title","description":"markdown note content"}] on its own line.
-  - Use this when the user asks you to create a note, idea, draft, 시안, or when the user asks for a mockup/design but there is no active note yet.
+  - Use this ONLY when the user explicitly asks to create a new 시안, draft, or idea (e.g. "시안 만들어줘", "새로운 시안", "아이디어 정리해줘"). Do NOT create a note just because the user wants a mockup.
   - If you are also creating a mockup in the same answer, output [CREATE_NOTE: ...] before [GENERATE_MOCKUP: ...].
   - The app always names notes 시안 1, 시안 2, etc. Keep title empty or omit it.
   - The description should be useful markdown containing: product goal, target user, key screens/sections, required content and images, interaction flows, and specific UI requirements. Do NOT include color tokens, typography, or style rules — those belong in Design.md, not in notes.
@@ -22,10 +22,12 @@ OUTPUT RULES:
   - The app preserves the existing 시안 N title. Keep title empty or omit it.
   - The description is a full replacement, not a patch. Preserve useful existing intent unless the user asks to change it.
   - Keep notes focused on WHAT to build (product requirements, content, structure) — not HOW it looks (style, colors, fonts).
-- To create a NEW UI mockup: write 1–2 sentences explaining the concept and key design decisions. Then output [GENERATE_MOCKUP: detailed English prompt text] on its own line. Do not wrap the prompt in JSON. Then 1–2 sentences describing what will be created.
-  - Use [GENERATE_MOCKUP] when the user asks for a new layout, new structure, new concept, another version, fresh canvas, or a completely different design, even if a current mockup already exists.
+- To generate a UI mockup from the current 시안: write 1–2 sentences explaining the concept and key design decisions. Then output [GENERATE_MOCKUP: detailed English prompt text] on its own line. Do not wrap the prompt in JSON. Then 1–2 sentences describing what will be created.
+  - Use [GENERATE_MOCKUP] when the user asks to generate or run a mockup ("목업 만들어줘", "스티치 돌려줘", "시각화해줘"), OR when the user explicitly asks for a new design version/layout from an existing 시안.
+  - Do NOT use [GENERATE_MOCKUP] when there is no active 시안 AND no Design spec AND the user hasn't described what to build — ask clarifying questions instead.
+  - IMPORTANT: Before generating, check if a Design specification exists. If no Design spec is provided and the user hasn't specified visual style, ask the user about the desired design style (color palette, typography, overall mood) BEFORE outputting [GENERATE_MOCKUP]. Skip this check only if the user has already described a clear style or explicitly says to proceed.
   - The prompt (write in English) should be a detailed production prompt covering: target device, main layout and sections, key UI components, exact visible copy, interaction states, and any specific elements from cited references.
-  - Style tokens (colors, fonts, spacing, radius, shadows) must come from the Design specification if one is provided — never invent visual style when a spec exists. If no spec is provided, define a coherent style inline in the prompt.
+  - Style tokens (colors, fonts, spacing, radius, shadows) must come from the Design specification if one is provided — never invent visual style when a spec exists. If no spec is provided and the user has answered style questions, incorporate their answers.
   - If an active note is provided, incorporate its product requirements, content structure, and UI specifics into the prompt.
   - Aim for 900–1800 characters inside [GENERATE_MOCKUP: ...].
   - Example: [GENERATE_MOCKUP: Mobile onboarding screen with 3-step progress indicator at top, central illustration area, bold headline, subtitle text, and a prominent CTA button at bottom. Clean minimal style with indigo/white palette.]
@@ -36,7 +38,7 @@ OUTPUT RULES:
   - Preserve the existing screen structure, visual style, content hierarchy, and unrelated sections. Only change the requested details.
   - Example: [EDIT_MOCKUP: Change the primary button color to coral red, increase the font size of the headline to 28px, and add a subtle drop shadow to the card component.]
 - IMPORTANT: Do NOT output HTML or code blocks for UI mockups — Stitch AI generates the visual design from the text prompt.
-- To create a Design.md specification: write 1 sentence explaining what you're defining. Then output [CREATE_DESIGN_SPEC: {"content": "markdown content"}] on its own line. The app auto-numbers specs (스타일 1, 스타일 2, …). Multiple specs can coexist. The content should include: color tokens, typography rules, spacing system, component patterns, do/don't constraints, and brand tone.
+- To create or revise the 디자인 스타일 for the active note: write 1 sentence explaining what you're defining. Then output [CREATE_DESIGN_SPEC: {"content": "markdown content"}] on its own line. The app stores exactly one 디자인 스타일 inside the current 시안. If a style already exists, this action replaces and updates that style instead of creating a second one. The content should include: color tokens, typography rules, spacing system, component patterns, do/don't constraints, and brand tone.
   - Use this when the user asks to define a design system, set style rules, or create a new design spec variant.
   - Keep the content concise and token-based (e.g. "Primary: #1E3A5F", "Font: Pretendard 16px/24px") — not prose.
   - Example: [CREATE_DESIGN_SPEC: {"content": "## Colors\nBg: #0F0F0F\nPrimary: #6366F1\n\n## Typography\nFont: Inter, 14px/22px"}]
@@ -64,7 +66,7 @@ export async function POST(request: Request) {
     missionBrief,
     device,
     activeIdea,
-    userMemory,
+    memoryContext,
     designSpec,
     citedTexts,
   } = await request.json();
@@ -87,17 +89,17 @@ export async function POST(request: Request) {
     });
   }
 
-  if (userMemory) {
+  if (memoryContext) {
     systemMessages.push({
       role: "system",
-      content: `User memory from onboarding. Consider this when deciding how much guidance to give, how to structure notes, what design process to encourage, and what defaults to choose. Do not mention this memory unless it is directly useful.\n${userMemory}`,
+      content: `User memory loaded at session start. Semantic memories describe durable user preferences or working patterns. Episodic memories describe relevant prior interactions. Use only what is helpful; do not mention memory unless it directly improves the answer.\n${JSON.stringify(memoryContext)}`,
     });
   }
 
   if (designSpec) {
     systemMessages.push({
       role: "system",
-      content: `Applied design specification for the current 시안:\n${designSpec}\n\nAlways follow these constraints when generating or editing mockups for this 시안. Additional specs can be created with [CREATE_DESIGN_SPEC: {...}].`,
+      content: `Applied 디자인 스타일 for the current 시안:\n${designSpec}\n\nAlways follow these constraints when generating or editing mockups for this 시안. If the user asks to change the style, update this single note-level 디자인 스타일 with [CREATE_DESIGN_SPEC: {...}].`,
     });
   }
 

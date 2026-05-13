@@ -35,7 +35,19 @@ type Participant = {
 type AdminUser = Participant & {
   missionIds: string[];
   sessionMissionIds: string[];
-  onboardingMemory?: string | null;
+};
+
+type AdminMemoryRow = {
+  id: string;
+  type: "episodic" | "semantic";
+  input?: string;
+  output?: string;
+  timestamp?: number;
+  category?: string[];
+  subcategory?: string[];
+  keywords?: string[];
+  episode?: string;
+  semantic?: string;
 };
 
 type MissionOption = {
@@ -123,7 +135,8 @@ export default function AdminPage() {
   const [participants, setParticipants] = useState<Participant[]>([]);
   const [adminUsers, setAdminUsers] = useState<AdminUser[]>([]);
   const [isLoadingUsers, setIsLoadingUsers] = useState(false);
-  const [memoryModal, setMemoryModal] = useState<{ userId: string; userName: string; memory: string } | null>(null);
+  const [memoryModal, setMemoryModal] = useState<{ userId: string; userName: string; rows: AdminMemoryRow[] } | null>(null);
+  const [isLoadingMemory, setIsLoadingMemory] = useState(false);
   const [isDeletingMemory, setIsDeletingMemory] = useState(false);
   const [onboardingSettings, setOnboardingSettings] =
     useState<OnboardingSettings>(defaultOnboardingSettings);
@@ -373,29 +386,46 @@ export default function AdminPage() {
     }
   };
 
-  const deleteMemory = async (userId: string) => {
+  const deleteAllMemory = async (userId: string) => {
+    if (!confirm("이 유저의 메모리를 전체 삭제할까요?")) return;
     const token = await getAdminToken();
     if (!token) return;
     setIsDeletingMemory(true);
     try {
-      const res = await fetch(`/api/admin/users/${userId}`, {
-        method: "PATCH",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ action: "clearMemory" }),
+      const res = await fetch(`/api/admin/users/${userId}/memory`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}` },
       });
       if (!res.ok) throw new Error("삭제 실패");
-      setAdminUsers((prev) =>
-        prev.map((u) => (u.id === userId ? { ...u, onboardingMemory: null } : u)),
-      );
       setMemoryModal(null);
     } catch (e) {
       alert("메모리 삭제에 실패했습니다.");
       console.error(e);
     } finally {
       setIsDeletingMemory(false);
+    }
+  };
+
+  const openMemoryTable = async (user: AdminUser) => {
+    const token = await getAdminToken();
+    if (!token) return;
+    setIsLoadingMemory(true);
+    try {
+      const res = await fetch(`/api/admin/users/${user.id}/memory`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) throw new Error("메모리 조회 실패");
+      const data = await res.json();
+      setMemoryModal({
+        userId: user.id,
+        userName: user.displayName ?? user.email ?? user.id,
+        rows: Array.isArray(data.memories) ? data.memories : [],
+      });
+    } catch (e) {
+      alert("메모리를 불러오지 못했습니다.");
+      console.error(e);
+    } finally {
+      setIsLoadingMemory(false);
     }
   };
 
@@ -420,7 +450,6 @@ export default function AdminPage() {
         missionIds: changes.missionIds ?? prev?.missionIds ?? [],
         sessionMissionIds:
           changes.sessionMissionIds ?? prev?.sessionMissionIds ?? [],
-        onboardingMemory: changes.onboardingMemory ?? prev?.onboardingMemory ?? null,
       });
     };
 
@@ -433,7 +462,6 @@ export default function AdminPage() {
         updatedAt: user.updatedAt,
         onboardingStatus: user.onboardingStatus,
         isAdmin: user.isAdmin,
-        onboardingMemory: (user as AdminUser).onboardingMemory ?? null,
       });
     });
 
@@ -556,7 +584,7 @@ export default function AdminPage() {
           onClick={() => setMemoryModal(null)}
         >
           <div
-            className="w-full max-w-lg rounded-3xl bg-white shadow-2xl"
+            className="w-full max-w-[95vw] rounded-3xl bg-white shadow-2xl"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4">
@@ -574,17 +602,44 @@ export default function AdminPage() {
                 </svg>
               </button>
             </div>
-            <pre className="max-h-80 overflow-y-auto whitespace-pre-wrap px-6 py-4 font-mono text-xs leading-relaxed text-slate-700">
-              {memoryModal.memory || "(비어 있음)"}
-            </pre>
+            <div className="max-h-[70vh] overflow-auto px-6 py-4">
+              {memoryModal.rows.length === 0 ? (
+                <p className="text-sm text-slate-400">(확정된 메모리 없음)</p>
+              ) : (
+                <table className="w-full min-w-[960px] border-separate border-spacing-0 text-left text-xs text-slate-600">
+                  <thead className="sticky top-0 bg-white text-slate-400">
+                    <tr>
+                      {["Type", "Input", "Output", "Timestamp", "Category", "Subcategory", "Keywords", "Episode", "Semantic"].map((label) => (
+                        <th key={label} className="border-b border-slate-100 px-3 py-2 font-semibold">{label}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {memoryModal.rows.map((row) => (
+                      <tr key={`${row.type}-${row.id}`} className="align-top">
+                        <td className="border-b border-slate-50 px-3 py-2 font-semibold text-slate-500">{row.type}</td>
+                        <td className="max-w-56 border-b border-slate-50 px-3 py-2">{row.input ?? ""}</td>
+                        <td className="max-w-56 border-b border-slate-50 px-3 py-2">{row.output ?? ""}</td>
+                        <td className="whitespace-nowrap border-b border-slate-50 px-3 py-2">{row.timestamp ? new Date(row.timestamp).toLocaleString("ko-KR") : ""}</td>
+                        <td className="border-b border-slate-50 px-3 py-2">{(row.category ?? []).join(", ")}</td>
+                        <td className="border-b border-slate-50 px-3 py-2">{(row.subcategory ?? []).join(", ")}</td>
+                        <td className="border-b border-slate-50 px-3 py-2">{(row.keywords ?? []).join(", ")}</td>
+                        <td className="max-w-64 border-b border-slate-50 px-3 py-2">{row.episode ?? ""}</td>
+                        <td className="max-w-64 border-b border-slate-50 px-3 py-2">{row.semantic ?? ""}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
             <div className="flex justify-end border-t border-slate-100 px-6 py-4">
               <button
                 type="button"
-                onClick={() => deleteMemory(memoryModal.userId)}
+                onClick={() => deleteAllMemory(memoryModal.userId)}
                 disabled={isDeletingMemory}
                 className="rounded-2xl bg-red-50 px-4 py-2 text-xs font-semibold text-red-600 transition hover:bg-red-100 disabled:opacity-50"
               >
-                {isDeletingMemory ? "삭제 중..." : "메모리 삭제"}
+                {isDeletingMemory ? "삭제 중..." : "메모리 전체 삭제"}
               </button>
             </div>
           </div>
@@ -707,19 +762,14 @@ export default function AdminPage() {
                       )}
                     </div>
 
-                    {user.onboardingMemory && (
-                      <button
-                        type="button"
-                        onClick={() => setMemoryModal({
-                          userId: user.id,
-                          userName: user.displayName ?? user.email ?? user.id,
-                          memory: user.onboardingMemory!,
-                        })}
-                        className="mt-3 text-[11px] font-semibold text-indigo-500 hover:text-indigo-700"
-                      >
-                        유저 메모리 보기 →
-                      </button>
-                    )}
+                    <button
+                      type="button"
+                      onClick={() => openMemoryTable(user)}
+                      disabled={isLoadingMemory}
+                      className="mt-3 text-[11px] font-semibold text-indigo-500 hover:text-indigo-700 disabled:text-slate-300"
+                    >
+                      메모리 테이블 보기 →
+                    </button>
                   </div>
                 );
               })}
