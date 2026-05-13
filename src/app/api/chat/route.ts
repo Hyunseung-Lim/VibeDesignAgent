@@ -184,7 +184,7 @@ export async function POST(request: Request) {
   const hasRefUrls = citedReferences?.some((r: { url?: string }) => r.url);
 
   const stream = await openai.responses.create({
-    model: "gpt-4o",
+    model: "gpt-5.4",
     tools: [{ type: "web_search_preview" }],
     tool_choice: hasRefUrls ? "required" : "auto",
     input: [...systemMessages, ...builtMessages] as Parameters<
