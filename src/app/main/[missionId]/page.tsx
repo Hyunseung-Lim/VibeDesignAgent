@@ -277,21 +277,11 @@ function optionBrief(option: MissionOption | null) {
     .join("\n\n");
 }
 
-function formatLocalDate(date: Date) {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
-}
-
 function createDefaultOnboardingMissionData() {
-  const today = formatLocalDate(new Date());
   return {
     title: "온보딩 미션",
     description:
       "자유주제로 PC 또는 모바일 화면을 선택해 노트, 목업, 프레젠테이션 생성 흐름을 연습합니다.",
-    startDate: today,
-    endDate: today,
     durationMinutes: 20,
     options: [
       {
@@ -320,14 +310,10 @@ async function fetchOnboardingMissionData() {
     const res = await fetch("/api/onboarding");
     if (!res.ok) return fallback;
     const settings = (await res.json()) as {
-      startDate?: string;
-      endDate?: string;
       durationMinutes?: number;
     };
     return {
       ...fallback,
-      startDate: settings.startDate || fallback.startDate,
-      endDate: settings.endDate || fallback.endDate,
       durationMinutes: Number(settings.durationMinutes) || 20,
     };
   } catch {
@@ -1432,7 +1418,6 @@ export default function MainScreenPage() {
   const [missionBrief, setMissionBrief] = useState("");
   const [parentMissionTitle, setParentMissionTitle] = useState("");
   const [parentMissionBrief, setParentMissionBrief] = useState("");
-  const [missionPeriod, setMissionPeriod] = useState("");
   const [missionOptions, setMissionOptions] = useState<MissionOption[]>([]);
   const [selectedOptionId, setSelectedOptionId] = useState<string | null>(null);
   const [missionDurationMinutes, setMissionDurationMinutes] = useState<
@@ -1796,8 +1781,6 @@ export default function MainScreenPage() {
 
       setMissionTitle(session?.missionTitle || pTitle);
       setMissionBrief(session?.missionBrief || pBrief);
-      if (missionData?.startDate && missionData?.endDate)
-        setMissionPeriod(`${missionData.startDate} – ${missionData.endDate}`);
       const sessionDevice = session?.selectedDevice as Device | undefined;
       const optionDevice = selectedOption?.device;
       if (sessionDevice) setDevice(sessionDevice);
@@ -4039,9 +4022,6 @@ export default function MainScreenPage() {
       {/* Header */}
       <header className="flex items-center justify-between border-b border-slate-200 bg-white px-6 py-4 lg:px-10">
         <div className="space-y-1">
-          {missionPeriod && (
-            <p className="text-sm text-slate-500">{missionPeriod}</p>
-          )}
           <h1 className="text-xl font-semibold">
             {parentMissionTitle &&
             activeOption &&
@@ -4115,11 +4095,6 @@ export default function MainScreenPage() {
                         </>
                       )}
                     </span>
-                    {missionPeriod && (
-                      <span className="rounded-full bg-slate-100 px-2.5 py-0.5 text-xs text-slate-500">
-                        {missionPeriod}
-                      </span>
-                    )}
                     <span className="rounded-full bg-slate-100 px-2.5 py-0.5 text-xs text-slate-500">
                       {missionDurationMinutes
                         ? `제한 시간 ${missionDurationMinutes}분`
@@ -4284,11 +4259,6 @@ export default function MainScreenPage() {
               <div className="flex items-center justify-between">
                 <p className="text-xl font-semibold text-slate-900">Mission</p>
                 <div className="flex items-center gap-2">
-                  {missionPeriod && (
-                    <span className="rounded-full bg-slate-100 px-3 py-1 text-xs text-slate-500">
-                      {missionPeriod}
-                    </span>
-                  )}
                   <span className="rounded-full bg-slate-100 px-3 py-1 text-xs text-slate-500">
                     {device === "mobile" ? (
                       <>

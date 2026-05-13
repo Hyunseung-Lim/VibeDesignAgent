@@ -16,8 +16,6 @@ type Mission = {
   id: string;
   title: string;
   description: string;
-  startDate: string;
-  endDate: string;
   device?: "desktop" | "mobile";
   durationMinutes?: number;
   options?: {
@@ -31,8 +29,6 @@ type Mission = {
 };
 
 type OnboardingSettings = {
-  startDate: string;
-  endDate: string;
   durationMinutes: number;
 };
 
@@ -58,8 +54,6 @@ function missionProgress(data: Record<string, unknown>): MissionProgress {
 }
 
 function derivedStatus(
-  startDate: string,
-  endDate: string,
   progress: MissionProgress | null,
   durationMinutes?: number,
 ): { label: string; style: string } {
@@ -74,32 +68,11 @@ function derivedStatus(
     return { label: "완료", style: "bg-emerald-100 text-emerald-700" };
   }
 
-  const now = new Date();
-  now.setHours(0, 0, 0, 0);
-  const start = parseLocalDate(startDate);
-  const end = parseLocalDate(endDate);
-  if (now < start)
-    return { label: "대기", style: "bg-slate-100 text-slate-600" };
-  if (now > end) return { label: "미완료", style: "bg-rose-100 text-rose-700" };
-  return { label: "진행중", style: "bg-amber-100 text-amber-700" };
-}
-
-function parseLocalDate(value: string) {
-  const [year, month, day] = value.split("-").map(Number);
-  if (!year || !month || !day) return new Date(value);
-  return new Date(year, month - 1, day);
-}
-
-function formatLocalDate(date: Date) {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
+  return { label: "대기", style: "bg-slate-100 text-slate-600" };
 }
 
 function defaultOnboardingSettings(): OnboardingSettings {
-  const today = formatLocalDate(new Date());
-  return { startDate: today, endDate: today, durationMinutes: 20 };
+  return { durationMinutes: 20 };
 }
 
 export default function LobbyPage() {
@@ -207,10 +180,7 @@ export default function LobbyPage() {
     fetch("/api/onboarding")
       .then((res) => (res.ok ? res.json() : null))
       .then((settings) => {
-        if (!settings?.startDate || !settings?.endDate) return;
         setOnboardingSettings({
-          startDate: settings.startDate,
-          endDate: settings.endDate,
           durationMinutes: Number(settings.durationMinutes) || 20,
         });
       })
@@ -228,15 +198,11 @@ export default function LobbyPage() {
   }, [isMenuOpen]);
 
   const userInitial = (userName?.trim()?.charAt(0) || "U").toUpperCase();
-  const todayDate = new Date();
-  todayDate.setHours(0, 0, 0, 0);
   const onboardingMission: Mission = {
     id: ONBOARDING_MISSION_ID,
     title: "온보딩 미션",
     description:
       "자유주제로 PC 또는 모바일 화면을 선택해 노트, 목업, 프레젠테이션 생성 흐름을 연습합니다.",
-    startDate: onboardingSettings.startDate,
-    endDate: onboardingSettings.endDate,
     durationMinutes: onboardingSettings.durationMinutes,
     options: [
       {
@@ -259,14 +225,7 @@ export default function LobbyPage() {
     ],
     createdAt: -1,
   };
-  const todayMissions = missions.filter((mission) => {
-    const start = parseLocalDate(mission.startDate);
-    const end = parseLocalDate(mission.endDate);
-    return todayDate >= start && todayDate <= end;
-  });
-  const regularVisibleMissions =
-    todayMissions.length > 0 ? todayMissions.slice(0, 1) : missions;
-  const visibleMissions = [onboardingMission, ...regularVisibleMissions];
+  const visibleMissions = [onboardingMission, ...missions];
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900">
@@ -393,12 +352,7 @@ export default function LobbyPage() {
                   (isOnboardingMission && !isOnboardingRequired
                     ? { hasActivity: true, timerStartedAt: null }
                     : null);
-                const status = derivedStatus(
-                  mission.startDate,
-                  mission.endDate,
-                  progress,
-                  mission.durationMinutes,
-                );
+                const status = derivedStatus(progress, mission.durationMinutes);
                 return (
                   <article
                     key={mission.id}
@@ -453,9 +407,6 @@ export default function LobbyPage() {
                       </p>
                     )}
                     <div className="mt-3 flex items-center gap-2">
-                      <p className="text-xs text-slate-400">
-                        {mission.startDate} – {mission.endDate}
-                      </p>
                       <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-500">
                         {mission.device === "mobile" ? (
                           <>

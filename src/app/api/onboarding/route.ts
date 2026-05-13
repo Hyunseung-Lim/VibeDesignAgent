@@ -9,18 +9,8 @@ export const runtime = "nodejs";
 
 const ADMIN_EMAILS = ["03leesun@gmail.com", "charlie9807@gmail.com"];
 
-function formatLocalDate(date: Date) {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
-}
-
 function defaultSettings() {
-  const today = formatLocalDate(new Date());
   return {
-    startDate: today,
-    endDate: today,
     durationMinutes: 20,
   };
 }
@@ -42,18 +32,8 @@ export async function PATCH(request: Request) {
   }
 
   const body = (await request.json().catch(() => ({}))) as {
-    startDate?: string;
-    endDate?: string;
     durationMinutes?: number;
   };
-  const startDate = body.startDate?.trim();
-  const endDate = body.endDate?.trim();
-  if (!startDate || !endDate) {
-    return Response.json(
-      { error: "startDate and endDate are required" },
-      { status: 400 },
-    );
-  }
 
   const durationMinutes =
     typeof body.durationMinutes === "number" && body.durationMinutes > 0
@@ -63,13 +43,11 @@ export async function PATCH(request: Request) {
   await patchFirestoreDocument(
     "settings/onboarding",
     {
-      startDate,
-      endDate,
       durationMinutes,
       updatedAt: new Date(),
     },
     token,
   );
 
-  return Response.json({ ok: true, startDate, endDate, durationMinutes });
+  return Response.json({ ok: true, durationMinutes });
 }

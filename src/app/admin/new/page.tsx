@@ -23,15 +23,9 @@ function createEmptyOption(): MissionOption {
   return { id: crypto.randomUUID(), title: "", description: "", content: "" };
 }
 
-function today() {
-  return new Date().toISOString().slice(0, 10);
-}
-
 const EMPTY_FORM = {
   title: "",
   description: "",
-  startDate: today(),
-  endDate: today(),
   device: "desktop" as Device,
   durationMinutes: 30,
   options: [createEmptyOption()],
@@ -83,8 +77,6 @@ export default function NewMissionPage() {
       await setDoc(doc(db, "missions", id), {
         title: form.title.trim(),
         description: form.description.trim(),
-        startDate: form.startDate,
-        endDate: form.endDate,
         device: form.device,
         durationMinutes: form.durationMinutes > 0 ? form.durationMinutes : null,
         options: validOptions.map((o) => ({
@@ -142,26 +134,6 @@ export default function NewMissionPage() {
             rows={3}
             className="w-full resize-none rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none focus:border-slate-400"
           />
-
-          <div className="space-y-2">
-            <p className="text-xs font-semibold text-slate-500">수행 기간</p>
-            <div className="flex items-center gap-3">
-              <input
-                type="date"
-                value={form.startDate}
-                onChange={(e) => setForm((p) => ({ ...p, startDate: e.target.value }))}
-                className="flex-1 rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none focus:border-slate-400"
-              />
-              <span className="text-slate-400">–</span>
-              <input
-                type="date"
-                value={form.endDate}
-                min={form.startDate}
-                onChange={(e) => setForm((p) => ({ ...p, endDate: e.target.value }))}
-                className="flex-1 rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none focus:border-slate-400"
-              />
-            </div>
-          </div>
 
           <div className="space-y-2">
             <p className="text-xs font-semibold text-slate-500">제한 시간 (분)</p>

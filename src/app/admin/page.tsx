@@ -61,8 +61,6 @@ type Mission = {
   id: string;
   title: string;
   description: string;
-  startDate: string;
-  endDate: string;
   device: Device;
   durationMinutes?: number | null;
   options?: MissionOption[];
@@ -70,37 +68,11 @@ type Mission = {
 };
 
 type OnboardingSettings = {
-  startDate: string;
-  endDate: string;
   durationMinutes: number;
 };
 
-function derivedStatus(
-  startDate: string,
-  endDate: string,
-): { label: string; style: string } {
-  const now = new Date();
-  now.setHours(0, 0, 0, 0);
-  const start = new Date(startDate);
-  const end = new Date(endDate);
-  if (now < start)
-    return { label: "대기", style: "bg-slate-100 text-slate-600" };
-  if (now > end)
-    return { label: "완료", style: "bg-emerald-100 text-emerald-700" };
-  return { label: "진행중", style: "bg-amber-100 text-amber-700" };
-}
-
-function today() {
-  const date = new Date();
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
-}
-
 function defaultOnboardingSettings(): OnboardingSettings {
-  const date = today();
-  return { startDate: date, endDate: date, durationMinutes: 20 };
+  return { durationMinutes: 20 };
 }
 
 function createEmptyOption(): MissionOption {
@@ -119,8 +91,6 @@ function normalizeOptions(options?: MissionOption[]) {
 const EMPTY_FORM = {
   title: "",
   description: "",
-  startDate: today(),
-  endDate: today(),
   device: "desktop" as Device,
   options: [createEmptyOption()],
 };
@@ -171,8 +141,6 @@ export default function AdminPage() {
     setEditFields({
       title: mission.title,
       description: mission.description,
-      startDate: mission.startDate,
-      endDate: mission.endDate,
       device: mission.device ?? "desktop",
       durationMinutes: mission.durationMinutes ?? 30,
       options: normalizeOptions(mission.options).length > 0 ? normalizeOptions(mission.options) : [createEmptyOption()],
@@ -186,8 +154,6 @@ export default function AdminPage() {
       await updateDoc(doc(db, "missions", id), clean({
         title: editFields.title.trim(),
         description: editFields.description?.trim() ?? "",
-        startDate: editFields.startDate ?? "",
-        endDate: editFields.endDate ?? "",
         device: editFields.device ?? "desktop",
         durationMinutes: (editFields.durationMinutes as number) > 0 ? editFields.durationMinutes : null,
         options: normalizeOptions(editFields.options as MissionOption[]).filter((option) => option.title.trim()),
@@ -351,8 +317,6 @@ export default function AdminPage() {
     if (!res.ok) return;
     const data = (await res.json()) as Partial<OnboardingSettings>;
     setOnboardingSettings({
-      startDate: data.startDate || today(),
-      endDate: data.endDate || data.startDate || today(),
       durationMinutes: Number(data.durationMinutes) || 20,
     });
   };
@@ -804,39 +768,6 @@ export default function AdminPage() {
           </div>
           <div className="flex flex-wrap items-end gap-3">
             <label className="space-y-1 text-xs font-semibold text-slate-500">
-              시작일
-              <input
-                type="date"
-                value={onboardingSettings.startDate}
-                onChange={(e) =>
-                  setOnboardingSettings((prev) => ({
-                    ...prev,
-                    startDate: e.target.value,
-                    endDate:
-                      prev.endDate < e.target.value
-                        ? e.target.value
-                        : prev.endDate,
-                  }))
-                }
-                className="block rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-700 outline-none focus:border-slate-400"
-              />
-            </label>
-            <label className="space-y-1 text-xs font-semibold text-slate-500">
-              종료일
-              <input
-                type="date"
-                value={onboardingSettings.endDate}
-                min={onboardingSettings.startDate}
-                onChange={(e) =>
-                  setOnboardingSettings((prev) => ({
-                    ...prev,
-                    endDate: e.target.value,
-                  }))
-                }
-                className="block rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-700 outline-none focus:border-slate-400"
-              />
-            </label>
-            <label className="space-y-1 text-xs font-semibold text-slate-500">
               제한 시간
               <div className="flex items-center gap-2">
                 <input
@@ -872,7 +803,6 @@ export default function AdminPage() {
         ) : (
           <div className="space-y-3">
             {missions.map((mission) => {
-              const status = derivedStatus(mission.startDate, mission.endDate);
               const isEditing = editingId === mission.id;
 
               return (
@@ -911,33 +841,6 @@ export default function AdminPage() {
                             rows={2}
                             className="w-full resize-none rounded-xl border border-slate-200 px-3 py-1.5 text-sm text-slate-600 outline-none focus:border-slate-400"
                           />
-                          <div className="flex items-center gap-2 text-xs text-slate-500">
-                            <span>기간</span>
-                            <input
-                              type="date"
-                              value={editFields.startDate ?? ""}
-                              onChange={(e) =>
-                                setEditFields((p) => ({
-                                  ...p,
-                                  startDate: e.target.value,
-                                }))
-                              }
-                              className="rounded-lg border border-slate-200 px-2 py-1 text-xs outline-none focus:border-slate-400"
-                            />
-                            <span className="text-slate-300">–</span>
-                            <input
-                              type="date"
-                              value={editFields.endDate ?? ""}
-                              min={editFields.startDate}
-                              onChange={(e) =>
-                                setEditFields((p) => ({
-                                  ...p,
-                                  endDate: e.target.value,
-                                }))
-                              }
-                              className="rounded-lg border border-slate-200 px-2 py-1 text-xs outline-none focus:border-slate-400"
-                            />
-                          </div>
                           <div className="flex items-center gap-2 text-xs text-slate-500">
                             <span>디바이스</span>
                             {(["desktop", "mobile"] as Device[]).map((d) => (
@@ -1039,11 +942,6 @@ export default function AdminPage() {
                             <p className="text-sm font-semibold text-slate-900 truncate">
                               {mission.title}
                             </p>
-                            <span
-                              className={`shrink-0 rounded-full px-2.5 py-0.5 text-xs font-semibold ${status.style}`}
-                            >
-                              {status.label}
-                            </span>
                             <span className="shrink-0 rounded-full bg-slate-100 px-2.5 py-0.5 text-xs text-slate-500">
                               {(mission.device ?? "desktop") === "desktop"
                                 ? <><MonitorIcon size={12} className="inline" /> PC</>
@@ -1057,9 +955,6 @@ export default function AdminPage() {
                           )}
                           <p className="text-xs text-slate-400">
                             옵션 {mission.options?.length ?? 0}개
-                          </p>
-                          <p className="text-xs text-slate-400">
-                            {mission.startDate} – {mission.endDate}
                           </p>
                         </>
                       )}
