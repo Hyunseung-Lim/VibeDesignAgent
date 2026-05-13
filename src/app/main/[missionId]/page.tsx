@@ -2316,7 +2316,14 @@ export default function MainScreenPage() {
   };
 
   const deleteIdea = (ideaId: string) => {
+    const target = ideas.find((i) => i.id === ideaId);
     if (!confirm("이 시안과 연결된 목업을 모두 삭제할까요?")) return;
+    void encodeMemoryDraft(
+      `delete-idea-${ideaId}`,
+      `시안 삭제: ${target?.title ?? ideaId}`,
+      `삭제된 시안 내용: ${target?.description?.slice(0, 500) ?? "(없음)"}`,
+      Date.now(),
+    );
     setIdeas((prev) => {
       const remaining = prev.filter((i) => i.id !== ideaId);
       const wasActive = activeIdeaId === ideaId;
@@ -3312,6 +3319,13 @@ export default function MainScreenPage() {
     const target = artboards.find((artboard) => artboard.id === artboardId);
     if (!target) return;
     if (!confirm("이 디자인을 삭제할까요?")) return;
+    const ownerIdea = ideas.find((i) => i.id === target.ideaId);
+    void encodeMemoryDraft(
+      `delete-design-${artboardId}`,
+      `목업 삭제: ${ownerIdea?.title ?? target.ideaId} 시안의 디자인`,
+      `삭제된 artboardId: ${artboardId}`,
+      Date.now(),
+    );
     setDesignContextMenu(null);
 
     setArtboards((prev) => {
@@ -4481,13 +4495,21 @@ export default function MainScreenPage() {
                     return (
                       <div
                         key={card.id}
-                        onClick={() =>
+                        onClick={() => {
+                          if (!isSelected) {
+                            void encodeMemoryDraft(
+                              `cite-reference-${card.id}`,
+                              `레퍼런스 인용: ${card.title}`,
+                              `태그: ${card.tag}, URL: ${card.url ?? ""}`,
+                              Date.now(),
+                            );
+                          }
                           setSelectedReferences((prev) =>
                             isSelected
                               ? prev.filter((r) => r.id !== card.id)
                               : [...prev, card],
-                          )
-                        }
+                          );
+                        }}
                         className={`group relative flex flex-col rounded-2xl border overflow-hidden transition cursor-pointer ${
                           isSelected
                             ? "border-indigo-400 bg-indigo-50 ring-2 ring-indigo-300"
@@ -4545,6 +4567,12 @@ export default function MainScreenPage() {
                                     link: card.url,
                                     imageUrl: card.imageUrl,
                                   });
+                                  void encodeMemoryDraft(
+                                    `delete-reference-${card.id}`,
+                                    `레퍼런스 삭제: ${card.title}`,
+                                    `태그: ${card.tag}, URL: ${card.url ?? ""}`,
+                                    Date.now(),
+                                  );
                                   setReferences((prev) =>
                                     prev.filter((r) => r.id !== card.id),
                                   );
@@ -5116,11 +5144,19 @@ export default function MainScreenPage() {
                                         return (
                                           <button
                                             key={presentation.id}
-                                            onClick={() =>
+                                            onClick={() => {
+                                              if (!isActive) {
+                                                void encodeMemoryDraft(
+                                                  `select-presentation-${presentation.id}`,
+                                                  `프레젠테이션 선택: ${presentation.title || `P${index + 1}`}`,
+                                                  `생성일: ${presentation.createdAt ? new Date(presentation.createdAt).toLocaleString("ko-KR") : "미상"}`,
+                                                  Date.now(),
+                                                );
+                                              }
                                               setActivePresentationId(
                                                 presentation.id,
-                                              )
-                                            }
+                                              );
+                                            }}
                                             className={`max-w-44 shrink-0 truncate rounded-lg px-3 py-1.5 text-xs font-medium transition ${
                                               isActive
                                                 ? "bg-slate-900 text-white"
@@ -5156,10 +5192,17 @@ export default function MainScreenPage() {
                                           confirm(
                                             "이 프레젠테이션을 삭제할까요?",
                                           )
-                                        )
+                                        ) {
+                                          void encodeMemoryDraft(
+                                            `delete-presentation-${selectedPresentation.id}`,
+                                            `프레젠테이션 삭제: ${selectedPresentation.title}`,
+                                            `생성일: ${selectedPresentation.createdAt ? new Date(selectedPresentation.createdAt).toLocaleString("ko-KR") : "미상"}`,
+                                            Date.now(),
+                                          );
                                           deletePresentation(
                                             selectedPresentation.id,
                                           );
+                                        }
                                       }}
                                       className="shrink-0 rounded-full p-1.5 text-slate-400 transition hover:bg-red-50 hover:text-red-500"
                                       title="프레젠테이션 삭제"
