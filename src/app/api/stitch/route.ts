@@ -1,7 +1,6 @@
 import { Stitch, StitchToolClient } from "@google/stitch-sdk";
 
-export const maxDuration = 120; // 2 minutes — Stitch generation can be slow
-
+export const maxDuration = 180;
 
 function createStitchClient() {
   const client = new StitchToolClient({ apiKey: process.env.STITCH_API_KEY! });
@@ -13,7 +12,6 @@ type StitchProject = ReturnType<Stitch["project"]>;
 type StitchScreenHandle = {
   id: string;
   getHtml: () => Promise<string>;
-  getImage: () => Promise<string>;
 };
 
 const INCOMPLETE_RESPONSE_ERROR = "Incomplete API response";
@@ -87,13 +85,11 @@ async function screenFromRawResponse(project: StitchProject, raw: unknown): Prom
   }
 
   const htmlUrl = (candidate.htmlCode as { downloadUrl?: string } | undefined)?.downloadUrl ?? "";
-  const imageUrl = (candidate.screenshot as { downloadUrl?: string } | undefined)?.downloadUrl ?? "";
   if (!htmlUrl) return null;
 
   return {
     id: screenId ?? `raw-${Date.now()}`,
     getHtml: async () => htmlUrl,
-    getImage: async () => imageUrl,
   };
 }
 
@@ -166,121 +162,12 @@ async function recoverGeneratedScreen(
   return null;
 }
 
-
-
-function formatAspectRatio(w: number, h: number): string {
-  if (!w || !h) return "";
-  const orientation = w >= h ? "landscape" : "portrait";
-  const ratio = (w / h).toFixed(2);
-  return `${w}×${h} (${orientation}, ratio ${ratio})`;
-}
-
-function promptWithReferenceImages(
-  prompt: string,
-  referenceImageUrls?: string[],
-  referenceImageAlts?: string[],
-  referenceImageDimensions?: { w: number; h: number }[],
-) {
-  const urls = (referenceImageUrls ?? []).filter(Boolean);
-  if (urls.length === 0) return prompt;
-
-  const imageLines = urls.map((url, i) => {
-    const alt = referenceImageAlts?.[i]?.trim();
-    const dim = referenceImageDimensions?.[i];
-    const dimStr = dim?.w ? formatAspectRatio(dim.w, dim.h) : "";
-    const desc = [dimStr, alt].filter(Boolean).join(" — ");
-    return desc
-      ? `  - Image ${i + 1}: ${desc} → use <img src="${url}" />`
-      : `  - Image ${i + 1}: use <img src="${url}" />`;
-  });
-
-  return [
-    prompt,
-    "",
-    `Include exactly ${urls.length} prominent <img> element(s) for real content imagery. Do not use CSS background-image — use <img> tags. Match each container's aspect ratio to the image's actual dimensions.`,
-    ...imageLines,
-  ].join("\n");
-}
-
-function proxyImageUrl(url: string): string {
-  return `/api/image-proxy?url=${encodeURIComponent(url)}`;
-}
-
-const SKIP_IMG_PATTERN = /icon|logo|avatar/i;
-
-function injectReferenceImages(html: string, imageUrls: string[]): string {
-  if (imageUrls.length === 0) return html;
-
-  // 1. Replace img src attributes in HTML
-  let urlIndex = 0;
-  const result = html.replace(/<img\b([^>]*)>/gi, (match, attrs) => {
-    if (urlIndex >= imageUrls.length) return match;
-
-    const srcMatch = attrs.match(/\bsrc="([^"]*)"/i);
-    if (!srcMatch || srcMatch[1].startsWith("data:")) return match;
-
-    const alt = attrs.match(/\balt="([^"]*)"/i)?.[1] ?? "";
-    const cls = attrs.match(/\bclass="([^"]*)"/i)?.[1] ?? "";
-    if (SKIP_IMG_PATTERN.test(alt) || SKIP_IMG_PATTERN.test(cls)) return match;
-
-    const newSrc = proxyImageUrl(imageUrls[urlIndex++]);
-    console.log("[stitch] injecting reference image", urlIndex, "→", newSrc.slice(0, 80));
-    // Also clear data-alt so Stitch scripts can't re-generate the image
-    return match
-      .replace(/\bsrc="[^"]*"/i, `src="${newSrc}"`)
-      .replace(/\bdata-alt="[^"]*"/i, "");
-  });
-
-  // 2. Inject a late-running script to re-apply URLs after Stitch's own scripts
-  const urlsJson = JSON.stringify(imageUrls.map(proxyImageUrl));
-  const overrideScript = `<script>
-(function(){
-  var urls = ${urlsJson};
-  function applyImages() {
-    var idx = 0;
-    var imgs = document.querySelectorAll('img');
-    for (var i = 0; i < imgs.length && idx < urls.length; i++) {
-      var img = imgs[i];
-      var alt = (img.getAttribute('alt') || '').toLowerCase();
-      var cls = (img.className || '').toLowerCase();
-      if (/icon|logo|avatar/.test(alt) || /icon|logo|avatar/.test(cls)) continue;
-      img.src = urls[idx++];
-    }
-  }
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', applyImages);
-  } else {
-    applyImages();
-  }
-  window.addEventListener('load', applyImages);
-})();
-</script>`;
-
-  const bodyEnd = result.lastIndexOf("</body>");
-  return bodyEnd !== -1
-    ? result.slice(0, bodyEnd) + overrideScript + result.slice(bodyEnd)
-    : result + overrideScript;
-}
-
 export async function POST(request: Request) {
-  const {
-    prompt,
-    device,
-    projectId,
-    screenId,
-    referenceImageUrls,
-    referenceImageAlts,
-    referenceImageDimensions,
-  } = await request.json();
+  const { prompt, device, projectId, screenId } = await request.json();
 
   if (!prompt) {
     return Response.json({ error: "prompt is required" }, { status: 400 });
   }
-  const referenceImageCount = Array.isArray(referenceImageUrls)
-    ? referenceImageUrls.filter(Boolean).length
-    : 0;
-  const effectivePrompt = promptWithReferenceImages(prompt, referenceImageUrls, referenceImageAlts, referenceImageDimensions);
-
   const deviceType: DeviceType = device === "mobile" ? "MOBILE" : "DESKTOP";
 
   const { client, sdk } = createStitchClient();
@@ -302,28 +189,18 @@ export async function POST(request: Request) {
     let screen;
 
     if (screenId) {
-      console.log(
-        "[stitch] editing screen:",
-        screenId,
-        "reference images:",
-        referenceImageCount,
-      );
+      console.log("[stitch] editing screen:", screenId);
       try {
-        screen = await editScreen(client, project, screenId, effectivePrompt, deviceType, beforeScreenIds);
+        screen = await editScreen(client, project, screenId, prompt, deviceType, beforeScreenIds);
       } catch (editErr) {
         const message = errorMessage(editErr);
         console.warn("[stitch] edit failed:", message);
         return Response.json({ error: `Existing mockup edit failed: ${message}` }, { status: 500 });
       }
     } else {
-      console.log(
-        "[stitch] generating screen for prompt:",
-        effectivePrompt.slice(0, 80),
-        "reference images:",
-        referenceImageCount,
-      );
+      console.log("[stitch] generating screen for prompt:", prompt.slice(0, 80));
       try {
-        screen = await generateScreen(client, project, effectivePrompt, deviceType, beforeScreenIds);
+        screen = await generateScreen(client, project, prompt, deviceType, beforeScreenIds);
       } catch (generateErr) {
         if (!isIncompleteResponseError(generateErr)) throw generateErr;
         console.warn("[stitch] generation returned incomplete response; checking project screens...");
@@ -332,6 +209,7 @@ export async function POST(request: Request) {
         screen = recovered;
       }
     }
+    if (!screen) throw new Error("No screen was generated or edited.");
     console.log("[stitch] screen id:", screen.id);
 
     // getHtml() may return empty if the screen HTML isn't ready yet — retry a few times
@@ -346,8 +224,6 @@ export async function POST(request: Request) {
       if (htmlUrlOrContent) break;
       console.warn("[stitch] getHtml() returned empty, retrying...", attempt + 1);
     }
-    const imageUrl = await screen.getImage().catch(() => "");
-
     console.log("[stitch] htmlUrlOrContent type:", htmlUrlOrContent?.startsWith("http") ? "URL" : "direct-content", "preview:", htmlUrlOrContent?.slice(0, 150));
 
     if (!htmlUrlOrContent) {
@@ -363,26 +239,6 @@ export async function POST(request: Request) {
       console.log("[stitch] fetched html length:", html.length);
     }
 
-    // Log image-related tags to diagnose how Stitch embeds images
-    const imgTagCount = (html.match(/<img\b/gi) ?? []).length;
-    const bgImageCount = (html.match(/background-image\s*:/gi) ?? []).length;
-    console.log("[stitch] html img tags:", imgTagCount, "background-image occurrences:", bgImageCount);
-    const imgTags = [...html.matchAll(/<img\b[^>]*>/gi)].map((m) => m[0].slice(0, 200));
-    imgTags.forEach((tag, i) => console.log(`[stitch] img[${i}]:`, tag));
-    const cspMeta = html.match(/<meta[^>]+http-equiv=["']?content-security-policy["']?[^>]*>/i)?.[0];
-    console.log("[stitch] csp meta:", cspMeta ?? "none");
-    const scriptSrcs = [...html.matchAll(/<script\b[^>]*>/gi)].map((m) => m[0]);
-    scriptSrcs.forEach((tag, i) => console.log(`[stitch] script[${i}]:`, tag));
-    const hasImageJs = /data-alt|generateImage|replaceImage|loadImage|fetchImage/i.test(html);
-    console.log("[stitch] image-related JS patterns found:", hasImageJs);
-
-    const refUrls = Array.isArray(referenceImageUrls)
-      ? referenceImageUrls.filter(Boolean)
-      : [];
-    if (refUrls.length > 0) {
-      html = injectReferenceImages(html, refUrls);
-    }
-
     // Only return screens created during this generation (not pre-existing ones)
     const allScreens = await project.screens().catch(() => []);
     const freshIds = new Set(
@@ -394,11 +250,9 @@ export async function POST(request: Request) {
 
     return Response.json({
       html,
-      imageUrl,
       projectId: actualProjectId,
       screenId: screen.id,
       allScreenIds,
-      referenceImageCount,
     });
   } catch (err) {
     const message = errorMessage(err);

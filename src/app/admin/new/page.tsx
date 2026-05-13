@@ -2,12 +2,11 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
-import { ArrowLeftIcon, DeviceMobileIcon, MonitorIcon, UploadSimpleIcon } from "@phosphor-icons/react";
+import { useEffect, useState } from "react";
+import { ArrowLeftIcon, DeviceMobileIcon, MonitorIcon } from "@phosphor-icons/react";
 import { onAuthStateChanged } from "firebase/auth";
 import { doc, setDoc } from "firebase/firestore";
-import { ref as storageRef, uploadBytes, getDownloadURL } from "firebase/storage";
-import { firebaseAuth, db, storage } from "@/lib/firebase";
+import { firebaseAuth, db } from "@/lib/firebase";
 
 const ADMIN_EMAILS = ["03leesun@gmail.com", "charlie9807@gmail.com"];
 
@@ -17,14 +16,11 @@ type MissionOption = {
   id: string;
   title: string;
   description: string;
-  imageUrls: string[];
-  imageAlts?: string[];
-  imageDimensions?: { w: number; h: number }[];
   content: string;
 };
 
 function createEmptyOption(): MissionOption {
-  return { id: crypto.randomUUID(), title: "", description: "", imageUrls: [], imageAlts: [], imageDimensions: [], content: "" };
+  return { id: crypto.randomUUID(), title: "", description: "", content: "" };
 }
 
 function today() {
@@ -41,29 +37,11 @@ const EMPTY_FORM = {
   options: [createEmptyOption()],
 };
 
-async function uploadOptionImage(optionId: string, file: File): Promise<string> {
-  const ext = file.name.split(".").pop() || "jpg";
-  const imgRef = storageRef(storage, `missions/options/${optionId}/image.${ext}`);
-  await uploadBytes(imgRef, file);
-  return getDownloadURL(imgRef);
-}
-
-function imageSrc(url: string) {
-  return url;
-}
-
-function fallbackImageSrc(url: string) {
-  if (!url || url.startsWith("data:") || url.startsWith("blob:")) return url;
-  return `/api/image-proxy?url=${encodeURIComponent(url)}`;
-}
-
 export default function NewMissionPage() {
   const router = useRouter();
   const [ready, setReady] = useState(false);
   const [form, setForm] = useState(EMPTY_FORM);
   const [isCreating, setIsCreating] = useState(false);
-  const [uploadingIds, setUploadingIds] = useState<Set<string>>(new Set());
-  const imageInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
 
   useEffect(() => {
     return onAuthStateChanged(firebaseAuth, (user) => {
@@ -112,8 +90,6 @@ export default function NewMissionPage() {
         options: validOptions.map((o) => ({
           ...o,
           title: o.title.trim(),
-          imageAlts: (o.imageAlts ?? []).map((a) => a ?? ""),
-          imageDimensions: (o.imageDimensions ?? []).map((d) => d ?? { w: 0, h: 0 }),
         })),
         createdAt: Date.now(),
       });
@@ -260,90 +236,6 @@ export default function NewMissionPage() {
                 rows={2}
                 className="w-full resize-none rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-slate-400"
               />
-              {/* Images */}
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <p className="text-xs font-semibold text-slate-400">이미지 ({option.imageUrls.length}개)</p>
-                  <button
-                    type="button"
-                    onClick={() => imageInputRefs.current[option.id]?.click()}
-                    disabled={uploadingIds.has(option.id)}
-                    className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-500 hover:bg-slate-50 disabled:opacity-50"
-                  >
-                    <UploadSimpleIcon size={13} />
-                    {uploadingIds.has(option.id) ? "업로드 중..." : "이미지 추가"}
-                  </button>
-                  <input
-                    ref={(el) => { imageInputRefs.current[option.id] = el; }}
-                    type="file" accept="image/*" multiple className="hidden"
-                    onChange={async (e) => {
-                      const files = Array.from(e.target.files ?? []);
-                      if (!files.length) return;
-                      setUploadingIds((s) => new Set(s).add(option.id));
-                      try {
-                        const urls = await Promise.all(files.map((f, i) => uploadOptionImage(`${option.id}-${Date.now()}-${i}`, f)));
-                        updateOption(option.id, {
-                          imageUrls: [...option.imageUrls, ...urls],
-                          imageAlts: [...(option.imageAlts ?? []), ...urls.map(() => "")],
-                          imageDimensions: [...(option.imageDimensions ?? []), ...urls.map(() => ({ w: 0, h: 0 }))],
-                        });
-                      } finally {
-                        setUploadingIds((s) => { const n = new Set(s); n.delete(option.id); return n; });
-                        e.target.value = "";
-                      }
-                    }}
-                  />
-                </div>
-                {option.imageUrls.length > 0 && (
-                  <div className="grid grid-cols-3 gap-2">
-                    {option.imageUrls.map((url, i) => (
-                      <div key={i} className="relative group space-y-1">
-                        <div className="relative">
-                          <img
-                            src={imageSrc(url)}
-                            alt=""
-                            className="h-24 w-full rounded-xl object-cover border border-slate-100"
-                            onLoad={(e) => {
-                              const { naturalWidth: w, naturalHeight: h } = e.currentTarget;
-                              if (!w || !h) return;
-                              const dims = [...(option.imageDimensions ?? option.imageUrls.map(() => ({ w: 0, h: 0 })))];
-                              dims[i] = { w, h };
-                              updateOption(option.id, { imageDimensions: dims });
-                            }}
-                            onError={(e) => {
-                              const img = e.currentTarget;
-                              if (img.dataset.fallback === "1") return;
-                              img.dataset.fallback = "1";
-                              img.src = fallbackImageSrc(url);
-                            }}
-                          />
-                          <button
-                            type="button"
-                            onClick={() => updateOption(option.id, {
-                              imageUrls: option.imageUrls.filter((_, j) => j !== i),
-                              imageAlts: (option.imageAlts ?? []).filter((_, j) => j !== i),
-                              imageDimensions: (option.imageDimensions ?? []).filter((_, j) => j !== i),
-                            })}
-                            className="absolute top-1 right-1 hidden group-hover:flex h-5 w-5 items-center justify-center rounded-full bg-black/60 text-white text-xs"
-                          >✕</button>
-                        </div>
-                        <textarea
-                          placeholder="이미지 설명 (alt)"
-                          rows={3}
-                          value={(option.imageAlts ?? [])[i] ?? ""}
-                          onChange={(e) => {
-                            const alts = [...(option.imageAlts ?? option.imageUrls.map(() => ""))];
-                            alts[i] = e.target.value;
-                            updateOption(option.id, { imageAlts: alts });
-                          }}
-                          className="w-full resize-none rounded-lg border border-slate-200 px-2 py-1.5 text-xs text-slate-600 outline-none focus:border-slate-400"
-                        ></textarea>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-
               {/* Content — markdown */}
               <div className="space-y-2">
                 <p className="text-xs font-semibold text-slate-400">콘텐츠 (마크다운)</p>

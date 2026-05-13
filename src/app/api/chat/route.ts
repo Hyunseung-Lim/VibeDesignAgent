@@ -62,7 +62,6 @@ export async function POST(request: Request) {
     citedReferences,
     missionTitle,
     missionBrief,
-    missionImageUrls,
     device,
     activeIdea,
     userMemory,
@@ -106,13 +105,6 @@ export async function POST(request: Request) {
     systemMessages.push({
       role: "system",
       content: `The user has cited the following text excerpts from the mission panel. Use them as direct context for your response:\n${citedTexts.map((t: string, i: number) => `[인용 ${i + 1}] ${t}`).join("\n\n")}`,
-    });
-  }
-
-  if (missionImageUrls?.length > 0) {
-    systemMessages.push({
-      role: "system",
-      content: `The following image URL(s) are the actual content/product images for this mission. You MUST use them as the primary visual reference when generating mockups:\n${(missionImageUrls as string[]).join("\n")}`,
     });
   }
 

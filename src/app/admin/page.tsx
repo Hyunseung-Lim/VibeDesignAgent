@@ -2,10 +2,8 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
-import { ArrowLeftIcon, ArrowRightIcon, DeviceMobileIcon, MonitorIcon, XIcon, PencilSimpleIcon, UsersThreeIcon, UploadSimpleIcon } from "@phosphor-icons/react";
-import { ref as storageRef, uploadBytes, getDownloadURL } from "firebase/storage";
-import { storage } from "@/lib/firebase";
+import { useEffect, useState } from "react";
+import { ArrowLeftIcon, ArrowRightIcon, DeviceMobileIcon, MonitorIcon, XIcon, PencilSimpleIcon, UsersThreeIcon } from "@phosphor-icons/react";
 import { getIdToken, onAuthStateChanged } from "firebase/auth";
 import {
   collection,
@@ -44,9 +42,6 @@ type MissionOption = {
   id: string;
   title: string;
   description: string;
-  imageUrls: string[];
-  imageAlts?: string[];
-  imageDimensions?: { w: number; h: number }[];
   content: string;
 };
 
@@ -97,7 +92,7 @@ function defaultOnboardingSettings(): OnboardingSettings {
 }
 
 function createEmptyOption(): MissionOption {
-  return { id: crypto.randomUUID(), title: "", description: "", imageUrls: [], content: "" };
+  return { id: crypto.randomUUID(), title: "", description: "", content: "" };
 }
 
 function normalizeOptions(options?: MissionOption[]) {
@@ -105,21 +100,8 @@ function normalizeOptions(options?: MissionOption[]) {
     id: option.id || crypto.randomUUID(),
     title: option.title ?? "",
     description: option.description ?? "",
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    imageUrls: (option as any).imageUrls ?? ((option as any).imageUrl ? [(option as any).imageUrl] : []),
-    imageAlts: (option.imageAlts ?? []).map((a) => a ?? ""),
-    imageDimensions: (option.imageDimensions ?? []).map((d) => d ?? { w: 0, h: 0 }),
     content: option.content ?? "",
   }));
-}
-
-function imageSrc(url: string) {
-  return url;
-}
-
-function fallbackImageSrc(url: string) {
-  if (!url || url.startsWith("data:") || url.startsWith("blob:")) return url;
-  return `/api/image-proxy?url=${encodeURIComponent(url)}`;
 }
 
 const EMPTY_FORM = {
@@ -147,8 +129,6 @@ export default function AdminPage() {
     useState<OnboardingSettings>(defaultOnboardingSettings);
   const [isSavingOnboardingSettings, setIsSavingOnboardingSettings] =
     useState(false);
-  const [editUploadingIds, setEditUploadingIds] = useState<Set<string>>(new Set());
-  const editImageInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
 
   useEffect(() => {
     return onAuthStateChanged(firebaseAuth, (user) => {
@@ -974,82 +954,6 @@ export default function AdminPage() {
                                   rows={2}
                                   className="w-full resize-none rounded-lg border border-slate-200 px-3 py-1.5 text-xs outline-none focus:border-slate-400"
                                 />
-                                {/* Images */}
-                                <div className="space-y-1.5">
-                                  <div className="flex items-center justify-between">
-                                    <p className="text-xs font-semibold text-slate-400">이미지 ({option.imageUrls.length}개)</p>
-                                    <button type="button" onClick={() => editImageInputRefs.current[option.id]?.click()} disabled={editUploadingIds.has(option.id)}
-                                      className="flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs font-semibold text-slate-500 hover:bg-slate-50 disabled:opacity-50">
-                                      <UploadSimpleIcon size={12} />{editUploadingIds.has(option.id) ? "업로드 중..." : "이미지 추가"}
-                                    </button>
-                                    <input ref={(el) => { editImageInputRefs.current[option.id] = el; }} type="file" accept="image/*" multiple className="hidden"
-                                      onChange={async (e) => {
-                                        const files = Array.from(e.target.files ?? []); if (!files.length) return;
-                                        setEditUploadingIds((s) => new Set(s).add(option.id));
-                                        try {
-                                          const urls = await Promise.all(files.map(async (f, i) => {
-                                            const ext = f.name.split(".").pop() || "jpg";
-                                            const imgRef = storageRef(storage, `missions/options/${option.id}-${Date.now()}-${i}/image.${ext}`);
-                                            await uploadBytes(imgRef, f);
-                                            return getDownloadURL(imgRef);
-                                          }));
-                                          updateEditOption(option.id, {
-                                            imageUrls: [...option.imageUrls, ...urls],
-                                            imageAlts: [...(option.imageAlts ?? []), ...urls.map(() => "")],
-                                            imageDimensions: [...(option.imageDimensions ?? []), ...urls.map(() => ({ w: 0, h: 0 }))],
-                                          });
-                                        } finally {
-                                          setEditUploadingIds((s) => { const n = new Set(s); n.delete(option.id); return n; });
-                                          e.target.value = "";
-                                        }
-                                      }} />
-                                  </div>
-                                  {option.imageUrls.length > 0 && (
-                                    <div className="grid grid-cols-3 gap-1.5">
-                                      {option.imageUrls.map((url: string, i: number) => (
-                                        <div key={i} className="relative group space-y-1">
-                                          <div className="relative">
-                                            <img
-                                              src={imageSrc(url)}
-                                              alt=""
-                                              className="h-20 w-full rounded-lg object-cover border border-slate-100"
-                                              onLoad={(e) => {
-                                                const { naturalWidth: w, naturalHeight: h } = e.currentTarget;
-                                                if (!w || !h) return;
-                                                const dims = [...(option.imageDimensions ?? option.imageUrls.map(() => ({ w: 0, h: 0 })))];
-                                                dims[i] = { w, h };
-                                                updateEditOption(option.id, { imageDimensions: dims });
-                                              }}
-                                              onError={(e) => {
-                                                const img = e.currentTarget;
-                                                if (img.dataset.fallback === "1") return;
-                                                img.dataset.fallback = "1";
-                                                img.src = fallbackImageSrc(url);
-                                              }}
-                                            />
-                                            <button type="button" onClick={() => updateEditOption(option.id, {
-                                              imageUrls: option.imageUrls.filter((_: string, j: number) => j !== i),
-                                              imageAlts: (option.imageAlts ?? []).filter((_: string, j: number) => j !== i),
-                                              imageDimensions: (option.imageDimensions ?? []).filter((_: { w: number; h: number }, j: number) => j !== i),
-                                            })}
-                                              className="absolute top-0.5 right-0.5 hidden group-hover:flex h-4 w-4 items-center justify-center rounded-full bg-black/60 text-white text-xs">✕</button>
-                                          </div>
-                                          <textarea
-                                            placeholder="이미지 설명 (alt)"
-                                            rows={3}
-                                            value={(option.imageAlts ?? [])[i] ?? ""}
-                                            onChange={(e) => {
-                                              const alts = [...(option.imageAlts ?? option.imageUrls.map(() => ""))];
-                                              alts[i] = e.target.value;
-                                              updateEditOption(option.id, { imageAlts: alts });
-                                            }}
-                                            className="w-full resize-none rounded-md border border-slate-200 px-1.5 py-1 text-[11px] text-slate-600 outline-none focus:border-slate-400"
-                                          ></textarea>
-                                        </div>
-                                      ))}
-                                    </div>
-                                  )}
-                                </div>
                                 {/* Content — markdown */}
                                 <div className="space-y-1.5">
                                   <p className="text-xs font-semibold text-slate-400">콘텐츠 (마크다운)</p>
@@ -1081,35 +985,6 @@ export default function AdminPage() {
                         </>
                       ) : (
                         <>
-                          {(() => {
-                            const options = normalizeOptions(mission.options);
-                            const imageUrls = options.flatMap(
-                              (option) => option.imageUrls,
-                            );
-                            return imageUrls.length > 0 ? (
-                              <div className="flex gap-2 overflow-x-auto pb-1">
-                                {imageUrls.slice(0, 8).map((url, index) => (
-                                  <img
-                                    key={`${url}-${index}`}
-                                    src={imageSrc(url)}
-                                    alt=""
-                                    className="h-16 w-20 shrink-0 rounded-xl border border-slate-100 object-cover"
-                                    onError={(e) => {
-                                      const img = e.currentTarget;
-                                      if (img.dataset.fallback === "1") return;
-                                      img.dataset.fallback = "1";
-                                      img.src = fallbackImageSrc(url);
-                                    }}
-                                  />
-                                ))}
-                                {imageUrls.length > 8 && (
-                                  <div className="flex h-16 w-20 shrink-0 items-center justify-center rounded-xl border border-slate-100 bg-slate-50 text-xs font-semibold text-slate-400">
-                                    +{imageUrls.length - 8}
-                                  </div>
-                                )}
-                              </div>
-                            ) : null;
-                          })()}
                           <div className="flex items-center gap-3">
                             <p className="text-sm font-semibold text-slate-900 truncate">
                               {mission.title}
@@ -1131,13 +1006,7 @@ export default function AdminPage() {
                             </p>
                           )}
                           <p className="text-xs text-slate-400">
-                            옵션 {mission.options?.length ?? 0}개 · 이미지{" "}
-                            {normalizeOptions(mission.options).reduce(
-                              (count, option) =>
-                                count + option.imageUrls.length,
-                              0,
-                            )}
-                            개
+                            옵션 {mission.options?.length ?? 0}개
                           </p>
                           <p className="text-xs text-slate-400">
                             {mission.startDate} – {mission.endDate}

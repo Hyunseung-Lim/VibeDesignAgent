@@ -37,6 +37,8 @@ type Message = {
   createdAt?: number;
   citedElement?: { selector: string; artboardId: string } | null;
   citedReferences?: { id: string; title: string; imageUrl?: string }[] | null;
+  citedDesignSpecTitle?: string | null;
+  citedTexts?: string[] | null;
 };
 
 type ActivityLogEvent = {
@@ -87,9 +89,6 @@ type MissionOption = {
   id: string;
   title: string;
   description: string;
-  imageUrls: string[];
-  imageAlts?: string[];
-  imageDimensions?: { w: number; h: number }[];
   content: string;
   device?: Device;
 };
@@ -237,12 +236,6 @@ function normalizeMissionOptions(
       title: option.title ?? "",
       description: option.description ?? "",
       device: option.device,
-      // backward compat: old data has imageUrl (string), new data has imageUrls (string[])
-      imageUrls:
-        option.imageUrls ??
-        ((option as unknown as { imageUrl?: string }).imageUrl
-          ? [(option as unknown as { imageUrl: string }).imageUrl]
-          : []),
       content: option.content ?? "",
     }));
   if (options.length > 0) return options;
@@ -252,7 +245,6 @@ function normalizeMissionOptions(
         id: "legacy-option",
         title: mission.title || "미션 옵션",
         description: mission.description || "",
-        imageUrls: [],
         content: mission.description || "",
       },
     ];
@@ -264,18 +256,10 @@ function optionBrief(option: MissionOption | null) {
   if (!option) return "";
   return [
     option.description,
-    option.imageUrls?.length
-      ? `웹/앱에 들어가야 하는 이미지:\n${option.imageUrls.join("\n")}`
-      : "",
     option.content ? `웹/앱에 들어가야 하는 콘텐츠:\n${option.content}` : "",
   ]
     .filter(Boolean)
     .join("\n\n");
-}
-
-function proxiedImageSrc(url: string) {
-  if (!url || url.startsWith("data:") || url.startsWith("blob:")) return url;
-  return `/api/image-proxy?url=${encodeURIComponent(url)}`;
 }
 
 function formatLocalDate(date: Date) {
@@ -300,7 +284,6 @@ function createDefaultOnboardingMissionData() {
         title: "PC 자유주제",
         description: "PC 화면 기준으로 자유롭게 웹/앱 아이디어를 진행합니다.",
         device: "desktop" as Device,
-        imageUrls: [],
         content:
           "자유주제로 랜딩 페이지, 서비스 화면, 포트폴리오, 커머스 등 원하는 웹/앱 화면을 만들어보세요.",
       },
@@ -309,7 +292,6 @@ function createDefaultOnboardingMissionData() {
         title: "모바일 자유주제",
         description: "모바일 화면 기준으로 자유롭게 앱/웹 아이디어를 진행합니다.",
         device: "mobile" as Device,
-        imageUrls: [],
         content:
           "자유주제로 온보딩, 홈 화면, 상세 화면, 예약/구독/커머스 등 원하는 모바일 화면을 만들어보세요.",
       },
@@ -1150,17 +1132,6 @@ function normalizeMockupActionPrompt(rawPrompt: string) {
   return prompt;
 }
 
-function mockupImageDeliveryStatus(imageUrls?: string[], isNew?: boolean) {
-  const count = imageUrls?.filter(Boolean).length ?? 0;
-  if (count === 0) {
-    return "참고: 현재 선택한 미션 옵션에 등록된 이미지가 없어 Stitch에 전달할 이미지가 없습니다.";
-  }
-  if (isNew && count >= 1) {
-    return `확인: 미션 이미지 1개를 Stitch에 직접 업로드합니다${count > 1 ? ` (나머지 ${count - 1}개는 URL로 전달)` : ""}.`;
-  }
-  return `확인: 미션 이미지 ${count}개 URL을 Stitch에 함께 전달합니다.`;
-}
-
 function cleanMessageContentForModel(content: string) {
   return content
     .replace(/\[CREATE_NOTE:\s*\{[\s\S]*?\}\]/g, "[노트 생성]")
@@ -1511,13 +1482,6 @@ export default function MainScreenPage() {
   const [activeOptionPreviewId, setActiveOptionPreviewId] = useState<
     string | null
   >(null);
-  const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
-  const [loadedImageUrls, setLoadedImageUrls] = useState<Set<string>>(
-    new Set(),
-  );
-  const [failedImageUrls, setFailedImageUrls] = useState<Set<string>>(
-    new Set(),
-  );
   const [timerStartedAt, setTimerStartedAt] = useState<number | null>(null);
   const [timerDisplay, setTimerDisplay] = useState<string>("");
   const [activeIdeaTab, setActiveIdeaTab] = useState("idea");
@@ -1629,81 +1593,6 @@ export default function MainScreenPage() {
   useEffect(() => {
     missionOptionsRef.current = missionOptions;
   }, [missionOptions]);
-
-  const getMissionReferenceImageUrls = useCallback(() => {
-    const options =
-      missionOptionsRef.current.length > 0
-        ? missionOptionsRef.current
-        : missionOptions;
-    const selectedId = selectedOptionIdRef.current ?? selectedOptionId;
-    const selected =
-      (selectedId ? options.find((option) => option.id === selectedId) : null) ??
-      activeOption;
-
-    if (selected) {
-      return Array.from(new Set((selected.imageUrls ?? []).filter(Boolean)));
-    }
-
-    return Array.from(
-      new Set(options.flatMap((option) => option.imageUrls ?? []).filter(Boolean)),
-    );
-  }, [activeOption, missionOptions, selectedOptionId]);
-
-  const getMissionReferenceImageAlts = useCallback(() => {
-    const options =
-      missionOptionsRef.current.length > 0
-        ? missionOptionsRef.current
-        : missionOptions;
-    const selectedId = selectedOptionIdRef.current ?? selectedOptionId;
-    const selected =
-      (selectedId ? options.find((option) => option.id === selectedId) : null) ??
-      activeOption;
-
-    const src = selected
-      ? { urls: selected.imageUrls ?? [], alts: selected.imageAlts ?? [] }
-      : {
-          urls: options.flatMap((o) => o.imageUrls ?? []),
-          alts: options.flatMap((o) => o.imageAlts ?? []),
-        };
-
-    const seen = new Set<string>();
-    const result: string[] = [];
-    src.urls.forEach((url, i) => {
-      if (url && !seen.has(url)) {
-        seen.add(url);
-        result.push(src.alts[i] ?? "");
-      }
-    });
-    return result;
-  }, [activeOption, missionOptions, selectedOptionId]);
-
-  const getMissionReferenceImageDimensions = useCallback(() => {
-    const options =
-      missionOptionsRef.current.length > 0
-        ? missionOptionsRef.current
-        : missionOptions;
-    const selectedId = selectedOptionIdRef.current ?? selectedOptionId;
-    const selected =
-      (selectedId ? options.find((option) => option.id === selectedId) : null) ??
-      activeOption;
-
-    const src = selected
-      ? { urls: selected.imageUrls ?? [], dims: selected.imageDimensions ?? [] }
-      : {
-          urls: options.flatMap((o) => o.imageUrls ?? []),
-          dims: options.flatMap((o) => o.imageDimensions ?? []),
-        };
-
-    const seen = new Set<string>();
-    const result: { w: number; h: number }[] = [];
-    src.urls.forEach((url, i) => {
-      if (url && !seen.has(url)) {
-        seen.add(url);
-        result.push(src.dims[i] ?? { w: 0, h: 0 });
-      }
-    });
-    return result;
-  }, [activeOption, missionOptions, selectedOptionId]);
 
   useEffect(() => {
     if (!designContextMenu) return;
@@ -2230,17 +2119,6 @@ export default function MainScreenPage() {
     return () => clearInterval(id);
   }, [timerStartedAt, missionDurationMinutes]);
 
-  // Preload all option images when options are available
-  useEffect(() => {
-    const allUrls = missionOptions.flatMap((o) => o.imageUrls ?? []);
-    allUrls.forEach((url) => {
-      if (!url) return;
-      const img = new window.Image();
-      img.onload = () => setLoadedImageUrls((prev) => new Set(prev).add(url));
-      img.src = url;
-    });
-  }, [missionOptions]);
-
   useEffect(() => {
     chatBottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
@@ -2584,6 +2462,10 @@ export default function MainScreenPage() {
               imageUrl: r.imageUrl,
             }))
           : null,
+      citedDesignSpecTitle: citedDesignSpecId
+        ? (designSpecs.find((s) => s.id === citedDesignSpecId)?.title ?? null)
+        : null,
+      citedTexts: citedTexts.length > 0 ? [...citedTexts] : null,
     };
     const assistantId = crypto.randomUUID();
     const assistantMsg: Message = {
@@ -2592,7 +2474,6 @@ export default function MainScreenPage() {
       content: "",
       createdAt: Date.now(),
     };
-    const missionReferenceImageUrls = getMissionReferenceImageUrls();
     const manualReference = parseManualReferencePrompt(text);
 
     setMessages((prev) => [...prev, userMsg, assistantMsg]);
@@ -2701,10 +2582,6 @@ export default function MainScreenPage() {
             ]
               .filter(Boolean)
               .join("\n\n") || undefined,
-          missionImageUrls:
-            missionReferenceImageUrls.length > 0
-              ? missionReferenceImageUrls
-              : undefined,
           device,
           activeIdea: ideas.find((i) => i.id === activeIdeaId) ?? undefined,
           userMemory:
@@ -2936,22 +2813,6 @@ export default function MainScreenPage() {
           return;
         }
 
-        const referenceImageUrls = getMissionReferenceImageUrls();
-        const referenceImageAlts = getMissionReferenceImageAlts();
-        const referenceImageDimensions = getMissionReferenceImageDimensions();
-        setMessages((prev) =>
-          prev.map((m) =>
-            m.id === assistantId
-              ? {
-                  ...m,
-                  content:
-                    m.content +
-                    `\n\n${mockupImageDeliveryStatus(referenceImageUrls, isNew)}`,
-                }
-              : m,
-          ),
-        );
-
         setIsGeneratingMockup(true);
         setMockupOperation(isNew ? "generate" : "edit");
         setGeneratingMockupIdeaId(mockupIdeaId);
@@ -2984,7 +2845,7 @@ export default function MainScreenPage() {
             const elapsed = Date.now() - progressStartedAt;
             const estimated = Math.min(
               88,
-              18 + Math.floor((elapsed / 115_000) * 70),
+              18 + Math.floor((elapsed / 170_000) * 70),
             );
             setMockupProgress((prev) =>
               prev
@@ -3002,7 +2863,7 @@ export default function MainScreenPage() {
           }, 1000);
           const stitchTimeout = setTimeout(
             () => stitchController.abort(),
-            115_000,
+            175_000,
           );
           let res: Response;
           try {
@@ -3015,14 +2876,6 @@ export default function MainScreenPage() {
                 device,
                 projectId: stitchProjectId || undefined,
                 screenId: targetArtboard?.stitchScreenId || undefined,
-                referenceImageUrls:
-                  referenceImageUrls.length > 0 ? referenceImageUrls : undefined,
-                referenceImageAlts:
-                  referenceImageAlts.some(Boolean) ? referenceImageAlts : undefined,
-                referenceImageDimensions:
-                  referenceImageDimensions.some((d) => d.w > 0)
-                    ? referenceImageDimensions
-                    : undefined,
               }),
             });
           } finally {
@@ -3037,28 +2890,6 @@ export default function MainScreenPage() {
           const data = await res.json();
           if (data.error) throw new Error(data.error);
           setMockupProgress({ percent: 96, label: "아트보드 배치 중" });
-          const receivedReferenceImageCount =
-            typeof data.referenceImageCount === "number"
-              ? data.referenceImageCount
-              : null;
-          if (
-            receivedReferenceImageCount !== null &&
-            receivedReferenceImageCount !== referenceImageUrls.length
-          ) {
-            setMessages((prev) =>
-              prev.map((m) =>
-                m.id === assistantId
-                  ? {
-                      ...m,
-                      content:
-                        m.content +
-                        `\n\n⚠️ 이미지 URL 전달 확인값이 다릅니다. 클라이언트 ${referenceImageUrls.length}개 / 서버 ${receivedReferenceImageCount}개`,
-                    }
-                  : m,
-              ),
-            );
-          }
-
           if (data.projectId) setStitchProjectId(data.projectId);
 
           if (isNew) {
@@ -3449,7 +3280,6 @@ export default function MainScreenPage() {
     missionId,
     fitToCanvasForIdea,
     activeOption,
-    getMissionReferenceImageUrls,
     parentMissionTitle,
     parentMissionBrief,
     appendActivityLog,
@@ -3585,7 +3415,6 @@ export default function MainScreenPage() {
   };
   const isGeneratingCurrentIdeaMockup =
     isGeneratingMockup && generatingMockupIdeaId === activeIdeaId;
-  const activeMissionImageCount = getMissionReferenceImageUrls().length;
   const exportMessageLogCsv = () => {
     const exportedAt = new Date().toISOString();
     const selectedOption = missionOptions.find(
@@ -3887,11 +3716,6 @@ export default function MainScreenPage() {
           {mockupProgress && (
             <p className="text-xs font-semibold text-white/75">
               {mockupProgress.percent}% · {mockupProgress.label}
-            </p>
-          )}
-          {activeMissionImageCount > 0 && (
-            <p className="text-xs font-medium text-sky-100">
-              이미지 {activeMissionImageCount}개 URL 전달됨
             </p>
           )}
           {!isReadOnly && (
@@ -4333,55 +4157,6 @@ export default function MainScreenPage() {
                       </p>
                     )}
 
-                    {/* Images — horizontal scroll with skeleton */}
-                    {option.imageUrls?.length > 0 && (
-                      <div className="space-y-2">
-                        <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">
-                          이미지
-                        </p>
-                        <div className="flex gap-4 overflow-x-auto pb-2">
-                          {option.imageUrls.map((url, i) => (
-                            <div key={i} className="relative h-72 shrink-0">
-                              {!loadedImageUrls.has(url) && (
-                                <div className="h-72 w-64 rounded-2xl bg-slate-200 animate-pulse" />
-                              )}
-                              <img
-                                src={proxiedImageSrc(url)}
-                                alt={`image ${i + 1}`}
-                                onClick={() => setLightboxUrl(url)}
-                                onLoad={() => {
-                                  setLoadedImageUrls((prev) =>
-                                    new Set(prev).add(url),
-                                  );
-                                  setFailedImageUrls((prev) => {
-                                    const next = new Set(prev);
-                                    next.delete(url);
-                                    return next;
-                                  });
-                                }}
-                                className={`h-72 w-auto rounded-2xl border border-slate-100 object-contain cursor-zoom-in transition-opacity duration-300 ${loadedImageUrls.has(url) ? "opacity-100" : "opacity-0 absolute inset-0"}`}
-                                onError={(e) => {
-                                  const img = e.currentTarget;
-                                  setLoadedImageUrls((prev) =>
-                                    new Set(prev).add(url),
-                                  );
-                                  setFailedImageUrls((prev) =>
-                                    new Set(prev).add(url),
-                                  );
-                                  img.style.display = "none";
-                                }}
-                              />
-                              {failedImageUrls.has(url) && (
-                                <div className="flex h-72 w-64 items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 text-center text-xs text-slate-400">
-                                  이미지를 불러오지 못했습니다.
-                                </div>
-                              )}
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-
                     {/* Content — markdown */}
                     {option.content && (
                       <div className="space-y-2">
@@ -4661,48 +4436,6 @@ export default function MainScreenPage() {
                               >
                                 {activeOption.content}
                               </ReactMarkdown>
-                            </div>
-                          )}
-                          {(activeOption.imageUrls ?? []).length > 0 && (
-                            <div className="flex gap-3 overflow-x-auto pb-1">
-                              {(activeOption.imageUrls ?? []).map((url, i) => (
-                                <div key={i} className="relative shrink-0">
-                                  {!loadedImageUrls.has(url) && (
-                                    <div className="h-48 w-48 rounded-2xl bg-slate-200 animate-pulse" />
-                                  )}
-                                  <img
-                                    src={proxiedImageSrc(url)}
-                                    alt=""
-                                    onClick={() => setLightboxUrl(url)}
-                                    onLoad={() => {
-                                      setLoadedImageUrls((prev) =>
-                                        new Set(prev).add(url),
-                                      );
-                                      setFailedImageUrls((prev) => {
-                                        const next = new Set(prev);
-                                        next.delete(url);
-                                        return next;
-                                      });
-                                    }}
-                                    className={`h-48 w-auto rounded-2xl border border-slate-100 object-contain cursor-zoom-in transition-opacity duration-300 ${loadedImageUrls.has(url) ? "opacity-100" : "opacity-0 absolute inset-0"}`}
-                                    onError={(e) => {
-                                      const img = e.currentTarget;
-                                      setLoadedImageUrls((prev) =>
-                                        new Set(prev).add(url),
-                                      );
-                                      setFailedImageUrls((prev) =>
-                                        new Set(prev).add(url),
-                                      );
-                                      img.style.display = "none";
-                                    }}
-                                  />
-                                  {failedImageUrls.has(url) && (
-                                    <div className="flex h-48 w-48 items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 text-center text-xs text-slate-400">
-                                      이미지를 불러오지 못했습니다.
-                                    </div>
-                                  )}
-                                </div>
-                              ))}
                             </div>
                           )}
                         </div>
@@ -5272,11 +5005,6 @@ export default function MainScreenPage() {
                                   {mockupOperation === "edit" ? "수정" : "생성"}{" "}
                                   중...
                                 </p>
-                                <p className="text-xs text-slate-400">
-                                  {activeMissionImageCount > 0
-                                    ? `미션 이미지 ${activeMissionImageCount}개 URL 전달됨`
-                                    : "전달할 미션 이미지 없음"}
-                                </p>
                                 {!isReadOnly && (
                                   <button
                                     onClick={cancelMockupGeneration}
@@ -5530,6 +5258,26 @@ export default function MainScreenPage() {
                               ))}
                             </div>
                           )}
+                        {msg.citedDesignSpecTitle && (
+                          <div className="flex justify-end">
+                            <span className="flex items-center gap-1.5 rounded-full bg-white/20 px-2.5 py-0.5 text-xs text-white/80">
+                              <span className="h-1.5 w-1.5 rounded-full bg-indigo-300" />
+                              {msg.citedDesignSpecTitle}
+                            </span>
+                          </div>
+                        )}
+                        {msg.citedTexts && msg.citedTexts.length > 0 && (
+                          <div className="flex flex-wrap justify-end gap-1">
+                            {msg.citedTexts.map((t, i) => (
+                              <span
+                                key={i}
+                                className="max-w-48 truncate rounded-full bg-white/20 px-2 py-0.5 text-xs text-white/80"
+                              >
+                                "{t}"
+                              </span>
+                            ))}
+                          </div>
+                        )}
                         <div>{msg.content}</div>
                       </div>
                     ) : msg.content ? (
@@ -5904,26 +5652,6 @@ export default function MainScreenPage() {
         </div>
       )}
 
-      {/* Lightbox */}
-      {lightboxUrl && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm"
-          onClick={() => setLightboxUrl(null)}
-        >
-          <img
-            src={lightboxUrl}
-            alt=""
-            className="max-h-[90vh] max-w-[90vw] rounded-2xl object-contain shadow-2xl"
-            onClick={(e) => e.stopPropagation()}
-          />
-          <button
-            onClick={() => setLightboxUrl(null)}
-            className="absolute right-5 top-5 flex h-9 w-9 items-center justify-center rounded-full bg-white/10 text-white hover:bg-white/20"
-          >
-            <XIcon size={18} />
-          </button>
-        </div>
-      )}
     </div>
   );
 }
