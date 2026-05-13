@@ -9,7 +9,7 @@ import { collection, onSnapshot, orderBy, query } from "firebase/firestore";
 import { firebaseAuth, db } from "@/lib/firebase";
 import { DeviceMobileIcon, MonitorIcon } from "@phosphor-icons/react";
 
-const ADMIN_EMAILS = ["03leesun@gmail.com"];
+const ADMIN_EMAILS = ["03leesun@gmail.com", "charlie9807@gmail.com"];
 const ONBOARDING_MISSION_ID = "onboarding";
 
 type Mission = {
