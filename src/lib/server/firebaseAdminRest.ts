@@ -14,7 +14,18 @@ type FirestoreValue =
   | { integerValue: string }
   | { doubleValue: number }
   | { nullValue: "NULL_VALUE" }
-  | { timestampValue: string };
+  | { timestampValue: string }
+  | { arrayValue: { values?: FirestoreValue[] } }
+  | { mapValue: { fields?: Record<string, FirestoreValue> } };
+
+type FirestoreDecodedValue =
+  | string
+  | boolean
+  | number
+  | null
+  | undefined
+  | FirestoreDecodedValue[]
+  | { [key: string]: FirestoreDecodedValue };
 
 const accessTokenCache = new Map<string, { token: string; expiresAt: number }>();
 let serviceAccountCache: ServiceAccount | null = null;
@@ -197,22 +208,43 @@ function encodeFirestoreValue(value: unknown): FirestoreValue {
   if (typeof value === "number") return { doubleValue: value };
   if (value === null || value === undefined) return { nullValue: "NULL_VALUE" };
   if (value instanceof Date) return { timestampValue: value.toISOString() };
+  if (Array.isArray(value)) {
+    return { arrayValue: { values: value.map(encodeFirestoreValue) } };
+  }
+  if (typeof value === "object") {
+    return {
+      mapValue: {
+        fields: Object.fromEntries(
+          Object.entries(value as Record<string, unknown>).map(([key, item]) => [
+            key,
+            encodeFirestoreValue(item),
+          ]),
+        ),
+      },
+    };
+  }
   return { stringValue: String(value) };
 }
 
-function decodeFirestoreValue(value: FirestoreValue | undefined) {
+function decodeFirestoreValue(
+  value: FirestoreValue | undefined,
+): FirestoreDecodedValue {
   if (!value) return undefined;
   if ("stringValue" in value) return value.stringValue;
   if ("booleanValue" in value) return value.booleanValue;
   if ("integerValue" in value) return Number(value.integerValue);
   if ("doubleValue" in value) return value.doubleValue;
   if ("timestampValue" in value) return value.timestampValue;
+  if ("arrayValue" in value) {
+    return (value.arrayValue.values ?? []).map(decodeFirestoreValue);
+  }
+  if ("mapValue" in value) return decodeFirestoreFields(value.mapValue.fields);
   return null;
 }
 
 export function decodeFirestoreFields(
   fields: Record<string, FirestoreValue> | undefined,
-) {
+): Record<string, FirestoreDecodedValue> {
   return Object.fromEntries(
     Object.entries(fields ?? {}).map(([key, value]) => [
       key,

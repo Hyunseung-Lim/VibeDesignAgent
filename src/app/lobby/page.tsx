@@ -37,6 +37,13 @@ type MissionProgress = {
   timerStartedAt: number | null;
 };
 
+type SessionRunSummary = {
+  runId: string;
+  missionId: string;
+  missionTitle?: string;
+  updatedAt?: number;
+};
+
 function missionProgress(data: Record<string, unknown>): MissionProgress {
   const timerStartedAt =
     typeof data.timerStartedAt === "number" ? data.timerStartedAt : null;
@@ -86,6 +93,9 @@ export default function LobbyPage() {
   const [missions, setMissions] = useState<Mission[]>([]);
   const [missionProgressById, setMissionProgressById] = useState<
     Record<string, MissionProgress>
+  >({});
+  const [sessionRunsByMissionId, setSessionRunsByMissionId] = useState<
+    Record<string, SessionRunSummary[]>
   >({});
   const [onboardingSettings, setOnboardingSettings] =
     useState<OnboardingSettings>(defaultOnboardingSettings);
@@ -151,22 +161,87 @@ export default function LobbyPage() {
   useEffect(() => {
     if (!userId) {
       setMissionProgressById({});
+      setSessionRunsByMissionId({});
       return;
     }
-    return onSnapshot(
+    let legacyProgress: Record<string, MissionProgress> = {};
+    let runProgress: Record<string, MissionProgress> = {};
+    const publishProgress = () => {
+      const merged = { ...legacyProgress };
+      for (const [missionId, progress] of Object.entries(runProgress)) {
+        const existing = merged[missionId];
+        merged[missionId] = {
+          hasActivity: Boolean(existing?.hasActivity || progress.hasActivity),
+          timerStartedAt: Math.max(
+            Number(existing?.timerStartedAt ?? 0),
+            Number(progress.timerStartedAt ?? 0),
+          ) || null,
+        };
+      }
+      setMissionProgressById(merged);
+    };
+    const unsubscribeLegacy = onSnapshot(
       collection(db, "sessions", userId, "missions"),
       (snap) => {
-        setMissionProgressById(
-          Object.fromEntries(
-            snap.docs.map((missionDoc) => [
-              missionDoc.id,
-              missionProgress(missionDoc.data() as Record<string, unknown>),
-            ]),
-          ),
+        legacyProgress = Object.fromEntries(
+          snap.docs.map((missionDoc) => [
+            missionDoc.id,
+            missionProgress(missionDoc.data() as Record<string, unknown>),
+          ]),
         );
+        publishProgress();
       },
       () => setMissionProgressById({}),
     );
+    const unsubscribeRuns = onSnapshot(
+      collection(db, "sessions", userId, "missionRuns"),
+      (snap) => {
+        runProgress = {};
+        const runsByMissionId: Record<string, SessionRunSummary[]> = {};
+        snap.docs.forEach((runDoc) => {
+          const data = runDoc.data() as Record<string, unknown>;
+          const missionId =
+            typeof data.missionId === "string" ? data.missionId : "";
+          if (!missionId) return;
+          const run = {
+            runId: runDoc.id,
+            missionId,
+            missionTitle:
+              typeof data.missionTitle === "string"
+                ? data.missionTitle
+                : undefined,
+            updatedAt:
+              typeof data.updatedAt === "number" ? data.updatedAt : undefined,
+          };
+          runsByMissionId[missionId] = [
+            ...(runsByMissionId[missionId] ?? []),
+            run,
+          ];
+          const progress = missionProgress(data);
+          const existing = runProgress[missionId];
+          runProgress[missionId] = {
+            hasActivity: Boolean(existing?.hasActivity || progress.hasActivity),
+            timerStartedAt: Math.max(
+              Number(existing?.timerStartedAt ?? 0),
+              Number(progress.timerStartedAt ?? 0),
+            ) || null,
+          };
+        });
+        Object.values(runsByMissionId).forEach((runs) =>
+          runs.sort((a, b) => Number(b.updatedAt ?? 0) - Number(a.updatedAt ?? 0)),
+        );
+        setSessionRunsByMissionId(runsByMissionId);
+        publishProgress();
+      },
+      () => {
+        setSessionRunsByMissionId({});
+        setMissionProgressById(legacyProgress);
+      },
+    );
+    return () => {
+      unsubscribeLegacy();
+      unsubscribeRuns();
+    };
   }, [userId]);
 
   useEffect(() => {
@@ -198,6 +273,10 @@ export default function LobbyPage() {
   }, [isMenuOpen]);
 
   const userInitial = (userName?.trim()?.charAt(0) || "U").toUpperCase();
+  const startNewSessionRun = (missionId: string) => {
+    const runId = `${missionId}-${Date.now()}`;
+    router.push(`/main/${missionId}?run=${encodeURIComponent(runId)}`);
+  };
   const onboardingMission: Mission = {
     id: ONBOARDING_MISSION_ID,
     title: "온보딩 미션",
@@ -353,20 +432,21 @@ export default function LobbyPage() {
                     ? { hasActivity: true, timerStartedAt: null }
                     : null);
                 const status = derivedStatus(progress, mission.durationMinutes);
+                const latestRun = sessionRunsByMissionId[mission.id]?.[0];
                 return (
                   <article
                     key={mission.id}
                     onClick={() => {
                       if (isCheckingOnboarding) return;
                       if (isOnboardingMission) {
-                        router.push(`/main/${ONBOARDING_MISSION_ID}`);
+                        startNewSessionRun(ONBOARDING_MISSION_ID);
                         return;
                       }
                       if (isOnboardingRequired) {
-                        router.push(`/main/${ONBOARDING_MISSION_ID}`);
+                        startNewSessionRun(ONBOARDING_MISSION_ID);
                         return;
                       }
-                      router.push(`/main/${mission.id}`);
+                      startNewSessionRun(mission.id);
                     }}
                     className={`rounded-3xl border border-slate-100 bg-white p-6 shadow-sm transition ${
                       (!isOnboardingMission && isOnboardingRequired) ||
@@ -431,6 +511,44 @@ export default function LobbyPage() {
                           : "시간 제한 없음"}
                       </span>
                     </div>
+                    {progress?.hasActivity && (
+                      <div className="mt-4 flex flex-wrap gap-2">
+                        {latestRun && (
+                          <button
+                            type="button"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              router.push(
+                                `/main/${mission.id}?run=${encodeURIComponent(latestRun.runId)}`,
+                              );
+                            }}
+                            className="rounded-full border border-indigo-100 bg-indigo-50 px-3 py-1 text-xs font-semibold text-indigo-600 transition hover:bg-indigo-100"
+                          >
+                            최근 세션 이어하기
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            router.push(`/main/${mission.id}`);
+                          }}
+                          className="rounded-full border border-slate-200 px-3 py-1 text-xs font-semibold text-slate-500 transition hover:bg-slate-50 hover:text-slate-900"
+                        >
+                          기존 세션 열기
+                        </button>
+                        <button
+                          type="button"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            startNewSessionRun(mission.id);
+                          }}
+                          className="rounded-full bg-slate-900 px-3 py-1 text-xs font-semibold text-white transition hover:bg-slate-700"
+                        >
+                          새 세션 시작
+                        </button>
+                      </div>
+                    )}
                   </article>
                 );
               })}

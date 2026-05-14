@@ -9,8 +9,10 @@ import {
 export const runtime = "nodejs";
 
 const ADMIN_EMAILS = ["03leesun@gmail.com", "charlie9807@gmail.com"];
+const VERSIONED_MEMORY_COLLECTION = "memories_0_1_1";
 
 function jsonArray(value: unknown) {
+  if (Array.isArray(value)) return value.map(String).filter(Boolean);
   if (typeof value !== "string") return [];
   try {
     const parsed = JSON.parse(value);
@@ -29,6 +31,7 @@ async function load(uid: string, collection: "episodicMemories" | "semanticMemor
           {}) as Record<string, unknown>;
       return {
         id,
+        version: "0.1.0",
         type: collection === "episodicMemories" ? "episodic" : "semantic",
         ...doc,
         category: jsonArray(doc?.categoryJson),
@@ -37,6 +40,33 @@ async function load(uid: string, collection: "episodicMemories" | "semanticMemor
       };
     }),
   ) as Promise<Array<Record<string, unknown> & { id: string; type: "episodic" | "semantic" }>>;
+}
+
+async function loadVersioned(uid: string, token: string) {
+  const ids = await listFirestoreDocumentIds(
+    `users/${uid}/${VERSIONED_MEMORY_COLLECTION}`,
+    token,
+  );
+  const docs = await Promise.all(
+    ids.map(async (id) => {
+      const doc =
+        ((await getFirestoreDocument(
+          `users/${uid}/${VERSIONED_MEMORY_COLLECTION}/${id}`,
+          token,
+        )) ?? {}) as Record<string, unknown>;
+      return {
+        id,
+        version: String(doc.schemaVersion ?? "0.1.1"),
+        type: String(doc.type ?? "interaction"),
+        ...doc,
+        episode: doc.content,
+        semantic: jsonArray(doc.semantic).join("\n"),
+        keywords: jsonArray(doc.keywords),
+        timestamp: Number(doc.timestamp ?? doc.occurredAt ?? doc.createdAt ?? 0),
+      };
+    }),
+  );
+  return docs.filter((doc) => doc.type === "interaction");
 }
 
 export async function DELETE(
@@ -74,8 +104,17 @@ export async function GET(
     load(uid, "episodicMemories", token),
     load(uid, "semanticMemories", token),
   ]);
-  const memories = [...episodic, ...semantic].sort(
-    (a, b) => Number(b.timestamp ?? b.createdAt ?? 0) - Number(a.timestamp ?? a.createdAt ?? 0),
+  const versioned = await loadVersioned(uid, token);
+  const memories = [...versioned, ...episodic, ...semantic].sort(
+    (a, b) =>
+      Number((b as Record<string, unknown>).timestamp ?? (b as Record<string, unknown>).createdAt ?? 0) -
+      Number((a as Record<string, unknown>).timestamp ?? (a as Record<string, unknown>).createdAt ?? 0),
   );
-  return Response.json({ memories });
+  return Response.json({
+    memories,
+    counts: {
+      "0.1.0": episodic.length + semantic.length,
+      "0.1.1": versioned.length,
+    },
+  });
 }

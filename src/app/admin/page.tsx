@@ -35,11 +35,18 @@ type Participant = {
 type AdminUser = Participant & {
   missionIds: string[];
   sessionMissionIds: string[];
+  sessionRuns?: {
+    runId: string;
+    missionId: string;
+    missionTitle?: string;
+    updatedAt?: number;
+  }[];
 };
 
 type AdminMemoryRow = {
   id: string;
-  type: "episodic" | "semantic";
+  version?: string;
+  type: "episodic" | "semantic" | "interaction" | string;
   input?: string;
   output?: string;
   timestamp?: number;
@@ -49,6 +56,9 @@ type AdminMemoryRow = {
   episode?: string;
   semantic?: string;
 };
+
+type MemoryCounts = Record<string, number>;
+type MemoryVersionTab = "0.1.0" | "0.1.1";
 
 type MissionOption = {
   id: string;
@@ -105,9 +115,11 @@ export default function AdminPage() {
   const [participants, setParticipants] = useState<Participant[]>([]);
   const [adminUsers, setAdminUsers] = useState<AdminUser[]>([]);
   const [isLoadingUsers, setIsLoadingUsers] = useState(false);
-  const [memoryModal, setMemoryModal] = useState<{ userId: string; userName: string; rows: AdminMemoryRow[] } | null>(null);
+  const [memoryModal, setMemoryModal] = useState<{ userId: string; userName: string; rows: AdminMemoryRow[]; counts: MemoryCounts } | null>(null);
+  const [memoryVersionTab, setMemoryVersionTab] = useState<MemoryVersionTab>("0.1.1");
   const [isLoadingMemory, setIsLoadingMemory] = useState(false);
   const [isDeletingMemory, setIsDeletingMemory] = useState(false);
+  const [deletingSessionsUserId, setDeletingSessionsUserId] = useState<string | null>(null);
   const [onboardingSettings, setOnboardingSettings] =
     useState<OnboardingSettings>(defaultOnboardingSettings);
   const [isSavingOnboardingSettings, setIsSavingOnboardingSettings] =
@@ -380,16 +392,61 @@ export default function AdminPage() {
       });
       if (!res.ok) throw new Error("메모리 조회 실패");
       const data = await res.json();
+      const counts = data.counts ?? {};
+      setMemoryVersionTab((counts["0.1.1"] ?? 0) > 0 ? "0.1.1" : "0.1.0");
       setMemoryModal({
         userId: user.id,
         userName: user.displayName ?? user.email ?? user.id,
         rows: Array.isArray(data.memories) ? data.memories : [],
+        counts,
       });
     } catch (e) {
       alert("메모리를 불러오지 못했습니다.");
       console.error(e);
     } finally {
       setIsLoadingMemory(false);
+    }
+  };
+
+  const backupAndDeleteSessions = async (user: AdminUser) => {
+    const label = user.displayName ?? user.email ?? user.id;
+    if (
+      !confirm(
+        `${label}의 세션 데이터와 프레젠테이션 파일을 백업한 뒤 삭제할까요?\n\n메모리 컬렉션은 삭제하지 않습니다.`,
+      )
+    ) {
+      return;
+    }
+    const token = await getAdminToken();
+    if (!token) return;
+    setDeletingSessionsUserId(user.id);
+    try {
+      const res = await fetch(`/api/admin/users/${user.id}/sessions`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ confirm: "backup-and-delete-sessions" }),
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(data?.error ?? "세션 삭제 실패");
+      alert(
+        [
+          "백업 후 세션 삭제가 완료됐습니다.",
+          `백업 경로: ${data.backupPath}`,
+          `삭제된 세션: ${data.deletedSessionMissions ?? 0}개`,
+          `삭제된 참여 기록: ${data.deletedParticipantRecords ?? 0}개`,
+          `삭제된 memoryDrafts: ${data.deletedMemoryDrafts ?? 0}개`,
+          `삭제된 Storage 파일: ${data.deletedStorageFiles ?? 0}개`,
+        ].join("\n"),
+      );
+      await loadUsers();
+    } catch (e) {
+      alert("세션 백업/삭제에 실패했습니다.");
+      console.error(e);
+    } finally {
+      setDeletingSessionsUserId(null);
     }
   };
 
@@ -414,6 +471,7 @@ export default function AdminPage() {
         missionIds: changes.missionIds ?? prev?.missionIds ?? [],
         sessionMissionIds:
           changes.sessionMissionIds ?? prev?.sessionMissionIds ?? [],
+        sessionRuns: changes.sessionRuns ?? prev?.sessionRuns ?? [],
       });
     };
 
@@ -464,9 +522,30 @@ export default function AdminPage() {
         ).catch(() => null);
         const sessionMissionIds =
           sessionMissionSnap?.docs.map((missionDoc) => missionDoc.id) ?? [];
+        const sessionRunSnap = await getDocs(
+          collection(db, "sessions", userDoc.id, "missionRuns"),
+        ).catch(() => null);
+        const sessionRuns =
+          sessionRunSnap?.docs.map((runDoc) => {
+            const data = runDoc.data() as {
+              missionId?: string;
+              missionTitle?: string;
+              updatedAt?: number;
+            };
+            return {
+              runId: runDoc.id,
+              missionId: data.missionId ?? runDoc.id,
+              missionTitle: data.missionTitle,
+              updatedAt: data.updatedAt,
+            };
+          }) ?? [];
         upsertUser(userDoc.id, {
           missionIds: Array.from(
-            new Set([...(existing?.missionIds ?? []), ...sessionMissionIds]),
+            new Set([
+              ...(existing?.missionIds ?? []),
+              ...sessionMissionIds,
+              ...sessionRuns.map((run) => run.missionId),
+            ]),
           ),
           sessionMissionIds: Array.from(
             new Set([
@@ -474,6 +553,7 @@ export default function AdminPage() {
               ...sessionMissionIds,
             ]),
           ),
+          sessionRuns: [...(existing?.sessionRuns ?? []), ...sessionRuns],
         });
       }),
     );
@@ -538,6 +618,10 @@ export default function AdminPage() {
   };
 
   if (!ready) return null;
+  const visibleMemoryRows =
+    memoryModal?.rows.filter(
+      (row) => (row.version ?? "0.1.0") === memoryVersionTab,
+    ) ?? [];
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900">
@@ -555,6 +639,9 @@ export default function AdminPage() {
               <div>
                 <p className="text-sm font-semibold text-slate-900">유저 메모리</p>
                 <p className="text-xs text-slate-400">{memoryModal.userName}</p>
+                <p className="mt-1 text-xs text-slate-400">
+                  v0.1.0 {memoryModal.counts["0.1.0"] ?? 0}개 · v0.1.1 {memoryModal.counts["0.1.1"] ?? 0}개
+                </p>
               </div>
               <button
                 type="button"
@@ -566,21 +653,40 @@ export default function AdminPage() {
                 </svg>
               </button>
             </div>
+            <div className="border-b border-slate-100 px-6 py-3">
+              <div className="inline-flex rounded-lg border border-slate-200 bg-slate-50 p-1">
+                {(["0.1.1", "0.1.0"] as const).map((version) => (
+                  <button
+                    key={version}
+                    type="button"
+                    onClick={() => setMemoryVersionTab(version)}
+                    className={`rounded-md px-3 py-1.5 text-xs font-semibold transition ${
+                      memoryVersionTab === version
+                        ? "bg-white text-slate-900 shadow-sm"
+                        : "text-slate-500 hover:text-slate-900"
+                    }`}
+                  >
+                    v{version} ({memoryModal.counts[version] ?? 0})
+                  </button>
+                ))}
+              </div>
+            </div>
             <div className="max-h-[70vh] overflow-auto px-6 py-4">
-              {memoryModal.rows.length === 0 ? (
-                <p className="text-sm text-slate-400">(확정된 메모리 없음)</p>
+              {visibleMemoryRows.length === 0 ? (
+                <p className="text-sm text-slate-400">v{memoryVersionTab} 메모리 없음</p>
               ) : (
                 <table className="w-full min-w-[960px] border-separate border-spacing-0 text-left text-xs text-slate-600">
                   <thead className="sticky top-0 bg-white text-slate-400">
                     <tr>
-                      {["Type", "Input", "Output", "Timestamp", "Category", "Subcategory", "Keywords", "Episode", "Semantic"].map((label) => (
+                      {["Version", "Type", "Input", "Output", "Timestamp", "Category", "Subcategory", "Keywords", "Episode", "Semantic"].map((label) => (
                         <th key={label} className="border-b border-slate-100 px-3 py-2 font-semibold">{label}</th>
                       ))}
                     </tr>
                   </thead>
                   <tbody>
-                    {memoryModal.rows.map((row) => (
-                      <tr key={`${row.type}-${row.id}`} className="align-top">
+                    {visibleMemoryRows.map((row) => (
+                      <tr key={`${row.version ?? "unknown"}-${row.type}-${row.id}`} className="align-top">
+                        <td className="whitespace-nowrap border-b border-slate-50 px-3 py-2 font-semibold text-slate-500">{row.version ?? "0.1.0"}</td>
                         <td className="border-b border-slate-50 px-3 py-2 font-semibold text-slate-500">{row.type}</td>
                         <td className="max-w-56 border-b border-slate-50 px-3 py-2">{row.input ?? ""}</td>
                         <td className="max-w-56 border-b border-slate-50 px-3 py-2">{row.output ?? ""}</td>
@@ -726,14 +832,45 @@ export default function AdminPage() {
                       )}
                     </div>
 
-                    <button
-                      type="button"
-                      onClick={() => openMemoryTable(user)}
-                      disabled={isLoadingMemory}
-                      className="mt-3 text-[11px] font-semibold text-indigo-500 hover:text-indigo-700 disabled:text-slate-300"
-                    >
-                      메모리 테이블 보기 →
-                    </button>
+                    {user.sessionRuns && user.sessionRuns.length > 0 && (
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        {user.sessionRuns
+                          .slice()
+                          .sort(
+                            (a, b) => Number(b.updatedAt ?? 0) - Number(a.updatedAt ?? 0),
+                          )
+                          .map((run) => (
+                            <Link
+                              key={run.runId}
+                              href={`/main/${run.missionId}?viewAs=${user.id}&run=${encodeURIComponent(run.runId)}`}
+                              className="rounded-full border border-indigo-100 bg-indigo-50 px-3 py-1 text-xs font-semibold text-indigo-600 transition hover:bg-indigo-100"
+                            >
+                              {run.missionTitle || missionTitle(run.missionId)} · run
+                            </Link>
+                          ))}
+                      </div>
+                    )}
+
+                    <div className="mt-3 flex flex-wrap items-center gap-3">
+                      <button
+                        type="button"
+                        onClick={() => openMemoryTable(user)}
+                        disabled={isLoadingMemory}
+                        className="text-[11px] font-semibold text-indigo-500 hover:text-indigo-700 disabled:text-slate-300"
+                      >
+                        메모리 테이블 보기 →
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => backupAndDeleteSessions(user)}
+                        disabled={deletingSessionsUserId === user.id}
+                        className="text-[11px] font-semibold text-red-400 hover:text-red-600 disabled:text-slate-300"
+                      >
+                        {deletingSessionsUserId === user.id
+                          ? "백업/삭제 중..."
+                          : "세션 백업 후 삭제"}
+                      </button>
+                    </div>
                   </div>
                 );
               })}
