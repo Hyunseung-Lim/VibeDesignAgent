@@ -5331,7 +5331,7 @@ export default function MainScreenPage() {
                                 key={i}
                                 className="max-w-48 truncate rounded-full bg-white/20 px-2 py-0.5 text-xs text-white/80"
                               >
-                                "{t}"
+                                &quot;{t}&quot;
                               </span>
                             ))}
                           </div>
@@ -5542,7 +5542,7 @@ export default function MainScreenPage() {
                   <div className="flex flex-col gap-1">
                     {citedTexts.map((t, i) => (
                       <span key={i} className="flex items-start gap-1 rounded-lg bg-white border border-slate-200 px-2 py-1 text-slate-600">
-                        <span className="mt-0.5 shrink-0 text-slate-300">"</span>
+                        <span className="mt-0.5 shrink-0 text-slate-300">&quot;</span>
                         <span className="line-clamp-1 flex-1">{t}</span>
                         <button
                           onClick={() => setCitedTexts((prev) => prev.filter((_, j) => j !== i))}
