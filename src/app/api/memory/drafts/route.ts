@@ -19,15 +19,18 @@ type EncodedMemory = {
   semantic: string[];
 };
 
-const MEMORY_PROMPT = `Generate a structured analysis of the following content by:
-1. Extract key concepts from the content.
-2. Summarize the specific interaction as a factual episode.
-3. Infer the user’s implicit intent and traits only when clearly supported.
+const MEMORY_PROMPT = `You will receive a structured record of one interaction turn in a UI/UX design agent session. Analyze it and return a JSON object.
+
+The input contains the following fields:
+- previous episodic memory: A one-sentence summary of the immediately preceding interaction. If this is the first turn, the value is "${FIRST_SESSION_TURN}".
+- previous agent output: The full response the agent gave in the immediately preceding turn. If this is the first turn, the value is "${FIRST_SESSION_TURN}".
+- user input: The query or instruction the user sent to the agent in this turn.
+- agent action category: The type of action the agent performed in this turn (e.g. mockup_generate, note_create, references_fetch). Use this as context, not as content to summarize.
 
 Return the response as a JSON object:
 {
   "keywords": [
-    // Salient nouns, verbs, and key concepts.
+    // Salient nouns, verbs, and key concepts from this interaction.
     // Ordered from most to least important.
     // Exclude speaker names, timestamps, and generic filler words.
     // Include at least three non-redundant keywords.
@@ -37,13 +40,15 @@ Return the response as a JSON object:
   // including the user/agent action and the immediate outcome, feedback, or decision.
 
   "semantic": [
-    // One-sentence inferences about the user's implicit intent, preferences, traits, tendencies, working style, or communication style.
+    // One-sentence inferences about the user’s implicit intent, preferences, traits, tendencies, working style, or communication style.
     // Include only inferences clearly supported by the content.
     // Do not include simple factual statements about what the user said or did.
     // Do not force or fabricate inferences.
     // Return an empty array if there is no clearly supported inference about the user.
   ]
-}`;
+}
+
+Content for analysis:`;
 
 function stringArray(value: unknown, fallback: string[] = []) {
   return Array.isArray(value)
@@ -51,15 +56,6 @@ function stringArray(value: unknown, fallback: string[] = []) {
     : fallback;
 }
 
-function jsonArray(value: unknown) {
-  if (Array.isArray(value)) return stringArray(value);
-  if (typeof value !== "string") return [];
-  try {
-    return stringArray(JSON.parse(value));
-  } catch {
-    return [];
-  }
-}
 
 function parseMemory(raw: string): EncodedMemory {
   try {
@@ -76,6 +72,43 @@ function parseMemory(raw: string): EncodedMemory {
       semantic: [],
     };
   }
+}
+
+type AgentAction = { type: string; content: string };
+
+function extractBracketContent(output: string, tag: string): string | null {
+  const marker = `[${tag}:`;
+  const idx = output.indexOf(marker);
+  if (idx === -1) return null;
+  let depth = 1;
+  let i = idx + marker.length;
+  const start = i;
+  while (i < output.length && depth > 0) {
+    if (output[i] === "[") depth++;
+    else if (output[i] === "]") depth--;
+    i++;
+  }
+  if (depth !== 0) return null;
+  return output.slice(start, i - 1).trim();
+}
+
+function extractAgentActions(output: string): AgentAction[] {
+  const actions: AgentAction[] = [];
+  const bracketTags: Array<[string, string]> = [
+    ["mockup_generate", "GENERATE_MOCKUP"],
+    ["mockup_edit", "EDIT_MOCKUP"],
+    ["note_create", "CREATE_NOTE"],
+    ["note_update", "UPDATE_NOTE"],
+    ["references_fetch", "FETCH_REFERENCES"],
+    ["design_spec_create", "CREATE_DESIGN_SPEC"],
+  ];
+  for (const [type, tag] of bracketTags) {
+    const content = extractBracketContent(output, tag);
+    if (content != null) actions.push({ type, content: content.slice(0, 1200) });
+  }
+  const presMatch = output.match(/```presentation\n([\s\S]{0,2000}?)\n```/);
+  if (presMatch) actions.push({ type: "presentation_create", content: presMatch[1].trim().slice(0, 1200) });
+  return actions;
 }
 
 function inferAgentActionCategory(output: string, interactionId: string) {
@@ -96,13 +129,10 @@ function inferAgentActionCategory(output: string, interactionId: string) {
 async function loadPreviousDraft(
   uid: string,
   missionId: string,
-  sessionRunId: string | undefined,
   timestamp: number,
   token: string,
 ) {
-  const draftPath = sessionRunId
-    ? `sessions/${uid}/missionRuns/${encodeURIComponent(sessionRunId)}/memoryDrafts`
-    : `sessions/${uid}/missions/${encodeURIComponent(missionId)}/memoryDrafts`;
+  const draftPath = `sessions/${uid}/missions/${encodeURIComponent(missionId)}/memoryDrafts`;
   const ids = await listFirestoreDocumentIds(draftPath, token);
   const drafts: Array<Record<string, unknown> & { id: string }> = await Promise.all(
     ids.map(async (id) => {
@@ -125,14 +155,12 @@ export async function POST(request: Request) {
 
   const body = (await request.json().catch(() => ({}))) as {
     missionId?: string;
-    sessionRunId?: string | null;
     interactionId?: string;
     input?: string;
     output?: string;
     timestamp?: number;
   };
   const missionId = body.missionId?.trim();
-  const sessionRunId = body.sessionRunId?.trim() || undefined;
   const interactionId = body.interactionId?.trim();
   const input = body.input?.trim() ?? "";
   const output = body.output?.trim() ?? "";
@@ -149,40 +177,32 @@ export async function POST(request: Request) {
   const previousDraft = await loadPreviousDraft(
     user.localId,
     missionId,
-    sessionRunId,
     timestamp,
     token,
   );
   const agentActionCategory = inferAgentActionCategory(output, interactionId);
-  const previousSemantic = jsonArray(previousDraft?.semanticJson);
+  const agentActions = extractAgentActions(output);
   const content = [
     `previous episodic memory: ${String(previousDraft?.episode ?? "").trim() || FIRST_SESSION_TURN}`,
     `previous agent output: ${String(previousDraft?.output ?? "").trim() || FIRST_SESSION_TURN}`,
     `user input: ${input}`,
-    `agent action category: ${agentActionCategory}`,
-    previousSemantic.length > 0
-      ? `previous semantic memory: ${previousSemantic.join(" / ")}`
-      : "",
-  ].join("\n\n");
+    `agent action category: ${agentActionCategory}${agentActions.length > 0 ? ` (${agentActions.map((a) => a.type).join(", ")})` : ""}`,
+  ].filter(Boolean).join("\n\n");
 
   const completion = await openai.chat.completions.create({
     model: "gpt-5.4-mini",
     response_format: { type: "json_object" },
     messages: [
       { role: "system", content: MEMORY_PROMPT },
-      { role: "user", content: `Content for analysis:\n${content}` },
+      { role: "user", content },
     ],
   });
   const encoded = parseMemory(completion.choices[0]?.message?.content ?? "{}");
   await patchFirestoreDocument(
-    `${sessionRunId
-      ? `sessions/${user.localId}/missionRuns/${encodeURIComponent(sessionRunId)}`
-      : `sessions/${user.localId}/missions/${encodeURIComponent(missionId)}`
-    }/memoryDrafts/${encodeURIComponent(interactionId)}`,
+    `sessions/${user.localId}/missions/${encodeURIComponent(missionId)}/memoryDrafts/${encodeURIComponent(interactionId)}`,
     {
       schemaVersion: MEMORY_SCHEMA_VERSION,
       missionId,
-      sessionRunId: sessionRunId ?? null,
       interactionId,
       input: input.slice(0, 8000),
       output: output.slice(0, 12000),
@@ -194,6 +214,7 @@ export async function POST(request: Request) {
       previousEpisode: String(previousDraft?.episode ?? "").slice(0, 2000),
       previousOutput: String(previousDraft?.output ?? "").slice(0, 12000),
       agentActionCategory,
+      agentActionsJson: JSON.stringify(agentActions),
       status: "draft",
       createdAt,
     },

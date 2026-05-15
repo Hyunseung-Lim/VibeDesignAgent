@@ -1389,8 +1389,6 @@ export default function MainScreenPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const viewAs = searchParams.get("viewAs"); // admin: view another user's session
-  const sessionRunId = searchParams.get("run")?.trim() || null;
-  const sessionStorageId = sessionRunId ?? missionId;
   const isOnboardingMission = missionId === ONBOARDING_MISSION_ID;
 
   const [messages, setMessages] = useState<Message[]>([]);
@@ -1413,11 +1411,8 @@ export default function MainScreenPage() {
   const citeMenuRef = useRef<HTMLDivElement>(null);
   const pendingCiteTextRef = useRef<string>("");
   const sessionRefFor = useCallback(
-    (uid: string) =>
-      sessionRunId
-        ? doc(db, "sessions", uid, "missionRuns", sessionRunId)
-        : doc(db, "sessions", uid, "missions", missionId),
-    [missionId, sessionRunId],
+    (uid: string) => doc(db, "sessions", uid, "missions", missionId),
+    [missionId],
   );
   const [memoryContext, setMemoryContext] = useState<MemoryContext>({
     episodic: [],
@@ -1505,7 +1500,6 @@ export default function MainScreenPage() {
           },
           body: JSON.stringify({
             missionId,
-            sessionRunId,
             interactionId,
             input,
             output,
@@ -1516,7 +1510,7 @@ export default function MainScreenPage() {
         console.warn("Unable to encode memory draft", error);
       }
     },
-    [isReadOnly, missionId, sessionRunId],
+    [isReadOnly, missionId],
   );
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -1946,7 +1940,7 @@ export default function MainScreenPage() {
     });
 
     return () => unsubMission();
-  }, [userId, missionId, sessionRunId, viewAs, isAdmin, isOnboardingMission]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [userId, missionId, viewAs, isAdmin, isOnboardingMission]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Save session to Firestore (debounced to avoid write storms during streaming)
   useEffect(() => {
@@ -1994,8 +1988,6 @@ export default function MainScreenPage() {
         clean({
           messages,
           missionId,
-          sessionRunId,
-          sessionKind: sessionRunId ? "missionRun" : "legacyMissionSession",
           artboards: artboardsToSave,
           references,
           activityLog: activityLog.slice(-500),
@@ -2017,7 +2009,6 @@ export default function MainScreenPage() {
   }, [
     userId,
     missionId,
-    sessionRunId,
     sessionRefFor,
     isReadOnly,
     messages,
@@ -3046,7 +3037,7 @@ export default function MainScreenPage() {
                 title: presentationBlock.data.title,
                 slides: presentationBlock.data.slides,
                 uid,
-                missionId: sessionStorageId,
+                missionId: missionId,
                 device: presentationMockupDevice,
                 mockupHtml: presentationMockupHtml || undefined,
                 mockupScreenshot: mockupScreenshot?.dataUrl || undefined,
@@ -3069,7 +3060,7 @@ export default function MainScreenPage() {
                     try {
                       const imgRef = storageRef(
                         storage,
-                        `presentations/${uid}/${sessionStorageId}/slide-${i}.png`,
+                        `presentations/${uid}/${missionId}/slide-${i}.png`,
                       );
                       await uploadString(imgRef, slide.imageUrl, "data_url");
                       const url = await getDownloadURL(imgRef);
@@ -3154,10 +3145,6 @@ export default function MainScreenPage() {
                     clean({
                       messages,
                       missionId,
-                      sessionRunId,
-                      sessionKind: sessionRunId
-                        ? "missionRun"
-                        : "legacyMissionSession",
                       artboards: artboardsToSave,
                       references,
                       ideas: ideasToSave,
@@ -3367,8 +3354,6 @@ export default function MainScreenPage() {
         ref,
         {
           missionId,
-          sessionRunId,
-          sessionKind: sessionRunId ? "missionRun" : "legacyMissionSession",
           selectedOptionId: option.id,
           missionTitle: option.title,
           missionBrief: optionBrief(option),
@@ -3395,7 +3380,7 @@ export default function MainScreenPage() {
           Authorization: `Bearer ${token}`,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ missionId, sessionRunId }),
+        body: JSON.stringify({ missionId }),
       });
       if (!res.ok) throw new Error(`Session completion failed: ${res.status}`);
       if (isOnboardingMission) {
@@ -3437,7 +3422,6 @@ export default function MainScreenPage() {
     );
     const sessionMeta = {
       missionId,
-      sessionRunId,
       missionTitle:
         parentMissionTitle || missionTitle || selectedOption?.title || "",
       missionOptionId: selectedOptionId ?? "",
@@ -4048,7 +4032,14 @@ export default function MainScreenPage() {
       )}
       {/* Header */}
       <header className="flex items-center justify-between border-b border-slate-200 bg-white px-6 py-4 lg:px-10">
-        <div className="space-y-1">
+        <div className="flex items-center gap-4">
+          <Link
+            href="/lobby"
+            className="flex items-center gap-1.5 rounded-full border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-800"
+          >
+            <ArrowLeftIcon size={14} />
+            로비로 돌아가기
+          </Link>
           <h1 className="text-xl font-semibold">
             {parentMissionTitle &&
             activeOption &&
@@ -4084,12 +4075,6 @@ export default function MainScreenPage() {
                   : "세션 종료"}
             </button>
           )}
-          <Link
-            href="/lobby"
-            className="rounded-full border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-800"
-          >
-            로비로 돌아가기
-          </Link>
         </div>
       </header>
 

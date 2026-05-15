@@ -35,12 +35,6 @@ type Participant = {
 type AdminUser = Participant & {
   missionIds: string[];
   sessionMissionIds: string[];
-  sessionRuns?: {
-    runId: string;
-    missionId: string;
-    missionTitle?: string;
-    updatedAt?: number;
-  }[];
 };
 
 type AdminMemoryRow = {
@@ -55,6 +49,7 @@ type AdminMemoryRow = {
   keywords?: string[];
   episode?: string;
   semantic?: string;
+  agentActionCategory?: string;
 };
 
 type MemoryCounts = Record<string, number>;
@@ -362,13 +357,13 @@ export default function AdminPage() {
     }
   };
 
-  const deleteAllMemory = async (userId: string) => {
-    if (!confirm("이 유저의 메모리를 전체 삭제할까요?")) return;
+  const deleteAllMemory = async (userId: string, version: string) => {
+    if (!confirm(`v${version} 메모리를 전체 삭제할까요?`)) return;
     const token = await getAdminToken();
     if (!token) return;
     setIsDeletingMemory(true);
     try {
-      const res = await fetch(`/api/admin/users/${userId}/memory`, {
+      const res = await fetch(`/api/admin/users/${userId}/memory?version=${encodeURIComponent(version)}`, {
         method: "DELETE",
         headers: { Authorization: `Bearer ${token}` },
       });
@@ -471,7 +466,6 @@ export default function AdminPage() {
         missionIds: changes.missionIds ?? prev?.missionIds ?? [],
         sessionMissionIds:
           changes.sessionMissionIds ?? prev?.sessionMissionIds ?? [],
-        sessionRuns: changes.sessionRuns ?? prev?.sessionRuns ?? [],
       });
     };
 
@@ -522,38 +516,13 @@ export default function AdminPage() {
         ).catch(() => null);
         const sessionMissionIds =
           sessionMissionSnap?.docs.map((missionDoc) => missionDoc.id) ?? [];
-        const sessionRunSnap = await getDocs(
-          collection(db, "sessions", userDoc.id, "missionRuns"),
-        ).catch(() => null);
-        const sessionRuns =
-          sessionRunSnap?.docs.map((runDoc) => {
-            const data = runDoc.data() as {
-              missionId?: string;
-              missionTitle?: string;
-              updatedAt?: number;
-            };
-            return {
-              runId: runDoc.id,
-              missionId: data.missionId ?? runDoc.id,
-              missionTitle: data.missionTitle,
-              updatedAt: data.updatedAt,
-            };
-          }) ?? [];
         upsertUser(userDoc.id, {
           missionIds: Array.from(
-            new Set([
-              ...(existing?.missionIds ?? []),
-              ...sessionMissionIds,
-              ...sessionRuns.map((run) => run.missionId),
-            ]),
+            new Set([...(existing?.missionIds ?? []), ...sessionMissionIds]),
           ),
           sessionMissionIds: Array.from(
-            new Set([
-              ...(existing?.sessionMissionIds ?? []),
-              ...sessionMissionIds,
-            ]),
+            new Set([...(existing?.sessionMissionIds ?? []), ...sessionMissionIds]),
           ),
-          sessionRuns: [...(existing?.sessionRuns ?? []), ...sessionRuns],
         });
       }),
     );
@@ -678,26 +647,54 @@ export default function AdminPage() {
                 <table className="w-full min-w-[960px] border-separate border-spacing-0 text-left text-xs text-slate-600">
                   <thead className="sticky top-0 bg-white text-slate-400">
                     <tr>
-                      {["Version", "Type", "Input", "Output", "Timestamp", "Category", "Subcategory", "Keywords", "Episode", "Semantic"].map((label) => (
+                      {["#", "Timestamp", "Action", "Input", "Episode", "Semantic", "Keywords"].map((label) => (
                         <th key={label} className="border-b border-slate-100 px-3 py-2 font-semibold">{label}</th>
                       ))}
                     </tr>
                   </thead>
                   <tbody>
-                    {visibleMemoryRows.map((row) => (
-                      <tr key={`${row.version ?? "unknown"}-${row.type}-${row.id}`} className="align-top">
-                        <td className="whitespace-nowrap border-b border-slate-50 px-3 py-2 font-semibold text-slate-500">{row.version ?? "0.1.0"}</td>
-                        <td className="border-b border-slate-50 px-3 py-2 font-semibold text-slate-500">{row.type}</td>
-                        <td className="max-w-56 border-b border-slate-50 px-3 py-2">{row.input ?? ""}</td>
-                        <td className="max-w-56 border-b border-slate-50 px-3 py-2">{row.output ?? ""}</td>
-                        <td className="whitespace-nowrap border-b border-slate-50 px-3 py-2">{row.timestamp ? new Date(row.timestamp).toLocaleString("ko-KR") : ""}</td>
-                        <td className="border-b border-slate-50 px-3 py-2">{(row.category ?? []).join(", ")}</td>
-                        <td className="border-b border-slate-50 px-3 py-2">{(row.subcategory ?? []).join(", ")}</td>
-                        <td className="border-b border-slate-50 px-3 py-2">{(row.keywords ?? []).join(", ")}</td>
-                        <td className="max-w-64 border-b border-slate-50 px-3 py-2">{row.episode ?? ""}</td>
-                        <td className="max-w-64 border-b border-slate-50 px-3 py-2">{row.semantic ?? ""}</td>
-                      </tr>
-                    ))}
+                    {visibleMemoryRows.map((row, idx) => {
+                      const semantics = typeof row.semantic === "string"
+                        ? row.semantic.split("\n").map((s: string) => s.trim()).filter(Boolean)
+                        : [];
+                      return (
+                        <tr key={`${row.version ?? "unknown"}-${row.type}-${row.id}`} className="align-top hover:bg-slate-50/60">
+                          <td className="whitespace-nowrap border-b border-slate-100 px-3 py-3 text-slate-400">{idx + 1}</td>
+                          <td className="whitespace-nowrap border-b border-slate-100 px-3 py-3 text-slate-400">
+                            {row.timestamp ? new Date(row.timestamp as number).toLocaleString("ko-KR", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "—"}
+                          </td>
+                          <td className="whitespace-nowrap border-b border-slate-100 px-3 py-3">
+                            {row.agentActionCategory ? (
+                              <span className="rounded-full bg-amber-50 px-2.5 py-1 text-xs font-medium text-amber-700">
+                                {row.agentActionCategory}
+                              </span>
+                            ) : <span className="text-slate-300">—</span>}
+                          </td>
+                          <td className="max-w-64 border-b border-slate-100 px-3 py-3 text-slate-700">{row.input ?? ""}</td>
+                          <td className="max-w-72 border-b border-slate-100 px-3 py-3 text-slate-600 italic">{row.episode ?? ""}</td>
+                          <td className="max-w-80 border-b border-slate-100 px-3 py-3">
+                            {semantics.length === 0 ? (
+                              <span className="text-slate-300">—</span>
+                            ) : (
+                              <div className="flex flex-col gap-1">
+                                {semantics.map((s: string, i: number) => (
+                                  <span key={i} className="inline-block rounded-lg bg-indigo-50 px-2.5 py-1 text-xs leading-snug text-indigo-700">
+                                    {s}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
+                          </td>
+                          <td className="max-w-48 border-b border-slate-100 px-3 py-3">
+                            <div className="flex flex-wrap gap-1">
+                              {(row.keywords ?? []).map((kw: string, i: number) => (
+                                <span key={i} className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-500">{kw}</span>
+                              ))}
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               )}
@@ -705,11 +702,11 @@ export default function AdminPage() {
             <div className="flex justify-end border-t border-slate-100 px-6 py-4">
               <button
                 type="button"
-                onClick={() => deleteAllMemory(memoryModal.userId)}
+                onClick={() => deleteAllMemory(memoryModal.userId, memoryVersionTab)}
                 disabled={isDeletingMemory}
                 className="rounded-2xl bg-red-50 px-4 py-2 text-xs font-semibold text-red-600 transition hover:bg-red-100 disabled:opacity-50"
               >
-                {isDeletingMemory ? "삭제 중..." : "메모리 전체 삭제"}
+                {isDeletingMemory ? "삭제 중..." : `v${memoryVersionTab} 메모리 삭제`}
               </button>
             </div>
           </div>
@@ -831,25 +828,6 @@ export default function AdminPage() {
                         ))
                       )}
                     </div>
-
-                    {user.sessionRuns && user.sessionRuns.length > 0 && (
-                      <div className="mt-3 flex flex-wrap gap-2">
-                        {user.sessionRuns
-                          .slice()
-                          .sort(
-                            (a, b) => Number(b.updatedAt ?? 0) - Number(a.updatedAt ?? 0),
-                          )
-                          .map((run) => (
-                            <Link
-                              key={run.runId}
-                              href={`/main/${run.missionId}?viewAs=${user.id}&run=${encodeURIComponent(run.runId)}`}
-                              className="rounded-full border border-indigo-100 bg-indigo-50 px-3 py-1 text-xs font-semibold text-indigo-600 transition hover:bg-indigo-100"
-                            >
-                              {run.missionTitle || missionTitle(run.missionId)} · run
-                            </Link>
-                          ))}
-                      </div>
-                    )}
 
                     <div className="mt-3 flex flex-wrap items-center gap-3">
                       <button

@@ -25,19 +25,13 @@ function jsonArray(value: unknown) {
 export async function POST(request: Request) {
   const user = await verifyFirebaseIdToken(request);
   if (!user) return Response.json({ error: "unauthorized" }, { status: 401 });
-  const body = (await request.json().catch(() => ({}))) as {
-    missionId?: string;
-    sessionRunId?: string | null;
-  };
+  const body = (await request.json().catch(() => ({}))) as { missionId?: string };
   const missionId = body.missionId?.trim();
-  const sessionRunId = body.sessionRunId?.trim() || undefined;
   if (!missionId) return Response.json({ error: "missionId required" }, { status: 400 });
 
   const token = await getFirebaseAccessToken();
-  const sessionPath = sessionRunId
-    ? `sessions/${user.localId}/missionRuns/${encodeURIComponent(sessionRunId)}`
-    : `sessions/${user.localId}/missions/${encodeURIComponent(missionId)}`;
-  const sourceId = sessionRunId ?? missionId;
+  const sessionPath = `sessions/${user.localId}/missions/${encodeURIComponent(missionId)}`;
+  const sourceId = missionId;
   const draftPath = `${sessionPath}/memoryDrafts`;
   const draftIds = await listFirestoreDocumentIds(draftPath, token);
   const drafts: Array<Record<string, unknown> & { id: string }> = await Promise.all(
@@ -57,7 +51,6 @@ export async function POST(request: Request) {
       const base = {
         sourceDraftId: draft.id,
         sourceMissionId: missionId,
-        sourceSessionRunId: sessionRunId ?? null,
         input: draft.input ?? "",
         output: draft.output ?? "",
         timestamp,
@@ -95,7 +88,6 @@ export async function POST(request: Request) {
             agentActionCategory: draft.agentActionCategory ?? "agent_response",
             source: {
               missionId,
-              sessionRunId: sessionRunId ?? null,
               draftId: draft.id,
             },
             createdAt: completedAt,
@@ -116,7 +108,6 @@ export async function POST(request: Request) {
     sessionPath,
     {
       missionId,
-      sessionRunId: sessionRunId ?? null,
       status: "completed",
       endedAt: completedAt,
       updatedAt: completedAt,

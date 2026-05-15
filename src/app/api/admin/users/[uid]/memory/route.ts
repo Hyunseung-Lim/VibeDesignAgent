@@ -78,16 +78,26 @@ export async function DELETE(
     return Response.json({ error: "forbidden" }, { status: 403 });
   }
   const { uid } = await params;
+  const version = new URL(request.url).searchParams.get("version") ?? "0.1.1";
   const token = await getFirebaseAccessToken();
-  const [episodicIds, semanticIds] = await Promise.all([
-    listFirestoreDocumentIds(`users/${uid}/episodicMemories`, token),
-    listFirestoreDocumentIds(`users/${uid}/semanticMemories`, token),
-  ]);
-  await Promise.all([
-    ...episodicIds.map((id) => deleteFirestoreDocument(`users/${uid}/episodicMemories/${id}`, token)),
-    ...semanticIds.map((id) => deleteFirestoreDocument(`users/${uid}/semanticMemories/${id}`, token)),
-  ]);
-  return Response.json({ ok: true, deleted: episodicIds.length + semanticIds.length });
+
+  let deleted = 0;
+  if (version === "0.1.1") {
+    const ids = await listFirestoreDocumentIds(`users/${uid}/${VERSIONED_MEMORY_COLLECTION}`, token);
+    await Promise.all(ids.map((id) => deleteFirestoreDocument(`users/${uid}/${VERSIONED_MEMORY_COLLECTION}/${id}`, token)));
+    deleted = ids.length;
+  } else {
+    const [episodicIds, semanticIds] = await Promise.all([
+      listFirestoreDocumentIds(`users/${uid}/episodicMemories`, token),
+      listFirestoreDocumentIds(`users/${uid}/semanticMemories`, token),
+    ]);
+    await Promise.all([
+      ...episodicIds.map((id) => deleteFirestoreDocument(`users/${uid}/episodicMemories/${id}`, token)),
+      ...semanticIds.map((id) => deleteFirestoreDocument(`users/${uid}/semanticMemories/${id}`, token)),
+    ]);
+    deleted = episodicIds.length + semanticIds.length;
+  }
+  return Response.json({ ok: true, deleted });
 }
 
 export async function GET(
