@@ -19,13 +19,27 @@ type EncodedMemory = {
   semantic: string[];
 };
 
-const MEMORY_PROMPT = `You will receive a structured record of one interaction turn in a UI/UX design agent session. Analyze it and return a JSON object.
+const MEMORY_PROMPT = `Generate a structured analysis of the following content by:
+1. Extract key concepts from the content.
+2. Summarize the specific interaction as a factual episode.
+3. Infer the user’s implicit intent and traits only when clearly supported.
+
+You will receive a structured record of one interaction turn in a UI/UX design agent session. Analyze the whole record, not just the user input.
 
 The input contains the following fields:
 - previous episodic memory: A one-sentence summary of the immediately preceding interaction. If this is the first turn, the value is "${FIRST_SESSION_TURN}".
 - previous agent output: The full response the agent gave in the immediately preceding turn. If this is the first turn, the value is "${FIRST_SESSION_TURN}".
 - user input: The query or instruction the user sent to the agent in this turn.
+- agent response: The response the agent generated in this turn, including any analysis of cited references, website text, visual direction, functional behavior, structural patterns, or generated artifacts.
 - agent action category: The type of action the agent performed in this turn (e.g. mockup_generate, note_create, references_fetch). Use this as context, not as content to summarize.
+- agent action details: Optional compact details extracted from the agent action payload. Use this only to understand what changed or was produced.
+
+Important:
+- The episode must describe the current interaction in relation to the previous episodic memory and previous agent output when they are available.
+- Do not summarize only the user input. Include the agent action, immediate outcome, feedback, or decision.
+- If the previous context changes the meaning of the current user input, reflect that context in the episode.
+- When the user cites references, do not assume the citation is only about visual style. The reference may be used for mood, function, information architecture, layout structure, interaction behavior, content, or another design rationale. Use the user input and agent response to infer how the reference was used.
+- If the agent response already analyzes cited references or website text, preserve the most relevant interpretation in the episode and keywords when it materially explains what happened.
 
 Return the response as a JSON object:
 {
@@ -41,10 +55,10 @@ Return the response as a JSON object:
 
   "semantic": [
     // One-sentence inferences about the user’s implicit intent, preferences, traits, tendencies, working style, or communication style.
-    // Include only inferences clearly supported by the content.
-    // Do not include simple factual statements about what the user said or did.
-    // Do not force or fabricate inferences.
-    // Return an empty array if there is no clearly supported inference about the user.
+    // Include only inferences clearly and directly supported by the content.
+    // Do NOT include simple factual statements about what the user said or did.
+    // Do NOT force or fabricate inferences. When in doubt, omit.
+    // IMPORTANT: Return an empty array [] if there is no clearly supported inference. Most interactions will not yield a semantic inference.
   ]
 }
 
@@ -56,12 +70,15 @@ function stringArray(value: unknown, fallback: string[] = []) {
     : fallback;
 }
 
-
 function parseMemory(raw: string): EncodedMemory {
   try {
     const parsed = JSON.parse(raw) as Partial<EncodedMemory>;
     return {
-      keywords: stringArray(parsed.keywords, ["conversation", "request", "response"]).slice(0, 10),
+      keywords: stringArray(parsed.keywords, [
+        "conversation",
+        "request",
+        "response",
+      ]).slice(0, 10),
       episode: String(parsed.episode ?? "").trim(),
       semantic: stringArray(parsed.semantic).slice(0, 6),
     };
@@ -104,10 +121,15 @@ function extractAgentActions(output: string): AgentAction[] {
   ];
   for (const [type, tag] of bracketTags) {
     const content = extractBracketContent(output, tag);
-    if (content != null) actions.push({ type, content: content.slice(0, 1200) });
+    if (content != null)
+      actions.push({ type, content: content.slice(0, 1200) });
   }
   const presMatch = output.match(/```presentation\n([\s\S]{0,2000}?)\n```/);
-  if (presMatch) actions.push({ type: "presentation_create", content: presMatch[1].trim().slice(0, 1200) });
+  if (presMatch)
+    actions.push({
+      type: "presentation_create",
+      content: presMatch[1].trim().slice(0, 1200),
+    });
   return actions;
 }
 
@@ -118,7 +140,8 @@ function inferAgentActionCategory(output: string, interactionId: string) {
   if (/\[EDIT_MOCKUP:/i.test(output)) return "mockup_edit";
   if (/\[CREATE_DESIGN_SPEC:/i.test(output)) return "design_spec_create";
   if (/\[FETCH_REFERENCES:/i.test(output)) return "references_fetch";
-  if (/```(?:json)?\s*\{[\s\S]*?"slides"/i.test(output)) return "presentation_create";
+  if (/```(?:json)?\s*\{[\s\S]*?"slides"/i.test(output))
+    return "presentation_create";
   if (interactionId.startsWith("delete-idea-")) return "note_delete";
   if (interactionId.startsWith("delete-design-")) return "mockup_delete";
   if (interactionId.startsWith("cite-reference-")) return "reference_cite";
@@ -134,14 +157,18 @@ async function loadPreviousDraft(
 ) {
   const draftPath = `sessions/${uid}/missions/${encodeURIComponent(missionId)}/memoryDrafts`;
   const ids = await listFirestoreDocumentIds(draftPath, token);
-  const drafts: Array<Record<string, unknown> & { id: string }> = await Promise.all(
-    ids.map(async (id) => {
-      const data = (await getFirestoreDocument(`${draftPath}/${id}`, token)) ?? {};
-      return { id, ...(data as Record<string, unknown>) };
-    }),
-  );
+  const drafts: Array<Record<string, unknown> & { id: string }> =
+    await Promise.all(
+      ids.map(async (id) => {
+        const data =
+          (await getFirestoreDocument(`${draftPath}/${id}`, token)) ?? {};
+        return { id, ...(data as Record<string, unknown>) };
+      }),
+    );
   return drafts
-    .filter((draft) => Number(draft.timestamp ?? draft.createdAt ?? 0) < timestamp)
+    .filter(
+      (draft) => Number(draft.timestamp ?? draft.createdAt ?? 0) < timestamp,
+    )
     .sort(
       (a, b) =>
         Number(b.timestamp ?? b.createdAt ?? 0) -
@@ -186,8 +213,14 @@ export async function POST(request: Request) {
     `previous episodic memory: ${String(previousDraft?.episode ?? "").trim() || FIRST_SESSION_TURN}`,
     `previous agent output: ${String(previousDraft?.output ?? "").trim() || FIRST_SESSION_TURN}`,
     `user input: ${input}`,
+    `agent response: ${output.slice(0, 10000)}`,
     `agent action category: ${agentActionCategory}${agentActions.length > 0 ? ` (${agentActions.map((a) => a.type).join(", ")})` : ""}`,
-  ].filter(Boolean).join("\n\n");
+    agentActions.length > 0
+      ? `agent action details: ${agentActions.map((action) => `${action.type}: ${action.content}`).join("\n")}`
+      : "",
+  ]
+    .filter(Boolean)
+    .join("\n\n");
 
   const completion = await openai.chat.completions.create({
     model: "gpt-5.4-mini",
@@ -209,7 +242,9 @@ export async function POST(request: Request) {
       timestamp,
       keywordsJson: JSON.stringify(encoded.keywords),
       episode: encoded.episode.slice(0, 2000),
-      semanticJson: JSON.stringify(encoded.semantic.map((item) => item.slice(0, 2000))),
+      semanticJson: JSON.stringify(
+        encoded.semantic.map((item) => item.slice(0, 2000)),
+      ),
       semantic: encoded.semantic.join("\n").slice(0, 4000),
       previousEpisode: String(previousDraft?.episode ?? "").slice(0, 2000),
       previousOutput: String(previousDraft?.output ?? "").slice(0, 12000),

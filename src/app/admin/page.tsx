@@ -50,6 +50,7 @@ type AdminMemoryRow = {
   episode?: string;
   semantic?: string;
   agentActionCategory?: string;
+  source?: { missionId?: string; draftId?: string };
 };
 
 type MemoryCounts = Record<string, number>;
@@ -647,7 +648,7 @@ export default function AdminPage() {
                 <table className="w-full min-w-[960px] border-separate border-spacing-0 text-left text-xs text-slate-600">
                   <thead className="sticky top-0 bg-white text-slate-400">
                     <tr>
-                      {["#", "Timestamp", "Action", "Input", "Episode", "Semantic", "Keywords"].map((label) => (
+                      {["#", "Timestamp", "Mission", "Action", "Input", "Episode", "Semantic", "Keywords"].map((label) => (
                         <th key={label} className="border-b border-slate-100 px-3 py-2 font-semibold">{label}</th>
                       ))}
                     </tr>
@@ -662,6 +663,9 @@ export default function AdminPage() {
                           <td className="whitespace-nowrap border-b border-slate-100 px-3 py-3 text-slate-400">{idx + 1}</td>
                           <td className="whitespace-nowrap border-b border-slate-100 px-3 py-3 text-slate-400">
                             {row.timestamp ? new Date(row.timestamp as number).toLocaleString("ko-KR", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "—"}
+                          </td>
+                          <td className="whitespace-nowrap border-b border-slate-100 px-3 py-3 text-xs text-slate-500">
+                            {row.source?.missionId ?? "—"}
                           </td>
                           <td className="whitespace-nowrap border-b border-slate-100 px-3 py-3">
                             {row.agentActionCategory ? (
@@ -699,7 +703,41 @@ export default function AdminPage() {
                 </table>
               )}
             </div>
-            <div className="flex justify-end border-t border-slate-100 px-6 py-4">
+            <div className="flex items-center justify-between border-t border-slate-100 px-6 py-4">
+              <button
+                type="button"
+                onClick={() => {
+                  if (visibleMemoryRows.length === 0) return;
+                  const headers = ["#", "Timestamp", "Mission", "Action", "Input", "Episode", "Semantic", "Keywords"];
+                  const escape = (v: string) => `"${v.replace(/"/g, '""')}"`;
+                  const rows = visibleMemoryRows.map((row, idx) => {
+                    const semantics = typeof row.semantic === "string"
+                      ? row.semantic.split("\n").map((s: string) => s.trim()).filter(Boolean).join(" | ")
+                      : "";
+                    return [
+                      String(idx + 1),
+                      row.timestamp ? new Date(row.timestamp as number).toLocaleString("ko-KR") : "",
+                      row.source?.missionId ?? "",
+                      row.agentActionCategory ?? "",
+                      row.input ?? "",
+                      row.episode ?? "",
+                      semantics,
+                      (row.keywords ?? []).join(", "),
+                    ].map(escape).join(",");
+                  });
+                  const csv = [headers.map(escape).join(","), ...rows].join("\n");
+                  const blob = new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8;" });
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement("a");
+                  a.href = url;
+                  a.download = `memory_${memoryModal.userName}_v${memoryVersionTab}_${new Date().toISOString().slice(0, 10)}.csv`;
+                  a.click();
+                  URL.revokeObjectURL(url);
+                }}
+                className="rounded-2xl bg-slate-100 px-4 py-2 text-xs font-semibold text-slate-600 transition hover:bg-slate-200"
+              >
+                CSV 내보내기
+              </button>
               <button
                 type="button"
                 onClick={() => deleteAllMemory(memoryModal.userId, memoryVersionTab)}

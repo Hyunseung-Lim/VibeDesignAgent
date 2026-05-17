@@ -117,6 +117,7 @@ type Artboard = {
   html: string;
   label: string;
   createdAt?: number;
+  htmlUpdatedAt?: number;
   x: number;
   y: number;
   device: Device;
@@ -1159,6 +1160,58 @@ async function hydrateManualReference(reference: Reference): Promise<Reference> 
   } catch {
     return reference;
   }
+}
+
+function formatMemoryInputWithCitations(
+  text: string,
+  citedReferences: Reference[],
+  citedTexts: string[],
+  citedElement: { artboardId: string; selector: string; outerHTML?: string } | null,
+) {
+  const sections = [`user input: ${text}`];
+  if (citedReferences.length > 0) {
+    sections.push(
+      [
+        `cited references (${citedReferences.length}):`,
+        ...citedReferences.map((reference, index) =>
+          [
+            `${index + 1}. ${reference.title}`,
+            reference.tag ? `tag: ${reference.tag}` : "",
+            reference.url ? `url: ${reference.url}` : "",
+            reference.imageUrl ? `imageUrl: ${reference.imageUrl}` : "",
+            reference.description
+              ? `description: ${reference.description}`
+              : "",
+          ]
+            .filter(Boolean)
+            .join(" / "),
+        ),
+      ].join("\n"),
+    );
+  }
+  if (citedTexts.length > 0) {
+    sections.push(
+      [
+        `cited text snippets (${citedTexts.length}):`,
+        ...citedTexts.map((snippet, index) => `${index + 1}. ${snippet}`),
+      ].join("\n"),
+    );
+  }
+  if (citedElement) {
+    sections.push(
+      [
+        "cited design element:",
+        `artboardId: ${citedElement.artboardId}`,
+        `selector: ${citedElement.selector}`,
+        citedElement.outerHTML
+          ? `outerHTML: ${citedElement.outerHTML.slice(0, 1200)}`
+          : "",
+      ]
+        .filter(Boolean)
+        .join("\n"),
+    );
+  }
+  return sections.join("\n\n");
 }
 
 function CodeChip({
@@ -2417,6 +2470,12 @@ export default function MainScreenPage() {
       createdAt: Date.now(),
     };
     const manualReference = parseManualReferencePrompt(text);
+    const memoryInput = formatMemoryInputWithCitations(
+      text,
+      selectedReferences,
+      citedTexts,
+      selectedElement,
+    );
 
     setMessages((prev) => [...prev, userMsg, assistantMsg]);
     setInputText("");
@@ -2470,7 +2529,12 @@ export default function MainScreenPage() {
             : message,
         ),
       );
-      void encodeMemoryDraft(assistantId, text, manualReferenceReply, userMsg.createdAt ?? Date.now());
+      void encodeMemoryDraft(
+        assistantId,
+        memoryInput,
+        manualReferenceReply,
+        userMsg.createdAt ?? Date.now(),
+      );
       return;
     }
 
@@ -2584,7 +2648,12 @@ export default function MainScreenPage() {
             : m,
         ),
       );
-      void encodeMemoryDraft(assistantId, text, fullText, userMsg.createdAt ?? Date.now());
+      void encodeMemoryDraft(
+        assistantId,
+        memoryInput,
+        fullText,
+        userMsg.createdAt ?? Date.now(),
+      );
 
       // Parse special blocks from completed response
       let createdNote: Idea | null = null;
@@ -2679,19 +2748,9 @@ export default function MainScreenPage() {
         : null;
 
       if (generateMatch || editMatch) {
-        const userRequestedNewMockup = isExplicitNewMockupRequest(text);
         const effectiveIdeas = createdNote ? [...ideas, createdNote] : ideas;
         const effectiveActiveIdeaId = createdNote?.id ?? activeIdeaId;
-        const hasExistingMockup =
-          !createdNote &&
-          (!!activeBoard?.stitchScreenId || currentIdeaBoards.length > 0);
-        const forceEditExisting =
-          !!generateMatch &&
-          hasExistingMockup &&
-          !userRequestedNewMockup;
-        const isNew =
-          (!!generateMatch && !forceEditExisting) ||
-          (!!editMatch && userRequestedNewMockup);
+        const isNew = true;
         const activeIdea =
           createdNote ??
           ideas.find((i) => i.id === effectiveActiveIdeaId) ??
@@ -2705,13 +2764,12 @@ export default function MainScreenPage() {
             ? defaultMockupPromptForIdea(activeIdea, device)
             : "Refine the current mockup according to the latest user request while preserving the existing structure.");
         const mockupIdeaId = effectiveActiveIdeaId;
-        const stitchPrompt = isNew
-          ? buildMockupPrompt(
-              prompt,
-              activeIdea,
-              activeDesignStyle(activeIdea),
-            )
-          : buildEditMockupPrompt(prompt);
+        // Always use generate prompt — new artboard is always created
+        const stitchPrompt = buildMockupPrompt(
+          prompt,
+          activeIdea,
+          activeDesignStyle(activeIdea),
+        );
         appendActivityLog({
           section: "mockup",
           action: "stitch_prompt",
@@ -2737,53 +2795,25 @@ export default function MainScreenPage() {
           return;
         }
 
-        const effectiveIdeaBoards = createdNote
-          ? []
-          : artboards.filter((a) => a.ideaId === effectiveActiveIdeaId);
-        const targetArtboard = !isNew
-          ? (effectiveIdeaBoards.find((a) => a.id === activeArtboardId) ??
-            effectiveIdeaBoards.at(-1) ??
-            null)
-          : null;
-
-        if (!isNew && !targetArtboard?.stitchScreenId) {
-          setMessages((prev) =>
-            prev.map((m) =>
-              m.id === assistantId
-                ? {
-                    ...m,
-                    content:
-                      m.content +
-                      "\n\n⚠️ 기존 목업의 Stitch 화면 ID가 없어 수정할 수 없습니다. 새 목업으로 다시 생성해 주세요.",
-                  }
-                : m,
-            ),
-          );
-          return;
-        }
-
         setIsGeneratingMockup(true);
-        setMockupOperation(isNew ? "generate" : "edit");
+        setMockupOperation("generate");
         setGeneratingMockupIdeaId(mockupIdeaId);
         setMockupProgress({
           percent: 8,
-          label: isNew ? "새 아트보드 자리 잡는 중" : "수정 대상 화면 준비 중",
+          label: "새 아트보드 자리 잡는 중",
         });
-        if (isNew) {
-          const last = effectiveIdeaBoards[effectiveIdeaBoards.length - 1];
+        {
+          const ideaBoards = artboards.filter((a) => a.ideaId === (effectiveActiveIdeaId ?? ""));
+          const last = ideaBoards[ideaBoards.length - 1];
           setPendingArtboardSkeleton({
             ideaId: effectiveActiveIdeaId ?? "",
-            label: `Design ${effectiveIdeaBoards.length + 1}`,
+            label: `Design ${ideaBoards.length + 1}`,
             x: last
-              ? last.x +
-                DEVICE_SIZE[last.device ?? "desktop"].width +
-                ARTBOARD_GAP
+              ? last.x + DEVICE_SIZE[last.device ?? "desktop"].width + ARTBOARD_GAP
               : 0,
             y: 0,
             device,
           });
-        } else {
-          setPendingArtboardSkeleton(null);
         }
         try {
           const stitchController = new AbortController();
@@ -2824,7 +2854,7 @@ export default function MainScreenPage() {
                 prompt: stitchPrompt,
                 device,
                 projectId: stitchProjectId || undefined,
-                screenId: targetArtboard?.stitchScreenId || undefined,
+                screenId: undefined,
               }),
             });
           } finally {
@@ -2840,7 +2870,6 @@ export default function MainScreenPage() {
           if (data.error) throw new Error(data.error);
           setMockupProgress({ percent: 96, label: "아트보드 배치 중" });
           if (data.projectId) setStitchProjectId(data.projectId);
-
           if (isNew) {
             const primaryId = crypto.randomUUID();
             // Collect extra screens Stitch created (excluding the primary one)
@@ -2913,7 +2942,7 @@ export default function MainScreenPage() {
                   if (d.html)
                     setArtboards((prev) =>
                       prev.map((a) =>
-                        a.stitchScreenId === sid ? { ...a, html: d.html } : a,
+                        a.stitchScreenId === sid ? { ...a, html: d.html, htmlUpdatedAt: Date.now() } : a,
                       ),
                     );
                 })
@@ -2924,7 +2953,7 @@ export default function MainScreenPage() {
             setArtboards((prev) =>
               prev.map((a) =>
                 a.id === targetId
-                  ? { ...a, html: data.html, stitchScreenId: data.screenId }
+                  ? { ...a, html: data.html, stitchScreenId: data.screenId, htmlUpdatedAt: Date.now() }
                   : a,
               ),
             );
@@ -3231,6 +3260,7 @@ export default function MainScreenPage() {
     activeIdeaId,
     selectedElement,
     selectedReferences,
+    citedTexts,
     ideas,
     references,
     device,
@@ -3801,6 +3831,7 @@ export default function MainScreenPage() {
                 }}
               >
                 <iframe
+                  key={`${artboard.id}-${artboard.htmlUpdatedAt ?? artboard.createdAt ?? 0}`}
                   srcDoc={artboardHtml}
                   sandbox="allow-scripts"
                   scrolling="no"
@@ -4478,14 +4509,6 @@ export default function MainScreenPage() {
                       <div
                         key={card.id}
                         onClick={() => {
-                          if (!isSelected) {
-                            void encodeMemoryDraft(
-                              `cite-reference-${card.id}`,
-                              `레퍼런스 인용: ${card.title}`,
-                              `태그: ${card.tag}, URL: ${card.url ?? ""}`,
-                              Date.now(),
-                            );
-                          }
                           setSelectedReferences((prev) =>
                             isSelected
                               ? prev.filter((r) => r.id !== card.id)
