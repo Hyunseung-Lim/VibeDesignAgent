@@ -19,55 +19,172 @@ type EncodedMemory = {
   semantic: string[];
 };
 
-const MEMORY_PROMPT = `Generate a structured analysis of the following content by:
-1. Extract key concepts from the content.
-2. Summarize the specific interaction as a factual episode.
-3. Infer the user’s implicit intent and traits only when clearly supported.
+const MEMORY_PROMPT = `# Task
 
-You will receive a structured record of one interaction turn in a UI/UX design agent session. Analyze the whole record, not just the user input.
+Generate a structured memory analysis for one interaction turn in a UI/UX design agent session.
 
-The input contains the following fields:
-- previous episodic memory: A one-sentence summary of the immediately preceding interaction. If this is the first turn, the value is "${FIRST_SESSION_TURN}".
-- previous agent output: The full response the agent gave in the immediately preceding turn. If this is the first turn, the value is "${FIRST_SESSION_TURN}".
-- user input: The query or instruction the user sent to the agent in this turn.
-- agent response: The response the agent generated in this turn, including any analysis of cited references, website text, visual direction, functional behavior, structural patterns, or generated artifacts.
-- agent action category: The type of action the agent performed in this turn (e.g. mockup_generate, note_create, references_fetch). Use this as context, not as content to summarize.
-- agent action details: Optional compact details extracted from the agent action payload. Use this only to understand what changed or was produced.
+Your goal is to produce a compact memory record that helps the system understand:
+1. What happened in this interaction.
+2. What concepts, references, artifacts, or actions mattered.
+3. Whether the interaction clearly reveals any durable user preference, intent, trait, tendency, or working style.
 
-Important:
-- The episode must describe the current interaction in relation to the previous episodic memory and previous agent output when they are available.
-- Do not summarize only the user input. Include the agent action, immediate outcome, feedback, or decision.
-- If the previous context changes the meaning of the current user input, reflect that context in the episode.
-- When the user cites references, do not assume the citation is only about visual style. The reference may be used for mood, function, information architecture, layout structure, interaction behavior, content, or another design rationale. Use the user input and agent response to infer how the reference was used.
-- If the agent response already analyzes cited references or website text, preserve the most relevant interpretation in the episode and keywords when it materially explains what happened.
+# Context
 
-Return the response as a JSON object:
+This is not a general conversation summary task.
+This is memory encoding for a design-agent research system.
+
+You will receive a structured record containing:
+- previous episodic memory
+- previous agent output
+- optional previous semantic memory
+- current user input
+- current agent response
+- agent action category
+- optional agent action details
+
+Analyze the whole record, not just the user input.
+
+# Input Fields
+
+previous episodic memory:
+A one-sentence summary of the immediately preceding interaction.
+If this is the first turn, the value is "${FIRST_SESSION_TURN}".
+
+previous agent output:
+The full response the agent gave in the immediately preceding turn.
+If this is the first turn, the value is "${FIRST_SESSION_TURN}".
+
+previous semantic memory:
+Optional prior durable inference about the user.
+Use it only as weak context. Do not reinforce or repeat it unless the current interaction clearly supports it.
+
+user input:
+The query or instruction the user sent in this turn.
+This may include cited references, quoted text, selected UI elements, or other contextual material.
+
+agent response:
+The response the agent generated in this turn.
+This may include analysis of cited references, website text, visual direction, functional behavior, structural patterns, design rationale, or generated artifacts.
+
+agent action category:
+The type of action the agent performed, such as:
+- agent_response
+- note_create
+- note_update
+- mockup_generate
+- mockup_edit
+- references_fetch
+- design_spec_create
+- presentation_create
+- reference_delete
+- note_delete
+- mockup_delete
+
+Use agent action category as context only.
+Do not copy machine action labels into the episode unless the label itself is the user-facing subject.
+
+agent action details:
+Optional compact details extracted from machine-readable action payloads.
+Use this only to understand what changed or was produced.
+
+# Reference Handling
+
+When the user cites a reference, do not assume the reference is only about visual style.
+
+A cited reference may be used for:
+- visual mood
+- layout structure
+- information architecture
+- feature behavior
+- interaction pattern
+- content tone
+- product framing
+- brand feeling
+- specific UI components
+- comparison or critique
+- another design rationale
+
+Use the user input and agent response together to infer how the reference was used.
+
+If the agent response already analyzes a cited reference, website, image, or text, preserve the most relevant interpretation in the memory when it materially explains the interaction.
+
+# Success Brief
+
+A good memory record should be:
+- factual
+- compact
+- grounded in the provided interaction
+- useful for reconstructing the user's design process later
+- careful about separating facts from inferences
+
+The episode should answer:
+"What happened in this turn, considering the prior context, the user's request, the agent's response, and the outcome?"
+
+The semantic field should answer:
+"Does this turn clearly reveal something durable about the user's preferences, intentions, traits, tendencies, or working style?"
+
+Most interactions should return an empty semantic array.
+
+# Rules
+
+Always:
+- Analyze the full structured record.
+- Use previous context when it changes the meaning of the current turn.
+- Include the agent action, outcome, feedback, or decision in the episode.
+- Keep the episode as one factual sentence.
+- Prefer concrete nouns, verbs, artifacts, references, actions, and design concepts in keywords.
+- Return valid JSON only.
+
+Never:
+- Summarize only the user input.
+- Treat cited references as visual style by default.
+- Invent user traits, preferences, or intentions.
+- Turn simple facts into semantic inferences.
+- Include simple factual statements about what the user said or did in semantic.
+- Include timestamps, speaker names, or generic filler words as keywords.
+- Copy machine action labels into the episode unless necessary.
+- Add explanations outside JSON.
+
+# Output Format
+
+Return exactly this JSON shape:
+
 {
   "keywords": [
-    // Salient nouns, verbs, and key concepts from this interaction.
+    // Salient nouns, verbs, artifacts, actions, references, and design concepts.
     // Ordered from most to least important.
     // Exclude speaker names, timestamps, and generic filler words.
     // Include at least three non-redundant keywords.
   ],
   "episode": "",
-  // A single factual sentence describing what happened in this interaction,
-  // including the user/agent action and the immediate outcome, feedback, or decision.
+  // One factual sentence describing the interaction,
+  // including the user request, relevant prior context, agent action/output,
+  // and immediate outcome, feedback, or decision.
 
   "semantic": [
-    // One-sentence inferences about the user’s implicit intent, preferences, traits, tendencies, working style, or communication style.
-    // Include only inferences clearly and directly supported by the content.
+    // One-sentence inferences about the user's durable intent, preferences, traits,
+    // tendencies, working style, or communication style.
+    // Include only when clearly and directly supported by the current interaction.
     // Do NOT include simple factual statements about what the user said or did.
-    // Do NOT force or fabricate inferences. When in doubt, omit.
-    // IMPORTANT: Return an empty array [] if there is no clearly supported inference. Most interactions will not yield a semantic inference.
+    // Do NOT force or fabricate inferences.
+    // Return [] when there is no clearly supported inference.
   ]
-}
-
-Content for analysis:`;
+}`;
 
 function stringArray(value: unknown, fallback: string[] = []) {
   return Array.isArray(value)
     ? value.map((item) => String(item).trim()).filter(Boolean)
     : fallback;
+}
+
+function jsonArray(value: unknown) {
+  if (Array.isArray(value)) return stringArray(value);
+  if (typeof value !== "string") return [];
+  try {
+    return stringArray(JSON.parse(value));
+  } catch {
+    return [];
+  }
 }
 
 function parseMemory(raw: string): EncodedMemory {
@@ -209,9 +326,13 @@ export async function POST(request: Request) {
   );
   const agentActionCategory = inferAgentActionCategory(output, interactionId);
   const agentActions = extractAgentActions(output);
+  const previousSemantic = jsonArray(previousDraft?.semanticJson);
   const content = [
     `previous episodic memory: ${String(previousDraft?.episode ?? "").trim() || FIRST_SESSION_TURN}`,
     `previous agent output: ${String(previousDraft?.output ?? "").trim() || FIRST_SESSION_TURN}`,
+    previousSemantic.length > 0
+      ? `previous semantic memory: ${previousSemantic.join(" / ")}`
+      : "",
     `user input: ${input}`,
     `agent response: ${output.slice(0, 10000)}`,
     `agent action category: ${agentActionCategory}${agentActions.length > 0 ? ` (${agentActions.map((a) => a.type).join(", ")})` : ""}`,
