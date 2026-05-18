@@ -162,8 +162,8 @@ Return exactly this JSON shape:
   // and immediate outcome, feedback, or decision.
 
   "semantic": [
-    // One-sentence inferences about the user's durable intent, preferences, traits,
-    // tendencies, working style, or communication style.
+    // One-sentence inferences about the user's intent, preferences, traits, tendencies, working style, or communication style.
+    // Keep each semantic item atomic; split it into separate items if it contains multiple separable ideas.
     // Pay attention to the user's stance, tone, emphasized points, and explicitly mentioned details, and infer the underlying reasons behind them.
     // Do NOT include simple factual statements about what the user said or did.
     // Do NOT force or fabricate inferences.
