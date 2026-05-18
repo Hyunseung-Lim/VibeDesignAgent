@@ -164,7 +164,7 @@ Return exactly this JSON shape:
   "semantic": [
     // One-sentence inferences about the user's durable intent, preferences, traits,
     // tendencies, working style, or communication style.
-    // Include only when clearly and directly supported by the current interaction.
+    // Pay attention to the user's stance, tone, emphasized points, and explicitly mentioned details, and infer the underlying reasons behind them.
     // Do NOT include simple factual statements about what the user said or did.
     // Do NOT force or fabricate inferences.
     // Return [] when there is no clearly supported inference.
