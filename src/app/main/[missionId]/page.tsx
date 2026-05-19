@@ -1415,6 +1415,62 @@ function isExplicitNewMockupRequest(text: string) {
   );
 }
 
+function isReferenceSearchRequest(text: string) {
+  const explicitReference =
+    /(레퍼런스|참고\s*(자료|이미지|사이트|앱|화면)?|벤치마크|inspiration|reference)s?\s*(찾|검색|추천|보여|골라|추가|줘)|(?:찾|검색|추천|보여|골라|추가).{0,12}(레퍼런스|참고\s*(자료|이미지|사이트|앱|화면)?|벤치마크|inspiration|reference)s?/i.test(
+      text,
+    );
+  if (explicitReference) return true;
+
+  const asksForExamples =
+    /(추천|찾|검색|보여|골라|알려|제안|뽑아|추려|recommend|suggest|find|show)/i.test(
+      text,
+    );
+  const externalDesignTarget =
+    /(사이트|웹\s*사이트|웹사이트|website|web\s*site|개인\s*웹|포트폴리오|portfolio|랜딩\s*페이지|landing\s*page|앱|app|서비스|service|프로덕트|product|브랜드|brand|ui|화면|screen|interface)/i.test(
+      text,
+    );
+  const inspirationQualifier =
+    /(영감|inspiration|inspo|잘\s*만들|좋은|멋진|괜찮은|유명한|사례|case|example|best|great|good|nice)/i.test(
+      text,
+    );
+
+  return asksForExamples && externalDesignTarget && inspirationQualifier;
+}
+
+function cleanSearchText(text: string) {
+  return text
+    .replace(/[^\p{L}\p{N}\s.-]/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function buildReferenceSearchQuery(
+  baseQuery: string | null | undefined,
+  missionTitle: string | undefined,
+  activeOption: MissionOption | null,
+  targetDevice: Device,
+) {
+  const optionContext = activeOption
+    ? [
+        cleanSearchText(activeOption.title),
+        activeOption.description,
+        activeOption.content?.slice(0, 240),
+      ]
+        .filter(Boolean)
+        .join(" ")
+    : "";
+  return [
+    missionTitle,
+    optionContext,
+    targetDevice === "mobile" ? "mobile app UI" : "desktop website UI",
+    baseQuery,
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .slice(0, 500);
+}
+
 function buildEditMockupPrompt(changePrompt: string) {
   return [
     "Edit the existing mockup in place. Preserve the current layout structure, visual style, typography, spacing, colors, content hierarchy, and all unrelated sections.",
@@ -1477,6 +1533,7 @@ export default function MainScreenPage() {
   const [device, setDevice] = useState<Device>("desktop");
   const [missionTitle, setMissionTitle] = useState("");
   const [missionBrief, setMissionBrief] = useState("");
+  const [isMissionContextReady, setIsMissionContextReady] = useState(false);
   const [parentMissionTitle, setParentMissionTitle] = useState("");
   const [parentMissionBrief, setParentMissionBrief] = useState("");
   const [missionOptions, setMissionOptions] = useState<MissionOption[]>([]);
@@ -1782,6 +1839,7 @@ export default function MainScreenPage() {
     const targetUserId = viewAs && isAdmin ? viewAs : userId;
     const sessionRef = sessionRefFor(targetUserId);
     const missionRef = doc(db, "missions", missionId);
+    setIsMissionContextReady(false);
 
     // Register current user as participant (skip if viewing as someone else)
     if (!viewAs && !isOnboardingMission) {
@@ -1849,6 +1907,7 @@ export default function MainScreenPage() {
       else if (missionData?.device) setDevice(missionData.device as Device);
       if (missionData?.durationMinutes)
         setMissionDurationMinutes(Number(missionData.durationMinutes));
+      setIsMissionContextReady(true);
     };
 
     getDoc(sessionRef).then((sessionSnap) => {
@@ -1979,7 +2038,9 @@ export default function MainScreenPage() {
         selectedOptionIdRef.current = session.selectedOptionId as string;
       }
       if (isOnboardingMission) {
-        fetchOnboardingMissionData().then(applyMission);
+        fetchOnboardingMissionData()
+          .then(applyMission)
+          .catch(() => applyMission(null));
       }
     });
 
@@ -2438,7 +2499,8 @@ export default function MainScreenPage() {
 
   const sendMessage = useCallback(async () => {
     const text = inputText.trim();
-    if (!text || isLoading || isGeneratingMockup) return;
+    if (!text || !isMissionContextReady || isLoading || isGeneratingMockup)
+      return;
 
     const userMsg: Message = {
       id: crypto.randomUUID(),
@@ -2551,6 +2613,19 @@ export default function MainScreenPage() {
       currentIdeaBoards.find((a) => a.id === activeArtboardId) ??
       currentIdeaBoards.at(-1) ??
       null;
+    const effectiveMissionTitle =
+      parentMissionTitle && activeOption && parentMissionTitle !== activeOption.title
+        ? `${parentMissionTitle} - ${activeOption.title}`
+        : activeOption?.title || parentMissionTitle || missionTitle || undefined;
+    const effectiveMissionBrief =
+      [
+        parentMissionBrief ? `[전체 미션 설명]\n${parentMissionBrief}` : "",
+        activeOption
+          ? `[선택된 옵션: ${activeOption.title}]\n${optionBrief(activeOption)}`
+          : missionBrief,
+      ]
+        .filter(Boolean)
+        .join("\n\n") || undefined;
 
     try {
       const res = await fetch("/api/chat", {
@@ -2569,26 +2644,8 @@ export default function MainScreenPage() {
           selectedElement: selectedElement || undefined,
           citedReferences:
             selectedReferences.length > 0 ? selectedReferences : undefined,
-          missionTitle:
-            parentMissionTitle &&
-            activeOption &&
-            parentMissionTitle !== activeOption.title
-              ? `${parentMissionTitle} - ${activeOption.title}`
-              : activeOption?.title ||
-                parentMissionTitle ||
-                missionTitle ||
-                undefined,
-          missionBrief:
-            [
-              parentMissionBrief
-                ? `[전체 미션 설명]\n${parentMissionBrief}`
-                : "",
-              activeOption
-                ? `[선택된 옵션: ${activeOption.title}]\n${optionBrief(activeOption)}`
-                : missionBrief,
-            ]
-              .filter(Boolean)
-              .join("\n\n") || undefined,
+          missionTitle: effectiveMissionTitle,
+          missionBrief: effectiveMissionBrief,
           device,
           activeIdea: ideas.find((i) => i.id === activeIdeaId) ?? undefined,
           memoryContext:
@@ -2738,8 +2795,29 @@ export default function MainScreenPage() {
         /\[FETCH_REFERENCES(?::\s*(.*?))?\]/,
       );
       if (fetchRefMatch) {
-        const customQuery = fetchRefMatch[1]?.trim() || null;
-        fetchReferences(missionTitle, missionBrief, customQuery);
+        const customQuery = buildReferenceSearchQuery(
+          fetchRefMatch[1]?.trim() || text,
+          effectiveMissionTitle,
+          activeOption,
+          device,
+        );
+        fetchReferences(
+          effectiveMissionTitle ?? "",
+          effectiveMissionBrief ?? "",
+          customQuery,
+        );
+      } else if (isReferenceSearchRequest(text)) {
+        const fallbackReferenceQuery = buildReferenceSearchQuery(
+          text,
+          effectiveMissionTitle,
+          activeOption,
+          device,
+        );
+        fetchReferences(
+          effectiveMissionTitle ?? "",
+          effectiveMissionBrief ?? "",
+          fallbackReferenceQuery || text,
+        );
       }
 
       const generateMatch = fullText.match(/\[GENERATE_MOCKUP(?::\s*([\s\S]*?))?\]/);
@@ -3253,6 +3331,7 @@ export default function MainScreenPage() {
   }, [
     inputText,
     isLoading,
+    isMissionContextReady,
     isGeneratingMockup,
     messages,
     artboards,
@@ -5613,7 +5692,12 @@ export default function MainScreenPage() {
                     value={inputText}
                     onChange={handleTextareaChange}
                     onKeyDown={handleKeyDown}
-                    placeholder="에이전트에게 메시지를 입력하세요..."
+                    disabled={!isMissionContextReady}
+                    placeholder={
+                      isMissionContextReady
+                        ? "에이전트에게 메시지를 입력하세요..."
+                        : "미션 정보를 불러오는 중입니다..."
+                    }
                     className="max-h-24 flex-1 resize-none bg-transparent text-sm text-slate-700 outline-none placeholder:text-slate-400"
                   />
                   {isGeneratingMockup ? (
@@ -5636,7 +5720,7 @@ export default function MainScreenPage() {
                   ) : (
                     <button
                       onClick={sendMessage}
-                      disabled={!inputText.trim()}
+                      disabled={!inputText.trim() || !isMissionContextReady}
                       className="rounded-full bg-slate-900 px-4 py-2 text-xs font-semibold text-white transition disabled:cursor-not-allowed disabled:opacity-40"
                     >
                       Send

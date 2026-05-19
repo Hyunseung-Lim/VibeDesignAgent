@@ -11,7 +11,7 @@ export const runtime = "nodejs";
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const MEMORY_SCHEMA_VERSION = "0.1.1";
-const FIRST_SESSION_TURN = "해당 세션의 첫 대화입니다.";
+const FIRST_SESSION_TURN = "This is the first turn of this session.";
 
 type EncodedMemory = {
   keywords: string[];
@@ -113,6 +113,7 @@ If the agent response already analyzes a cited reference, website, image, or tex
 A good memory record should be:
 - factual
 - compact
+- written entirely in English
 - grounded in the provided interaction
 - useful for reconstructing the user's design process later
 - careful about separating facts from inferences
@@ -129,6 +130,8 @@ Most interactions should return an empty semantic array.
 
 Always:
 - Analyze the full structured record.
+- Write every output value in English, regardless of the language used in the input or agent response.
+- Translate Korean or other non-English concepts into concise natural English.
 - Use previous context when it changes the meaning of the current turn.
 - Include the agent action, outcome, feedback, or decision in the episode.
 - Keep the episode as one factual sentence.
@@ -136,6 +139,7 @@ Always:
 - Return valid JSON only.
 
 Never:
+- Return Korean or mixed-language memory output.
 - Summarize only the user input.
 - Treat cited references as visual style by default.
 - Invent user traits, preferences, or intentions.
@@ -151,18 +155,18 @@ Return exactly this JSON shape:
 
 {
   "keywords": [
-    // Salient nouns, verbs, artifacts, actions, references, and design concepts.
+    // English salient nouns, verbs, artifacts, actions, references, and design concepts.
     // Ordered from most to least important.
     // Exclude speaker names, timestamps, and generic filler words.
     // Include at least three non-redundant keywords.
   ],
   "episode": "",
-  // One factual sentence describing the interaction,
+  // One factual English sentence describing the interaction,
   // including the user request, relevant prior context, agent action/output,
   // and immediate outcome, feedback, or decision.
 
   "semantic": [
-    // One-sentence inferences about the user's intent, preferences, traits, tendencies, working style, or communication style.
+    // One-sentence English inferences about the user's intent, preferences, traits, tendencies, working style, or communication style.
     // Keep each semantic item atomic; split it into separate items if it contains multiple separable ideas.
     // Pay attention to the user's stance, tone, emphasized points, and explicitly mentioned details, and infer the underlying reasons behind them.
     // Do NOT include simple factual statements about what the user said or did.

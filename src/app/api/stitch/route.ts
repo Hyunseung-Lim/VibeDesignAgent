@@ -14,6 +14,13 @@ type StitchScreenHandle = {
   getHtml: () => Promise<string>;
 };
 
+type MaterializedScreen = {
+  screen: StitchScreenHandle;
+  html: string;
+  htmlPending: boolean;
+  score: number;
+};
+
 const INCOMPLETE_RESPONSE_ERROR = "Incomplete API response";
 
 function errorMessage(error: unknown) {
@@ -26,6 +33,53 @@ function isIncompleteResponseError(error: unknown) {
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function visibleText(html: string) {
+  return html
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function countMatches(text: string, pattern: RegExp) {
+  return text.match(pattern)?.length ?? 0;
+}
+
+function scoreGeneratedScreen(html: string, prompt: string) {
+  const lowerHtml = html.toLowerCase();
+  const lowerPrompt = prompt.toLowerCase();
+  const text = visibleText(html).toLowerCase();
+  const textLength = text.length;
+  let score = 0;
+
+  score += Math.min(30, Math.floor(html.length / 1500));
+  score += Math.min(25, Math.floor(textLength / 250));
+  score += countMatches(lowerHtml, /<(main|section|article|header|nav|footer)\b/g) * 8;
+  score += countMatches(lowerHtml, /<(button|form|input|textarea|select)\b/g) * 4;
+  score += countMatches(lowerHtml, /class=["'][^"']*(hero|cta|card|grid|section|nav|header|footer|feature|pricing|testimonial|gallery)[^"']*["']/g) * 4;
+
+  if (/<html\b/i.test(html)) score += 8;
+  if (/<body\b/i.test(html)) score += 8;
+  if (/landing|website|web page|homepage|desktop|hero|section/.test(lowerPrompt)) {
+    if (/<(main|section|header|nav)\b/i.test(html)) score += 18;
+    if (/hero|cta|section|feature|navigation|headline/.test(text)) score += 10;
+  }
+  if (/mobile|app|screen/.test(lowerPrompt) && /nav|tab|button|card|screen/.test(text)) {
+    score += 8;
+  }
+
+  const logoSignals = /logo|logomark|brand mark|wordmark|symbol|icon/.test(text);
+  const websiteSignals =
+    /hero|headline|section|navigation|cta|feature|pricing|testimonial|about|footer|form|recommendation/.test(text) ||
+    /<(main|section|article|header|nav|footer|button|form)\b/i.test(html);
+  if (logoSignals && !websiteSignals) score -= 50;
+  if (textLength < 120 && lowerHtml.length < 2500) score -= 35;
+  if (countMatches(lowerHtml, /<svg\b/g) > 0 && !/<(main|section|button|form)\b/i.test(html)) score -= 20;
+
+  return score;
 }
 
 async function listScreens(project: StitchProject) {
@@ -189,6 +243,59 @@ async function waitForScreenHtml(
   return "";
 }
 
+async function materializeHtml(htmlUrlOrContent: string) {
+  if (!htmlUrlOrContent || !htmlUrlOrContent.startsWith("http")) {
+    return htmlUrlOrContent;
+  }
+  const fetchRes = await fetch(htmlUrlOrContent);
+  if (!fetchRes.ok) {
+    throw new Error(`Failed to fetch HTML from Stitch URL: ${fetchRes.status}`);
+  }
+  return fetchRes.text();
+}
+
+async function choosePrimaryScreen(
+  project: StitchProject,
+  screens: StitchScreenHandle[],
+  fallbackScreen: StitchScreenHandle,
+  prompt: string,
+) {
+  const unique = new Map<string, StitchScreenHandle>();
+  for (const screen of [fallbackScreen, ...screens]) {
+    if (screen?.id) unique.set(screen.id, screen);
+  }
+  const materialized = await Promise.all(
+    Array.from(unique.values()).map(async (screen): Promise<MaterializedScreen> => {
+      const htmlUrlOrContent = await waitForScreenHtml(project, screen);
+      if (!htmlUrlOrContent) {
+        return { screen, html: "", htmlPending: true, score: -100 };
+      }
+      const html = await materializeHtml(htmlUrlOrContent);
+      return {
+        screen,
+        html,
+        htmlPending: false,
+        score: scoreGeneratedScreen(html, prompt),
+      };
+    }),
+  );
+  materialized.sort((a, b) => b.score - a.score);
+  const selected = materialized[0] ?? {
+    screen: fallbackScreen,
+    html: "",
+    htmlPending: true,
+    score: -100,
+  };
+  console.log(
+    "[stitch] screen scores:",
+    materialized.map((item) => `${item.screen.id}:${item.score}`).join(", "),
+  );
+  return {
+    selected,
+    allScreenIds: Array.from(unique.keys()),
+  };
+}
+
 export async function POST(request: Request) {
   const { prompt, device, projectId, screenId } = await request.json();
 
@@ -239,16 +346,28 @@ export async function POST(request: Request) {
     if (!screen) throw new Error("No screen was generated or edited.");
     console.log("[stitch] screen id:", screen.id);
 
-    // Stitch can return a valid screen before its HTML download URL is ready.
-    const htmlUrlOrContent = await waitForScreenHtml(project, screen);
-    console.log("[stitch] htmlUrlOrContent type:", htmlUrlOrContent?.startsWith("http") ? "URL" : "direct-content", "preview:", htmlUrlOrContent?.slice(0, 150));
+    // Only consider screens created during this generation. Stitch sometimes
+    // creates a logo/brand asset before the actual web mockup, so pick the
+    // richest website-like screen as primary instead of trusting return order.
+    const allScreens = await project.screens().catch(() => []);
+    const freshScreens = allScreens.filter(
+      (candidate) => candidate.id && !beforeScreenIds.has(candidate.id),
+    );
+    const { selected, allScreenIds } = screenId
+      ? {
+          selected: {
+            screen,
+            html: await materializeHtml(await waitForScreenHtml(project, screen)),
+            htmlPending: false,
+            score: 0,
+          },
+          allScreenIds: [screen.id],
+        }
+      : await choosePrimaryScreen(project, freshScreens, screen, prompt);
+    screen = selected.screen;
+    console.log("[stitch] selected primary screen id:", screen.id);
 
-    if (!htmlUrlOrContent) {
-      const allScreens = await project.screens().catch(() => []);
-      const freshIds = new Set(
-        allScreens.map((candidate) => candidate.id).filter((id) => !beforeScreenIds.has(id)),
-      );
-      freshIds.add(screen.id);
+    if (!selected.html) {
       console.warn("[stitch] HTML still pending; returning screen metadata for lazy recovery:", screen.id);
       return Response.json(
         {
@@ -256,28 +375,14 @@ export async function POST(request: Request) {
           htmlPending: true,
           projectId: actualProjectId,
           screenId: screen.id,
-          allScreenIds: Array.from(freshIds),
+          allScreenIds,
         },
         { status: 202 },
       );
     }
 
-    // getHtml() returns a download URL, not the actual HTML — fetch the content
-    let html = htmlUrlOrContent;
-    if (htmlUrlOrContent.startsWith("http")) {
-      const fetchRes = await fetch(htmlUrlOrContent);
-      if (!fetchRes.ok) throw new Error(`Failed to fetch HTML from Stitch URL: ${fetchRes.status}`);
-      html = await fetchRes.text();
-      console.log("[stitch] fetched html length:", html.length);
-    }
-
-    // Only return screens created during this generation (not pre-existing ones)
-    const allScreens = await project.screens().catch(() => []);
-    const freshIds = new Set(
-      allScreens.map(s => s.id).filter(id => !beforeScreenIds.has(id))
-    );
-    freshIds.add(screen.id); // always include the primary screen
-    const allScreenIds = Array.from(freshIds);
+    const html = selected.html;
+    console.log("[stitch] selected html length:", html.length);
     console.log("[stitch] new screens this generation:", allScreenIds.length);
 
     return Response.json({
