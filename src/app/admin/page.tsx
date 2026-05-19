@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { ArrowLeftIcon, ArrowRightIcon, DeviceMobileIcon, MonitorIcon, XIcon, PencilSimpleIcon, UsersThreeIcon } from "@phosphor-icons/react";
 import { getIdToken, onAuthStateChanged } from "firebase/auth";
 import {
@@ -55,6 +55,9 @@ type AdminMemoryRow = {
 
 type MemoryCounts = Record<string, number>;
 type MemoryVersionTab = "0.1.0" | "0.1.1";
+type MemorySortKey = "timestamp" | "action" | "semantic";
+type SortDirection = "asc" | "desc";
+type SemanticFilter = "all" | "with" | "without";
 
 type MissionOption = {
   id: string;
@@ -94,6 +97,22 @@ function normalizeOptions(options?: MissionOption[]) {
   }));
 }
 
+function semanticItems(row: AdminMemoryRow) {
+  return typeof row.semantic === "string"
+    ? row.semantic
+        .split("\n")
+        .map((item) => item.trim())
+        .filter(Boolean)
+    : [];
+}
+
+function dateInputValue(timestamp?: number) {
+  if (!timestamp) return "";
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toISOString().slice(0, 10);
+}
+
 const EMPTY_FORM = {
   title: "",
   description: "",
@@ -113,6 +132,15 @@ export default function AdminPage() {
   const [isLoadingUsers, setIsLoadingUsers] = useState(false);
   const [memoryModal, setMemoryModal] = useState<{ userId: string; userName: string; rows: AdminMemoryRow[]; counts: MemoryCounts } | null>(null);
   const [memoryVersionTab, setMemoryVersionTab] = useState<MemoryVersionTab>("0.1.1");
+  const [memorySortKey, setMemorySortKey] =
+    useState<MemorySortKey>("timestamp");
+  const [memorySortDirection, setMemorySortDirection] =
+    useState<SortDirection>("desc");
+  const [memoryActionFilter, setMemoryActionFilter] = useState("all");
+  const [memorySemanticFilter, setMemorySemanticFilter] =
+    useState<SemanticFilter>("all");
+  const [memoryStartDate, setMemoryStartDate] = useState("");
+  const [memoryEndDate, setMemoryEndDate] = useState("");
   const [isLoadingMemory, setIsLoadingMemory] = useState(false);
   const [isDeletingMemory, setIsDeletingMemory] = useState(false);
   const [deletingSessionsUserId, setDeletingSessionsUserId] = useState<string | null>(null);
@@ -390,6 +418,7 @@ export default function AdminPage() {
       const data = await res.json();
       const counts = data.counts ?? {};
       setMemoryVersionTab((counts["0.1.1"] ?? 0) > 0 ? "0.1.1" : "0.1.0");
+      resetMemoryFilters();
       setMemoryModal({
         userId: user.id,
         userName: user.displayName ?? user.email ?? user.id,
@@ -587,11 +616,79 @@ export default function AdminPage() {
     });
   };
 
+  const versionMemoryRows = useMemo(
+    () =>
+      memoryModal?.rows.filter(
+        (row) => (row.version ?? "0.1.0") === memoryVersionTab,
+      ) ?? [],
+    [memoryModal?.rows, memoryVersionTab],
+  );
+  const memoryActionOptions = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          versionMemoryRows
+            .map((row) => row.agentActionCategory ?? "")
+            .filter(Boolean),
+        ),
+      ).sort(),
+    [versionMemoryRows],
+  );
+  const visibleMemoryRows = useMemo(() => {
+    const startTime = memoryStartDate
+      ? new Date(`${memoryStartDate}T00:00:00`).getTime()
+      : null;
+    const endTime = memoryEndDate
+      ? new Date(`${memoryEndDate}T23:59:59.999`).getTime()
+      : null;
+    const rows = versionMemoryRows.filter((row) => {
+      const timestamp = Number(row.timestamp ?? 0);
+      const hasSemantic = semanticItems(row).length > 0;
+      if (memoryActionFilter !== "all") {
+        if ((row.agentActionCategory ?? "") !== memoryActionFilter)
+          return false;
+      }
+      if (memorySemanticFilter === "with" && !hasSemantic) return false;
+      if (memorySemanticFilter === "without" && hasSemantic) return false;
+      if (startTime != null && timestamp < startTime) return false;
+      if (endTime != null && timestamp > endTime) return false;
+      return true;
+    });
+    const direction = memorySortDirection === "asc" ? 1 : -1;
+    return [...rows].sort((a, b) => {
+      if (memorySortKey === "timestamp") {
+        return (
+          (Number(a.timestamp ?? 0) - Number(b.timestamp ?? 0)) * direction
+        );
+      }
+      if (memorySortKey === "semantic") {
+        return (semanticItems(a).length - semanticItems(b).length) * direction;
+      }
+      return (
+        (a.agentActionCategory ?? "").localeCompare(
+          b.agentActionCategory ?? "",
+        ) * direction
+      );
+    });
+  }, [
+    versionMemoryRows,
+    memoryActionFilter,
+    memorySemanticFilter,
+    memoryStartDate,
+    memoryEndDate,
+    memorySortKey,
+    memorySortDirection,
+  ]);
+  const resetMemoryFilters = () => {
+    setMemoryActionFilter("all");
+    setMemorySemanticFilter("all");
+    setMemoryStartDate("");
+    setMemoryEndDate("");
+    setMemorySortKey("timestamp");
+    setMemorySortDirection("desc");
+  };
+
   if (!ready) return null;
-  const visibleMemoryRows =
-    memoryModal?.rows.filter(
-      (row) => (row.version ?? "0.1.0") === memoryVersionTab,
-    ) ?? [];
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900">
@@ -624,43 +721,130 @@ export default function AdminPage() {
               </button>
             </div>
             <div className="border-b border-slate-100 px-6 py-3">
-              <div className="inline-flex rounded-lg border border-slate-200 bg-slate-50 p-1">
-                {(["0.1.1", "0.1.0"] as const).map((version) => (
-                  <button
-                    key={version}
-                    type="button"
-                    onClick={() => setMemoryVersionTab(version)}
-                    className={`rounded-md px-3 py-1.5 text-xs font-semibold transition ${
-                      memoryVersionTab === version
-                        ? "bg-white text-slate-900 shadow-sm"
-                        : "text-slate-500 hover:text-slate-900"
-                    }`}
+              <div className="flex flex-wrap items-end gap-3">
+                <div className="inline-flex rounded-lg border border-slate-200 bg-slate-50 p-1">
+                  {(["0.1.1", "0.1.0"] as const).map((version) => (
+                    <button
+                      key={version}
+                      type="button"
+                      onClick={() => setMemoryVersionTab(version)}
+                      className={`rounded-md px-3 py-1.5 text-xs font-semibold transition ${
+                        memoryVersionTab === version
+                          ? "bg-white text-slate-900 shadow-sm"
+                          : "text-slate-500 hover:text-slate-900"
+                      }`}
+                    >
+                      v{version} ({memoryModal.counts[version] ?? 0})
+                    </button>
+                  ))}
+                </div>
+                <label className="flex flex-col gap-1 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+                  Start
+                  <input
+                    type="date"
+                    value={memoryStartDate}
+                    min={dateInputValue(versionMemoryRows.at(-1)?.timestamp)}
+                    max={memoryEndDate || dateInputValue(versionMemoryRows[0]?.timestamp)}
+                    onChange={(e) => setMemoryStartDate(e.target.value)}
+                    className="rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-normal normal-case tracking-normal text-slate-700 outline-none focus:border-slate-400"
+                  />
+                </label>
+                <label className="flex flex-col gap-1 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+                  End
+                  <input
+                    type="date"
+                    value={memoryEndDate}
+                    min={memoryStartDate || dateInputValue(versionMemoryRows.at(-1)?.timestamp)}
+                    max={dateInputValue(versionMemoryRows[0]?.timestamp)}
+                    onChange={(e) => setMemoryEndDate(e.target.value)}
+                    className="rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-normal normal-case tracking-normal text-slate-700 outline-none focus:border-slate-400"
+                  />
+                </label>
+                <label className="flex flex-col gap-1 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+                  Action
+                  <select
+                    value={memoryActionFilter}
+                    onChange={(e) => setMemoryActionFilter(e.target.value)}
+                    className="min-w-40 rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-normal normal-case tracking-normal text-slate-700 outline-none focus:border-slate-400"
                   >
-                    v{version} ({memoryModal.counts[version] ?? 0})
-                  </button>
-                ))}
+                    <option value="all">All actions</option>
+                    {memoryActionOptions.map((action) => (
+                      <option key={action} value={action}>
+                        {action}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="flex flex-col gap-1 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+                  Semantic
+                  <select
+                    value={memorySemanticFilter}
+                    onChange={(e) =>
+                      setMemorySemanticFilter(e.target.value as SemanticFilter)
+                    }
+                    className="rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-normal normal-case tracking-normal text-slate-700 outline-none focus:border-slate-400"
+                  >
+                    <option value="all">All</option>
+                    <option value="with">With semantic</option>
+                    <option value="without">No semantic</option>
+                  </select>
+                </label>
+                <label className="flex flex-col gap-1 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+                  Sort
+                  <select
+                    value={memorySortKey}
+                    onChange={(e) =>
+                      setMemorySortKey(e.target.value as MemorySortKey)
+                    }
+                    className="rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-normal normal-case tracking-normal text-slate-700 outline-none focus:border-slate-400"
+                  >
+                    <option value="timestamp">Timestamp</option>
+                    <option value="action">Action</option>
+                    <option value="semantic">Semantic count</option>
+                  </select>
+                </label>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setMemorySortDirection((prev) =>
+                      prev === "desc" ? "asc" : "desc",
+                    )
+                  }
+                  className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 transition hover:border-slate-300 hover:bg-slate-50"
+                >
+                  {memorySortDirection === "desc" ? "Desc" : "Asc"}
+                </button>
+                <button
+                  type="button"
+                  onClick={resetMemoryFilters}
+                  className="rounded-lg bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-500 transition hover:bg-slate-200"
+                >
+                  Reset
+                </button>
+                <span className="ml-auto text-xs text-slate-400">
+                  {visibleMemoryRows.length} / {versionMemoryRows.length} rows
+                </span>
               </div>
             </div>
-            <div className="max-h-[70vh] overflow-auto px-6 py-4">
+            <div className="max-h-[70vh] overflow-auto">
               {visibleMemoryRows.length === 0 ? (
-                <p className="text-sm text-slate-400">v{memoryVersionTab} 메모리 없음</p>
+                <p className="px-6 py-4 text-sm text-slate-400">v{memoryVersionTab} 메모리 없음</p>
               ) : (
                 <table className="w-full min-w-[960px] border-separate border-spacing-0 text-left text-xs text-slate-600">
-                  <thead className="sticky top-0 bg-white text-slate-400">
+                  <thead className="sticky top-0 z-10 bg-white text-slate-400 shadow-[0_1px_0_0_rgba(226,232,240,1)]">
                     <tr>
-                      {["#", "Timestamp", "Mission", "Action", "Input", "Episode", "Semantic", "Keywords"].map((label) => (
-                        <th key={label} className="border-b border-slate-100 px-3 py-2 font-semibold">{label}</th>
+                      {["Timestamp", "Mission", "Action", "Input", "Episode", "Semantic", "Keywords"].map((label) => (
+                        <th key={label} className="border-b border-slate-100 px-3 py-2 font-semibold">
+                          {label}
+                        </th>
                       ))}
                     </tr>
                   </thead>
                   <tbody>
-                    {visibleMemoryRows.map((row, idx) => {
-                      const semantics = typeof row.semantic === "string"
-                        ? row.semantic.split("\n").map((s: string) => s.trim()).filter(Boolean)
-                        : [];
+                    {visibleMemoryRows.map((row) => {
+                      const semantics = semanticItems(row);
                       return (
                         <tr key={`${row.version ?? "unknown"}-${row.type}-${row.id}`} className="align-top hover:bg-slate-50/60">
-                          <td className="whitespace-nowrap border-b border-slate-100 px-3 py-3 text-slate-400">{idx + 1}</td>
                           <td className="whitespace-nowrap border-b border-slate-100 px-3 py-3 text-slate-400">
                             {row.timestamp ? new Date(row.timestamp as number).toLocaleString("ko-KR", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "—"}
                           </td>
@@ -674,25 +858,25 @@ export default function AdminPage() {
                               </span>
                             ) : <span className="text-slate-300">—</span>}
                           </td>
-                          <td className="max-w-64 border-b border-slate-100 px-3 py-3 text-slate-700">{row.input ?? ""}</td>
-                          <td className="max-w-72 border-b border-slate-100 px-3 py-3 text-slate-600 italic">{row.episode ?? ""}</td>
-                          <td className="max-w-80 border-b border-slate-100 px-3 py-3">
+                          <td className="max-w-64 break-words border-b border-slate-100 px-3 py-3 text-slate-700 [overflow-wrap:anywhere]">{row.input ?? ""}</td>
+                          <td className="max-w-72 break-words border-b border-slate-100 px-3 py-3 text-slate-600 italic [overflow-wrap:anywhere]">{row.episode ?? ""}</td>
+                          <td className="max-w-80 break-words border-b border-slate-100 px-3 py-3 [overflow-wrap:anywhere]">
                             {semantics.length === 0 ? (
                               <span className="text-slate-300">—</span>
                             ) : (
                               <div className="flex flex-col gap-1">
                                 {semantics.map((s: string, i: number) => (
-                                  <span key={i} className="inline-block rounded-lg bg-indigo-50 px-2.5 py-1 text-xs leading-snug text-indigo-700">
+                                  <span key={i} className="inline-block max-w-full break-words rounded-lg bg-indigo-50 px-2.5 py-1 text-xs leading-snug text-indigo-700 [overflow-wrap:anywhere]">
                                     {s}
                                   </span>
                                 ))}
                               </div>
                             )}
                           </td>
-                          <td className="max-w-48 border-b border-slate-100 px-3 py-3">
+                          <td className="max-w-48 break-words border-b border-slate-100 px-3 py-3 [overflow-wrap:anywhere]">
                             <div className="flex flex-wrap gap-1">
                               {(row.keywords ?? []).map((kw: string, i: number) => (
-                                <span key={i} className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-500">{kw}</span>
+                                <span key={i} className="max-w-full break-words rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-500 [overflow-wrap:anywhere]">{kw}</span>
                               ))}
                             </div>
                           </td>
@@ -708,14 +892,11 @@ export default function AdminPage() {
                 type="button"
                 onClick={() => {
                   if (visibleMemoryRows.length === 0) return;
-                  const headers = ["#", "Timestamp", "Mission", "Action", "Input", "Episode", "Semantic", "Keywords"];
+                  const headers = ["Timestamp", "Mission", "Action", "Input", "Episode", "Semantic", "Keywords"];
                   const escape = (v: string) => `"${v.replace(/"/g, '""')}"`;
-                  const rows = visibleMemoryRows.map((row, idx) => {
-                    const semantics = typeof row.semantic === "string"
-                      ? row.semantic.split("\n").map((s: string) => s.trim()).filter(Boolean).join(" | ")
-                      : "";
+                  const rows = visibleMemoryRows.map((row) => {
+                    const semantics = semanticItems(row).join(" | ");
                     return [
-                      String(idx + 1),
                       row.timestamp ? new Date(row.timestamp as number).toLocaleString("ko-KR") : "",
                       row.source?.missionId ?? "",
                       row.agentActionCategory ?? "",

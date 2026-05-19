@@ -69,6 +69,21 @@ async function loadVersioned(uid: string, token: string) {
   return docs.filter((doc) => doc.type === "interaction");
 }
 
+function legacyCompatibilityIds(
+  versioned: Array<Record<string, unknown> & { id: string }>,
+) {
+  const ids = new Set<string>();
+  for (const doc of versioned) {
+    const source = doc.source as
+      | { missionId?: unknown; draftId?: unknown }
+      | undefined;
+    const missionId = String(source?.missionId ?? "").trim();
+    const draftId = String(source?.draftId ?? "").trim();
+    if (missionId && draftId) ids.add(`${missionId}-${draftId}`);
+  }
+  return ids;
+}
+
 export async function DELETE(
   request: Request,
   { params }: { params: Promise<{ uid: string }> },
@@ -115,7 +130,13 @@ export async function GET(
     load(uid, "semanticMemories", token),
   ]);
   const versioned = await loadVersioned(uid, token);
-  const memories = [...versioned, ...episodic, ...semantic].sort(
+  const versionedLegacyIds = legacyCompatibilityIds(versioned);
+  const legacy = [...episodic, ...semantic].filter(
+    (doc) =>
+      !versionedLegacyIds.has(doc.id) &&
+      String(doc.schemaVersion ?? "0.1.0") === "0.1.0",
+  );
+  const memories = [...versioned, ...legacy].sort(
     (a, b) =>
       Number((b as Record<string, unknown>).timestamp ?? (b as Record<string, unknown>).createdAt ?? 0) -
       Number((a as Record<string, unknown>).timestamp ?? (a as Record<string, unknown>).createdAt ?? 0),
@@ -123,7 +144,7 @@ export async function GET(
   return Response.json({
     memories,
     counts: {
-      "0.1.0": episodic.length + semantic.length,
+      "0.1.0": legacy.length,
       "0.1.1": versioned.length,
     },
   });
