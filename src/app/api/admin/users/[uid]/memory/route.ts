@@ -5,10 +5,10 @@ import {
   deleteFirestoreDocument,
   verifyFirebaseIdToken,
 } from "@/lib/server/firebaseAdminRest";
+import { isAdminEmail } from "@/lib/admin";
 
 export const runtime = "nodejs";
 
-const ADMIN_EMAILS = ["03leesun@gmail.com", "charlie9807@gmail.com"];
 const VERSIONED_MEMORY_COLLECTION = "memories_0_1_1";
 
 function jsonArray(value: unknown) {
@@ -89,7 +89,7 @@ export async function DELETE(
   { params }: { params: Promise<{ uid: string }> },
 ) {
   const admin = await verifyFirebaseIdToken(request);
-  if (!admin || !ADMIN_EMAILS.includes(admin.email ?? "")) {
+  if (!admin || !isAdminEmail(admin.email)) {
     return Response.json({ error: "forbidden" }, { status: 403 });
   }
   const { uid } = await params;
@@ -120,7 +120,7 @@ export async function GET(
   { params }: { params: Promise<{ uid: string }> },
 ) {
   const admin = await verifyFirebaseIdToken(request);
-  if (!admin || !ADMIN_EMAILS.includes(admin.email ?? "")) {
+  if (!admin || !isAdminEmail(admin.email)) {
     return Response.json({ error: "forbidden" }, { status: 403 });
   }
   const { uid } = await params;

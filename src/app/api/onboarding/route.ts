@@ -4,10 +4,9 @@ import {
   patchFirestoreDocument,
   verifyFirebaseIdToken,
 } from "@/lib/server/firebaseAdminRest";
+import { isAdminEmail } from "@/lib/admin";
 
 export const runtime = "nodejs";
-
-const ADMIN_EMAILS = ["03leesun@gmail.com", "charlie9807@gmail.com"];
 
 function defaultSettings() {
   return {
@@ -27,7 +26,7 @@ export async function GET() {
 
 export async function PATCH(request: Request) {
   const requester = await verifyFirebaseIdToken(request);
-  if (!requester || !ADMIN_EMAILS.includes(requester.email ?? "")) {
+  if (!requester || !isAdminEmail(requester.email)) {
     return Response.json({ error: "forbidden" }, { status: 403 });
   }
 

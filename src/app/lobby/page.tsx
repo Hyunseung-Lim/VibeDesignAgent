@@ -8,8 +8,7 @@ import { useEffect, useRef, useState } from "react";
 import { collection, onSnapshot, orderBy, query } from "firebase/firestore";
 import { firebaseAuth, db } from "@/lib/firebase";
 import { DeviceMobileIcon, MonitorIcon } from "@phosphor-icons/react";
-
-const ADMIN_EMAILS = ["03leesun@gmail.com", "charlie9807@gmail.com"];
+import { isAdminEmail } from "@/lib/admin";
 const ONBOARDING_MISSION_ID = "onboarding";
 
 type Mission = {
@@ -112,7 +111,7 @@ export default function LobbyPage() {
       setUserEmail(user.email ?? "");
       setUserName(user.displayName ?? user.email?.split("@")[0] ?? "사용자");
       setUserPhoto(user.photoURL ?? null);
-      setIsAdmin(ADMIN_EMAILS.includes(user.email ?? ""));
+      setIsAdmin(isAdminEmail(user.email));
       setIsCheckingOnboarding(true);
       getIdToken(user)
         .then((token) =>

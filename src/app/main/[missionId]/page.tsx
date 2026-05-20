@@ -26,8 +26,7 @@ import {
   DownloadSimpleIcon,
   XIcon,
 } from "@phosphor-icons/react";
-
-const ADMIN_EMAILS = ["03leesun@gmail.com", "charlie9807@gmail.com"];
+import { isAdminEmail } from "@/lib/admin";
 const ONBOARDING_MISSION_ID = "onboarding";
 
 type Message = {
@@ -1783,7 +1782,7 @@ export default function MainScreenPage() {
   useEffect(() => {
     return onAuthStateChanged(firebaseAuth, (user) => {
       setUserId(user?.uid ?? null);
-      setIsAdmin(ADMIN_EMAILS.includes(user?.email ?? ""));
+      setIsAdmin(isAdminEmail(user?.email));
       if (!user) return;
       getIdToken(user)
         .then((token) =>

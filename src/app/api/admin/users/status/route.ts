@@ -3,14 +3,13 @@ import {
   getFirestoreDocument,
   verifyFirebaseIdToken,
 } from "@/lib/server/firebaseAdminRest";
+import { isAdminEmail } from "@/lib/admin";
 
 export const runtime = "nodejs";
 
-const ADMIN_EMAILS = ["03leesun@gmail.com", "charlie9807@gmail.com"];
-
 export async function POST(request: Request) {
   const user = await verifyFirebaseIdToken(request);
-  if (!user || !ADMIN_EMAILS.includes(user.email ?? "")) {
+  if (!user || !isAdminEmail(user.email)) {
     return Response.json({ error: "forbidden" }, { status: 403 });
   }
 

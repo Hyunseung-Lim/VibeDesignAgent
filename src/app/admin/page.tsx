@@ -16,8 +16,8 @@ import {
   getDocs,
 } from "firebase/firestore";
 import { firebaseAuth, db } from "@/lib/firebase";
+import { isAdminEmail } from "@/lib/admin";
 
-const ADMIN_EMAILS = ["03leesun@gmail.com", "charlie9807@gmail.com"];
 const ONBOARDING_MISSION_ID = "onboarding";
 
 type Device = "desktop" | "mobile";
@@ -178,7 +178,7 @@ export default function AdminPage() {
 
   useEffect(() => {
     return onAuthStateChanged(firebaseAuth, (user) => {
-      if (!user || !ADMIN_EMAILS.includes(user.email ?? "")) {
+      if (!user || !isAdminEmail(user.email)) {
         router.replace("/lobby");
         return;
       }
@@ -233,7 +233,7 @@ export default function AdminPage() {
     );
     const participantRows = snap.docs.map((d) => {
       const participant = { id: d.id, ...d.data() } as Participant;
-      participant.isAdmin = ADMIN_EMAILS.includes(participant.email ?? "");
+      participant.isAdmin = isAdminEmail(participant.email);
       return participant;
     });
     const statuses = await fetchOnboardingStatuses(
@@ -524,7 +524,7 @@ export default function AdminPage() {
         isAdmin:
           changes.isAdmin ??
           prev?.isAdmin ??
-          ADMIN_EMAILS.includes(changes.email ?? prev?.email ?? ""),
+          isAdminEmail(changes.email ?? prev?.email),
         missionIds: changes.missionIds ?? prev?.missionIds ?? [],
         sessionMissionIds:
           changes.sessionMissionIds ?? prev?.sessionMissionIds ?? [],
@@ -556,9 +556,7 @@ export default function AdminPage() {
             email: data.email ?? existing?.email ?? null,
             photoURL: data.photoURL ?? existing?.photoURL ?? null,
             updatedAt: data.updatedAt ?? existing?.updatedAt ?? 0,
-            isAdmin: ADMIN_EMAILS.includes(
-              data.email ?? existing?.email ?? "",
-            ),
+            isAdmin: isAdminEmail(data.email ?? existing?.email),
             missionIds: Array.from(
               new Set([...(existing?.missionIds ?? []), mission.id]),
             ),
@@ -593,7 +591,7 @@ export default function AdminPage() {
     const statuses = await fetchOnboardingStatuses(rawUsers.map((user) => user.id));
     const enrichedUsers = rawUsers.map((user) => ({
       ...user,
-      isAdmin: ADMIN_EMAILS.includes(user.email ?? ""),
+      isAdmin: isAdminEmail(user.email),
       onboardingStatus:
         statuses[user.id]?.onboardingStatus ?? user.onboardingStatus,
     }));

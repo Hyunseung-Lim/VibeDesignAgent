@@ -1,10 +1,9 @@
 import { createSign } from "crypto";
 import { readFile } from "fs/promises";
 import path from "path";
+import { isAdminEmail } from "@/lib/admin";
 
 export const runtime = "nodejs";
-
-const ADMIN_EMAILS = ["03leesun@gmail.com", "charlie9807@gmail.com"];
 
 type ServiceAccount = {
   client_email: string;
@@ -122,7 +121,7 @@ async function assertAdmin(request: Request) {
   );
   if (!res.ok) return false;
   const data = (await res.json()) as { users?: Array<{ email?: string }> };
-  return ADMIN_EMAILS.includes(data.users?.[0]?.email ?? "");
+  return isAdminEmail(data.users?.[0]?.email);
 }
 
 function firestoreBase() {

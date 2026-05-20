@@ -4,11 +4,9 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { ArrowLeftIcon, DeviceMobileIcon, MonitorIcon } from "@phosphor-icons/react";
-import { onAuthStateChanged } from "firebase/auth";
-import { doc, setDoc } from "firebase/firestore";
-import { firebaseAuth, db } from "@/lib/firebase";
-
-const ADMIN_EMAILS = ["03leesun@gmail.com", "charlie9807@gmail.com"];
+import { getIdToken, onAuthStateChanged } from "firebase/auth";
+import { firebaseAuth } from "@/lib/firebase";
+import { isAdminEmail } from "@/lib/admin";
 
 type Device = "desktop" | "mobile";
 
@@ -36,10 +34,11 @@ export default function NewMissionPage() {
   const [ready, setReady] = useState(false);
   const [form, setForm] = useState(EMPTY_FORM);
   const [isCreating, setIsCreating] = useState(false);
+  const [error, setError] = useState("");
 
   useEffect(() => {
     return onAuthStateChanged(firebaseAuth, (user) => {
-      if (!user || !ADMIN_EMAILS.includes(user.email ?? "")) {
+      if (!user || !isAdminEmail(user.email)) {
         router.replace("/lobby");
         return;
       }
@@ -71,21 +70,36 @@ export default function NewMissionPage() {
   const createMission = async () => {
     if (!canSubmit) return;
     setIsCreating(true);
+    setError("");
     try {
-      const now = new Date();
-      const id = `mission-${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, "0")}${String(now.getDate()).padStart(2, "0")}-${String(now.getHours()).padStart(2, "0")}${String(now.getMinutes()).padStart(2, "0")}${String(now.getSeconds()).padStart(2, "0")}`;
-      await setDoc(doc(db, "missions", id), {
-        title: form.title.trim(),
-        description: form.description.trim(),
-        device: form.device,
-        durationMinutes: form.durationMinutes > 0 ? form.durationMinutes : null,
-        options: validOptions.map((o) => ({
-          ...o,
-          title: o.title.trim(),
-        })),
-        createdAt: Date.now(),
+      const user = firebaseAuth.currentUser;
+      if (!user) throw new Error("로그인이 필요합니다.");
+      const token = await getIdToken(user);
+      const res = await fetch("/api/admin/missions", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          title: form.title.trim(),
+          description: form.description.trim(),
+          device: form.device,
+          durationMinutes: form.durationMinutes > 0 ? form.durationMinutes : null,
+          options: validOptions.map((o) => ({
+            ...o,
+            title: o.title.trim(),
+          })),
+        }),
       });
+      if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        throw new Error(data?.error ?? "미션 생성에 실패했습니다.");
+      }
       router.push("/admin");
+    } catch (err) {
+      console.error("[admin/new] create mission failed", err);
+      setError(err instanceof Error ? err.message : "미션 생성에 실패했습니다.");
     } finally {
       setIsCreating(false);
     }
@@ -116,6 +130,11 @@ export default function NewMissionPage() {
 
       {/* Form */}
       <div className="mx-auto max-w-2xl space-y-6 px-4 py-10 lg:px-10">
+        {error && (
+          <div className="rounded-2xl border border-red-100 bg-red-50 px-4 py-3 text-sm text-red-600">
+            {error}
+          </div>
+        )}
         <div className="rounded-3xl border border-slate-100 bg-white p-6 space-y-4">
           <p className="text-sm font-semibold text-slate-500">기본 정보</p>
 

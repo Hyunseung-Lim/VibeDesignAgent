@@ -8,10 +8,10 @@ import {
   listFirestoreDocumentIds,
   verifyFirebaseIdToken,
 } from "@/lib/server/firebaseAdminRest";
+import { isAdminEmail } from "@/lib/admin";
 
 export const runtime = "nodejs";
 
-const ADMIN_EMAILS = ["03leesun@gmail.com", "charlie9807@gmail.com"];
 const STORAGE_BUCKET =
   process.env.FIREBASE_STORAGE_BUCKET || "vibedesignagent.firebasestorage.app";
 
@@ -22,7 +22,7 @@ function safeName(value: string, fallback: string) {
 
 async function assertAdmin(request: Request) {
   const admin = await verifyFirebaseIdToken(request);
-  return !!admin && ADMIN_EMAILS.includes(admin.email ?? "");
+  return !!admin && isAdminEmail(admin.email);
 }
 
 async function loadCollection(path: string, token: string) {

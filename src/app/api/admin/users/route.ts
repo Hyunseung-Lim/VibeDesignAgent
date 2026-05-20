@@ -4,14 +4,13 @@ import {
   listFirestoreDocumentIds,
   verifyFirebaseIdToken,
 } from "@/lib/server/firebaseAdminRest";
+import { isAdminEmail } from "@/lib/admin";
 
 export const runtime = "nodejs";
 
-const ADMIN_EMAILS = ["03leesun@gmail.com", "charlie9807@gmail.com"];
-
 export async function GET(request: Request) {
   const requester = await verifyFirebaseIdToken(request);
-  if (!requester || !ADMIN_EMAILS.includes(requester.email ?? "")) {
+  if (!requester || !isAdminEmail(requester.email)) {
     return Response.json({ error: "forbidden" }, { status: 403 });
   }
 
@@ -34,7 +33,7 @@ export async function GET(request: Request) {
             ? "completed"
             : "required"
           : "unknown",
-        isAdmin: ADMIN_EMAILS.includes(String(profile?.email ?? "")),
+        isAdmin: isAdminEmail(String(profile?.email ?? "")),
       };
     }),
   );

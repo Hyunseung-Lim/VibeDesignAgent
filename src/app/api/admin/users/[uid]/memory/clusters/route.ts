@@ -1,9 +1,9 @@
 import OpenAI from "openai";
 import { verifyFirebaseIdToken } from "@/lib/server/firebaseAdminRest";
+import { isAdminEmail } from "@/lib/admin";
 
 export const runtime = "nodejs";
 
-const ADMIN_EMAILS = ["03leesun@gmail.com", "charlie9807@gmail.com"];
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 type ClusterInputItem = {
@@ -314,7 +314,7 @@ export async function POST(
   { params }: { params: Promise<{ uid: string }> },
 ) {
   const admin = await verifyFirebaseIdToken(request);
-  if (!admin || !ADMIN_EMAILS.includes(admin.email ?? "")) {
+  if (!admin || !isAdminEmail(admin.email)) {
     return Response.json({ error: "forbidden" }, { status: 403 });
   }
   await params;
