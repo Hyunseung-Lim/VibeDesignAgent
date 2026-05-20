@@ -4875,7 +4875,7 @@ export default function MainScreenPage() {
                                   )}
                                 </div>
                                 {!isIdeaExpanded && (
-                                  <div className="pointer-events-none absolute inset-x-0 bottom-0 h-20 bg-gradient-to-t from-white via-white to-transparent" />
+                                  <div className="pointer-events-none absolute inset-x-0 bottom-0 h-20 bg-linear-to-t from-white via-white to-transparent" />
                                 )}
                                 <div className="absolute inset-x-0 bottom-3 z-10 flex justify-center">
                                   <button
@@ -5735,7 +5735,7 @@ export default function MainScreenPage() {
       {/* Mockup expanded canvas: keep the chat panel visible */}
       {isMockupExpanded && (
         <div
-          className="fixed inset-y-0 left-0 right-0 z-40 flex flex-col bg-[#1a1a1a] md:right-[28rem]"
+          className="fixed inset-y-0 left-0 right-0 z-40 flex flex-col bg-[#1a1a1a] md:right-112"
           style={{
             backgroundImage:
               "radial-gradient(circle, #383838 1px, transparent 1px)",

@@ -1023,7 +1023,7 @@ export default function AdminPage() {
                 {visibleMemoryRows.length === 0 ? (
                 <p className="px-6 py-4 text-sm text-slate-400">v{memoryVersionTab} 메모리 없음</p>
                 ) : (
-                <table className="w-full min-w-[960px] border-separate border-spacing-0 text-left text-xs text-slate-600">
+                <table className="w-full min-w-240 border-separate border-spacing-0 text-left text-xs text-slate-600">
                   <thead className="sticky top-0 z-10 bg-white text-slate-400 shadow-[0_1px_0_0_rgba(226,232,240,1)]">
                     <tr>
                       {["Timestamp", "Mission", "Action", "Input", "Episode", "Semantic", "Keywords"].map((label) => (
@@ -1051,25 +1051,25 @@ export default function AdminPage() {
                               </span>
                             ) : <span className="text-slate-300">—</span>}
                           </td>
-                          <td className="max-w-64 break-words border-b border-slate-100 px-3 py-3 text-slate-700 [overflow-wrap:anywhere]">{row.input ?? ""}</td>
-                          <td className="max-w-72 break-words border-b border-slate-100 px-3 py-3 text-slate-600 italic [overflow-wrap:anywhere]">{row.episode ?? ""}</td>
-                          <td className="max-w-80 break-words border-b border-slate-100 px-3 py-3 [overflow-wrap:anywhere]">
+                          <td className="max-w-64 wrap-anywhere border-b border-slate-100 px-3 py-3 text-slate-700">{row.input ?? ""}</td>
+                          <td className="max-w-72 wrap-anywhere border-b border-slate-100 px-3 py-3 text-slate-600 italic">{row.episode ?? ""}</td>
+                          <td className="max-w-80 wrap-anywhere border-b border-slate-100 px-3 py-3">
                             {semantics.length === 0 ? (
                               <span className="text-slate-300">—</span>
                             ) : (
                               <div className="flex flex-col gap-1">
                                 {semantics.map((s: string, i: number) => (
-                                  <span key={i} className="inline-block max-w-full break-words rounded-lg bg-indigo-50 px-2.5 py-1 text-xs leading-snug text-indigo-700 [overflow-wrap:anywhere]">
+                                  <span key={i} className="inline-block max-w-full wrap-anywhere rounded-lg bg-indigo-50 px-2.5 py-1 text-xs leading-snug text-indigo-700">
                                     {s}
                                   </span>
                                 ))}
                               </div>
                             )}
                           </td>
-                          <td className="max-w-48 break-words border-b border-slate-100 px-3 py-3 [overflow-wrap:anywhere]">
+                          <td className="max-w-48 wrap-anywhere border-b border-slate-100 px-3 py-3">
                             <div className="flex flex-wrap gap-1">
                               {(row.keywords ?? []).map((kw: string, i: number) => (
-                                <span key={i} className="max-w-full break-words rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-500 [overflow-wrap:anywhere]">{kw}</span>
+                                <span key={i} className="max-w-full wrap-anywhere rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-500">{kw}</span>
                               ))}
                             </div>
                           </td>
@@ -1234,7 +1234,7 @@ export default function AdminPage() {
                               key={item.id}
                               className="rounded-2xl border border-slate-100 bg-white p-4 text-xs shadow-sm"
                             >
-                              <p className="break-words text-sm leading-relaxed text-slate-800 [overflow-wrap:anywhere]">
+                              <p className="wrap-anywhere text-sm leading-relaxed text-slate-800">
                                 {item.semantic}
                               </p>
                               <div className="mt-3 flex flex-wrap items-center gap-2 text-[11px] text-slate-400">
@@ -1258,12 +1258,12 @@ export default function AdminPage() {
                                 <span>{item.row.source?.missionId ?? "—"}</span>
                               </div>
                               {item.episode && (
-                                <p className="mt-3 break-words text-slate-500 [overflow-wrap:anywhere]">
+                                <p className="mt-3 wrap-anywhere text-slate-500">
                                   {item.episode}
                                 </p>
                               )}
                               {item.input && (
-                                <p className="mt-2 break-words text-slate-400 [overflow-wrap:anywhere]">
+                                <p className="mt-2 wrap-anywhere text-slate-400">
                                   Input: {item.input}
                                 </p>
                               )}
