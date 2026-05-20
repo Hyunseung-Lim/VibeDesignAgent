@@ -58,6 +58,23 @@ type MemoryVersionTab = "0.1.0" | "0.1.1";
 type MemorySortKey = "timestamp" | "action" | "semantic";
 type SortDirection = "asc" | "desc";
 type SemanticFilter = "all" | "with" | "without";
+type MemoryViewTab = "table" | "clusters";
+
+type MemoryCluster = {
+  id: string;
+  label: string;
+  summary: string;
+  count: number;
+  relatedActions: string[];
+  itemIds: string[];
+  representativeItems: string[];
+};
+
+type MemoryClusterDiagnostics = {
+  duplicateItemIds: string[];
+  recoveredUnassignedItemIds?: string[];
+  unassignedItemIds: string[];
+};
 
 type MissionOption = {
   id: string;
@@ -141,6 +158,16 @@ export default function AdminPage() {
     useState<SemanticFilter>("all");
   const [memoryStartDate, setMemoryStartDate] = useState("");
   const [memoryEndDate, setMemoryEndDate] = useState("");
+  const [memoryViewTab, setMemoryViewTab] = useState<MemoryViewTab>("table");
+  const [memoryClusters, setMemoryClusters] = useState<MemoryCluster[]>([]);
+  const [selectedMemoryClusterId, setSelectedMemoryClusterId] =
+    useState<string | null>(null);
+  const [isClusteringMemory, setIsClusteringMemory] = useState(false);
+  const [memoryClusterError, setMemoryClusterError] = useState<string | null>(
+    null,
+  );
+  const [memoryClusterDiagnostics, setMemoryClusterDiagnostics] =
+    useState<MemoryClusterDiagnostics | null>(null);
   const [isLoadingMemory, setIsLoadingMemory] = useState(false);
   const [isDeletingMemory, setIsDeletingMemory] = useState(false);
   const [deletingSessionsUserId, setDeletingSessionsUserId] = useState<string | null>(null);
@@ -419,6 +446,11 @@ export default function AdminPage() {
       const counts = data.counts ?? {};
       setMemoryVersionTab((counts["0.1.1"] ?? 0) > 0 ? "0.1.1" : "0.1.0");
       resetMemoryFilters();
+      setMemoryViewTab("table");
+      setMemoryClusters([]);
+      setSelectedMemoryClusterId(null);
+      setMemoryClusterError(null);
+      setMemoryClusterDiagnostics(null);
       setMemoryModal({
         userId: user.id,
         userName: user.displayName ?? user.email ?? user.id,
@@ -679,6 +711,52 @@ export default function AdminPage() {
     memorySortKey,
     memorySortDirection,
   ]);
+  const clusterableMemoryItems = useMemo(
+    () =>
+      visibleMemoryRows.flatMap((row) =>
+        semanticItems(row).map((semantic, index) => ({
+          id: `${row.id}-semantic-${index}`,
+          memoryId: row.id,
+          semantic,
+          episode: row.episode ?? "",
+          input: row.input ?? "",
+          action: row.agentActionCategory ?? "",
+          timestamp: row.timestamp ?? 0,
+          keywords: row.keywords ?? [],
+          row,
+        })),
+      ),
+    [visibleMemoryRows],
+  );
+  const clusterableItemById = useMemo(
+    () =>
+      new Map(
+        clusterableMemoryItems.map((item) => [item.id, item] as const),
+      ),
+    [clusterableMemoryItems],
+  );
+  const selectedMemoryCluster =
+    memoryClusters.find((cluster) => cluster.id === selectedMemoryClusterId) ??
+    memoryClusters[0] ??
+    null;
+  const selectedClusterItems = selectedMemoryCluster
+    ? selectedMemoryCluster.itemIds
+        .map((id) => clusterableItemById.get(id))
+        .filter((item): item is NonNullable<typeof item> => Boolean(item))
+    : [];
+  const clusterInputSignature = useMemo(
+    () =>
+      clusterableMemoryItems
+        .map((item) => `${item.id}:${item.semantic}`)
+        .join("|"),
+    [clusterableMemoryItems],
+  );
+  useEffect(() => {
+    setMemoryClusters([]);
+    setSelectedMemoryClusterId(null);
+    setMemoryClusterError(null);
+    setMemoryClusterDiagnostics(null);
+  }, [clusterInputSignature]);
   const resetMemoryFilters = () => {
     setMemoryActionFilter("all");
     setMemorySemanticFilter("all");
@@ -686,6 +764,106 @@ export default function AdminPage() {
     setMemoryEndDate("");
     setMemorySortKey("timestamp");
     setMemorySortDirection("desc");
+  };
+
+  const generateMemoryClusters = async () => {
+    if (!memoryModal || clusterableMemoryItems.length === 0) return;
+    const token = await getAdminToken();
+    if (!token) return;
+    setIsClusteringMemory(true);
+    setMemoryClusterError(null);
+    setMemoryClusterDiagnostics(null);
+    try {
+      const res = await fetch(
+        `/api/admin/users/${encodeURIComponent(memoryModal.userId)}/memory/clusters`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            items: clusterableMemoryItems.map((item) => ({
+              id: item.id,
+              semantic: item.semantic,
+              episode: item.episode,
+              input: item.input,
+              action: item.action,
+              timestamp: item.timestamp,
+              keywords: item.keywords,
+            })),
+          }),
+        },
+      );
+      const data = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(data?.error ?? "클러스터 생성 실패");
+      const clusters = Array.isArray(data?.clusters) ? data.clusters : [];
+      setMemoryClusters(clusters);
+      setMemoryClusterDiagnostics(
+        data?.diagnostics &&
+          Array.isArray(data.diagnostics.duplicateItemIds) &&
+          Array.isArray(data.diagnostics.unassignedItemIds)
+          ? {
+              duplicateItemIds: data.diagnostics.duplicateItemIds,
+              recoveredUnassignedItemIds: Array.isArray(
+                data.diagnostics.recoveredUnassignedItemIds,
+              )
+                ? data.diagnostics.recoveredUnassignedItemIds
+                : [],
+              unassignedItemIds: data.diagnostics.unassignedItemIds,
+            }
+          : null,
+      );
+      setSelectedMemoryClusterId(clusters[0]?.id ?? null);
+      if (clusters.length === 0) {
+        setMemoryClusterError("생성된 클러스터가 없습니다.");
+      }
+    } catch (error) {
+      console.error("[admin] memory clustering failed", error);
+      setMemoryClusterError("클러스터 생성에 실패했습니다.");
+    } finally {
+      setIsClusteringMemory(false);
+    }
+  };
+
+  const copyMemoryClustersJson = async () => {
+    if (!memoryModal || memoryClusters.length === 0) return;
+    const itemForExport = (id: string) => {
+      const item = clusterableItemById.get(id);
+      if (!item) return null;
+      return {
+        id: item.id,
+        memoryId: item.memoryId,
+        semantic: item.semantic,
+        episode: item.episode,
+        input: item.input,
+        action: item.action,
+        timestamp: item.timestamp,
+        missionId: item.row.source?.missionId ?? null,
+        keywords: item.keywords,
+      };
+    };
+    const payload = {
+      exportedAt: new Date().toISOString(),
+      userId: memoryModal.userId,
+      userName: memoryModal.userName,
+      memoryVersion: memoryVersionTab,
+      filters: {
+        startDate: memoryStartDate || null,
+        endDate: memoryEndDate || null,
+        action: memoryActionFilter,
+        semantic: memorySemanticFilter,
+        sortKey: memorySortKey,
+        sortDirection: memorySortDirection,
+      },
+      sourceItemCount: clusterableMemoryItems.length,
+      diagnostics: memoryClusterDiagnostics,
+      clusters: memoryClusters.map((cluster) => ({
+        ...cluster,
+        items: cluster.itemIds.map(itemForExport).filter(Boolean),
+      })),
+    };
+    await navigator.clipboard.writeText(JSON.stringify(payload, null, 2));
   };
 
   if (!ready) return null;
@@ -722,6 +900,22 @@ export default function AdminPage() {
             </div>
             <div className="border-b border-slate-100 px-6 py-3">
               <div className="flex flex-wrap items-end gap-3">
+                <div className="inline-flex rounded-lg border border-slate-200 bg-slate-50 p-1">
+                  {(["table", "clusters"] as const).map((tab) => (
+                    <button
+                      key={tab}
+                      type="button"
+                      onClick={() => setMemoryViewTab(tab)}
+                      className={`rounded-md px-3 py-1.5 text-xs font-semibold transition ${
+                        memoryViewTab === tab
+                          ? "bg-white text-slate-900 shadow-sm"
+                          : "text-slate-500 hover:text-slate-900"
+                      }`}
+                    >
+                      {tab === "table" ? "Table" : "Clusters"}
+                    </button>
+                  ))}
+                </div>
                 <div className="inline-flex rounded-lg border border-slate-200 bg-slate-50 p-1">
                   {(["0.1.1", "0.1.0"] as const).map((version) => (
                     <button
@@ -826,10 +1020,11 @@ export default function AdminPage() {
                 </span>
               </div>
             </div>
-            <div className="max-h-[70vh] overflow-auto">
-              {visibleMemoryRows.length === 0 ? (
+            {memoryViewTab === "table" ? (
+              <div className="max-h-[70vh] overflow-auto">
+                {visibleMemoryRows.length === 0 ? (
                 <p className="px-6 py-4 text-sm text-slate-400">v{memoryVersionTab} 메모리 없음</p>
-              ) : (
+                ) : (
                 <table className="w-full min-w-[960px] border-separate border-spacing-0 text-left text-xs text-slate-600">
                   <thead className="sticky top-0 z-10 bg-white text-slate-400 shadow-[0_1px_0_0_rgba(226,232,240,1)]">
                     <tr>
@@ -885,8 +1080,204 @@ export default function AdminPage() {
                     })}
                   </tbody>
                 </table>
-              )}
-            </div>
+                )}
+              </div>
+            ) : (
+              <div className="grid max-h-[70vh] min-h-96 grid-cols-[minmax(220px,320px)_1fr] overflow-hidden">
+                <div className="border-r border-slate-100 bg-slate-50/60">
+                  <div className="sticky top-0 z-10 border-b border-slate-100 bg-slate-50/95 p-4">
+                    <div className="grid grid-cols-[1fr_auto] gap-2">
+                      <button
+                        type="button"
+                        onClick={generateMemoryClusters}
+                        disabled={
+                          isClusteringMemory ||
+                          clusterableMemoryItems.length === 0
+                        }
+                        className="rounded-xl bg-slate-900 px-3 py-2 text-xs font-semibold text-white transition hover:bg-slate-700 disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-500"
+                      >
+                        {isClusteringMemory
+                          ? "Generating..."
+                          : `Generate (${clusterableMemoryItems.length})`}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={copyMemoryClustersJson}
+                        disabled={memoryClusters.length === 0}
+                        className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+                      >
+                        Copy JSON
+                      </button>
+                    </div>
+                    {memoryClusterError && (
+                      <p className="mt-2 text-xs text-red-500">
+                        {memoryClusterError}
+                      </p>
+                    )}
+                    {memoryClusterDiagnostics &&
+                      (memoryClusterDiagnostics.duplicateItemIds.length > 0 ||
+                        (memoryClusterDiagnostics.recoveredUnassignedItemIds
+                          ?.length ?? 0) > 0 ||
+                        memoryClusterDiagnostics.unassignedItemIds.length >
+                          0) && (
+                        <p className="mt-2 text-xs leading-relaxed text-slate-400">
+                          Normalized clusters: removed{" "}
+                          {memoryClusterDiagnostics.duplicateItemIds.length}{" "}
+                          duplicate assignments, recovered{" "}
+                          {memoryClusterDiagnostics.recoveredUnassignedItemIds
+                            ?.length ?? 0}{" "}
+                          omitted items, final unassigned{" "}
+                          {memoryClusterDiagnostics.unassignedItemIds.length}.
+                        </p>
+                      )}
+                  </div>
+                  <div className="max-h-[calc(70vh-73px)] overflow-auto p-3">
+                    {clusterableMemoryItems.length === 0 ? (
+                      <p className="px-2 py-3 text-xs text-slate-400">
+                        현재 필터에 semantic memory가 없습니다.
+                      </p>
+                    ) : memoryClusters.length === 0 ? (
+                      <p className="px-2 py-3 text-xs leading-relaxed text-slate-400">
+                        현재 필터링된 semantic memory를 기준으로 클러스터를
+                        생성할 수 있습니다.
+                      </p>
+                    ) : (
+                      <div className="space-y-2">
+                        {memoryClusters.map((cluster) => (
+                          <button
+                            key={cluster.id}
+                            type="button"
+                            onClick={() =>
+                              setSelectedMemoryClusterId(cluster.id)
+                            }
+                            className={`w-full rounded-xl border px-3 py-3 text-left transition ${
+                              selectedMemoryCluster?.id === cluster.id
+                                ? "border-slate-300 bg-white shadow-sm"
+                                : "border-transparent bg-white/60 hover:border-slate-200 hover:bg-white"
+                            }`}
+                          >
+                            <div className="flex items-start justify-between gap-2">
+                              <p className="text-sm font-semibold text-slate-800">
+                                {cluster.label}
+                              </p>
+                              <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-500">
+                                {cluster.count}
+                              </span>
+                            </div>
+                            <p className="mt-1 line-clamp-2 text-xs leading-relaxed text-slate-500">
+                              {cluster.summary}
+                            </p>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+                <div className="max-h-[70vh] overflow-auto p-5">
+                  {!selectedMemoryCluster ? (
+                    <div className="flex h-full min-h-80 items-center justify-center text-sm text-slate-400">
+                      클러스터를 생성하면 여기에 상세 내용이 표시됩니다.
+                    </div>
+                  ) : (
+                    <div className="space-y-5">
+                      <div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <h3 className="text-lg font-semibold text-slate-900">
+                            {selectedMemoryCluster.label}
+                          </h3>
+                          <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-500">
+                            {selectedClusterItems.length} items
+                          </span>
+                        </div>
+                        <p className="mt-2 max-w-3xl text-sm leading-relaxed text-slate-500">
+                          {selectedMemoryCluster.summary}
+                        </p>
+                        {selectedMemoryCluster.relatedActions.length > 0 && (
+                          <div className="mt-3 flex flex-wrap gap-1.5">
+                            {selectedMemoryCluster.relatedActions.map(
+                              (action) => (
+                                <span
+                                  key={action}
+                                  className="rounded-full bg-amber-50 px-2.5 py-1 text-xs font-medium text-amber-700"
+                                >
+                                  {action}
+                                </span>
+                              ),
+                            )}
+                          </div>
+                        )}
+                      </div>
+                      {selectedMemoryCluster.representativeItems.length > 0 && (
+                        <section>
+                          <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">
+                            Representative semantics
+                          </p>
+                          <div className="space-y-2">
+                            {selectedMemoryCluster.representativeItems.map(
+                              (item, index) => (
+                                <p
+                                  key={index}
+                                  className="rounded-xl bg-indigo-50 px-3 py-2 text-xs leading-relaxed text-indigo-700"
+                                >
+                                  {item}
+                                </p>
+                              ),
+                            )}
+                          </div>
+                        </section>
+                      )}
+                      <section>
+                        <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">
+                          Included memory items
+                        </p>
+                        <div className="space-y-3">
+                          {selectedClusterItems.map((item) => (
+                            <div
+                              key={item.id}
+                              className="rounded-2xl border border-slate-100 bg-white p-4 text-xs shadow-sm"
+                            >
+                              <p className="break-words text-sm leading-relaxed text-slate-800 [overflow-wrap:anywhere]">
+                                {item.semantic}
+                              </p>
+                              <div className="mt-3 flex flex-wrap items-center gap-2 text-[11px] text-slate-400">
+                                {item.timestamp ? (
+                                  <span>
+                                    {new Date(
+                                      item.timestamp as number,
+                                    ).toLocaleString("ko-KR", {
+                                      month: "numeric",
+                                      day: "numeric",
+                                      hour: "2-digit",
+                                      minute: "2-digit",
+                                    })}
+                                  </span>
+                                ) : null}
+                                {item.action ? (
+                                  <span className="rounded-full bg-amber-50 px-2 py-0.5 font-medium text-amber-700">
+                                    {item.action}
+                                  </span>
+                                ) : null}
+                                <span>{item.row.source?.missionId ?? "—"}</span>
+                              </div>
+                              {item.episode && (
+                                <p className="mt-3 break-words text-slate-500 [overflow-wrap:anywhere]">
+                                  {item.episode}
+                                </p>
+                              )}
+                              {item.input && (
+                                <p className="mt-2 break-words text-slate-400 [overflow-wrap:anywhere]">
+                                  Input: {item.input}
+                                </p>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      </section>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
             <div className="flex items-center justify-between border-t border-slate-100 px-6 py-4">
               <button
                 type="button"
