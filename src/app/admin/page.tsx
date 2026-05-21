@@ -130,6 +130,32 @@ function dateInputValue(timestamp?: number) {
   return date.toISOString().slice(0, 10);
 }
 
+function parseMemoryClusterDiagnostics(value: unknown) {
+  const diagnostics = value as Partial<MemoryClusterDiagnostics>;
+  return diagnostics &&
+    Array.isArray(diagnostics.duplicateItemIds) &&
+    Array.isArray(diagnostics.unassignedItemIds)
+    ? {
+        duplicateItemIds: diagnostics.duplicateItemIds,
+        recoveredUnassignedItemIds: Array.isArray(
+          diagnostics.recoveredUnassignedItemIds,
+        )
+          ? diagnostics.recoveredUnassignedItemIds
+          : [],
+        unassignedItemIds: diagnostics.unassignedItemIds,
+      }
+    : null;
+}
+
+function stableHash(value: string) {
+  let hash = 2166136261;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(36);
+}
+
 const EMPTY_FORM = {
   title: "",
   description: "",
@@ -162,6 +188,8 @@ export default function AdminPage() {
   const [memoryClusters, setMemoryClusters] = useState<MemoryCluster[]>([]);
   const [selectedMemoryClusterId, setSelectedMemoryClusterId] =
     useState<string | null>(null);
+  const [isLoadingMemoryClusters, setIsLoadingMemoryClusters] =
+    useState(false);
   const [isClusteringMemory, setIsClusteringMemory] = useState(false);
   const [memoryClusterError, setMemoryClusterError] = useState<string | null>(
     null,
@@ -743,10 +771,22 @@ export default function AdminPage() {
         .filter((item): item is NonNullable<typeof item> => Boolean(item))
     : [];
   const clusterInputSignature = useMemo(
-    () =>
-      clusterableMemoryItems
-        .map((item) => `${item.id}:${item.semantic}`)
-        .join("|"),
+    () => {
+      const rawSignature = clusterableMemoryItems
+        .map((item) =>
+          [
+            item.id,
+            item.semantic,
+            item.episode,
+            item.input,
+            item.action,
+            item.timestamp,
+            item.keywords.join(","),
+          ].join(":"),
+        )
+        .join("|");
+      return `${clusterableMemoryItems.length}-${stableHash(rawSignature)}`;
+    },
     [clusterableMemoryItems],
   );
   useEffect(() => {
@@ -754,7 +794,53 @@ export default function AdminPage() {
     setSelectedMemoryClusterId(null);
     setMemoryClusterError(null);
     setMemoryClusterDiagnostics(null);
-  }, [clusterInputSignature]);
+    setIsLoadingMemoryClusters(false);
+    if (!memoryModal || clusterableMemoryItems.length === 0) return;
+
+    let cancelled = false;
+    const loadSavedClusters = async () => {
+      const token = await getAdminToken();
+      if (!token) return;
+      setIsLoadingMemoryClusters(true);
+      try {
+        const params = new URLSearchParams({
+          version: memoryVersionTab,
+          signature: clusterInputSignature,
+        });
+        const res = await fetch(
+          `/api/admin/users/${encodeURIComponent(
+            memoryModal.userId,
+          )}/memory/clusters?${params.toString()}`,
+          { headers: { Authorization: `Bearer ${token}` } },
+        );
+        const data = await res.json().catch(() => null);
+        if (!res.ok) throw new Error(data?.error ?? "클러스터 조회 실패");
+        if (cancelled || !data?.cacheHit) return;
+        const clusters = Array.isArray(data.clusters) ? data.clusters : [];
+        setMemoryClusters(clusters);
+        setMemoryClusterDiagnostics(
+          parseMemoryClusterDiagnostics(data.diagnostics),
+        );
+        setSelectedMemoryClusterId(clusters[0]?.id ?? null);
+      } catch (error) {
+        if (cancelled) return;
+        console.error("[admin] saved memory clusters load failed", error);
+        setMemoryClusterError("저장된 클러스터를 불러오지 못했습니다.");
+      } finally {
+        if (!cancelled) setIsLoadingMemoryClusters(false);
+      }
+    };
+
+    loadSavedClusters();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    clusterInputSignature,
+    clusterableMemoryItems.length,
+    memoryModal,
+    memoryVersionTab,
+  ]);
   const resetMemoryFilters = () => {
     setMemoryActionFilter("all");
     setMemorySemanticFilter("all");
@@ -781,6 +867,8 @@ export default function AdminPage() {
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
+            itemSignature: clusterInputSignature,
+            memoryVersion: memoryVersionTab,
             items: clusterableMemoryItems.map((item) => ({
               id: item.id,
               semantic: item.semantic,
@@ -798,19 +886,7 @@ export default function AdminPage() {
       const clusters = Array.isArray(data?.clusters) ? data.clusters : [];
       setMemoryClusters(clusters);
       setMemoryClusterDiagnostics(
-        data?.diagnostics &&
-          Array.isArray(data.diagnostics.duplicateItemIds) &&
-          Array.isArray(data.diagnostics.unassignedItemIds)
-          ? {
-              duplicateItemIds: data.diagnostics.duplicateItemIds,
-              recoveredUnassignedItemIds: Array.isArray(
-                data.diagnostics.recoveredUnassignedItemIds,
-              )
-                ? data.diagnostics.recoveredUnassignedItemIds
-                : [],
-              unassignedItemIds: data.diagnostics.unassignedItemIds,
-            }
-          : null,
+        parseMemoryClusterDiagnostics(data?.diagnostics),
       );
       setSelectedMemoryClusterId(clusters[0]?.id ?? null);
       if (clusters.length === 0) {
@@ -1089,6 +1165,7 @@ export default function AdminPage() {
                         type="button"
                         onClick={generateMemoryClusters}
                         disabled={
+                          isLoadingMemoryClusters ||
                           isClusteringMemory ||
                           clusterableMemoryItems.length === 0
                         }
@@ -1096,7 +1173,7 @@ export default function AdminPage() {
                       >
                         {isClusteringMemory
                           ? "Generating..."
-                          : `Generate (${clusterableMemoryItems.length})`}
+                          : `Regenerate (${clusterableMemoryItems.length})`}
                       </button>
                       <button
                         type="button"
@@ -1130,14 +1207,18 @@ export default function AdminPage() {
                       )}
                   </div>
                   <div className="max-h-[calc(70vh-73px)] overflow-auto p-3">
-                    {clusterableMemoryItems.length === 0 ? (
+                    {isLoadingMemoryClusters ? (
+                      <p className="px-2 py-3 text-xs text-slate-400">
+                        저장된 클러스터를 불러오는 중입니다.
+                      </p>
+                    ) : clusterableMemoryItems.length === 0 ? (
                       <p className="px-2 py-3 text-xs text-slate-400">
                         현재 필터에 semantic memory가 없습니다.
                       </p>
                     ) : memoryClusters.length === 0 ? (
                       <p className="px-2 py-3 text-xs leading-relaxed text-slate-400">
-                        현재 필터링된 semantic memory를 기준으로 클러스터를
-                        생성할 수 있습니다.
+                        저장된 클러스터가 없습니다. 현재 필터링된 semantic
+                        memory를 기준으로 생성할 수 있습니다.
                       </p>
                     ) : (
                       <div className="space-y-2">
@@ -1172,9 +1253,13 @@ export default function AdminPage() {
                   </div>
                 </div>
                 <div className="max-h-[70vh] overflow-auto p-5">
-                  {!selectedMemoryCluster ? (
+                  {isLoadingMemoryClusters ? (
                     <div className="flex h-full min-h-80 items-center justify-center text-sm text-slate-400">
-                      클러스터를 생성하면 여기에 상세 내용이 표시됩니다.
+                      저장된 클러스터를 불러오는 중입니다.
+                    </div>
+                  ) : !selectedMemoryCluster ? (
+                    <div className="flex h-full min-h-80 items-center justify-center text-sm text-slate-400">
+                      저장된 클러스터가 없으면 Regenerate를 눌러 새로 생성할 수 있습니다.
                     </div>
                   ) : (
                     <div className="space-y-5">

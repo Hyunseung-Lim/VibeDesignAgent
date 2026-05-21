@@ -1,6 +1,12 @@
 import OpenAI from "openai";
+import { createHash } from "crypto";
 import { isAdminEmail } from "@/lib/admin";
-import { verifyFirebaseIdToken } from "@/lib/server/firebaseAdminRest";
+import {
+  getFirebaseAccessToken,
+  getFirestoreDocument,
+  patchFirestoreDocument,
+  verifyFirebaseIdToken,
+} from "@/lib/server/firebaseAdminRest";
 
 export const runtime = "nodejs";
 
@@ -10,6 +16,8 @@ const LABEL_MODEL = "gpt-5.4-mini";
 const TARGET_CLUSTER_COUNT = 10;
 const MAX_ITEMS = 160;
 const MAX_KMEANS_ITERATIONS = 40;
+const CLUSTER_COLLECTION = "memoryClusters";
+const DEFAULT_MEMORY_VERSION = "0.1.1";
 
 type ClusterInputItem = {
   id: string;
@@ -42,6 +50,16 @@ type ClusterDiagnostics = {
   actualClusterCount: number;
 };
 
+type StoredClusterDocument = {
+  clusters?: unknown;
+  diagnostics?: unknown;
+  itemSignature?: unknown;
+  sourceItemCount?: unknown;
+  memoryVersion?: unknown;
+  generatedAt?: unknown;
+  generatedBy?: unknown;
+};
+
 type ClusterLabel = {
   id: string;
   label: string;
@@ -52,6 +70,69 @@ function stringArray(value: unknown) {
   return Array.isArray(value)
     ? value.map((item) => String(item).trim()).filter(Boolean)
     : [];
+}
+
+function clusterCacheId(memoryVersion: string, itemSignature: string) {
+  const versionKey = memoryVersion.replace(/[^a-zA-Z0-9_-]/g, "_");
+  const signatureHash = createHash("sha256")
+    .update(itemSignature)
+    .digest("hex")
+    .slice(0, 24);
+  return `${versionKey}-${signatureHash}`;
+}
+
+function clusterDocumentPath(
+  uid: string,
+  memoryVersion: string,
+  itemSignature: string,
+) {
+  return `users/${uid}/${CLUSTER_COLLECTION}/${clusterCacheId(
+    memoryVersion,
+    itemSignature,
+  )}`;
+}
+
+function isMemoryCluster(value: unknown): value is MemoryCluster {
+  const cluster = value as Partial<MemoryCluster>;
+  return (
+    Boolean(cluster) &&
+    typeof cluster.id === "string" &&
+    typeof cluster.label === "string" &&
+    typeof cluster.summary === "string" &&
+    typeof cluster.count === "number" &&
+    Array.isArray(cluster.relatedActions) &&
+    Array.isArray(cluster.itemIds) &&
+    Array.isArray(cluster.representativeItems)
+  );
+}
+
+function parseStoredClusters(value: unknown) {
+  return Array.isArray(value) ? value.filter(isMemoryCluster) : [];
+}
+
+function parseStoredDiagnostics(value: unknown): ClusterDiagnostics | null {
+  const diagnostics = value as Partial<ClusterDiagnostics>;
+  if (
+    !diagnostics ||
+    !Array.isArray(diagnostics.duplicateItemIds) ||
+    !Array.isArray(diagnostics.recoveredUnassignedItemIds) ||
+    !Array.isArray(diagnostics.unassignedItemIds)
+  ) {
+    return null;
+  }
+  return {
+    duplicateItemIds: diagnostics.duplicateItemIds.map(String),
+    recoveredUnassignedItemIds:
+      diagnostics.recoveredUnassignedItemIds.map(String),
+    unassignedItemIds: diagnostics.unassignedItemIds.map(String),
+    method: "embedding-kmeans",
+    embeddingModel: String(diagnostics.embeddingModel ?? EMBEDDING_MODEL),
+    labelModel: String(diagnostics.labelModel ?? LABEL_MODEL),
+    requestedClusterCount: Number(
+      diagnostics.requestedClusterCount ?? TARGET_CLUSTER_COUNT,
+    ),
+    actualClusterCount: Number(diagnostics.actualClusterCount ?? 0),
+  };
 }
 
 function embeddingText(item: ClusterInputItem) {
@@ -366,6 +447,44 @@ function diagnostics(clusters: MemoryCluster[], itemCount: number): ClusterDiagn
   };
 }
 
+export async function GET(
+  request: Request,
+  { params }: { params: Promise<{ uid: string }> },
+) {
+  const admin = await verifyFirebaseIdToken(request);
+  if (!admin || !isAdminEmail(admin.email)) {
+    return Response.json({ error: "forbidden" }, { status: 403 });
+  }
+  const { uid } = await params;
+  const url = new URL(request.url);
+  const itemSignature = url.searchParams.get("signature") ?? "";
+  const memoryVersion =
+    url.searchParams.get("version") ?? DEFAULT_MEMORY_VERSION;
+
+  if (!itemSignature) {
+    return Response.json({ clusters: [], cacheHit: false });
+  }
+
+  const token = await getFirebaseAccessToken();
+  const stored = (await getFirestoreDocument(
+    clusterDocumentPath(uid, memoryVersion, itemSignature),
+    token,
+  )) as StoredClusterDocument | null;
+
+  if (!stored || stored.itemSignature !== itemSignature) {
+    return Response.json({ clusters: [], cacheHit: false });
+  }
+
+  return Response.json({
+    clusters: parseStoredClusters(stored.clusters),
+    diagnostics: parseStoredDiagnostics(stored.diagnostics),
+    sourceItemCount: Number(stored.sourceItemCount ?? 0),
+    generatedAt: stored.generatedAt ?? null,
+    generatedBy: stored.generatedBy ?? null,
+    cacheHit: true,
+  });
+}
+
 export async function POST(
   request: Request,
   { params }: { params: Promise<{ uid: string }> },
@@ -374,10 +493,16 @@ export async function POST(
   if (!admin || !isAdminEmail(admin.email)) {
     return Response.json({ error: "forbidden" }, { status: 403 });
   }
-  await params;
+  const { uid } = await params;
   const body = (await request.json().catch(() => ({}))) as {
     items?: ClusterInputItem[];
+    itemSignature?: unknown;
+    memoryVersion?: unknown;
   };
+  const itemSignature = String(body.itemSignature ?? "").trim();
+  const memoryVersion = String(
+    body.memoryVersion ?? DEFAULT_MEMORY_VERSION,
+  ).trim();
   const items = (body.items ?? [])
     .map((item) => ({
       id: String(item.id ?? "").trim(),
@@ -406,9 +531,27 @@ export async function POST(
     buildClusters(items, vectors, assignments),
     itemsById,
   );
+  const clusterDiagnostics = diagnostics(clusters, items.length);
+
+  if (itemSignature) {
+    const token = await getFirebaseAccessToken();
+    await patchFirestoreDocument(
+      clusterDocumentPath(uid, memoryVersion, itemSignature),
+      {
+        itemSignature,
+        memoryVersion,
+        sourceItemCount: items.length,
+        clusters,
+        diagnostics: clusterDiagnostics,
+        generatedAt: new Date(),
+        generatedBy: admin.email ?? admin.localId,
+      },
+      token,
+    );
+  }
 
   return Response.json({
     clusters,
-    diagnostics: diagnostics(clusters, items.length),
+    diagnostics: clusterDiagnostics,
   });
 }
