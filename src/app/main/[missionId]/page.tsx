@@ -241,6 +241,33 @@ function normalizePresentations(idea: Idea): Presentation[] {
   return [];
 }
 
+function canonicalReferenceUrl(value?: string) {
+  if (!value) return "";
+  try {
+    const url = new URL(value);
+    url.hash = "";
+    Array.from(url.searchParams.keys()).forEach((key) => {
+      if (/^(utm_|fbclid|gclid|igshid|mc_cid|mc_eid)/i.test(key)) {
+        url.searchParams.delete(key);
+      }
+    });
+    url.searchParams.sort();
+    const pathname =
+      url.pathname !== "/" ? url.pathname.replace(/\/+$/, "") : "";
+    return `${url.hostname.replace(/^www\./, "").toLowerCase()}${pathname}${url.search}`;
+  } catch {
+    return value.trim().replace(/\/+$/, "").toLowerCase();
+  }
+}
+
+function referenceMatches(a: Reference, b: Reference) {
+  const aUrl = canonicalReferenceUrl(a.url);
+  const bUrl = canonicalReferenceUrl(b.url);
+  const aImage = canonicalReferenceUrl(a.imageUrl);
+  const bImage = canonicalReferenceUrl(b.imageUrl);
+  return Boolean((aUrl && aUrl === bUrl) || (aImage && aImage === bImage));
+}
+
 function normalizeMissionOptions(
   mission: {
     title?: string;
@@ -1625,6 +1652,7 @@ export default function MainScreenPage() {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const chatBottomRef = useRef<HTMLDivElement>(null);
   const ideaSectionRef = useRef<HTMLElement>(null);
+  const styleSectionRef = useRef<HTMLElement>(null);
   const mockupSectionRef = useRef<HTMLElement>(null);
   const presentationSectionRef = useRef<HTMLElement>(null);
   const canvasRef = useRef<HTMLDivElement>(null);
@@ -2546,20 +2574,14 @@ export default function MainScreenPage() {
 
     if (manualReference) {
       const alreadyExists = references.some(
-        (reference) =>
-          reference.url === manualReference.url ||
-          (manualReference.imageUrl &&
-            reference.imageUrl === manualReference.imageUrl),
+        (reference) => referenceMatches(reference, manualReference),
       );
       const hydratedReference = alreadyExists
         ? manualReference
         : await hydrateManualReference(manualReference);
       setReferences((prev) => {
         const exists = prev.some(
-          (reference) =>
-            reference.url === hydratedReference.url ||
-            (hydratedReference.imageUrl &&
-              reference.imageUrl === hydratedReference.imageUrl),
+          (reference) => referenceMatches(reference, hydratedReference),
         );
         if (exists) return prev;
         return [...prev, hydratedReference];
@@ -3372,6 +3394,12 @@ export default function MainScreenPage() {
       if (isFetchingRefs || isReadOnly) return;
       setIsFetchingRefs(true);
       try {
+        const loggedReferenceLinks = activityLog
+          .filter((event) => event.section === "reference" && event.link)
+          .map((event) => ({
+            url: event.link,
+            imageUrl: event.imageUrl,
+          }));
         const res = await fetch("/api/references", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -3379,14 +3407,20 @@ export default function MainScreenPage() {
             missionTitle: title,
             missionBrief: brief,
             customQuery,
+            existingReferences: [...references, ...loggedReferenceLinks],
           }),
         });
         const data = await res.json();
         if (data.references?.length > 0) {
           setReferences((prev) => {
-            const existingIds = new Set(prev.map((r) => r.id));
-            const newRefs = data.references.filter(
-              (r: Reference) => !existingIds.has(r.id),
+            const newRefs = (data.references as Reference[]).filter(
+              (candidate) =>
+                !prev.some((reference) =>
+                  referenceMatches(reference, candidate),
+                ) &&
+                !loggedReferenceLinks.some((reference) =>
+                  referenceMatches(reference as Reference, candidate),
+                ),
             );
             newRefs.forEach((reference: Reference) => {
               appendActivityLog({
@@ -3406,7 +3440,7 @@ export default function MainScreenPage() {
         setIsFetchingRefs(false);
       }
     },
-    [isFetchingRefs, isReadOnly, appendActivityLog],
+    [activityLog, isFetchingRefs, isReadOnly, references, appendActivityLog],
   );
 
   const ideaArtboards = artboards.filter((a) => a.ideaId === activeIdeaId);
@@ -4733,6 +4767,11 @@ export default function MainScreenPage() {
                       {[
                         { id: "idea", label: "Note", ref: ideaSectionRef },
                         {
+                          id: "style",
+                          label: "Style",
+                          ref: styleSectionRef,
+                        },
+                        {
                           id: "mockup",
                           label: "Mockup",
                           ref: mockupSectionRef,
@@ -4775,21 +4814,22 @@ export default function MainScreenPage() {
                           ideas.find((i) => i.id === activeIdeaId) ?? null;
                         if (!idea) return null;
                         return (
-                          <section
-                            ref={ideaSectionRef}
-                            className="space-y-4 scroll-mt-4"
-                          >
-                            <div className="flex items-center justify-between">
-                              <div className="space-y-1">
-                                <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">
-                                  시안 노트
-                                </p>
-                                <p className="text-base font-semibold text-slate-900">
-                                  {idea.title}
-                                </p>
+                          <>
+                            <section
+                              ref={ideaSectionRef}
+                              className="space-y-4 scroll-mt-4"
+                            >
+                              <div className="flex items-center justify-between">
+                                <div className="space-y-1">
+                                  <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+                                    시안 노트
+                                  </p>
+                                  <p className="text-base font-semibold text-slate-900">
+                                    {idea.title}
+                                  </p>
+                                </div>
                               </div>
-                            </div>
-                            <div className="relative rounded-2xl border border-slate-100 bg-white shadow-sm">
+                              <div className="relative rounded-2xl border border-slate-100 bg-white shadow-sm">
                                 <div
                                   className={`space-y-2 px-5 pb-14 pt-5 text-sm text-slate-700 ${isIdeaExpanded ? "max-h-[60vh] overflow-y-auto" : "max-h-64 overflow-hidden"}`}
                                 >
@@ -4891,7 +4931,13 @@ export default function MainScreenPage() {
                                   </button>
                                 </div>
                               </div>
-                            <div className="overflow-hidden rounded-2xl border border-indigo-100 bg-indigo-50/40">
+                            </section>
+
+                            <section
+                              ref={styleSectionRef}
+                              className="space-y-3 scroll-mt-4"
+                            >
+                              <div className="overflow-hidden rounded-2xl border border-indigo-100 bg-indigo-50/40">
                               <button
                                 type="button"
                                 onClick={() => setIsDesignSpecOpen((open) => !open)}
@@ -5028,8 +5074,9 @@ export default function MainScreenPage() {
                                   )}
                                 </div>
                               )}
-                            </div>
-                          </section>
+                              </div>
+                            </section>
+                          </>
                         );
                       })()}
 
@@ -5745,6 +5792,23 @@ export default function MainScreenPage() {
           {/* Overlay header */}
           <div className="flex items-center justify-between bg-slate-900/80 px-5 py-3 backdrop-blur">
             <div className="flex items-center gap-3">
+              {!isReadOnly && (
+                <button
+                  onClick={() => {
+                    setEditMode((prev) => {
+                      if (prev) setSelectedElement(null);
+                      return !prev;
+                    });
+                  }}
+                  className={`rounded border px-2 py-1 text-xs font-semibold transition ${
+                    editMode
+                      ? "border-indigo-300 bg-indigo-500/20 text-indigo-100"
+                      : "border-white/20 text-white/70 hover:bg-white/10"
+                  }`}
+                >
+                  {editMode ? "편집 가능 On" : "편집 가능 Off"}
+                </button>
+              )}
               <button
                 onClick={fitToCanvas}
                 className="rounded border border-white/20 px-2 py-1 text-xs text-white/70 hover:bg-white/10"
