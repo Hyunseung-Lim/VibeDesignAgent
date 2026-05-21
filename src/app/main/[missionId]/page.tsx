@@ -1581,6 +1581,7 @@ export default function MainScreenPage() {
   >(null);
   const [userId, setUserId] = useState<string | null>(null);
   const [isFetchingRefs, setIsFetchingRefs] = useState(false);
+  const [referenceSearchError, setReferenceSearchError] = useState("");
   const [isAdmin, setIsAdmin] = useState(false);
   const [viewAsName, setViewAsName] = useState<string | null>(null);
   const [stitchProjectId, setStitchProjectId] = useState<string>("");
@@ -3393,6 +3394,7 @@ export default function MainScreenPage() {
     async (title: string, brief: string, customQuery?: string | null) => {
       if (isFetchingRefs || isReadOnly) return;
       setIsFetchingRefs(true);
+      setReferenceSearchError("");
       try {
         const loggedReferenceLinks = activityLog
           .filter((event) => event.section === "reference" && event.link)
@@ -3411,31 +3413,45 @@ export default function MainScreenPage() {
           }),
         });
         const data = await res.json();
-        if (data.references?.length > 0) {
-          setReferences((prev) => {
-            const newRefs = (data.references as Reference[]).filter(
-              (candidate) =>
-                !prev.some((reference) =>
-                  referenceMatches(reference, candidate),
-                ) &&
-                !loggedReferenceLinks.some((reference) =>
-                  referenceMatches(reference as Reference, candidate),
-                ),
-            );
-            newRefs.forEach((reference: Reference) => {
-              appendActivityLog({
-                section: "reference",
-                action: "add",
-                input: customQuery ?? title ?? brief,
-                output: reference.description,
-                outputTitle: reference.title,
-                link: reference.url,
-                imageUrl: reference.imageUrl,
-              });
-            });
-            return [...prev, ...newRefs];
-          });
+        if (!res.ok) {
+          throw new Error(data?.error ?? "레퍼런스 검색에 실패했습니다.");
         }
+        if (data.references?.length > 0) {
+          const newRefs = (data.references as Reference[]).filter(
+            (candidate) =>
+              !references.some((reference) =>
+                referenceMatches(reference, candidate),
+              ) &&
+              !loggedReferenceLinks.some((reference) =>
+                referenceMatches(reference as Reference, candidate),
+              ),
+          );
+          newRefs.forEach((reference: Reference) => {
+            appendActivityLog({
+              section: "reference",
+              action: "add",
+              input: customQuery ?? title ?? brief,
+              output: reference.description,
+              outputTitle: reference.title,
+              link: reference.url,
+              imageUrl: reference.imageUrl,
+            });
+          });
+          if (newRefs.length === 0) {
+            setReferenceSearchError(
+              "새로 추가할 레퍼런스를 찾지 못했습니다. 이미 추가했거나 삭제한 사이트는 제외됩니다.",
+            );
+          } else {
+            setReferences((prev) => [...prev, ...newRefs]);
+          }
+        } else {
+          setReferenceSearchError(
+            "조건에 맞는 레퍼런스를 찾지 못했습니다. 검색어를 조금 더 구체적으로 바꿔보세요.",
+          );
+        }
+      } catch (error) {
+        console.error("[references] fetch failed", error);
+        setReferenceSearchError("레퍼런스 검색에 실패했습니다.");
       } finally {
         setIsFetchingRefs(false);
       }
@@ -4603,15 +4619,22 @@ export default function MainScreenPage() {
                     <span className="h-3 w-3 animate-spin rounded-full border-2 border-slate-300 border-t-slate-500" />
                     레퍼런스 검색 중...
                   </span>
-                )}
-              </div>
-              {references.length === 0 && !isFetchingRefs ? (
-                <div className="mt-4 rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-6 text-center text-sm text-slate-400">
-                  {
-                    '채팅에서 "레퍼런스 찾아줘"라고 입력하면 관련 UI 이미지가 표시됩니다.'
-                  }
-                </div>
-              ) : (
+	                )}
+	              </div>
+	              {referenceSearchError && !isFetchingRefs && (
+	                <div className="mt-4 rounded-2xl border border-amber-100 bg-amber-50 px-4 py-3 text-sm text-amber-700">
+	                  {referenceSearchError}
+	                </div>
+	              )}
+	              {references.length === 0 && !isFetchingRefs ? (
+	                referenceSearchError ? null : (
+	                <div className="mt-4 rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-6 text-center text-sm text-slate-400">
+	                  {
+	                    '채팅에서 "레퍼런스 찾아줘"라고 입력하면 관련 UI 이미지가 표시됩니다.'
+	                  }
+	                </div>
+	                )
+	              ) : (
                 <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
                   {references.map((card) => {
                     const isSelected = selectedReferences.some(

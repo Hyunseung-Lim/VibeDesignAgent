@@ -111,32 +111,16 @@ function matchesReferenceIntent(
   return significantTerms.some((term) => haystack.includes(term));
 }
 
-function metaContent(html: string, key: string) {
-  const escaped = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const p = new RegExp(
-    `<meta\\b(?=[^>]*(?:property|name)=["']${escaped}["'])(?=[^>]*content=["']([^"']+)["'])[^>]*>`,
-    "i",
-  );
-  return html.match(p)?.[1] ?? "";
-}
-
-async function fetchOgImage(link: string): Promise<string | null> {
-  try {
-    const res = await fetch(link, {
-      headers: { "User-Agent": "Mozilla/5.0 VibeDesignAgent reference crawler", Accept: "text/html" },
-      signal: AbortSignal.timeout(4000),
-    });
-    if (!res.ok) return null;
-    const html = (await res.text()).slice(0, 200_000);
-    const raw =
-      metaContent(html, "og:image") ||
-      metaContent(html, "twitter:image") ||
-      metaContent(html, "twitter:image:src");
-    if (!raw) return null;
-    return new URL(raw, link).toString();
-  } catch {
-    return null;
-  }
+function isAcceptableFallbackCandidate(
+  img: SerperImage,
+  domain: string,
+  requiredPattern: RegExp | null,
+  significantTerms: string[],
+) {
+  const haystack = `${img.title} ${img.source} ${img.link} ${domain}`.toLowerCase();
+  if (isLowQualityListing(img.title, img.link, img.source)) return false;
+  if (requiredPattern?.test(haystack)) return true;
+  return significantTerms.some((term) => haystack.includes(term));
 }
 
 async function buildSearchQueries(
@@ -144,6 +128,11 @@ async function buildSearchQueries(
   missionBrief: string,
   customQuery: string | null,
 ): Promise<string[]> {
+  if (customQuery?.trim()) {
+    const query = customQuery.trim();
+    return [query, `${query} website design`, `${query} UI reference`];
+  }
+
   const res = await openai.chat.completions.create({
     model: "gpt-4o",
     messages: [
@@ -253,6 +242,8 @@ export async function POST(request: Request) {
       img: SerperImage;
       domain: string;
     }[] = [];
+    const fallbackCandidates: typeof candidates = [];
+    const emergencyCandidates: typeof candidates = [];
 
     results.forEach((images, kwIdx) => {
       images.forEach((img, i) => {
@@ -262,6 +253,9 @@ export async function POST(request: Request) {
         if (imageUrl && blockedImages.has(imageUrl)) return;
         seen.add(url);
         const domain = domainFor(img.link, img.source);
+        if (!isLowQualityListing(img.title, img.link, img.source)) {
+          emergencyCandidates.push({ kwIdx, i, img, domain });
+        }
         if (
           !matchesReferenceIntent(
             img,
@@ -270,16 +264,33 @@ export async function POST(request: Request) {
             significantTerms,
           )
         ) {
+          if (
+            isAcceptableFallbackCandidate(
+              img,
+              domain,
+              requiredPattern,
+              significantTerms,
+            )
+          ) {
+            fallbackCandidates.push({ kwIdx, i, img, domain });
+          }
           return;
         }
         candidates.push({ kwIdx, i, img, domain });
       });
     });
 
+    const selectedCandidates = (
+      candidates.length > 0
+        ? candidates
+        : fallbackCandidates.length > 0
+          ? fallbackCandidates
+          : emergencyCandidates
+    ).slice(0, 6);
+
     const resolved = await Promise.all(
-      candidates.map(async ({ kwIdx, i, img, domain }) => {
-        const ogImage = await fetchOgImage(img.link);
-        const imageUrl = ogImage ?? img.imageUrl;
+      selectedCandidates.map(async ({ kwIdx, i, img, domain }) => {
+        const imageUrl = img.imageUrl || img.thumbnailUrl;
         if (!imageUrl) return null;
         const canonicalImage = canonicalUrl(imageUrl);
         if (canonicalImage && blockedImages.has(canonicalImage)) return null;
