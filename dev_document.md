@@ -61,13 +61,21 @@
 - 세션 종료 완료 후에는 `status: completed` 기준으로 세션 종료 버튼 비활성화
 
 ### 4.2 레퍼런스 (Reference)
-- 채팅에서 "레퍼런스 찾아줘" → `[FETCH_REFERENCES: {query}]` 블록 → Serper API로 이미지 검색
+- 채팅에서 "레퍼런스 찾아줘" → `[FETCH_REFERENCES: {query}]` 블록 → Serper API로 이미지/웹 검색
 - 검색당 3개씩 누적 표시 (삭제 가능, confirm 팝업)
 - 레퍼런스 선택(인용) 후 메시지 전송 시 이미지를 base64로 서버에서 변환해 GPT-4o에 전달
 - 인용된 레퍼런스 URL도 시스템 컨텍스트로 전달, GPT-4o가 웹 검색으로 방문 가능
+- **검색 모드 분기**: `inferReferenceMode(query)`로 "style" vs "product" 모드를 분류
+  - **product 모드**: Serper 이미지 검색 × 3 병렬 실행
+  - **style 모드**: 이미지 검색 × 3 + `searchCurationSites()` 병렬 실행
+- **큐레이션 사이트 검색**: Serper `/search` 엔드포인트에 `site:` 연산자를 사용해 9개 큐레이션 도메인에서 웹 결과 검색
+  - 대상 도메인: awwwards.com, siteinspire.com, cssdesignawards.com, godly.website, mobbin.com, refero.design, siteofsites.co, craftwork.design, component.gallery
+  - 큐레이션 결과는 imageUrl 없이 수집 → `hydrateReferenceMetadata()`로 og:image를 fetch해 썸네일 확보
+- `withConcurrency(tasks, limit)` 함수로 병렬 fetch 수를 제한해 외부 API 과부하 방지
+- `sanitizeInput()` 로 LLM 입력 검증 및 prompt injection 방지
 
 ### 4.3 아이디어 (Idea)
-- 사용자가 직접 마크다운으로 작성 (AI 자동 생성 없음)
+- 사용자가 직접 마크다운으로 작성하거나 AI가 `[CREATE_NOTE: ...]` / `[UPDATE_NOTE: ...]` 태그로 생성·수정
 - 아이디어 탭별 독립적인 Mockup + Presentation 보유
 - 탭 추가/편집/삭제 가능
 - 편집 모드: 제목 input + 마크다운 textarea
@@ -77,6 +85,7 @@
 - **생성 조건**: 아이디어가 1개 이상 저장된 경우에만 생성 가능
 - **생성 흐름**: 채팅 → GPT-4o가 `[GENERATE_MOCKUP: {prompt}]` 출력 → Google Stitch API 호출 → HTML 반환 → 캔버스에 표시
 - **GPT-4o 컨텍스트**: 미션 제목/브리핑, 현재 아이디어 내용, 기존 목업 HTML, 선택된 UI 요소, 인용 레퍼런스, 대화 히스토리
+- **missionBrief 보완 주입**: 신규 목업 생성 시 아이디어 내용이 300자 미만으로 빈약하면 `missionBrief`를 `buildMockupPrompt`에 직접 주입해 제품 데이터가 Stitch에 전달되도록 보장 (수정 시에는 주입 안 함)
 - **캔버스**: 드래그 패닝, 휠 줌, Fit 버튼, 확대(fullscreen) 모드
 - **편집 모드**: 특정 UI 요소 클릭 선택 → `[EDIT_MOCKUP: {prompt}]`로 수정
 - 아이디어 탭 전환 시 해당 아이디어의 목업만 표시
@@ -91,15 +100,18 @@
 - 아이디어별 독립 저장
 
 ### 4.6 AI 채팅
-- **모델**: OpenAI gpt-4o (Responses API)
+- **모델**: OpenAI gpt-5.4 (Responses API)
 - **웹 검색**: `web_search_preview` 툴 상시 활성화, 레퍼런스 URL 인용 시 `tool_choice: "required"`로 강제
 - **스트리밍**: SSE 방식으로 실시간 토큰 출력
 - **웹 검색 표시**: 검색 발생 시 `[WEB_SEARCHED]` 마커 → "웹 검색 완료" 배지 표시
 - **인용 링크**: 웹 검색 출처 `(domain.com)` 자동으로 클릭 가능한 마크다운 링크로 변환
 - **특수 블록 처리**:
+  - `[CREATE_NOTE: ...]` → 새 아이디어(시안) 생성
+  - `[UPDATE_NOTE: ...]` → 현재 아이디어 내용 업데이트
+  - `[CREATE_DESIGN_SPEC: ...]` → 현재 아이디어의 디자인 스타일 정의/교체
   - `[GENERATE_MOCKUP: ...]` → Stitch 목업 생성
   - `[EDIT_MOCKUP: ...]` → 목업 수정
-  - `[FETCH_REFERENCES: ...]` → Serper 이미지 검색
+  - `[FETCH_REFERENCES: ...]` → Serper 이미지/큐레이션 검색
   - ` ```presentation ... ``` ` → gpt-image-2 프레젠테이션 생성
   - `[WEB_SEARCHED]` → 웹 검색 배지
 
@@ -108,6 +120,7 @@
 - **확정 시점**: 사용자가 `세션 종료` 버튼을 누르면 `/api/memory/complete-session`에서 draft를 통합해 장기 메모리로 저장
 - **버전 관리**: admin memory modal에서 v0.1.0 / v0.1.1을 분리 조회
 - **현재 활용**: 세션 시작 시 `/api/memory/bootstrap`으로 memory를 로드하고, 각 채팅 turn 직전에 `/api/memory/retrieve`로 현재 query와 가까운 semantic memory top 5를 검색해 채팅 context에 주입
+- **Retrieval 쿼리 구성**: `[user text] + Mission: [parentMissionTitle] + Active idea: [description]` — 선택된 옵션 이름(페르소나 등)은 제외해 임베딩 노이즈 방지
 - **Admin 관측**: researcher가 user별 memory rows, semantic item, cluster 결과, retrieval log/score delta, forgetting/archive 후보를 확인 가능
 - **Retrieval MVP**: semantic memory item에 embedding과 score metadata를 저장하고, retrieve된 item은 usage score를 천천히 올리며 candidate pool의 미선택 item에는 작은 decay를 적용
 - **Forgetting MVP**: 자동 삭제 없이 low retention/stale/duplicate 후보를 표시하고, researcher가 선택한 semantic item만 `archivedAt` 기반으로 soft archive
@@ -194,14 +207,17 @@ type PresentationSlide = {
 | `POST /api/chat` | GPT-4o 채팅 (Responses API + web_search) |
 | `POST /api/stitch` | Google Stitch 목업 생성/편집 |
 | `GET /api/stitch/html` | Stitch 스크린 HTML 재조회 |
-| `POST /api/references` | Serper 이미지 검색 (3개 반환) |
+| `POST /api/references` | Serper 이미지 검색 + 큐레이션 사이트 웹 검색 (3개 반환) |
 | `POST /api/presentation` | gpt-image-2/gpt-image-1로 프레젠테이션 이미지 생성 |
 | `POST /api/memory/drafts` | interaction turn 단위 memory draft 생성 |
 | `POST /api/memory/complete-session` | 세션 종료 시 draft를 장기 메모리로 확정 |
 | `GET /api/memory/bootstrap` | 세션 시작 시 user memory 로드 |
 | `POST /api/memory/retrieve` | query embedding 기반 semantic memory top 5 검색 및 retrieval score 업데이트 |
+| `POST /api/admin/missions` | 미션 생성 (관리자 전용) |
 | `GET /api/admin/users/[uid]/memory` | admin memory table 조회 |
 | `GET/POST /api/admin/users/[uid]/memory/clusters` | admin memory cluster 캐시 조회/생성 |
+| `GET /api/admin/users/[uid]/memory/forgetting` | archive 후보 산출 |
+| `PATCH /api/admin/users/[uid]/memory/forgetting` | semantic item soft archive |
 
 ---
 
@@ -259,7 +275,29 @@ FIREBASE_MEASUREMENT_ID
 - 메인 채팅 요청 전 현재 user input + mission/idea context를 query로 사용해 retrieve하고, 결과를 해당 turn의 memory context에 주입
 - Admin memory modal의 Retrievals 탭에서 query, retrieved memory, similarity, usage/decay/retention score delta를 확인 가능
 
-### 9.4 Memory forgetting/archive MVP
+### 9.4 References API 개선
+- **성능**: `Promise.all` 대신 `withConcurrency(tasks, 4)`로 병렬 fetch 수 제한
+- **안정성**: `extractFirstJsonArray()` — regex 대신 bracket depth counting 파서로 URL 내 `[]` 포함 케이스 처리
+- **보안**: `sanitizeInput(value, maxLength)` 함수로 LLM 입력 길이 제한 및 prompt injection 방지
+- **큐레이션 검색**: `inferReferenceMode(query)`로 style/product 모드 분기. style 모드에서 9개 큐레이션 도메인 대상 `site:` Serper 웹 검색 병렬 실행
+- **이미지 확보**: 큐레이션 결과는 imageUrl 없이 수집 후 `hydrateReferenceMetadata()`로 og:image fetch
+- ID 생성을 `Date.now()`에서 `crypto.randomUUID()`로 교체
+
+### 9.5 로비 이탈 경고 모달
+- 세션 미종료 상태(`!sessionCompleted`)에서 로비로 돌아가기 클릭 시 경고 모달 표시
+- "메모리 저장이 되지 않을 수 있습니다. 세션 종료 버튼을 먼저 눌러주세요." 안내
+- 그래도 나가기 / 취소 두 가지 선택지 제공
+
+### 9.6 목업 생성 시 missionBrief 보완 주입
+- `buildMockupPrompt(basePrompt, idea, style, missionBrief)` 함수에 `missionBrief` 파라미터 추가
+- 신규 목업 생성(`[GENERATE_MOCKUP]`) 시에만 적용: 아이디어 내용이 300자 미만이면 missionBrief를 프롬프트 말미에 추가
+- 목업 편집(`[EDIT_MOCKUP]`)에는 주입 안 함 — 기존 화면 구조를 유지해야 하므로
+
+### 9.7 Memory retrieval 쿼리 개선
+- retrieval 쿼리에서 `effectiveMissionTitle`(`parentTitle - optionName` 형태) 대신 `parentMissionTitle`만 사용
+- 페르소나 이름("🎬 Daniel Park" 등) 같은 옵션 타이틀이 임베딩 벡터에 노이즈를 추가하는 문제 제거
+
+### 9.8 Memory forgetting/archive MVP
 - `GET /api/admin/users/[uid]/memory/forgetting`에서 archive candidate를 산출
 - 후보 기준:
   - `retentionScore < 0.28`
@@ -273,6 +311,8 @@ FIREBASE_MEASUREMENT_ID
 ---
 
 ## 10. 메모리 Retrieval / Forgetting 개발 계획
+
+> **상태**: 1~7단계 모두 구현 완료. 실제 구현 내용은 9.3, 9.4(현 9.8) 참조. 아래는 설계 기록으로 보존.
 
 ### 10.1 목표
 - 세션 시작 또는 interaction 중 필요한 memory를 vector similarity 기반으로 retrieve

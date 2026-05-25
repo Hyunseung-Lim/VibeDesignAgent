@@ -1369,7 +1369,12 @@ function activeDesignStyle(idea?: Idea | null) {
   return idea?.designStyle ?? null;
 }
 
-function buildMockupPrompt(basePrompt: string, idea?: Idea | null, appliedStyle?: DesignStyle | null) {
+function buildMockupPrompt(
+  basePrompt: string,
+  idea?: Idea | null,
+  appliedStyle?: DesignStyle | null,
+  missionBrief?: string,
+) {
   const parts: string[] = [basePrompt];
   if (appliedStyle?.content.trim()) {
     parts.push(
@@ -1384,6 +1389,14 @@ function buildMockupPrompt(basePrompt: string, idea?: Idea | null, appliedStyle?
       "Use the following active note as the current idea brief. It describes what to build for this specific 시안.",
       `Note title: ${idea.title}`,
       `Note content:\n${idea.description.slice(0, 8000)}`,
+    );
+  }
+  // Fallback: if note is thin, inject full mission content so Stitch has the product details
+  if (missionBrief?.trim() && (idea?.description?.length ?? 0) < 300) {
+    parts.push(
+      "",
+      "Mission content (use as product/content reference since the note above is sparse):",
+      missionBrief.slice(0, 6000),
     );
   }
   return parts.join("\n");
@@ -2721,10 +2734,12 @@ export default function MainScreenPage() {
         .join("\n\n") || undefined;
 
     try {
+      const retrievalMissionLabel =
+        parentMissionTitle || activeOption?.title || missionTitle || "";
       const retrievedMemory = await retrieveMemoryForQuery(
         [
           text,
-          effectiveMissionTitle ? `Mission: ${effectiveMissionTitle}` : "",
+          retrievalMissionLabel ? `Mission: ${retrievalMissionLabel}` : "",
           activeIdeaId
             ? `Active idea: ${ideas.find((idea) => idea.id === activeIdeaId)?.description ?? ""}`
             : "",
@@ -2965,6 +2980,8 @@ export default function MainScreenPage() {
           prompt,
           activeIdea,
           activeDesignStyle(activeIdea),
+          // Only inject mission brief for new mockups — edits don't need the full product context
+          generateMatch ? missionBrief : undefined,
         );
         appendActivityLog({
           section: "mockup",
