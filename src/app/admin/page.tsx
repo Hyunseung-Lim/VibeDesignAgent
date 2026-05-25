@@ -74,6 +74,31 @@ type MemoryClusterDiagnostics = {
   duplicateItemIds: string[];
   recoveredUnassignedItemIds?: string[];
   unassignedItemIds: string[];
+  method?: string;
+  requestedClusterCount?: number;
+  actualClusterCount?: number;
+  elbow?: {
+    minK: number;
+    maxK: number;
+    selectedK: number;
+    points: {
+      k: number;
+      inertia: number;
+      improvement: number | null;
+    }[];
+  };
+  granularity?: {
+    model: string;
+    selectedK: number;
+    fallbackK: number;
+    pairCount: number;
+    scores: {
+      k: number;
+      matches: number;
+      total: number;
+      agreement: number;
+    }[];
+  };
 };
 
 type MissionOption = {
@@ -143,8 +168,91 @@ function parseMemoryClusterDiagnostics(value: unknown) {
           ? diagnostics.recoveredUnassignedItemIds
           : [],
         unassignedItemIds: diagnostics.unassignedItemIds,
+        method:
+          typeof diagnostics.method === "string" ? diagnostics.method : "",
+        requestedClusterCount:
+          typeof diagnostics.requestedClusterCount === "number"
+            ? diagnostics.requestedClusterCount
+            : undefined,
+        actualClusterCount:
+          typeof diagnostics.actualClusterCount === "number"
+            ? diagnostics.actualClusterCount
+            : undefined,
+        elbow: parseElbowDiagnostics(diagnostics.elbow),
+        granularity: parseGranularityDiagnostics(diagnostics.granularity),
       }
     : null;
+}
+
+function parseElbowDiagnostics(value: unknown) {
+  const elbow = value as Partial<NonNullable<MemoryClusterDiagnostics["elbow"]>>;
+  if (
+    !elbow ||
+    typeof elbow.selectedK !== "number" ||
+    !Array.isArray(elbow.points)
+  ) {
+    return undefined;
+  }
+  return {
+    minK: Number(elbow.minK ?? 1),
+    maxK: Number(elbow.maxK ?? elbow.points.length),
+    selectedK: elbow.selectedK,
+    points: elbow.points
+      .map((point) => ({
+        k: Number(point.k),
+        inertia: Number(point.inertia),
+        improvement:
+          typeof point.improvement === "number" ? point.improvement : null,
+      }))
+      .filter(
+        (point) => Number.isFinite(point.k) && Number.isFinite(point.inertia),
+      ),
+  };
+}
+
+function parseGranularityDiagnostics(value: unknown) {
+  const granularity = value as Partial<
+    NonNullable<MemoryClusterDiagnostics["granularity"]>
+  >;
+  if (
+    !granularity ||
+    typeof granularity.selectedK !== "number" ||
+    !Array.isArray(granularity.scores)
+  ) {
+    return undefined;
+  }
+  return {
+    model: String(granularity.model ?? ""),
+    selectedK: granularity.selectedK,
+    fallbackK: Number(granularity.fallbackK ?? granularity.selectedK),
+    pairCount: Number(granularity.pairCount ?? 0),
+    scores: granularity.scores
+      .map((score) => ({
+        k: Number(score.k),
+        matches: Number(score.matches),
+        total: Number(score.total),
+        agreement: Number(score.agreement),
+      }))
+      .filter(
+        (score) =>
+          Number.isFinite(score.k) &&
+          Number.isFinite(score.total) &&
+          Number.isFinite(score.agreement),
+      ),
+  };
+}
+
+function elbowBarWidth(
+  point: NonNullable<MemoryClusterDiagnostics["elbow"]>["points"][number],
+  points: NonNullable<MemoryClusterDiagnostics["elbow"]>["points"],
+) {
+  const maxInertia = Math.max(...points.map((item) => item.inertia), 0);
+  if (!maxInertia) return "4%";
+  return `${Math.max(4, (point.inertia / maxInertia) * 100).toFixed(1)}%`;
+}
+
+function agreementBarWidth(agreement: number) {
+  return `${Math.max(4, Math.min(100, agreement * 100)).toFixed(1)}%`;
 }
 
 function stableHash(value: string) {
@@ -221,6 +329,15 @@ export default function AdminPage() {
       setMissions(snap.docs.map((d) => ({ id: d.id, ...d.data() }) as Mission));
     });
   }, [ready]);
+
+  useEffect(() => {
+    if (!memoryModal) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [memoryModal]);
 
   const deleteMission = async (id: string) => {
     if (!confirm("미션을 삭제할까요?")) return;
@@ -770,6 +887,8 @@ export default function AdminPage() {
         .map((id) => clusterableItemById.get(id))
         .filter((item): item is NonNullable<typeof item> => Boolean(item))
     : [];
+  const memoryElbowDiagnostics = memoryClusterDiagnostics?.elbow;
+  const memoryGranularityDiagnostics = memoryClusterDiagnostics?.granularity;
   const clusterInputSignature = useMemo(
     () => {
       const rawSignature = clusterableMemoryItems
@@ -951,10 +1070,10 @@ export default function AdminPage() {
           onClick={() => setMemoryModal(null)}
         >
           <div
-            className="w-full max-w-[95vw] rounded-3xl bg-white shadow-2xl"
+            className="flex h-[calc(100vh-2rem)] w-full max-w-[95vw] flex-col overflow-hidden rounded-3xl bg-white shadow-2xl"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4">
+            <div className="flex shrink-0 items-center justify-between border-b border-slate-100 px-6 py-4">
               <div>
                 <p className="text-sm font-semibold text-slate-900">유저 메모리</p>
                 <p className="text-xs text-slate-400">{memoryModal.userName}</p>
@@ -972,7 +1091,7 @@ export default function AdminPage() {
                 </svg>
               </button>
             </div>
-            <div className="border-b border-slate-100 px-6 py-3">
+            <div className="shrink-0 border-b border-slate-100 px-6 py-3">
               <div className="flex flex-wrap items-end gap-3">
                 <div className="inline-flex rounded-lg border border-slate-200 bg-slate-50 p-1">
                   {(["table", "clusters"] as const).map((tab) => (
@@ -1094,8 +1213,9 @@ export default function AdminPage() {
                 </span>
               </div>
             </div>
+            <div className="h-[calc(100vh-14rem)] min-h-80">
             {memoryViewTab === "table" ? (
-              <div className="max-h-[70vh] overflow-auto">
+              <div className="h-full overflow-y-auto overscroll-contain">
                 {visibleMemoryRows.length === 0 ? (
                 <p className="px-6 py-4 text-sm text-slate-400">v{memoryVersionTab} 메모리 없음</p>
                 ) : (
@@ -1157,9 +1277,9 @@ export default function AdminPage() {
                 )}
               </div>
             ) : (
-              <div className="grid max-h-[70vh] min-h-96 grid-cols-[minmax(220px,320px)_1fr] overflow-hidden">
-                <div className="border-r border-slate-100 bg-slate-50/60">
-                  <div className="sticky top-0 z-10 border-b border-slate-100 bg-slate-50/95 p-4">
+              <div className="grid h-full grid-cols-[minmax(220px,320px)_1fr] overflow-hidden">
+                <div className="h-full overflow-y-auto overscroll-contain border-r border-slate-100 bg-slate-50/60">
+                  <div className="border-b border-slate-100 bg-slate-50/95 p-4">
                     <div className="grid grid-cols-[1fr_auto] gap-2">
                       <button
                         type="button"
@@ -1205,8 +1325,116 @@ export default function AdminPage() {
                           {memoryClusterDiagnostics.unassignedItemIds.length}.
                         </p>
                       )}
+                    {memoryElbowDiagnostics &&
+                      memoryElbowDiagnostics.points.length > 0 && (
+                        <div className="mt-3 rounded-xl border border-slate-200 bg-white p-3">
+                          <div className="flex items-center justify-between gap-3">
+                            <p className="text-xs font-semibold text-slate-600">
+                              Elbow K={memoryElbowDiagnostics.selectedK}
+                            </p>
+                            <p className="text-[11px] text-slate-400">
+                              {memoryClusterDiagnostics.actualClusterCount ??
+                                memoryElbowDiagnostics.selectedK}{" "}
+                              clusters
+                            </p>
+                          </div>
+                          <div className="mt-3 space-y-1.5">
+                            {memoryElbowDiagnostics.points.map(
+                              (point) => (
+                                <div
+                                  key={point.k}
+                                  className="grid grid-cols-[1.5rem_1fr_3.5rem] items-center gap-2 text-[11px]"
+                                >
+                                  <span
+                                    className={
+                                      point.k ===
+                                      memoryElbowDiagnostics.selectedK
+                                        ? "font-semibold text-slate-800"
+                                        : "text-slate-400"
+                                    }
+                                  >
+                                    {point.k}
+                                  </span>
+                                  <div className="h-1.5 overflow-hidden rounded-full bg-slate-100">
+                                    <div
+                                      className={`h-full rounded-full ${
+                                        point.k ===
+                                        memoryElbowDiagnostics.selectedK
+                                          ? "bg-slate-800"
+                                          : "bg-slate-300"
+                                      }`}
+                                      style={{
+                                        width: elbowBarWidth(
+                                          point,
+                                          memoryElbowDiagnostics.points,
+                                        ),
+                                      }}
+                                    />
+                                  </div>
+                                  <span className="text-right tabular-nums text-slate-400">
+                                    {point.inertia.toFixed(2)}
+                                  </span>
+                                </div>
+                              ),
+                            )}
+                          </div>
+                        </div>
+                      )}
+                    {memoryGranularityDiagnostics &&
+                      memoryGranularityDiagnostics.scores.length > 0 && (
+                        <div className="mt-3 rounded-xl border border-slate-200 bg-white p-3">
+                          <div className="flex items-center justify-between gap-3">
+                            <p className="text-xs font-semibold text-slate-600">
+                              LLM K=
+                              {memoryGranularityDiagnostics.selectedK}
+                            </p>
+                            <p className="text-[11px] text-slate-400">
+                              {memoryGranularityDiagnostics.pairCount} pairs
+                            </p>
+                          </div>
+                          <div className="mt-3 space-y-1.5">
+                            {memoryGranularityDiagnostics.scores.map(
+                              (score) => (
+                                <div
+                                  key={score.k}
+                                  className="grid grid-cols-[1.5rem_1fr_3.5rem] items-center gap-2 text-[11px]"
+                                >
+                                  <span
+                                    className={
+                                      score.k ===
+                                      memoryGranularityDiagnostics.selectedK
+                                        ? "font-semibold text-slate-800"
+                                        : "text-slate-400"
+                                    }
+                                  >
+                                    {score.k}
+                                  </span>
+                                  <div className="h-1.5 overflow-hidden rounded-full bg-slate-100">
+                                    <div
+                                      className={`h-full rounded-full ${
+                                        score.k ===
+                                        memoryGranularityDiagnostics.selectedK
+                                          ? "bg-emerald-600"
+                                          : "bg-emerald-200"
+                                      }`}
+                                      style={{
+                                        width: agreementBarWidth(
+                                          score.agreement,
+                                        ),
+                                      }}
+                                    />
+                                  </div>
+                                  <span className="text-right tabular-nums text-slate-400">
+                                    {(score.agreement * 100).toFixed(0)}%
+                                  </span>
+                                </div>
+                              ),
+                            )}
+                          </div>
+                        </div>
+                      )}
                   </div>
-                  <div className="max-h-[calc(70vh-73px)] overflow-auto p-3">
+                  <div className="p-3">
                     {isLoadingMemoryClusters ? (
                       <p className="px-2 py-3 text-xs text-slate-400">
                         저장된 클러스터를 불러오는 중입니다.
@@ -1252,7 +1480,7 @@ export default function AdminPage() {
                     )}
                   </div>
                 </div>
-                <div className="max-h-[70vh] overflow-auto p-5">
+                <div className="h-full overflow-y-auto overscroll-contain p-5">
                   {isLoadingMemoryClusters ? (
                     <div className="flex h-full min-h-80 items-center justify-center text-sm text-slate-400">
                       저장된 클러스터를 불러오는 중입니다.
@@ -1361,7 +1589,8 @@ export default function AdminPage() {
                 </div>
               </div>
             )}
-            <div className="flex items-center justify-between border-t border-slate-100 px-6 py-4">
+            </div>
+            <div className="flex shrink-0 items-center justify-between border-t border-slate-100 px-6 py-4">
               <button
                 type="button"
                 onClick={() => {
