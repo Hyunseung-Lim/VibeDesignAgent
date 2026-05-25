@@ -1925,9 +1925,37 @@ export default function MainScreenPage() {
         normalizedOptions.find((o) => o.id === currentOptionId) ??
         (normalizedOptions.length === 1 ? normalizedOptions[0] : null);
       setMissionOptions(normalizedOptions);
+      if (
+        !isReadOnly &&
+        !session?.selectedOptionId &&
+        !selectedOptionIdRef.current &&
+        normalizedOptions.length === 1
+      ) {
+        const option = normalizedOptions[0];
+        const now = Date.now();
+        selectedOptionIdRef.current = option.id;
+        setSelectedOptionId(option.id);
+        setTimerStartedAt(Number(session?.timerStartedAt ?? now));
+        setDoc(
+          sessionRef,
+          {
+            missionId,
+            selectedOptionId: option.id,
+            missionTitle: option.title,
+            missionBrief: optionBrief(option),
+            selectedDevice: option.device ?? missionData?.device ?? device,
+            timerStartedAt: session?.timerStartedAt ?? now,
+            updatedAt: now,
+          },
+          { merge: true },
+        );
+      }
 
-      setMissionTitle(session?.missionTitle || pTitle);
-      setMissionBrief(session?.missionBrief || pBrief);
+      setMissionTitle(session?.missionTitle || selectedOption?.title || pTitle);
+      setMissionBrief(
+        session?.missionBrief ||
+          (selectedOption ? optionBrief(selectedOption) : pBrief),
+      );
       const sessionDevice = session?.selectedDevice as Device | undefined;
       const optionDevice = selectedOption?.device;
       if (sessionDevice) setDevice(sessionDevice);
