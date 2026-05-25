@@ -84,6 +84,8 @@ type Reference = {
   tag: string;
   url?: string;
   imageUrl?: string;
+  referenceMode?: "style" | "product";
+  searchProvider?: "openai-web" | "serper-image";
 };
 
 type DesignStyle = {
@@ -1559,6 +1561,7 @@ export default function MainScreenPage() {
   });
   const [isCompletingSession, setIsCompletingSession] = useState(false);
   const [sessionCompleted, setSessionCompleted] = useState(false);
+  const [showLobbyWarning, setShowLobbyWarning] = useState(false);
   const [editMode, setEditMode] = useState(false);
   const [device, setDevice] = useState<Device>("desktop");
   const [missionTitle, setMissionTitle] = useState("");
@@ -4289,13 +4292,20 @@ export default function MainScreenPage() {
       {/* Header */}
       <header className="flex items-center justify-between border-b border-slate-200 bg-white px-6 py-4 lg:px-10">
         <div className="flex items-center gap-4">
-          <Link
-            href="/lobby"
+          <button
+            type="button"
+            onClick={() => {
+              if (!isReadOnly && selectedOptionId && !sessionCompleted) {
+                setShowLobbyWarning(true);
+              } else {
+                router.push("/lobby");
+              }
+            }}
             className="flex items-center gap-1.5 rounded-full border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-800"
           >
             <ArrowLeftIcon size={14} />
             로비로 돌아가기
-          </Link>
+          </button>
           <h1 className="text-xl font-semibold">
             {parentMissionTitle &&
             activeOption &&
@@ -4774,9 +4784,23 @@ export default function MainScreenPage() {
                             {card.title}
                           </p>
                           <div className="flex items-center justify-between mt-1">
-                            <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-500">
-                              {card.tag}
-                            </span>
+                            <div className="flex min-w-0 flex-wrap items-center gap-1">
+                              <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-500">
+                                {card.tag}
+                              </span>
+                              {card.searchProvider && (
+                                <span className="rounded-full bg-indigo-50 px-2 py-0.5 text-xs font-medium text-indigo-600">
+                                  {card.searchProvider === "openai-web"
+                                    ? "OpenAI web"
+                                    : "Serper image"}
+                                </span>
+                              )}
+                              {card.referenceMode && (
+                                <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-500">
+                                  {card.referenceMode}
+                                </span>
+                              )}
+                            </div>
                             <div className="flex items-center gap-1">
                               {card.url && (
                                 <a
@@ -5965,6 +5989,36 @@ export default function MainScreenPage() {
 
           {/* Canvas */}
           {renderMockupCanvas(true)}
+        </div>
+      )}
+
+      {/* Lobby navigation warning */}
+      {showLobbyWarning && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+          <div className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-xl">
+            <h2 className="mb-2 text-base font-semibold text-slate-900">
+              세션이 아직 종료되지 않았어요
+            </h2>
+            <p className="mb-6 text-sm leading-relaxed text-slate-600">
+              <strong>세션 종료</strong> 버튼을 누르지 않으면 이번 세션의 메모리가 저장되지 않을 수 있습니다. 계속 나가시겠어요?
+            </p>
+            <div className="flex gap-3">
+              <button
+                type="button"
+                onClick={() => setShowLobbyWarning(false)}
+                className="flex-1 rounded-full border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+              >
+                취소
+              </button>
+              <button
+                type="button"
+                onClick={() => router.push("/lobby")}
+                className="flex-1 rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-700"
+              >
+                그냥 나가기
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
