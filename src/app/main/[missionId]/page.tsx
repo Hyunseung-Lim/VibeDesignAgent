@@ -73,6 +73,10 @@ type MemoryContext = {
   semantic: MemoryRecord[];
 };
 
+type MemoryRetrievalResponse = {
+  retrieved?: MemoryRecord[];
+};
+
 type Reference = {
   id: string;
   title: string;
@@ -1571,6 +1575,7 @@ export default function MainScreenPage() {
     string | null
   >(null);
   const [timerStartedAt, setTimerStartedAt] = useState<number | null>(null);
+  const [timerEndedAt, setTimerEndedAt] = useState<number | null>(null);
   const [timerDisplay, setTimerDisplay] = useState<string>("");
   const [activeIdeaTab, setActiveIdeaTab] = useState("idea");
   const [activeIdeaId, setActiveIdeaId] = useState<string | null>(null);
@@ -1645,6 +1650,37 @@ export default function MainScreenPage() {
         });
       } catch (error) {
         console.warn("Unable to encode memory draft", error);
+      }
+    },
+    [isReadOnly, missionId],
+  );
+  const retrieveMemoryForQuery = useCallback(
+    async (query: string) => {
+      if (isReadOnly || !missionId || !query.trim()) return null;
+      const currentUser = firebaseAuth.currentUser;
+      if (!currentUser) return null;
+      try {
+        const token = await getIdToken(currentUser);
+        const res = await fetch("/api/memory/retrieve", {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            query,
+            missionId,
+            limit: 5,
+          }),
+        });
+        if (!res.ok) return null;
+        const data = (await res.json()) as MemoryRetrievalResponse;
+        const retrieved = Array.isArray(data.retrieved) ? data.retrieved : [];
+        if (retrieved.length === 0) return null;
+        return retrieved;
+      } catch (error) {
+        console.warn("Unable to retrieve memory", error);
+        return null;
       }
     },
     [isReadOnly, missionId],
@@ -1970,6 +2006,11 @@ export default function MainScreenPage() {
       const session = sessionSnap.exists() ? sessionSnap.data() : null;
       sessionData = session ?? null;
       setSessionCompleted(session?.status === "completed");
+      setTimerEndedAt(
+        session?.endedAt && session.status === "completed"
+          ? Number(session.endedAt)
+          : null,
+      );
 
       if (session?.messages) setMessages(session.messages);
       // Load ideas first so we can reference their IDs
@@ -2200,31 +2241,30 @@ export default function MainScreenPage() {
       setTimerDisplay("");
       return;
     }
-    const update = () => {
-      const elapsed = Date.now() - timerStartedAt;
+    const displayForTime = (currentTime: number) => {
+      const elapsed = Math.max(0, currentTime - timerStartedAt);
       if (missionDurationMinutes && missionDurationMinutes > 0) {
         const remaining = missionDurationMinutes * 60 * 1000 - elapsed;
-        if (remaining <= 0) {
-          setTimerDisplay("시간 종료");
-          return;
-        }
+        if (remaining <= 0) return "시간 종료";
         const m = Math.floor(remaining / 60000);
         const s = Math.floor((remaining % 60000) / 1000);
-        setTimerDisplay(
-          `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`,
-        );
-      } else {
-        const m = Math.floor(elapsed / 60000);
-        const s = Math.floor((elapsed % 60000) / 1000);
-        setTimerDisplay(
-          `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`,
-        );
+        return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
       }
+      const m = Math.floor(elapsed / 60000);
+      const s = Math.floor((elapsed % 60000) / 1000);
+      return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+    };
+    if (sessionCompleted && timerEndedAt) {
+      setTimerDisplay(displayForTime(timerEndedAt));
+      return;
+    }
+    const update = () => {
+      setTimerDisplay(displayForTime(Date.now()));
     };
     update();
     const id = setInterval(update, 1000);
     return () => clearInterval(id);
-  }, [timerStartedAt, missionDurationMinutes]);
+  }, [timerStartedAt, timerEndedAt, sessionCompleted, missionDurationMinutes]);
 
   useEffect(() => {
     chatBottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -2678,6 +2718,30 @@ export default function MainScreenPage() {
         .join("\n\n") || undefined;
 
     try {
+      const retrievedMemory = await retrieveMemoryForQuery(
+        [
+          text,
+          effectiveMissionTitle ? `Mission: ${effectiveMissionTitle}` : "",
+          activeIdeaId
+            ? `Active idea: ${ideas.find((idea) => idea.id === activeIdeaId)?.description ?? ""}`
+            : "",
+        ]
+          .filter(Boolean)
+          .join("\n\n"),
+      );
+      const turnMemoryContext =
+        retrievedMemory && retrievedMemory.length > 0
+          ? {
+              episodic: memoryContext.episodic.slice(0, 20),
+              semantic: retrievedMemory,
+            }
+          : memoryContext;
+      if (retrievedMemory && retrievedMemory.length > 0) {
+        setMemoryContext((prev) => ({
+          ...prev,
+          semantic: retrievedMemory,
+        }));
+      }
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -2699,8 +2763,9 @@ export default function MainScreenPage() {
           device,
           activeIdea: ideas.find((i) => i.id === activeIdeaId) ?? undefined,
           memoryContext:
-            memoryContext.episodic.length > 0 || memoryContext.semantic.length > 0
-              ? memoryContext
+            turnMemoryContext.episodic.length > 0 ||
+            turnMemoryContext.semantic.length > 0
+              ? turnMemoryContext
               : undefined,
           citedTexts: citedTexts.length > 0 ? citedTexts : undefined,
           designSpec: (() => {
@@ -3530,6 +3595,7 @@ export default function MainScreenPage() {
     const nextDevice = option.device ?? device;
     setSelectedOptionId(option.id);
     setDevice(nextDevice);
+    setTimerEndedAt(null);
 
     setMissionTitle(option.title);
     setMissionBrief(optionBrief(option));
@@ -3569,6 +3635,8 @@ export default function MainScreenPage() {
         body: JSON.stringify({ missionId }),
       });
       if (!res.ok) throw new Error(`Session completion failed: ${res.status}`);
+      const completionData = await res.json().catch(() => null);
+      const completedAt = Number(completionData?.completedAt ?? Date.now());
       if (isOnboardingMission) {
         await fetch("/api/users/me", {
           method: "PATCH",
@@ -3593,6 +3661,7 @@ export default function MainScreenPage() {
           semantic: Array.isArray(memory.semantic) ? memory.semantic : [],
         });
       }
+      setTimerEndedAt(completedAt);
       setSessionCompleted(true);
     } catch (error) {
       console.warn("Unable to complete session", error);

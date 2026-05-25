@@ -1,3 +1,4 @@
+import OpenAI from "openai";
 import {
   getFirebaseAccessToken,
   getFirestoreDocument,
@@ -8,8 +9,10 @@ import {
 
 export const runtime = "nodejs";
 
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const MEMORY_SCHEMA_VERSION = "0.1.1";
 const MEMORY_COLLECTION = "memories_0_1_1";
+const EMBEDDING_MODEL = "text-embedding-3-large";
 
 function jsonArray(value: unknown) {
   if (Array.isArray(value)) return value.map(String).filter(Boolean);
@@ -20,6 +23,21 @@ function jsonArray(value: unknown) {
   } catch {
     return [];
   }
+}
+
+function l2Normalize(vector: number[]) {
+  const norm = Math.sqrt(vector.reduce((sum, value) => sum + value * value, 0));
+  if (!norm) return vector;
+  return vector.map((value) => value / norm);
+}
+
+async function embedSemanticItems(semantic: string[]) {
+  if (semantic.length === 0) return [];
+  const response = await openai.embeddings.create({
+    model: EMBEDDING_MODEL,
+    input: semantic,
+  });
+  return response.data.map((item) => l2Normalize(item.embedding));
 }
 
 export async function POST(request: Request) {
@@ -48,6 +66,24 @@ export async function POST(request: Request) {
       const keywords = jsonArray(draft.keywordsJson);
       const semantic = jsonArray(draft.semanticJson);
       const episode = String(draft.episode ?? "");
+      const semanticEmbeddings = await embedSemanticItems(semantic);
+      const semanticItems = semantic.map((item, index) => ({
+        id: `semantic-${index}`,
+        semantic: item,
+        embedding: semanticEmbeddings[index] ?? [],
+        embeddingModel: EMBEDDING_MODEL,
+        importanceScore: 0.5,
+        usageScore: 0,
+        decayScore: 0,
+        retentionScore: 0.5,
+        lastRetrievedAt: null,
+        retrievedCount: 0,
+        duplicateOf: null,
+        archivedAt: null,
+        archiveReason: null,
+        createdAt: completedAt,
+        updatedAt: completedAt,
+      }));
       const base = {
         sourceDraftId: draft.id,
         sourceMissionId: missionId,
@@ -80,6 +116,7 @@ export async function POST(request: Request) {
             content: episode,
             keywords,
             semantic,
+            semanticItems,
             input: draft.input ?? "",
             output: draft.output ?? "",
             timestamp,
