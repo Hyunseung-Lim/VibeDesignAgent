@@ -14,6 +14,7 @@ const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const EMBEDDING_MODEL = "text-embedding-3-large";
 const LABEL_MODEL = "gpt-5.4-mini";
 const MAX_TARGET_CLUSTER_COUNT = 12;
+const FIXED_KMEANS_CLUSTER_COUNT = 10;
 const MAX_GRAPH_CLUSTER_COUNT = 16;
 const MAX_ITEMS = 160;
 const MAX_KMEANS_ITERATIONS = 40;
@@ -23,7 +24,7 @@ const GRAPH_STRONG_SIMILARITY = 0.74;
 const GRAPH_KNN_EDGES = 3;
 const GRAPH_COMMUNITY_ITERATIONS = 30;
 const CLUSTER_COLLECTION = "memoryClusters";
-const CLUSTERING_METHOD_VERSION = "llm-granularity-v1";
+const CLUSTERING_METHOD_VERSION = "llm-granularity-graph-fixed-v1";
 const DEFAULT_MEMORY_VERSION = "0.1.1";
 
 type ClusterInputItem = {
@@ -50,7 +51,9 @@ type ClusterDiagnostics = {
   duplicateItemIds: string[];
   recoveredUnassignedItemIds: string[];
   unassignedItemIds: string[];
-  method: "embedding-kmeans-elbow-llm-granularity";
+  method:
+    | "embedding-kmeans-elbow-llm-granularity"
+    | "embedding-kmeans-fixed";
   embeddingModel: string;
   labelModel: string;
   requestedClusterCount: number;
@@ -128,8 +131,10 @@ type GranularityDiagnostics = {
 
 type StoredClusterDocument = {
   clusters?: unknown;
+  fixedClusters?: unknown;
   graphClusters?: unknown;
   diagnostics?: unknown;
+  fixedDiagnostics?: unknown;
   graphDiagnostics?: unknown;
   itemSignature?: unknown;
   sourceItemCount?: unknown;
@@ -203,7 +208,10 @@ function parseStoredDiagnostics(value: unknown): ClusterDiagnostics | null {
     recoveredUnassignedItemIds:
       diagnostics.recoveredUnassignedItemIds.map(String),
     unassignedItemIds: diagnostics.unassignedItemIds.map(String),
-    method: "embedding-kmeans-elbow-llm-granularity",
+    method:
+      diagnostics.method === "embedding-kmeans-fixed"
+        ? "embedding-kmeans-fixed"
+        : "embedding-kmeans-elbow-llm-granularity",
     embeddingModel: String(diagnostics.embeddingModel ?? EMBEDDING_MODEL),
     labelModel: String(diagnostics.labelModel ?? LABEL_MODEL),
     requestedClusterCount: Number(diagnostics.requestedClusterCount ?? 0),
@@ -1144,6 +1152,22 @@ function diagnostics(
   };
 }
 
+function fixedKMeansDiagnostics(
+  clusters: MemoryCluster[],
+  requestedClusterCount: number,
+): ClusterDiagnostics {
+  return {
+    duplicateItemIds: [],
+    recoveredUnassignedItemIds: [],
+    unassignedItemIds: [],
+    method: "embedding-kmeans-fixed",
+    embeddingModel: EMBEDDING_MODEL,
+    labelModel: LABEL_MODEL,
+    requestedClusterCount,
+    actualClusterCount: clusters.length,
+  };
+}
+
 export async function GET(
   request: Request,
   { params }: { params: Promise<{ uid: string }> },
@@ -1174,8 +1198,10 @@ export async function GET(
 
   return Response.json({
     clusters: parseStoredClusters(stored.clusters),
+    fixedClusters: parseStoredClusters(stored.fixedClusters),
     graphClusters: parseStoredClusters(stored.graphClusters),
     diagnostics: parseStoredDiagnostics(stored.diagnostics),
+    fixedDiagnostics: parseStoredDiagnostics(stored.fixedDiagnostics),
     graphDiagnostics: parseGraphCommunityDiagnostics(stored.graphDiagnostics),
     sourceItemCount: Number(stored.sourceItemCount ?? 0),
     generatedAt: stored.generatedAt ?? null,
@@ -1218,8 +1244,10 @@ export async function POST(
   if (items.length === 0) {
     return Response.json({
       clusters: [],
+      fixedClusters: [],
       graphClusters: [],
       diagnostics: diagnostics([], 0),
+      fixedDiagnostics: fixedKMeansDiagnostics([], 0),
       graphDiagnostics: parseGraphCommunityDiagnostics({
         duplicateItemIds: [],
         recoveredUnassignedItemIds: [],
@@ -1253,6 +1281,11 @@ export async function POST(
     buildClusters(items, vectors, assignments),
     itemsById,
   );
+  const fixedK = Math.min(FIXED_KMEANS_CLUSTER_COUNT, items.length);
+  const fixedClusters = await labelClusters(
+    buildClusters(items, vectors, kMeans(vectors, fixedK)),
+    itemsById,
+  );
   const graphCommunity = buildGraphCommunityClusters(items, vectors);
   const graphClusters = await labelClusters(graphCommunity.clusters, itemsById);
   const clusterDiagnostics = diagnostics(
@@ -1261,6 +1294,7 @@ export async function POST(
     elbow,
     granularity,
   );
+  const fixedDiagnostics = fixedKMeansDiagnostics(fixedClusters, fixedK);
   const graphDiagnostics = {
     ...graphCommunity.diagnostics,
     actualClusterCount: graphClusters.length,
@@ -1275,8 +1309,10 @@ export async function POST(
         memoryVersion,
         sourceItemCount: items.length,
         clusters,
+        fixedClusters,
         graphClusters,
         diagnostics: clusterDiagnostics,
+        fixedDiagnostics,
         graphDiagnostics,
         generatedAt: new Date(),
         generatedBy: admin.email ?? admin.localId,
@@ -1287,8 +1323,10 @@ export async function POST(
 
   return Response.json({
     clusters,
+    fixedClusters,
     graphClusters,
     diagnostics: clusterDiagnostics,
+    fixedDiagnostics,
     graphDiagnostics,
   });
 }

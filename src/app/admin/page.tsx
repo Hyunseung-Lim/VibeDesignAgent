@@ -70,7 +70,7 @@ type SortDirection = "asc" | "desc";
 type SemanticFilter = "all" | "with" | "without";
 type MemoryViewTab = "table" | "clusters" | "retrievals" | "forgetting";
 type MemoryClusterViewTab = "graph" | "detail";
-type MemoryClusterMethodTab = "kmeans" | "graph";
+type MemoryClusterMethodTab = "kmeans" | "fixed" | "graph";
 
 type MemoryCluster = {
   id: string;
@@ -133,6 +133,12 @@ type MemoryGraphClusterDiagnostics = {
     rawCommunityCount: number;
     cappedCommunityCount: number;
   };
+};
+
+const memoryClusterMethodLabels: Record<MemoryClusterMethodTab, string> = {
+  kmeans: "K-means LLM",
+  fixed: "Fixed K-means",
+  graph: "Similarity Graph",
 };
 
 type MemoryRetrievalItem = {
@@ -443,6 +449,9 @@ export default function AdminPage() {
   const [memoryClusterMethodTab, setMemoryClusterMethodTab] =
     useState<MemoryClusterMethodTab>("kmeans");
   const [memoryClusters, setMemoryClusters] = useState<MemoryCluster[]>([]);
+  const [memoryFixedClusters, setMemoryFixedClusters] = useState<
+    MemoryCluster[]
+  >([]);
   const [memoryGraphClusters, setMemoryGraphClusters] = useState<
     MemoryCluster[]
   >([]);
@@ -455,6 +464,8 @@ export default function AdminPage() {
     null,
   );
   const [memoryClusterDiagnostics, setMemoryClusterDiagnostics] =
+    useState<MemoryClusterDiagnostics | null>(null);
+  const [memoryFixedClusterDiagnostics, setMemoryFixedClusterDiagnostics] =
     useState<MemoryClusterDiagnostics | null>(null);
   const [memoryGraphClusterDiagnostics, setMemoryGraphClusterDiagnostics] =
     useState<MemoryGraphClusterDiagnostics | null>(null);
@@ -1062,11 +1073,17 @@ export default function AdminPage() {
     [clusterableMemoryItems],
   );
   const activeMemoryClusters =
-    memoryClusterMethodTab === "graph" ? memoryGraphClusters : memoryClusters;
+    memoryClusterMethodTab === "graph"
+      ? memoryGraphClusters
+      : memoryClusterMethodTab === "fixed"
+        ? memoryFixedClusters
+        : memoryClusters;
   const activeMemoryClusterDiagnostics =
     memoryClusterMethodTab === "graph"
       ? memoryGraphClusterDiagnostics
-      : memoryClusterDiagnostics;
+      : memoryClusterMethodTab === "fixed"
+        ? memoryFixedClusterDiagnostics
+        : memoryClusterDiagnostics;
   const selectedMemoryCluster =
     activeMemoryClusters.find(
       (cluster) => cluster.id === selectedMemoryClusterId,
@@ -1114,10 +1131,12 @@ export default function AdminPage() {
   }, [activeMemoryClusters, memoryClusterMethodTab]);
   useEffect(() => {
     setMemoryClusters([]);
+    setMemoryFixedClusters([]);
     setMemoryGraphClusters([]);
     setSelectedMemoryClusterId(null);
     setMemoryClusterError(null);
     setMemoryClusterDiagnostics(null);
+    setMemoryFixedClusterDiagnostics(null);
     setMemoryGraphClusterDiagnostics(null);
     setIsLoadingMemoryClusters(false);
     if (!memoryModal || clusterableMemoryItems.length === 0) return;
@@ -1142,19 +1161,29 @@ export default function AdminPage() {
         if (!res.ok) throw new Error(data?.error ?? "클러스터 조회 실패");
         if (cancelled || !data?.cacheHit) return;
         const clusters = Array.isArray(data.clusters) ? data.clusters : [];
+        const fixedClusters = Array.isArray(data.fixedClusters)
+          ? data.fixedClusters
+          : [];
         const graphClusters = Array.isArray(data.graphClusters)
           ? data.graphClusters
           : [];
         setMemoryClusters(clusters);
+        setMemoryFixedClusters(fixedClusters);
         setMemoryGraphClusters(graphClusters);
         setMemoryClusterDiagnostics(
           parseMemoryClusterDiagnostics(data.diagnostics),
+        );
+        setMemoryFixedClusterDiagnostics(
+          parseMemoryClusterDiagnostics(data.fixedDiagnostics),
         );
         setMemoryGraphClusterDiagnostics(
           parseMemoryGraphClusterDiagnostics(data.graphDiagnostics),
         );
         setSelectedMemoryClusterId(
-          clusters[0]?.id ?? graphClusters[0]?.id ?? null,
+          clusters[0]?.id ??
+            fixedClusters[0]?.id ??
+            graphClusters[0]?.id ??
+            null,
         );
       } catch (error) {
         if (cancelled) return;
@@ -1274,6 +1303,7 @@ export default function AdminPage() {
     setIsClusteringMemory(true);
     setMemoryClusterError(null);
     setMemoryClusterDiagnostics(null);
+    setMemoryFixedClusterDiagnostics(null);
     setMemoryGraphClusterDiagnostics(null);
     try {
       const res = await fetch(
@@ -1302,21 +1332,36 @@ export default function AdminPage() {
       const data = await res.json().catch(() => null);
       if (!res.ok) throw new Error(data?.error ?? "클러스터 생성 실패");
       const clusters = Array.isArray(data?.clusters) ? data.clusters : [];
+      const fixedClusters = Array.isArray(data?.fixedClusters)
+        ? data.fixedClusters
+        : [];
       const graphClusters = Array.isArray(data?.graphClusters)
         ? data.graphClusters
         : [];
       setMemoryClusters(clusters);
+      setMemoryFixedClusters(fixedClusters);
       setMemoryGraphClusters(graphClusters);
       setMemoryClusterDiagnostics(
         parseMemoryClusterDiagnostics(data?.diagnostics),
+      );
+      setMemoryFixedClusterDiagnostics(
+        parseMemoryClusterDiagnostics(data?.fixedDiagnostics),
       );
       setMemoryGraphClusterDiagnostics(
         parseMemoryGraphClusterDiagnostics(data?.graphDiagnostics),
       );
       const activeClusters =
-        memoryClusterMethodTab === "graph" ? graphClusters : clusters;
+        memoryClusterMethodTab === "graph"
+          ? graphClusters
+          : memoryClusterMethodTab === "fixed"
+            ? fixedClusters
+            : clusters;
       setSelectedMemoryClusterId(activeClusters[0]?.id ?? null);
-      if (clusters.length === 0 && graphClusters.length === 0) {
+      if (
+        clusters.length === 0 &&
+        fixedClusters.length === 0 &&
+        graphClusters.length === 0
+      ) {
         setMemoryClusterError("생성된 클러스터가 없습니다.");
       }
     } catch (error) {
@@ -1362,6 +1407,7 @@ export default function AdminPage() {
       diagnostics: activeMemoryClusterDiagnostics,
       comparedDiagnostics: {
         kmeans: memoryClusterDiagnostics,
+        fixed: memoryFixedClusterDiagnostics,
         graph: memoryGraphClusterDiagnostics,
       },
       clusters: activeMemoryClusters.map((cluster) => ({
@@ -2106,15 +2152,15 @@ export default function AdminPage() {
                       >
                         {isClusteringMemory
                           ? "Generating..."
-                          : `Regenerate both (${clusterableMemoryItems.length})`}
+                          : `Regenerate all (${clusterableMemoryItems.length})`}
                       </button>
                       <p className="text-[11px] leading-relaxed text-slate-400">
-                        K-means와 Similarity Graph 결과를 함께 다시 생성합니다.
+                        K-means LLM, Fixed K-means, Similarity Graph 결과를 함께 다시 생성합니다.
                       </p>
                     </div>
                     <div className="mt-4 space-y-2 border-t border-slate-200 pt-3">
                       <div className="inline-flex rounded-lg border border-slate-200 bg-white p-1">
-                        {(["kmeans", "graph"] as const).map((method) => (
+                        {(["kmeans", "fixed", "graph"] as const).map((method) => (
                           <button
                             key={method}
                             type="button"
@@ -2125,9 +2171,7 @@ export default function AdminPage() {
                                 : "text-slate-500 hover:text-slate-900"
                             }`}
                           >
-                            {method === "kmeans"
-                              ? "K-means"
-                              : "Similarity Graph"}
+                            {memoryClusterMethodLabels[method]}
                           </button>
                         ))}
                       </div>
@@ -2160,6 +2204,26 @@ export default function AdminPage() {
                           omitted items, final unassigned{" "}
                           {memoryClusterDiagnostics.unassignedItemIds.length}.
                         </p>
+                      )}
+                    {memoryFixedClusterDiagnostics &&
+                      memoryClusterMethodTab === "fixed" && (
+                        <div className="mt-3 rounded-xl border border-slate-200 bg-white p-3">
+                          <div className="flex items-center justify-between gap-3">
+                            <p className="text-xs font-semibold text-slate-600">
+                              Fixed K=
+                              {memoryFixedClusterDiagnostics.requestedClusterCount ??
+                                0}
+                            </p>
+                            <p className="text-[11px] text-slate-400">
+                              {memoryFixedClusterDiagnostics.actualClusterCount ??
+                                memoryFixedClusters.length}{" "}
+                              clusters
+                            </p>
+                          </div>
+                          <p className="mt-2 text-[11px] leading-relaxed text-slate-400">
+                            예전 방식처럼 목표 클러스터 수를 고정해 생성한 결과입니다.
+                          </p>
+                        </div>
                       )}
                     {memoryGraphClusterDiagnostics?.graph &&
                       memoryClusterMethodTab === "graph" && (
@@ -2336,7 +2400,9 @@ export default function AdminPage() {
                     ) : activeMemoryClusters.length === 0 ? (
                       <p className="px-2 py-3 text-xs leading-relaxed text-slate-400">
                         {memoryClusterMethodTab === "graph"
-                          ? "Similarity graph 결과가 없습니다. Regenerate를 눌러 두 방식을 함께 생성할 수 있습니다."
+                          ? "Similarity graph 결과가 없습니다. Regenerate를 눌러 모든 방식을 함께 생성할 수 있습니다."
+                          : memoryClusterMethodTab === "fixed"
+                            ? "Fixed K-means 결과가 없습니다. Regenerate를 눌러 예전 고정 K 방식도 함께 생성할 수 있습니다."
                           : "저장된 클러스터가 없습니다. 현재 필터링된 semantic memory를 기준으로 생성할 수 있습니다."}
                       </p>
                     ) : (
@@ -2390,10 +2456,8 @@ export default function AdminPage() {
                       ))}
                     </div>
                     <span className="text-xs text-slate-400">
-                      {memoryClusterMethodTab === "kmeans"
-                        ? "K-means"
-                        : "Similarity Graph"}{" "}
-                      · {activeMemoryClusters.length} clusters ·{" "}
+                      {memoryClusterMethodLabels[memoryClusterMethodTab]} ·{" "}
+                      {activeMemoryClusters.length} clusters ·{" "}
                       {clusterableMemoryItems.length} semantic nodes
                     </span>
                   </div>
