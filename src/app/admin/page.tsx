@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { ArrowLeftIcon, ArrowRightIcon, DeviceMobileIcon, MonitorIcon, XIcon, PencilSimpleIcon, UsersThreeIcon } from "@phosphor-icons/react";
@@ -17,6 +18,15 @@ import {
 } from "firebase/firestore";
 import { firebaseAuth, db } from "@/lib/firebase";
 import { isAdminEmail } from "@/lib/admin";
+
+const MemoryClusterGraph = dynamic(() => import("./MemoryClusterGraph"), {
+  ssr: false,
+  loading: () => (
+    <div className="flex h-[28rem] min-h-96 items-center justify-center rounded-2xl border border-slate-100 bg-white text-sm text-slate-400 shadow-sm">
+      Graph view loading...
+    </div>
+  ),
+});
 
 const ONBOARDING_MISSION_ID = "onboarding";
 
@@ -59,6 +69,7 @@ type MemorySortKey = "timestamp" | "action" | "semantic";
 type SortDirection = "asc" | "desc";
 type SemanticFilter = "all" | "with" | "without";
 type MemoryViewTab = "table" | "clusters" | "retrievals" | "forgetting";
+type MemoryClusterViewTab = "graph" | "detail";
 
 type MemoryCluster = {
   id: string;
@@ -357,6 +368,8 @@ export default function AdminPage() {
   const [memoryStartDate, setMemoryStartDate] = useState("");
   const [memoryEndDate, setMemoryEndDate] = useState("");
   const [memoryViewTab, setMemoryViewTab] = useState<MemoryViewTab>("table");
+  const [memoryClusterViewTab, setMemoryClusterViewTab] =
+    useState<MemoryClusterViewTab>("graph");
   const [memoryClusters, setMemoryClusters] = useState<MemoryCluster[]>([]);
   const [selectedMemoryClusterId, setSelectedMemoryClusterId] =
     useState<string | null>(null);
@@ -678,6 +691,7 @@ export default function AdminPage() {
       setMemoryVersionTab((counts["0.1.1"] ?? 0) > 0 ? "0.1.1" : "0.1.0");
       resetMemoryFilters();
       setMemoryViewTab("table");
+      setMemoryClusterViewTab("graph");
       setMemoryClusters([]);
       setSelectedMemoryClusterId(null);
       setMemoryClusterError(null);
@@ -2162,7 +2176,30 @@ export default function AdminPage() {
                     )}
                   </div>
                 </div>
-                <div className="h-full overflow-y-auto overscroll-contain p-5">
+                <div className="flex h-full min-h-0 flex-col overflow-hidden">
+                  <div className="flex shrink-0 items-center justify-between gap-3 border-b border-slate-100 bg-white px-5 py-3">
+                    <div className="inline-flex rounded-lg border border-slate-200 bg-slate-50 p-1">
+                      {(["graph", "detail"] as const).map((tab) => (
+                        <button
+                          key={tab}
+                          type="button"
+                          onClick={() => setMemoryClusterViewTab(tab)}
+                          className={`rounded-md px-3 py-1.5 text-xs font-semibold transition ${
+                            memoryClusterViewTab === tab
+                              ? "bg-white text-slate-900 shadow-sm"
+                              : "text-slate-500 hover:text-slate-900"
+                          }`}
+                        >
+                          {tab === "graph" ? "Graph" : "Detail"}
+                        </button>
+                      ))}
+                    </div>
+                    <span className="text-xs text-slate-400">
+                      {memoryClusters.length} clusters ·{" "}
+                      {clusterableMemoryItems.length} semantic nodes
+                    </span>
+                  </div>
+                  <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-5">
                   {isLoadingMemoryClusters ? (
                     <div className="flex h-full min-h-80 items-center justify-center text-sm text-slate-400">
                       저장된 클러스터를 불러오는 중입니다.
@@ -2170,6 +2207,16 @@ export default function AdminPage() {
                   ) : !selectedMemoryCluster ? (
                     <div className="flex h-full min-h-80 items-center justify-center text-sm text-slate-400">
                       저장된 클러스터가 없으면 Regenerate를 눌러 새로 생성할 수 있습니다.
+                    </div>
+                  ) : memoryClusterViewTab === "graph" ? (
+                    <div className="h-full min-h-[32rem] overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm">
+                      <MemoryClusterGraph
+                        clusters={memoryClusters}
+                        items={clusterableMemoryItems}
+                        selectedClusterId={selectedMemoryCluster.id}
+                        onSelectCluster={setSelectedMemoryClusterId}
+                        fill
+                      />
                     </div>
                   ) : (
                     <div className="space-y-5">
@@ -2268,6 +2315,7 @@ export default function AdminPage() {
                       </section>
                     </div>
                   )}
+                  </div>
                 </div>
               </div>
             )}
