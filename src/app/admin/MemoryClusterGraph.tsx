@@ -198,7 +198,7 @@ export default function MemoryClusterGraph({
       className={`relative overflow-hidden bg-white ${
         fill
           ? "h-full min-h-0"
-          : "h-[28rem] min-h-96 rounded-2xl border border-slate-100 shadow-sm"
+          : "h-112 min-h-96 rounded-2xl border border-slate-100 shadow-sm"
       }`}
     >
       <div className="absolute left-4 top-4 z-10 flex flex-wrap items-center gap-2">

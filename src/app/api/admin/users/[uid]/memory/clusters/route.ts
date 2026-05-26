@@ -14,9 +14,14 @@ const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const EMBEDDING_MODEL = "text-embedding-3-large";
 const LABEL_MODEL = "gpt-5.4-mini";
 const MAX_TARGET_CLUSTER_COUNT = 12;
+const MAX_GRAPH_CLUSTER_COUNT = 16;
 const MAX_ITEMS = 160;
 const MAX_KMEANS_ITERATIONS = 40;
 const MAX_GRANULARITY_PAIRS = 24;
+const GRAPH_MIN_SIMILARITY = 0.58;
+const GRAPH_STRONG_SIMILARITY = 0.74;
+const GRAPH_KNN_EDGES = 3;
+const GRAPH_COMMUNITY_ITERATIONS = 30;
 const CLUSTER_COLLECTION = "memoryClusters";
 const CLUSTERING_METHOD_VERSION = "llm-granularity-v1";
 const DEFAULT_MEMORY_VERSION = "0.1.1";
@@ -52,6 +57,28 @@ type ClusterDiagnostics = {
   actualClusterCount: number;
   elbow?: ElbowDiagnostics;
   granularity?: GranularityDiagnostics;
+};
+
+type GraphCommunityDiagnostics = {
+  duplicateItemIds: string[];
+  recoveredUnassignedItemIds: string[];
+  unassignedItemIds: string[];
+  method: "embedding-similarity-graph-label-propagation-llm-labeling";
+  embeddingModel: string;
+  labelModel: string;
+  requestedClusterCount: null;
+  actualClusterCount: number;
+  graph: {
+    minSimilarity: number;
+    strongSimilarity: number;
+    knnEdges: number;
+    nodeCount: number;
+    edgeCount: number;
+    averageDegree: number;
+    singletonCount: number;
+    rawCommunityCount: number;
+    cappedCommunityCount: number;
+  };
 };
 
 type ElbowPoint = {
@@ -101,7 +128,9 @@ type GranularityDiagnostics = {
 
 type StoredClusterDocument = {
   clusters?: unknown;
+  graphClusters?: unknown;
   diagnostics?: unknown;
+  graphDiagnostics?: unknown;
   itemSignature?: unknown;
   sourceItemCount?: unknown;
   memoryVersion?: unknown;
@@ -246,6 +275,49 @@ function parseGranularityDiagnostics(
           Number.isFinite(score.total) &&
           Number.isFinite(score.agreement),
       ),
+  };
+}
+
+function parseGraphCommunityDiagnostics(
+  value: unknown,
+): GraphCommunityDiagnostics | null {
+  const diagnostics = value as Partial<GraphCommunityDiagnostics>;
+  const graph = diagnostics?.graph as
+    | Partial<GraphCommunityDiagnostics["graph"]>
+    | undefined;
+  if (
+    !diagnostics ||
+    !Array.isArray(diagnostics.duplicateItemIds) ||
+    !Array.isArray(diagnostics.recoveredUnassignedItemIds) ||
+    !Array.isArray(diagnostics.unassignedItemIds) ||
+    !graph
+  ) {
+    return null;
+  }
+
+  return {
+    duplicateItemIds: diagnostics.duplicateItemIds.map(String),
+    recoveredUnassignedItemIds:
+      diagnostics.recoveredUnassignedItemIds.map(String),
+    unassignedItemIds: diagnostics.unassignedItemIds.map(String),
+    method: "embedding-similarity-graph-label-propagation-llm-labeling",
+    embeddingModel: String(diagnostics.embeddingModel ?? EMBEDDING_MODEL),
+    labelModel: String(diagnostics.labelModel ?? LABEL_MODEL),
+    requestedClusterCount: null,
+    actualClusterCount: Number(diagnostics.actualClusterCount ?? 0),
+    graph: {
+      minSimilarity: Number(graph.minSimilarity ?? GRAPH_MIN_SIMILARITY),
+      strongSimilarity: Number(
+        graph.strongSimilarity ?? GRAPH_STRONG_SIMILARITY,
+      ),
+      knnEdges: Number(graph.knnEdges ?? GRAPH_KNN_EDGES),
+      nodeCount: Number(graph.nodeCount ?? 0),
+      edgeCount: Number(graph.edgeCount ?? 0),
+      averageDegree: Number(graph.averageDegree ?? 0),
+      singletonCount: Number(graph.singletonCount ?? 0),
+      rawCommunityCount: Number(graph.rawCommunityCount ?? 0),
+      cappedCommunityCount: Number(graph.cappedCommunityCount ?? 0),
+    },
   };
 }
 
@@ -750,7 +822,7 @@ async function labelClusters(
         role: "system",
         content: `Name semantic-memory clusters for a design-agent research admin view.
 
-The cluster membership is already fixed by embeddings and k-means. Do not move, add, remove, or duplicate item ids.
+The cluster membership is already fixed by an embedding-based clustering method. Do not move, add, remove, or duplicate item ids.
 
 Return valid JSON only:
 {
@@ -843,6 +915,212 @@ function buildClusters(
     });
 }
 
+type SimilarityEdge = {
+  source: number;
+  target: number;
+  weight: number;
+};
+
+function similarityEdges(vectors: number[][]) {
+  const pairEdges: SimilarityEdge[] = [];
+  const edgesByKey = new Map<string, SimilarityEdge>();
+  const neighborCandidates = vectors.map(() => [] as SimilarityEdge[]);
+
+  for (let source = 0; source < vectors.length; source += 1) {
+    for (let target = source + 1; target < vectors.length; target += 1) {
+      const weight = cosineSimilarity(vectors[source], vectors[target]);
+      const edge = { source, target, weight };
+      pairEdges.push(edge);
+      neighborCandidates[source].push(edge);
+      neighborCandidates[target].push(edge);
+    }
+  }
+
+  const addEdge = (edge: SimilarityEdge) => {
+    const key = `${edge.source}:${edge.target}`;
+    const existing = edgesByKey.get(key);
+    if (!existing || edge.weight > existing.weight) {
+      edgesByKey.set(key, edge);
+    }
+  };
+
+  pairEdges
+    .filter((edge) => edge.weight >= GRAPH_STRONG_SIMILARITY)
+    .forEach(addEdge);
+
+  neighborCandidates.forEach((edges) => {
+    edges
+      .filter((edge) => edge.weight >= GRAPH_MIN_SIMILARITY)
+      .sort((a, b) => b.weight - a.weight)
+      .slice(0, GRAPH_KNN_EDGES)
+      .forEach(addEdge);
+  });
+
+  return Array.from(edgesByKey.values()).sort((a, b) => b.weight - a.weight);
+}
+
+function labelPropagationCommunities(nodeCount: number, edges: SimilarityEdge[]) {
+  const labels = Array.from({ length: nodeCount }, (_, index) => index);
+  const adjacency = Array.from({ length: nodeCount }, () => [] as {
+    neighbor: number;
+    weight: number;
+  }[]);
+
+  edges.forEach((edge) => {
+    adjacency[edge.source].push({ neighbor: edge.target, weight: edge.weight });
+    adjacency[edge.target].push({ neighbor: edge.source, weight: edge.weight });
+  });
+
+  for (
+    let iteration = 0;
+    iteration < GRAPH_COMMUNITY_ITERATIONS;
+    iteration += 1
+  ) {
+    let changed = false;
+    const order = Array.from({ length: nodeCount }, (_, index) => index).sort(
+      (a, b) => adjacency[b].length - adjacency[a].length || a - b,
+    );
+
+    order.forEach((nodeIndex) => {
+      if (adjacency[nodeIndex].length === 0) return;
+      const scores = new Map<number, number>();
+      adjacency[nodeIndex].forEach(({ neighbor, weight }) => {
+        const label = labels[neighbor];
+        scores.set(label, (scores.get(label) ?? 0) + weight);
+      });
+
+      const currentLabel = labels[nodeIndex];
+      const best = Array.from(scores.entries()).sort(
+        ([labelA, scoreA], [labelB, scoreB]) =>
+          scoreB - scoreA ||
+          (labelA === currentLabel ? -1 : labelB === currentLabel ? 1 : 0) ||
+          labelA - labelB,
+      )[0];
+      if (best && best[0] !== currentLabel) {
+        labels[nodeIndex] = best[0];
+        changed = true;
+      }
+    });
+
+    if (!changed) break;
+  }
+
+  return labels;
+}
+
+function communityCentroid(
+  group: number[],
+  vectors: number[][],
+  dimension: number,
+) {
+  return meanVector(
+    group.map((itemIndex) => vectors[itemIndex]),
+    dimension,
+  );
+}
+
+function mergeCommunities(
+  groups: number[][],
+  vectors: number[][],
+  maxCount: number,
+) {
+  const dimension = vectors[0]?.length ?? 0;
+  const merged = groups.map((group) => [...group]);
+
+  while (merged.length > maxCount) {
+    let bestA = 0;
+    let bestB = 1;
+    let bestSimilarity = -Infinity;
+
+    const centroids = merged.map((group) =>
+      communityCentroid(group, vectors, dimension),
+    );
+
+    for (let a = 0; a < merged.length; a += 1) {
+      for (let b = a + 1; b < merged.length; b += 1) {
+        const similarity = cosineSimilarity(centroids[a], centroids[b]);
+        if (similarity > bestSimilarity) {
+          bestSimilarity = similarity;
+          bestA = a;
+          bestB = b;
+        }
+      }
+    }
+
+    merged[bestA] = [...merged[bestA], ...merged[bestB]];
+    merged.splice(bestB, 1);
+  }
+
+  return merged;
+}
+
+function buildGraphCommunityClusters(
+  items: ClusterInputItem[],
+  vectors: number[][],
+) {
+  const edges = similarityEdges(vectors);
+  const labels = labelPropagationCommunities(items.length, edges);
+  const byLabel = new Map<number, number[]>();
+
+  labels.forEach((label, itemIndex) => {
+    const current = byLabel.get(label) ?? [];
+    current.push(itemIndex);
+    byLabel.set(label, current);
+  });
+
+  const rawGroups = Array.from(byLabel.values()).sort(
+    (a, b) => b.length - a.length,
+  );
+  const groups = mergeCommunities(rawGroups, vectors, MAX_GRAPH_CLUSTER_COUNT);
+  const edgeNodeIds = new Set<number>();
+  edges.forEach((edge) => {
+    edgeNodeIds.add(edge.source);
+    edgeNodeIds.add(edge.target);
+  });
+  const singletonCount = rawGroups.filter((group) => group.length === 1).length;
+
+  return {
+    clusters: groups
+      .sort((a, b) => b.length - a.length)
+      .map((itemIndexes, index) => {
+        const clusterItems = itemIndexes.map((itemIndex) => items[itemIndex]);
+        const clusterVectors = itemIndexes.map((itemIndex) => vectors[itemIndex]);
+        return {
+          id: `graph-${clusterId(index)}`,
+          label: "Memory Pattern",
+          summary: "",
+          count: clusterItems.length,
+          relatedActions: relatedActions(clusterItems),
+          itemIds: clusterItems.map((item) => item.id),
+          representativeItems: representativeItems(clusterItems, clusterVectors),
+        };
+      }),
+    diagnostics: {
+      duplicateItemIds: [],
+      recoveredUnassignedItemIds: [],
+      unassignedItemIds: [],
+      method: "embedding-similarity-graph-label-propagation-llm-labeling",
+      embeddingModel: EMBEDDING_MODEL,
+      labelModel: LABEL_MODEL,
+      requestedClusterCount: null,
+      actualClusterCount: groups.length,
+      graph: {
+        minSimilarity: GRAPH_MIN_SIMILARITY,
+        strongSimilarity: GRAPH_STRONG_SIMILARITY,
+        knnEdges: GRAPH_KNN_EDGES,
+        nodeCount: items.length,
+        edgeCount: edges.length,
+        averageDegree: Number(
+          ((edges.length * 2) / Math.max(items.length, 1)).toFixed(3),
+        ),
+        singletonCount,
+        rawCommunityCount: rawGroups.length,
+        cappedCommunityCount: groups.length,
+      },
+    } satisfies GraphCommunityDiagnostics,
+  };
+}
+
 function diagnostics(
   clusters: MemoryCluster[],
   itemCount: number,
@@ -896,7 +1174,9 @@ export async function GET(
 
   return Response.json({
     clusters: parseStoredClusters(stored.clusters),
+    graphClusters: parseStoredClusters(stored.graphClusters),
     diagnostics: parseStoredDiagnostics(stored.diagnostics),
+    graphDiagnostics: parseGraphCommunityDiagnostics(stored.graphDiagnostics),
     sourceItemCount: Number(stored.sourceItemCount ?? 0),
     generatedAt: stored.generatedAt ?? null,
     generatedBy: stored.generatedBy ?? null,
@@ -938,7 +1218,21 @@ export async function POST(
   if (items.length === 0) {
     return Response.json({
       clusters: [],
+      graphClusters: [],
       diagnostics: diagnostics([], 0),
+      graphDiagnostics: parseGraphCommunityDiagnostics({
+        duplicateItemIds: [],
+        recoveredUnassignedItemIds: [],
+        unassignedItemIds: [],
+        graph: {
+          nodeCount: 0,
+          edgeCount: 0,
+          averageDegree: 0,
+          singletonCount: 0,
+          rawCommunityCount: 0,
+          cappedCommunityCount: 0,
+        },
+      }),
     });
   }
 
@@ -959,12 +1253,18 @@ export async function POST(
     buildClusters(items, vectors, assignments),
     itemsById,
   );
+  const graphCommunity = buildGraphCommunityClusters(items, vectors);
+  const graphClusters = await labelClusters(graphCommunity.clusters, itemsById);
   const clusterDiagnostics = diagnostics(
     clusters,
     items.length,
     elbow,
     granularity,
   );
+  const graphDiagnostics = {
+    ...graphCommunity.diagnostics,
+    actualClusterCount: graphClusters.length,
+  };
 
   if (itemSignature) {
     const token = await getFirebaseAccessToken();
@@ -975,7 +1275,9 @@ export async function POST(
         memoryVersion,
         sourceItemCount: items.length,
         clusters,
+        graphClusters,
         diagnostics: clusterDiagnostics,
+        graphDiagnostics,
         generatedAt: new Date(),
         generatedBy: admin.email ?? admin.localId,
       },
@@ -985,6 +1287,8 @@ export async function POST(
 
   return Response.json({
     clusters,
+    graphClusters,
     diagnostics: clusterDiagnostics,
+    graphDiagnostics,
   });
 }
