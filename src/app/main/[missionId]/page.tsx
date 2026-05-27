@@ -1977,31 +1977,6 @@ export default function MainScreenPage() {
         normalizedOptions.find((o) => o.id === currentOptionId) ??
         (normalizedOptions.length === 1 ? normalizedOptions[0] : null);
       setMissionOptions(normalizedOptions);
-      if (
-        !isReadOnly &&
-        !session?.selectedOptionId &&
-        !selectedOptionIdRef.current &&
-        normalizedOptions.length === 1
-      ) {
-        const option = normalizedOptions[0];
-        const now = Date.now();
-        selectedOptionIdRef.current = option.id;
-        setSelectedOptionId(option.id);
-        setTimerStartedAt(Number(session?.timerStartedAt ?? now));
-        setDoc(
-          sessionRef,
-          {
-            missionId,
-            selectedOptionId: option.id,
-            missionTitle: option.title,
-            missionBrief: optionBrief(option),
-            selectedDevice: option.device ?? missionData?.device ?? device,
-            timerStartedAt: session?.timerStartedAt ?? now,
-            updatedAt: now,
-          },
-          { merge: true },
-        );
-      }
 
       setMissionTitle(session?.missionTitle || selectedOption?.title || pTitle);
       setMissionBrief(
@@ -4361,7 +4336,7 @@ export default function MainScreenPage() {
         </div>
       </header>
 
-      {missionOptions.length > 1 && !selectedOptionId ? (
+      {missionOptions.length > 0 && !selectedOptionId ? (
         <main className="flex flex-1 flex-col overflow-hidden">
           <div className="flex-1 overflow-y-auto">
             <div className="mx-auto max-w-3xl px-8 py-8 space-y-6">
@@ -4409,30 +4384,32 @@ export default function MainScreenPage() {
                 </div>
               )}
 
-              {/* Option tabs */}
-              <div className="flex gap-2 overflow-x-auto pb-1">
-                {missionOptions.map((o, i) => {
-                  const isActive =
-                    activeOptionPreviewId === o.id ||
-                    (!activeOptionPreviewId && i === 0);
-                  return (
-                    <button
-                      key={o.id}
-                      onClick={() => setActiveOptionPreviewId(o.id)}
-                      className={`shrink-0 rounded-xl border px-4 py-2 text-sm font-semibold transition ${isActive ? "border-slate-900 bg-slate-900 text-white" : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"}`}
-                    >
-                      <span className="inline-flex items-center gap-1">
-                        {o.device === "mobile" ? (
-                          <DeviceMobileIcon size={13} />
-                        ) : o.device === "desktop" ? (
-                          <MonitorIcon size={13} />
-                        ) : null}
-                        {o.title}
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
+              {/* Option tabs — only shown when multiple options exist */}
+              {missionOptions.length > 1 && (
+                <div className="flex gap-2 overflow-x-auto pb-1">
+                  {missionOptions.map((o, i) => {
+                    const isActive =
+                      activeOptionPreviewId === o.id ||
+                      (!activeOptionPreviewId && i === 0);
+                    return (
+                      <button
+                        key={o.id}
+                        onClick={() => setActiveOptionPreviewId(o.id)}
+                        className={`shrink-0 rounded-xl border px-4 py-2 text-sm font-semibold transition ${isActive ? "border-slate-900 bg-slate-900 text-white" : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"}`}
+                      >
+                        <span className="inline-flex items-center gap-1">
+                          {o.device === "mobile" ? (
+                            <DeviceMobileIcon size={13} />
+                          ) : o.device === "desktop" ? (
+                            <MonitorIcon size={13} />
+                          ) : null}
+                          {o.title}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
 
               {/* Option detail */}
               {(() => {
@@ -4539,7 +4516,7 @@ export default function MainScreenPage() {
                 }}
                 className="w-full rounded-2xl bg-slate-900 py-3.5 text-sm font-semibold text-white transition hover:bg-slate-700"
               >
-                이 옵션으로 시작{" "}
+                {missionOptions.length > 1 ? "이 옵션으로 시작" : "미션 시작"}{" "}
                 {missionDurationMinutes ? `(${missionDurationMinutes}분)` : ""}
               </button>
             </div>

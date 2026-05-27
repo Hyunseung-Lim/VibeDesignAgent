@@ -180,7 +180,6 @@ export async function GET(
               archivedAt: item?.archivedAt ?? null,
               source: item?.source ?? null,
               timestamp: item?.timestamp ?? null,
-              keywords: item?.keywords ?? [],
             };
           }),
         };

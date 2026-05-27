@@ -146,6 +146,7 @@ type MemoryRetrievalItem = {
   memoryId: string;
   semanticItemId: string;
   semantic: string;
+  episode?: string;
   similarity: number | null;
   retentionScore: number | null;
   retrievedCount: number;
@@ -154,7 +155,6 @@ type MemoryRetrievalItem = {
   archivedAt?: number | null;
   source?: { missionId?: string; draftId?: string } | null;
   timestamp?: number | null;
-  keywords?: string[];
 };
 
 type MemoryRetrievalScoreDelta = {
@@ -1871,6 +1871,16 @@ export default function AdminPage() {
                                       <span className="rounded-full bg-emerald-50 px-2 py-0.5 font-semibold text-emerald-700">
                                         Match {formatScore(item.similarity)}
                                       </span>
+                                      {item.semantic && (
+                                        <span className="rounded-full bg-violet-50 px-2 py-0.5 font-semibold text-violet-600">
+                                          Semantic
+                                        </span>
+                                      )}
+                                      {item.episode && (
+                                        <span className="rounded-full bg-sky-50 px-2 py-0.5 font-semibold text-sky-600">
+                                          Episodic
+                                        </span>
+                                      )}
                                       <span>
                                         Strength{" "}
                                         {formatScore(item.retentionScore)}
@@ -1885,19 +1895,6 @@ export default function AdminPage() {
                                     {item.semantic ||
                                       "(semantic item not found)"}
                                   </p>
-                                  {item.keywords &&
-                                    item.keywords.length > 0 && (
-                                      <div className="mt-3 flex flex-wrap gap-1">
-                                        {item.keywords.map((keyword) => (
-                                          <span
-                                            key={keyword}
-                                            className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-500"
-                                          >
-                                            {keyword}
-                                          </span>
-                                        ))}
-                                      </div>
-                                    )}
                                   <details className="mt-3 rounded-xl bg-slate-50 px-3 py-2">
                                     <summary className="cursor-pointer text-[11px] font-semibold text-slate-500">
                                       Technical details

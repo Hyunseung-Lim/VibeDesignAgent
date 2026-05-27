@@ -373,7 +373,7 @@ export async function POST(request: Request) {
         semanticItemId: candidate.item.id,
         type: "semantic",
         semantic: candidate.item.semantic,
-        keywords: stringArray(candidate.doc.keywords),
+        episode: String(candidate.doc.content ?? "").trim(),
         source: candidate.doc.source,
         timestamp:
           candidate.doc.timestamp ?? candidate.doc.occurredAt ?? candidate.doc.createdAt,

@@ -34,6 +34,7 @@ type OnboardingSettings = {
 type MissionProgress = {
   hasActivity: boolean;
   timerStartedAt: number | null;
+  status: string | null;
 };
 
 
@@ -42,6 +43,7 @@ function missionProgress(data: Record<string, unknown>): MissionProgress {
     typeof data.timerStartedAt === "number" ? data.timerStartedAt : null;
   return {
     timerStartedAt,
+    status: typeof data.status === "string" ? data.status : null,
     hasActivity: Boolean(
       data.selectedOptionId ||
       data.timerStartedAt ||
@@ -57,6 +59,9 @@ function derivedStatus(
   progress: MissionProgress | null,
   durationMinutes?: number,
 ): { label: string; style: string } {
+  if (progress?.status === "completed") {
+    return { label: "완료", style: "bg-emerald-100 text-emerald-700" };
+  }
   if (progress?.hasActivity) {
     if (
       progress.timerStartedAt &&
@@ -64,6 +69,9 @@ function derivedStatus(
       Date.now() - progress.timerStartedAt < durationMinutes * 60 * 1000
     ) {
       return { label: "진행중", style: "bg-amber-100 text-amber-700" };
+    }
+    if (durationMinutes) {
+      return { label: "시간 초과", style: "bg-orange-100 text-orange-700" };
     }
     return { label: "완료", style: "bg-emerald-100 text-emerald-700" };
   }
