@@ -4,7 +4,15 @@ import Link from "next/link";
 import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
-import { ArrowLeftIcon, ArrowRightIcon, DeviceMobileIcon, MonitorIcon, XIcon, PencilSimpleIcon, UsersThreeIcon } from "@phosphor-icons/react";
+import {
+  ArrowLeftIcon,
+  ArrowRightIcon,
+  DeviceMobileIcon,
+  MonitorIcon,
+  XIcon,
+  PencilSimpleIcon,
+  UsersThreeIcon,
+} from "@phosphor-icons/react";
 import { getIdToken, onAuthStateChanged } from "firebase/auth";
 import {
   collection,
@@ -102,7 +110,6 @@ type MemoryGraphClusterDiagnostics = {
     cappedCommunityCount: number;
   };
 };
-
 
 type MemoryRetrievalItem = {
   id: string;
@@ -216,7 +223,6 @@ function dateInputValue(timestamp?: number) {
   return date.toISOString().slice(0, 10);
 }
 
-
 function parseMemoryGraphClusterDiagnostics(value: unknown) {
   const diagnostics = value as Partial<MemoryGraphClusterDiagnostics>;
   const graph = diagnostics?.graph as
@@ -264,7 +270,6 @@ function parseMemoryGraphClusterDiagnostics(value: unknown) {
     : null;
 }
 
-
 function formatScore(value?: number | null) {
   return typeof value === "number" && Number.isFinite(value)
     ? value.toFixed(3)
@@ -293,12 +298,20 @@ export default function AdminPage() {
   const [missions, setMissions] = useState<Mission[]>([]);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editFields, setEditFields] = useState<Partial<Mission>>({});
-  const [participantsMissionId, setParticipantsMissionId] = useState<string | null>(null);
+  const [participantsMissionId, setParticipantsMissionId] = useState<
+    string | null
+  >(null);
   const [participants, setParticipants] = useState<Participant[]>([]);
   const [adminUsers, setAdminUsers] = useState<AdminUser[]>([]);
   const [isLoadingUsers, setIsLoadingUsers] = useState(false);
-  const [memoryModal, setMemoryModal] = useState<{ userId: string; userName: string; rows: AdminMemoryRow[]; counts: MemoryCounts } | null>(null);
-  const [memoryVersionTab, setMemoryVersionTab] = useState<MemoryVersionTab>("0.1.1");
+  const [memoryModal, setMemoryModal] = useState<{
+    userId: string;
+    userName: string;
+    rows: AdminMemoryRow[];
+    counts: MemoryCounts;
+  } | null>(null);
+  const [memoryVersionTab, setMemoryVersionTab] =
+    useState<MemoryVersionTab>("0.1.1");
   const [memorySortKey, setMemorySortKey] =
     useState<MemorySortKey>("timestamp");
   const [memorySortDirection, setMemorySortDirection] =
@@ -314,10 +327,10 @@ export default function AdminPage() {
   const [memoryGraphClusters, setMemoryGraphClusters] = useState<
     MemoryCluster[]
   >([]);
-  const [selectedMemoryClusterId, setSelectedMemoryClusterId] =
-    useState<string | null>(null);
-  const [isLoadingMemoryClusters, setIsLoadingMemoryClusters] =
-    useState(false);
+  const [selectedMemoryClusterId, setSelectedMemoryClusterId] = useState<
+    string | null
+  >(null);
+  const [isLoadingMemoryClusters, setIsLoadingMemoryClusters] = useState(false);
   const [isClusteringMemory, setIsClusteringMemory] = useState(false);
   const [memoryClusterError, setMemoryClusterError] = useState<string | null>(
     null,
@@ -327,8 +340,9 @@ export default function AdminPage() {
   const [memoryRetrievalLogs, setMemoryRetrievalLogs] = useState<
     MemoryRetrievalLog[]
   >([]);
-  const [selectedMemoryRetrievalId, setSelectedMemoryRetrievalId] =
-    useState<string | null>(null);
+  const [selectedMemoryRetrievalId, setSelectedMemoryRetrievalId] = useState<
+    string | null
+  >(null);
   const [isLoadingMemoryRetrievals, setIsLoadingMemoryRetrievals] =
     useState(false);
   const [memoryRetrievalError, setMemoryRetrievalError] = useState<
@@ -337,18 +351,22 @@ export default function AdminPage() {
   const [memoryForgettingCandidates, setMemoryForgettingCandidates] = useState<
     MemoryForgettingCandidate[]
   >([]);
-  const [selectedMemoryForgettingId, setSelectedMemoryForgettingId] =
-    useState<string | null>(null);
+  const [selectedMemoryForgettingId, setSelectedMemoryForgettingId] = useState<
+    string | null
+  >(null);
   const [isLoadingMemoryForgetting, setIsLoadingMemoryForgetting] =
     useState(false);
   const [memoryForgettingError, setMemoryForgettingError] = useState<
     string | null
   >(null);
-  const [archivingMemoryCandidateId, setArchivingMemoryCandidateId] =
-    useState<string | null>(null);
+  const [archivingMemoryCandidateId, setArchivingMemoryCandidateId] = useState<
+    string | null
+  >(null);
   const [isLoadingMemory, setIsLoadingMemory] = useState(false);
   const [isDeletingMemory, setIsDeletingMemory] = useState(false);
-  const [deletingSessionsUserId, setDeletingSessionsUserId] = useState<string | null>(null);
+  const [deletingSessionsUserId, setDeletingSessionsUserId] = useState<
+    string | null
+  >(null);
   const [onboardingSettings, setOnboardingSettings] =
     useState<OnboardingSettings>(defaultOnboardingSettings);
   const [isSavingOnboardingSettings, setIsSavingOnboardingSettings] =
@@ -393,21 +411,34 @@ export default function AdminPage() {
       description: mission.description,
       device: mission.device ?? "desktop",
       durationMinutes: mission.durationMinutes ?? 30,
-      options: normalizeOptions(mission.options).length > 0 ? normalizeOptions(mission.options) : [createEmptyOption()],
+      options:
+        normalizeOptions(mission.options).length > 0
+          ? normalizeOptions(mission.options)
+          : [createEmptyOption()],
     });
   };
 
   const saveEdit = async (id: string) => {
     if (editFields.title?.trim()) {
       const clean = <T,>(v: T): T =>
-        JSON.parse(JSON.stringify(v, (_, val) => (val === undefined ? null : val)));
-      await updateDoc(doc(db, "missions", id), clean({
-        title: editFields.title.trim(),
-        description: editFields.description?.trim() ?? "",
-        device: editFields.device ?? "desktop",
-        durationMinutes: (editFields.durationMinutes as number) > 0 ? editFields.durationMinutes : null,
-        options: normalizeOptions(editFields.options as MissionOption[]).filter((option) => option.title.trim()),
-      }));
+        JSON.parse(
+          JSON.stringify(v, (_, val) => (val === undefined ? null : val)),
+        );
+      await updateDoc(
+        doc(db, "missions", id),
+        clean({
+          title: editFields.title.trim(),
+          description: editFields.description?.trim() ?? "",
+          device: editFields.device ?? "desktop",
+          durationMinutes:
+            (editFields.durationMinutes as number) > 0
+              ? editFields.durationMinutes
+              : null,
+          options: normalizeOptions(
+            editFields.options as MissionOption[],
+          ).filter((option) => option.title.trim()),
+        }),
+      );
     }
     setEditingId(null);
   };
@@ -444,7 +475,8 @@ export default function AdminPage() {
       alert("삭제할 미션 정보가 없습니다.");
       return;
     }
-    const label = participant.displayName ?? participant.email ?? participant.id;
+    const label =
+      participant.displayName ?? participant.email ?? participant.id;
     if (
       !confirm(
         `${label} 사용자의 ${missionTitle(targetMissionId)} 기록만 삭제할까요? 유저 정보와 다른 미션 기록은 유지됩니다.`,
@@ -518,7 +550,8 @@ export default function AdminPage() {
   const missionTitle = (missionId: string) =>
     missionId === ONBOARDING_MISSION_ID
       ? "온보딩"
-      : missions.find((mission) => mission.id === missionId)?.title ?? missionId;
+      : (missions.find((mission) => mission.id === missionId)?.title ??
+        missionId);
 
   const getAdminToken = async () => {
     const currentUser = firebaseAuth.currentUser;
@@ -529,7 +562,10 @@ export default function AdminPage() {
   const fetchOnboardingStatuses = async (uids: string[]) => {
     const token = await getAdminToken();
     if (!token || uids.length === 0) {
-      return {} as Record<string, { onboardingStatus: Participant["onboardingStatus"] }>;
+      return {} as Record<
+        string,
+        { onboardingStatus: Participant["onboardingStatus"] }
+      >;
     }
     const res = await fetch("/api/admin/users/status", {
       method: "POST",
@@ -540,7 +576,10 @@ export default function AdminPage() {
       body: JSON.stringify({ uids }),
     });
     if (!res.ok) {
-      return {} as Record<string, { onboardingStatus: Participant["onboardingStatus"] }>;
+      return {} as Record<
+        string,
+        { onboardingStatus: Participant["onboardingStatus"] }
+      >;
     }
     const data = (await res.json()) as {
       statuses?: Record<
@@ -606,10 +645,13 @@ export default function AdminPage() {
     if (!token) return;
     setIsDeletingMemory(true);
     try {
-      const res = await fetch(`/api/admin/users/${userId}/memory?version=${encodeURIComponent(version)}`, {
-        method: "DELETE",
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const res = await fetch(
+        `/api/admin/users/${userId}/memory?version=${encodeURIComponent(version)}`,
+        {
+          method: "DELETE",
+          headers: { Authorization: `Bearer ${token}` },
+        },
+      );
       if (!res.ok) throw new Error("삭제 실패");
       setMemoryModal(null);
     } catch (e) {
@@ -772,14 +814,19 @@ export default function AdminPage() {
             new Set([...(existing?.missionIds ?? []), ...sessionMissionIds]),
           ),
           sessionMissionIds: Array.from(
-            new Set([...(existing?.sessionMissionIds ?? []), ...sessionMissionIds]),
+            new Set([
+              ...(existing?.sessionMissionIds ?? []),
+              ...sessionMissionIds,
+            ]),
           ),
         });
       }),
     );
 
     const rawUsers = Array.from(users.values());
-    const statuses = await fetchOnboardingStatuses(rawUsers.map((user) => user.id));
+    const statuses = await fetchOnboardingStatuses(
+      rawUsers.map((user) => user.id),
+    );
     const enrichedUsers = rawUsers.map((user) => ({
       ...user,
       isAdmin: isAdminEmail(user.email),
@@ -818,13 +865,21 @@ export default function AdminPage() {
       const options = normalizeOptions(prev.options as MissionOption[]);
       return {
         ...prev,
-        options: options.map((option) => option.id === id ? { ...option, ...changes } : option),
+        options: options.map((option) =>
+          option.id === id ? { ...option, ...changes } : option,
+        ),
       };
     });
   };
 
   const addEditOption = () => {
-    setEditFields((prev) => ({ ...prev, options: [...normalizeOptions(prev.options as MissionOption[]), createEmptyOption()] }));
+    setEditFields((prev) => ({
+      ...prev,
+      options: [
+        ...normalizeOptions(prev.options as MissionOption[]),
+        createEmptyOption(),
+      ],
+    }));
   };
 
   const removeEditOption = (id: string) => {
@@ -832,7 +887,10 @@ export default function AdminPage() {
       const options = normalizeOptions(prev.options as MissionOption[]);
       return {
         ...prev,
-        options: options.length <= 1 ? options : options.filter((option) => option.id !== id),
+        options:
+          options.length <= 1
+            ? options
+            : options.filter((option) => option.id !== id),
       };
     });
   };
@@ -919,9 +977,7 @@ export default function AdminPage() {
   );
   const clusterableItemById = useMemo(
     () =>
-      new Map(
-        clusterableMemoryItems.map((item) => [item.id, item] as const),
-      ),
+      new Map(clusterableMemoryItems.map((item) => [item.id, item] as const)),
     [clusterableMemoryItems],
   );
   const activeMemoryClusters = memoryGraphClusters;
@@ -947,25 +1003,22 @@ export default function AdminPage() {
     ) ??
     memoryForgettingCandidates[0] ??
     null;
-  const clusterInputSignature = useMemo(
-    () => {
-      const rawSignature = clusterableMemoryItems
-        .map((item) =>
-          [
-            item.id,
-            item.semantic,
-            item.episode,
-            item.input,
-            item.action,
-            item.timestamp,
-            item.keywords.join(","),
-          ].join(":"),
-        )
-        .join("|");
-      return `${clusterableMemoryItems.length}-${stableHash(rawSignature)}`;
-    },
-    [clusterableMemoryItems],
-  );
+  const clusterInputSignature = useMemo(() => {
+    const rawSignature = clusterableMemoryItems
+      .map((item) =>
+        [
+          item.id,
+          item.semantic,
+          item.episode,
+          item.input,
+          item.action,
+          item.timestamp,
+          item.keywords.join(","),
+        ].join(":"),
+      )
+      .join("|");
+    return `${clusterableMemoryItems.length}-${stableHash(rawSignature)}`;
+  }, [clusterableMemoryItems]);
   useEffect(() => {
     setSelectedMemoryClusterId(activeMemoryClusters[0]?.id ?? null);
   }, [activeMemoryClusters]);
@@ -1039,7 +1092,8 @@ export default function AdminPage() {
           { headers: { Authorization: `Bearer ${token}` } },
         );
         const data = await res.json().catch(() => null);
-        if (!res.ok) throw new Error(data?.error ?? "retrieval log load failed");
+        if (!res.ok)
+          throw new Error(data?.error ?? "retrieval log load failed");
         if (cancelled) return;
         const retrievals = Array.isArray(data?.retrievals)
           ? (data.retrievals as MemoryRetrievalLog[])
@@ -1048,7 +1102,7 @@ export default function AdminPage() {
         setSelectedMemoryRetrievalId((current) =>
           current && retrievals.some((log) => log.id === current)
             ? current
-            : retrievals[0]?.id ?? null,
+            : (retrievals[0]?.id ?? null),
         );
       } catch (error) {
         if (cancelled) return;
@@ -1091,11 +1145,14 @@ export default function AdminPage() {
         setSelectedMemoryForgettingId((current) =>
           current && candidates.some((candidate) => candidate.id === current)
             ? current
-            : candidates[0]?.id ?? null,
+            : (candidates[0]?.id ?? null),
         );
       } catch (error) {
         if (cancelled) return;
-        console.error("[admin] memory forgetting candidates load failed", error);
+        console.error(
+          "[admin] memory forgetting candidates load failed",
+          error,
+        );
         setMemoryForgettingError("Forgetting 후보를 불러오지 못했습니다.");
       } finally {
         if (!cancelled) setIsLoadingMemoryForgetting(false);
@@ -1268,10 +1325,13 @@ export default function AdminPage() {
           >
             <div className="flex shrink-0 items-center justify-between border-b border-slate-100 px-6 py-4">
               <div>
-                <p className="text-sm font-semibold text-slate-900">유저 메모리</p>
+                <p className="text-sm font-semibold text-slate-900">
+                  유저 메모리
+                </p>
                 <p className="text-xs text-slate-400">{memoryModal.userName}</p>
                 <p className="mt-1 text-xs text-slate-400">
-                  v0.1.0 {memoryModal.counts["0.1.0"] ?? 0}개 · v0.1.1 {memoryModal.counts["0.1.1"] ?? 0}개
+                  v0.1.0 {memoryModal.counts["0.1.0"] ?? 0}개 · v0.1.1{" "}
+                  {memoryModal.counts["0.1.1"] ?? 0}개
                 </p>
               </div>
               <button
@@ -1280,14 +1340,21 @@ export default function AdminPage() {
                 className="rounded-full p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
               >
                 <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-                  <path d="M3 3l10 10M13 3L3 13" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+                  <path
+                    d="M3 3l10 10M13 3L3 13"
+                    stroke="currentColor"
+                    strokeWidth="1.5"
+                    strokeLinecap="round"
+                  />
                 </svg>
               </button>
             </div>
             <div className="shrink-0 border-b border-slate-100 px-6 py-3">
               <div className="flex flex-wrap items-end gap-3">
                 <div className="inline-flex rounded-lg border border-slate-200 bg-slate-50 p-1">
-                  {(["table", "clusters", "retrievals", "forgetting"] as const).map((tab) => (
+                  {(
+                    ["table", "clusters", "retrievals", "forgetting"] as const
+                  ).map((tab) => (
                     <button
                       key={tab}
                       type="button"
@@ -1308,113 +1375,126 @@ export default function AdminPage() {
                     </button>
                   ))}
                 </div>
-                {(memoryViewTab === "table" || memoryViewTab === "clusters") && (
-                <div className="inline-flex rounded-lg border border-slate-200 bg-slate-50 p-1">
-                  {(["0.1.1", "0.1.0"] as const).map((version) => (
-                    <button
-                      key={version}
-                      type="button"
-                      onClick={() => setMemoryVersionTab(version)}
-                      className={`rounded-md px-3 py-1.5 text-xs font-semibold transition ${
-                        memoryVersionTab === version
-                          ? "bg-white text-slate-900 shadow-sm"
-                          : "text-slate-500 hover:text-slate-900"
-                      }`}
-                    >
-                      v{version} ({memoryModal.counts[version] ?? 0})
-                    </button>
-                  ))}
-                </div>
-                )}
-                {(memoryViewTab === "table" || memoryViewTab === "clusters") && (
-                <>
-                <label className="flex flex-col gap-1 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
-                  Start
-                  <input
-                    type="date"
-                    value={memoryStartDate}
-                    min={dateInputValue(versionMemoryRows.at(-1)?.timestamp)}
-                    max={memoryEndDate || dateInputValue(versionMemoryRows[0]?.timestamp)}
-                    onChange={(e) => setMemoryStartDate(e.target.value)}
-                    className="rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-normal normal-case tracking-normal text-slate-700 outline-none focus:border-slate-400"
-                  />
-                </label>
-                <label className="flex flex-col gap-1 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
-                  End
-                  <input
-                    type="date"
-                    value={memoryEndDate}
-                    min={memoryStartDate || dateInputValue(versionMemoryRows.at(-1)?.timestamp)}
-                    max={dateInputValue(versionMemoryRows[0]?.timestamp)}
-                    onChange={(e) => setMemoryEndDate(e.target.value)}
-                    className="rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-normal normal-case tracking-normal text-slate-700 outline-none focus:border-slate-400"
-                  />
-                </label>
-                <label className="flex flex-col gap-1 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
-                  Action
-                  <select
-                    value={memoryActionFilter}
-                    onChange={(e) => setMemoryActionFilter(e.target.value)}
-                    className="min-w-40 rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-normal normal-case tracking-normal text-slate-700 outline-none focus:border-slate-400"
-                  >
-                    <option value="all">All actions</option>
-                    {memoryActionOptions.map((action) => (
-                      <option key={action} value={action}>
-                        {action}
-                      </option>
+                {(memoryViewTab === "table" ||
+                  memoryViewTab === "clusters") && (
+                  <div className="inline-flex rounded-lg border border-slate-200 bg-slate-50 p-1">
+                    {(["0.1.1", "0.1.0"] as const).map((version) => (
+                      <button
+                        key={version}
+                        type="button"
+                        onClick={() => setMemoryVersionTab(version)}
+                        className={`rounded-md px-3 py-1.5 text-xs font-semibold transition ${
+                          memoryVersionTab === version
+                            ? "bg-white text-slate-900 shadow-sm"
+                            : "text-slate-500 hover:text-slate-900"
+                        }`}
+                      >
+                        v{version} ({memoryModal.counts[version] ?? 0})
+                      </button>
                     ))}
-                  </select>
-                </label>
-                <label className="flex flex-col gap-1 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
-                  Semantic
-                  <select
-                    value={memorySemanticFilter}
-                    onChange={(e) =>
-                      setMemorySemanticFilter(e.target.value as SemanticFilter)
-                    }
-                    className="rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-normal normal-case tracking-normal text-slate-700 outline-none focus:border-slate-400"
-                  >
-                    <option value="all">All</option>
-                    <option value="with">With semantic</option>
-                    <option value="without">No semantic</option>
-                  </select>
-                </label>
-                <label className="flex flex-col gap-1 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
-                  Sort
-                  <select
-                    value={memorySortKey}
-                    onChange={(e) =>
-                      setMemorySortKey(e.target.value as MemorySortKey)
-                    }
-                    className="rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-normal normal-case tracking-normal text-slate-700 outline-none focus:border-slate-400"
-                  >
-                    <option value="timestamp">Timestamp</option>
-                    <option value="action">Action</option>
-                    <option value="semantic">Semantic count</option>
-                  </select>
-                </label>
-                <button
-                  type="button"
-                  onClick={() =>
-                    setMemorySortDirection((prev) =>
-                      prev === "desc" ? "asc" : "desc",
-                    )
-                  }
-                  className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 transition hover:border-slate-300 hover:bg-slate-50"
-                >
-                  {memorySortDirection === "desc" ? "Desc" : "Asc"}
-                </button>
-                <button
-                  type="button"
-                  onClick={resetMemoryFilters}
-                  className="rounded-lg bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-500 transition hover:bg-slate-200"
-                >
-                  Reset
-                </button>
-                <span className="ml-auto text-xs text-slate-400">
-                  {visibleMemoryRows.length} / {versionMemoryRows.length} rows
-                </span>
-                </>
+                  </div>
+                )}
+                {(memoryViewTab === "table" ||
+                  memoryViewTab === "clusters") && (
+                  <>
+                    <label className="flex flex-col gap-1 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+                      Start
+                      <input
+                        type="date"
+                        value={memoryStartDate}
+                        min={dateInputValue(
+                          versionMemoryRows.at(-1)?.timestamp,
+                        )}
+                        max={
+                          memoryEndDate ||
+                          dateInputValue(versionMemoryRows[0]?.timestamp)
+                        }
+                        onChange={(e) => setMemoryStartDate(e.target.value)}
+                        className="rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-normal normal-case tracking-normal text-slate-700 outline-none focus:border-slate-400"
+                      />
+                    </label>
+                    <label className="flex flex-col gap-1 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+                      End
+                      <input
+                        type="date"
+                        value={memoryEndDate}
+                        min={
+                          memoryStartDate ||
+                          dateInputValue(versionMemoryRows.at(-1)?.timestamp)
+                        }
+                        max={dateInputValue(versionMemoryRows[0]?.timestamp)}
+                        onChange={(e) => setMemoryEndDate(e.target.value)}
+                        className="rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-normal normal-case tracking-normal text-slate-700 outline-none focus:border-slate-400"
+                      />
+                    </label>
+                    <label className="flex flex-col gap-1 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+                      Action
+                      <select
+                        value={memoryActionFilter}
+                        onChange={(e) => setMemoryActionFilter(e.target.value)}
+                        className="min-w-40 rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-normal normal-case tracking-normal text-slate-700 outline-none focus:border-slate-400"
+                      >
+                        <option value="all">All actions</option>
+                        {memoryActionOptions.map((action) => (
+                          <option key={action} value={action}>
+                            {action}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="flex flex-col gap-1 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+                      Semantic
+                      <select
+                        value={memorySemanticFilter}
+                        onChange={(e) =>
+                          setMemorySemanticFilter(
+                            e.target.value as SemanticFilter,
+                          )
+                        }
+                        className="rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-normal normal-case tracking-normal text-slate-700 outline-none focus:border-slate-400"
+                      >
+                        <option value="all">All</option>
+                        <option value="with">With semantic</option>
+                        <option value="without">No semantic</option>
+                      </select>
+                    </label>
+                    <label className="flex flex-col gap-1 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+                      Sort
+                      <select
+                        value={memorySortKey}
+                        onChange={(e) =>
+                          setMemorySortKey(e.target.value as MemorySortKey)
+                        }
+                        className="rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-normal normal-case tracking-normal text-slate-700 outline-none focus:border-slate-400"
+                      >
+                        <option value="timestamp">Timestamp</option>
+                        <option value="action">Action</option>
+                        <option value="semantic">Semantic count</option>
+                      </select>
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setMemorySortDirection((prev) =>
+                          prev === "desc" ? "asc" : "desc",
+                        )
+                      }
+                      className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 transition hover:border-slate-300 hover:bg-slate-50"
+                    >
+                      {memorySortDirection === "desc" ? "Desc" : "Asc"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={resetMemoryFilters}
+                      className="rounded-lg bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-500 transition hover:bg-slate-200"
+                    >
+                      Reset
+                    </button>
+                    <span className="ml-auto text-xs text-slate-400">
+                      {visibleMemoryRows.length} / {versionMemoryRows.length}{" "}
+                      rows
+                    </span>
+                  </>
                 )}
                 {memoryViewTab === "retrievals" && (
                   <span className="ml-auto text-xs text-slate-400">
@@ -1429,538 +1509,576 @@ export default function AdminPage() {
               </div>
             </div>
             <div className="h-[calc(100vh-14rem)] min-h-80">
-            {memoryViewTab === "table" ? (
-              <div className="h-full overflow-y-auto overscroll-contain">
-                {visibleMemoryRows.length === 0 ? (
-                <p className="px-6 py-4 text-sm text-slate-400">v{memoryVersionTab} 메모리 없음</p>
-                ) : (
-                <table className="w-full min-w-240 border-separate border-spacing-0 text-left text-xs text-slate-600">
-                  <thead className="sticky top-0 z-10 bg-white text-slate-400 shadow-[0_1px_0_0_rgba(226,232,240,1)]">
-                    <tr>
-                      {["Timestamp", "Mission", "Action", "Input", "Episode", "Semantic", "Keywords"].map((label) => (
-                        <th key={label} className="border-b border-slate-100 px-3 py-2 font-semibold">
-                          {label}
-                        </th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {visibleMemoryRows.map((row) => {
-                      const semantics = semanticItems(row);
-                      return (
-                        <tr key={`${row.version ?? "unknown"}-${row.type}-${row.id}`} className="align-top hover:bg-slate-50/60">
-                          <td className="whitespace-nowrap border-b border-slate-100 px-3 py-3 text-slate-400">
-                            {row.timestamp ? new Date(row.timestamp as number).toLocaleString("ko-KR", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "—"}
-                          </td>
-                          <td className="whitespace-nowrap border-b border-slate-100 px-3 py-3 text-xs text-slate-500">
-                            {row.source?.missionId ?? "—"}
-                          </td>
-                          <td className="whitespace-nowrap border-b border-slate-100 px-3 py-3">
-                            {row.agentActionCategory ? (
-                              <span className="rounded-full bg-amber-50 px-2.5 py-1 text-xs font-medium text-amber-700">
-                                {row.agentActionCategory}
-                              </span>
-                            ) : <span className="text-slate-300">—</span>}
-                          </td>
-                          <td className="max-w-64 wrap-anywhere border-b border-slate-100 px-3 py-3 text-slate-700">{row.input ?? ""}</td>
-                          <td className="max-w-72 wrap-anywhere border-b border-slate-100 px-3 py-3 text-slate-600 italic">{row.episode ?? ""}</td>
-                          <td className="max-w-80 wrap-anywhere border-b border-slate-100 px-3 py-3">
-                            {semantics.length === 0 ? (
-                              <span className="text-slate-300">—</span>
-                            ) : (
-                              <div className="flex flex-col gap-1">
-                                {semantics.map((s: string, i: number) => (
-                                  <span key={i} className="inline-block max-w-full wrap-anywhere rounded-lg bg-indigo-50 px-2.5 py-1 text-xs leading-snug text-indigo-700">
-                                    {s}
-                                  </span>
-                                ))}
-                              </div>
-                            )}
-                          </td>
-                          <td className="max-w-48 wrap-anywhere border-b border-slate-100 px-3 py-3">
-                            <div className="flex flex-wrap gap-1">
-                              {(row.keywords ?? []).map((kw: string, i: number) => (
-                                <span key={i} className="max-w-full wrap-anywhere rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-500">{kw}</span>
-                              ))}
-                            </div>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-                )}
-              </div>
-            ) : memoryViewTab === "retrievals" ? (
-              <div className="grid h-full grid-cols-[minmax(260px,360px)_1fr] overflow-hidden">
-                <div className="h-full overflow-y-auto overscroll-contain border-r border-slate-100 bg-slate-50/60 p-3">
-                  {memoryRetrievalError && (
-                    <p className="mb-3 rounded-xl bg-red-50 px-3 py-2 text-xs text-red-500">
-                      {memoryRetrievalError}
-                    </p>
-                  )}
-                  {isLoadingMemoryRetrievals ? (
-                    <p className="px-2 py-3 text-xs text-slate-400">
-                      Retrieval logs를 불러오는 중입니다.
-                    </p>
-                  ) : memoryRetrievalLogs.length === 0 ? (
-                    <p className="px-2 py-3 text-xs leading-relaxed text-slate-400">
-                      아직 retrieval log가 없습니다. 사용자가 채팅을 보내면
-                      query와 검색된 memory가 여기에 기록됩니다.
+              {memoryViewTab === "table" ? (
+                <div className="h-full overflow-y-auto overscroll-contain">
+                  {visibleMemoryRows.length === 0 ? (
+                    <p className="px-6 py-4 text-sm text-slate-400">
+                      v{memoryVersionTab} 메모리 없음
                     </p>
                   ) : (
-                    <div className="space-y-2">
-                      {memoryRetrievalLogs.map((log) => (
-                        <button
-                          key={log.id}
-                          type="button"
-                          onClick={() => setSelectedMemoryRetrievalId(log.id)}
-                          className={`w-full rounded-xl border px-3 py-3 text-left transition ${
-                            selectedMemoryRetrieval?.id === log.id
-                              ? "border-slate-300 bg-white shadow-sm"
-                              : "border-transparent bg-white/60 hover:border-slate-200 hover:bg-white"
-                          }`}
-                        >
-                          <div className="flex items-start justify-between gap-2">
-                            <p className="line-clamp-2 text-xs font-semibold leading-relaxed text-slate-800">
-                              {log.query || "(empty query)"}
-                            </p>
-                            <span className="shrink-0 rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-500">
-                              {log.retrieved.length} used
-                            </span>
-                          </div>
-                          <div className="mt-2 flex flex-wrap gap-1.5 text-[11px] text-slate-400">
-                            <span>
-                              {log.createdAt
-                                ? new Date(log.createdAt).toLocaleString(
-                                    "ko-KR",
-                                    {
+                    <table className="w-full min-w-240 border-separate border-spacing-0 text-left text-xs text-slate-600">
+                      <thead className="sticky top-0 z-10 bg-white text-slate-400 shadow-[0_1px_0_0_rgba(226,232,240,1)]">
+                        <tr>
+                          {[
+                            "Timestamp",
+                            "Mission",
+                            "Action",
+                            "Input",
+                            "Episode",
+                            "Semantic",
+                            "Keywords",
+                          ].map((label) => (
+                            <th
+                              key={label}
+                              className="border-b border-slate-100 px-3 py-2 font-semibold"
+                            >
+                              {label}
+                            </th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {visibleMemoryRows.map((row) => {
+                          const semantics = semanticItems(row);
+                          return (
+                            <tr
+                              key={`${row.version ?? "unknown"}-${row.type}-${row.id}`}
+                              className="align-top hover:bg-slate-50/60"
+                            >
+                              <td className="whitespace-nowrap border-b border-slate-100 px-3 py-3 text-slate-400">
+                                {row.timestamp
+                                  ? new Date(
+                                      row.timestamp as number,
+                                    ).toLocaleString("ko-KR", {
                                       month: "numeric",
                                       day: "numeric",
                                       hour: "2-digit",
                                       minute: "2-digit",
-                                    },
-                                  )
-                                : "—"}
-                            </span>
-                            {log.missionId && <span>{log.missionId}</span>}
-                          </div>
-                          <p className="mt-2 line-clamp-1 text-[11px] text-slate-400">
-                            Top memory: {log.retrieved[0]?.semantic || "—"}
-                          </p>
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-                <div className="h-full overflow-y-auto overscroll-contain p-5">
-                  {isLoadingMemoryRetrievals ? (
-                    <div className="flex h-full min-h-80 items-center justify-center text-sm text-slate-400">
-                      Retrieval logs를 불러오는 중입니다.
-                    </div>
-                  ) : !selectedMemoryRetrieval ? (
-                    <div className="flex h-full min-h-80 items-center justify-center text-sm text-slate-400">
-                      선택된 retrieval log가 없습니다.
-                    </div>
-                  ) : (
-                    <div className="space-y-5">
-                      <section className="space-y-3">
-                        <div className="flex flex-wrap items-start justify-between gap-3">
-                          <div>
-                            <h3 className="text-lg font-semibold text-slate-900">
-                              Memory used for this turn
-                            </h3>
-                            <p className="mt-1 text-sm text-slate-500">
-                              The user message was embedded, compared with saved
-                              semantic memories, and the closest matches were
-                              sent to the agent.
-                            </p>
-                          </div>
-                          <div className="flex flex-wrap gap-2">
-                            <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700">
-                              {selectedMemoryRetrieval.retrieved.length} used
-                            </span>
-                            {selectedMemoryRetrieval.missionId && (
-                              <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-500">
-                                {selectedMemoryRetrieval.missionId}
-                              </span>
-                            )}
-                          </div>
-                        </div>
-                        <div className="grid gap-2 md:grid-cols-3">
-                          <div className="rounded-xl bg-slate-50 px-3 py-3">
-                            <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">
-                              1. Query
-                            </p>
-                            <p className="mt-1 line-clamp-3 text-xs leading-relaxed text-slate-700">
-                              {selectedMemoryRetrieval.query || "—"}
-                            </p>
-                          </div>
-                          <div className="rounded-xl bg-slate-50 px-3 py-3">
-                            <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">
-                              2. Search
-                            </p>
-                            <p className="mt-1 text-xs leading-relaxed text-slate-700">
-                              Vector similarity over semantic memory, no LLM
-                              ranking.
-                            </p>
-                          </div>
-                          <div className="rounded-xl bg-slate-50 px-3 py-3">
-                            <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">
-                              3. Learning
-                            </p>
-                            <p className="mt-1 text-xs leading-relaxed text-slate-700">
-                              Used memories are reinforced; nearby unused
-                              candidates decay slightly.
-                            </p>
-                          </div>
-                        </div>
-                        <div className="flex flex-wrap gap-2 text-xs text-slate-400">
-                          <span>
-                            {selectedMemoryRetrieval.createdAt
-                              ? new Date(
-                                  selectedMemoryRetrieval.createdAt,
-                                ).toLocaleString("ko-KR")
-                              : "—"}
-                          </span>
-                          {selectedMemoryRetrieval.missionId && (
-                            <span>{selectedMemoryRetrieval.missionId}</span>
-                          )}
-                          {selectedMemoryRetrieval.queryEmbeddingModel && (
-                            <span>
-                              {selectedMemoryRetrieval.queryEmbeddingModel}
-                            </span>
-                          )}
-                        </div>
-                      </section>
-
-                      <section>
-                        <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">
-                          Used memories
-                        </p>
-                        <div className="space-y-3">
-                          {selectedMemoryRetrieval.retrieved.map(
-                            (item, index) => {
-                              const delta =
-                                selectedMemoryRetrieval.scoreDeltas.find(
-                                  (candidate) =>
-                                    candidate.memoryId === item.memoryId &&
-                                    candidate.semanticItemId ===
-                                      item.semanticItemId,
-                                );
-                              return (
-                                <div
-                                  key={item.id}
-                                  className="rounded-2xl border border-slate-100 bg-white p-4 text-xs shadow-sm"
-                                >
-                                  <div className="flex flex-wrap items-start justify-between gap-3">
-                                    <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-400">
-                                      <span className="rounded-full bg-slate-900 px-2 py-0.5 font-semibold text-white">
-                                        #{index + 1}
-                                      </span>
-                                      <span className="rounded-full bg-emerald-50 px-2 py-0.5 font-semibold text-emerald-700">
-                                        Match {formatScore(item.similarity)}
-                                      </span>
-                                      {item.semantic && (
-                                        <span className="rounded-full bg-violet-50 px-2 py-0.5 font-semibold text-violet-600">
-                                          Semantic
-                                        </span>
-                                      )}
-                                      {item.episode && (
-                                        <span className="rounded-full bg-sky-50 px-2 py-0.5 font-semibold text-sky-600">
-                                          Episodic
-                                        </span>
-                                      )}
-                                      <span>
-                                        Strength{" "}
-                                        {formatScore(item.retentionScore)}
-                                      </span>
-                                      <span>used {item.retrievedCount}x</span>
-                                      {item.source?.missionId && (
-                                        <span>{item.source.missionId}</span>
-                                      )}
-                                    </div>
-                                  </div>
-                                  <p className="mt-3 wrap-anywhere text-sm leading-relaxed text-slate-800">
-                                    {item.semantic ||
-                                      "(semantic item not found)"}
-                                  </p>
-                                  <details className="mt-3 rounded-xl bg-slate-50 px-3 py-2">
-                                    <summary className="cursor-pointer text-[11px] font-semibold text-slate-500">
-                                      Technical details
-                                    </summary>
-                                    <div className="mt-2 grid gap-2 text-[11px] text-slate-500 sm:grid-cols-2 lg:grid-cols-4">
-                                      <span>
-                                        usage {formatScore(item.usageScore)}
-                                      </span>
-                                      <span>
-                                        decay {formatScore(item.decayScore)}
-                                      </span>
-                                      <span>
-                                        usage delta{" "}
-                                        {formatScore(delta?.usageDelta)}
-                                      </span>
-                                      <span>
-                                        decay delta{" "}
-                                        {formatScore(delta?.decayDelta)}
-                                      </span>
-                                    </div>
-                                    <p className="mt-2 wrap-anywhere text-[11px] text-slate-400">
-                                      {item.memoryId}:{item.semanticItemId}
-                                    </p>
-                                  </details>
-                                </div>
-                              );
-                            },
-                          )}
-                        </div>
-                      </section>
-                    </div>
-                  )}
-                </div>
-              </div>
-            ) : memoryViewTab === "forgetting" ? (
-              <div className="grid h-full grid-cols-[minmax(260px,360px)_1fr] overflow-hidden">
-                <div className="h-full overflow-y-auto overscroll-contain border-r border-slate-100 bg-slate-50/60 p-3">
-                  {memoryForgettingError && (
-                    <p className="mb-3 rounded-xl bg-red-50 px-3 py-2 text-xs text-red-500">
-                      {memoryForgettingError}
-                    </p>
-                  )}
-                  {isLoadingMemoryForgetting ? (
-                    <p className="px-2 py-3 text-xs text-slate-400">
-                      Forgetting 후보를 불러오는 중입니다.
-                    </p>
-                  ) : memoryForgettingCandidates.length === 0 ? (
-                    <p className="px-2 py-3 text-xs leading-relaxed text-slate-400">
-                      현재 archive 후보가 없습니다. Retrieval이 누적되면 낮은
-                      strength, 오래 쓰이지 않은 semantic, 중복 semantic이
-                      여기에 표시됩니다.
-                    </p>
-                  ) : (
-                    <div className="space-y-2">
-                      {memoryForgettingCandidates.map((candidate) => (
-                        <button
-                          key={candidate.id}
-                          type="button"
-                          onClick={() =>
-                            setSelectedMemoryForgettingId(candidate.id)
-                          }
-                          className={`w-full rounded-xl border px-3 py-3 text-left transition ${
-                            selectedMemoryForgetting?.id === candidate.id
-                              ? "border-slate-300 bg-white shadow-sm"
-                              : "border-transparent bg-white/60 hover:border-slate-200 hover:bg-white"
-                          }`}
-                        >
-                          <div className="flex items-start justify-between gap-2">
-                            <p className="line-clamp-2 text-xs font-semibold leading-relaxed text-slate-800">
-                              {candidate.semantic}
-                            </p>
-                            <span className="shrink-0 rounded-full bg-rose-50 px-2 py-0.5 text-[11px] font-semibold text-rose-600">
-                              {candidate.reason}
-                            </span>
-                          </div>
-                          <div className="mt-2 flex flex-wrap gap-1.5 text-[11px] text-slate-400">
-                            <span>
-                              Strength {formatScore(candidate.retentionScore)}
-                            </span>
-                            <span>used {candidate.retrievedCount}x</span>
-                            {candidate.source?.missionId && (
-                              <span>{candidate.source.missionId}</span>
-                            )}
-                          </div>
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-                <div className="h-full overflow-y-auto overscroll-contain p-5">
-                  {isLoadingMemoryForgetting ? (
-                    <div className="flex h-full min-h-80 items-center justify-center text-sm text-slate-400">
-                      Forgetting 후보를 불러오는 중입니다.
-                    </div>
-                  ) : !selectedMemoryForgetting ? (
-                    <div className="flex h-full min-h-80 items-center justify-center text-sm text-slate-400">
-                      선택된 archive 후보가 없습니다.
-                    </div>
-                  ) : (
-                    <div className="space-y-5">
-                      <section className="space-y-3">
-                        <div className="flex flex-wrap items-start justify-between gap-3">
-                          <div>
-                            <h3 className="text-lg font-semibold text-slate-900">
-                              Archive candidate
-                            </h3>
-                            <p className="mt-1 max-w-2xl text-sm text-slate-500">
-                              자동 삭제하지 않고 연구자가 후보를 확인한 뒤
-                              semantic item만 soft archive합니다.
-                            </p>
-                          </div>
-                          <button
-                            type="button"
-                            onClick={() =>
-                              archiveMemoryCandidate(selectedMemoryForgetting)
-                            }
-                            disabled={
-                              archivingMemoryCandidateId ===
-                              selectedMemoryForgetting.id
-                            }
-                            className="rounded-xl bg-slate-900 px-4 py-2 text-xs font-semibold text-white transition hover:bg-slate-700 disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-500"
-                          >
-                            {archivingMemoryCandidateId ===
-                            selectedMemoryForgetting.id
-                              ? "Archiving..."
-                              : "Archive"}
-                          </button>
-                        </div>
-                        <div className="flex flex-wrap gap-2">
-                          <span className="rounded-full bg-rose-50 px-2.5 py-1 text-xs font-semibold text-rose-600">
-                            {selectedMemoryForgetting.reason}
-                          </span>
-                          <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-500">
-                            Strength{" "}
-                            {formatScore(
-                              selectedMemoryForgetting.retentionScore,
-                            )}
-                          </span>
-                          <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-500">
-                            used {selectedMemoryForgetting.retrievedCount}x
-                          </span>
-                        </div>
-                        <p className="rounded-xl bg-slate-50 px-3 py-3 text-xs leading-relaxed text-slate-600">
-                          {selectedMemoryForgetting.reasonLabel}
-                        </p>
-                      </section>
-
-                      <section>
-                        <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">
-                          Semantic
-                        </p>
-                        <p className="wrap-anywhere rounded-2xl border border-slate-100 bg-white p-4 text-sm leading-relaxed text-slate-800 shadow-sm">
-                          {selectedMemoryForgetting.semantic}
-                        </p>
-                        {selectedMemoryForgetting.keywords &&
-                          selectedMemoryForgetting.keywords.length > 0 && (
-                            <div className="mt-3 flex flex-wrap gap-1">
-                              {selectedMemoryForgetting.keywords.map(
-                                (keyword) => (
-                                  <span
-                                    key={keyword}
-                                    className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-500"
-                                  >
-                                    {keyword}
+                                    })
+                                  : "—"}
+                              </td>
+                              <td className="whitespace-nowrap border-b border-slate-100 px-3 py-3 text-xs text-slate-500">
+                                {row.source?.missionId ?? "—"}
+                              </td>
+                              <td className="whitespace-nowrap border-b border-slate-100 px-3 py-3">
+                                {row.agentActionCategory ? (
+                                  <span className="rounded-full bg-amber-50 px-2.5 py-1 text-xs font-medium text-amber-700">
+                                    {row.agentActionCategory}
                                   </span>
-                                ),
-                              )}
-                            </div>
-                          )}
-                      </section>
-
-                      {selectedMemoryForgetting.duplicate && (
-                        <section>
-                          <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">
-                            Similar semantic kept
-                          </p>
-                          <div className="rounded-2xl border border-emerald-100 bg-emerald-50 p-4 text-xs">
-                            <div className="mb-2 flex flex-wrap gap-2 text-[11px] font-semibold text-emerald-700">
-                              <span>
-                                Match{" "}
-                                {formatScore(
-                                  selectedMemoryForgetting.duplicate
-                                    .similarity,
+                                ) : (
+                                  <span className="text-slate-300">—</span>
                                 )}
-                              </span>
-                              <span>
-                                {selectedMemoryForgetting.duplicate.memoryId}:
-                                {
-                                  selectedMemoryForgetting.duplicate
-                                    .semanticItemId
-                                }
-                              </span>
-                            </div>
-                            <p className="wrap-anywhere leading-relaxed text-emerald-900">
-                              {selectedMemoryForgetting.duplicate.semantic}
-                            </p>
-                          </div>
-                        </section>
-                      )}
-
-                      <details className="rounded-xl bg-slate-50 px-3 py-2">
-                        <summary className="cursor-pointer text-[11px] font-semibold text-slate-500">
-                          Technical details
-                        </summary>
-                        <div className="mt-2 grid gap-2 text-[11px] text-slate-500 sm:grid-cols-2 lg:grid-cols-4">
-                          <span>
-                            importance{" "}
-                            {formatScore(
-                              selectedMemoryForgetting.importanceScore,
-                            )}
-                          </span>
-                          <span>
-                            usage{" "}
-                            {formatScore(selectedMemoryForgetting.usageScore)}
-                          </span>
-                          <span>
-                            decay{" "}
-                            {formatScore(selectedMemoryForgetting.decayScore)}
-                          </span>
-                          <span>
-                            last retrieved{" "}
-                            {selectedMemoryForgetting.lastRetrievedAt
-                              ? new Date(
-                                  selectedMemoryForgetting.lastRetrievedAt,
-                                ).toLocaleDateString("ko-KR")
-                              : "—"}
-                          </span>
-                        </div>
-                        <p className="mt-2 wrap-anywhere text-[11px] text-slate-400">
-                          {selectedMemoryForgetting.memoryId}:
-                          {selectedMemoryForgetting.semanticItemId}
-                        </p>
-                      </details>
-                    </div>
+                              </td>
+                              <td className="max-w-64 wrap-anywhere border-b border-slate-100 px-3 py-3 text-slate-700">
+                                {row.input ?? ""}
+                              </td>
+                              <td className="max-w-72 wrap-anywhere border-b border-slate-100 px-3 py-3 text-slate-600 italic">
+                                {row.episode ?? ""}
+                              </td>
+                              <td className="max-w-80 wrap-anywhere border-b border-slate-100 px-3 py-3">
+                                {semantics.length === 0 ? (
+                                  <span className="text-slate-300">—</span>
+                                ) : (
+                                  <div className="flex flex-col gap-1">
+                                    {semantics.map((s: string, i: number) => (
+                                      <span
+                                        key={i}
+                                        className="inline-block max-w-full wrap-anywhere rounded-lg bg-indigo-50 px-2.5 py-1 text-xs leading-snug text-indigo-700"
+                                      >
+                                        {s}
+                                      </span>
+                                    ))}
+                                  </div>
+                                )}
+                              </td>
+                              <td className="max-w-48 wrap-anywhere border-b border-slate-100 px-3 py-3">
+                                <div className="flex flex-wrap gap-1">
+                                  {(row.keywords ?? []).map(
+                                    (kw: string, i: number) => (
+                                      <span
+                                        key={i}
+                                        className="max-w-full wrap-anywhere rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-500"
+                                      >
+                                        {kw}
+                                      </span>
+                                    ),
+                                  )}
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
                   )}
                 </div>
-              </div>
-            ) : (
-              <div className="grid h-full grid-cols-[minmax(220px,320px)_1fr] overflow-hidden">
-                <div className="h-full overflow-y-auto overscroll-contain border-r border-slate-100 bg-slate-50/60">
-                  <div className="border-b border-slate-100 bg-slate-50/95 p-4">
-                    <div className="space-y-2">
-                      <button
-                        type="button"
-                        onClick={generateMemoryClusters}
-                        disabled={
-                          isLoadingMemoryClusters ||
-                          isClusteringMemory ||
-                          clusterableMemoryItems.length === 0
-                        }
-                        className="w-full rounded-xl bg-slate-900 px-3 py-2 text-xs font-semibold text-white transition hover:bg-slate-700 disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-500"
-                      >
-                        {isClusteringMemory
-                          ? "Generating..."
-                          : `Regenerate all (${clusterableMemoryItems.length})`}
-                      </button>
-                      <p className="text-[11px] leading-relaxed text-slate-400">
-                        K-means LLM, Fixed K-means, Similarity Graph 결과를 함께 다시 생성합니다.
-                      </p>
-                    </div>
-                    <div className="mt-4 space-y-2 border-t border-slate-200 pt-3">
-                      <button
-                        type="button"
-                        onClick={copyMemoryClustersJson}
-                        disabled={activeMemoryClusters.length === 0}
-                        className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
-                      >
-                        Copy current JSON
-                      </button>
-                    </div>
-                    {memoryClusterError && (
-                      <p className="mt-2 text-xs text-red-500">
-                        {memoryClusterError}
+              ) : memoryViewTab === "retrievals" ? (
+                <div className="grid h-full grid-cols-[minmax(260px,360px)_1fr] overflow-hidden">
+                  <div className="h-full overflow-y-auto overscroll-contain border-r border-slate-100 bg-slate-50/60 p-3">
+                    {memoryRetrievalError && (
+                      <p className="mb-3 rounded-xl bg-red-50 px-3 py-2 text-xs text-red-500">
+                        {memoryRetrievalError}
                       </p>
                     )}
-                    {memoryGraphClusterDiagnostics?.graph && (
+                    {isLoadingMemoryRetrievals ? (
+                      <p className="px-2 py-3 text-xs text-slate-400">
+                        Retrieval logs를 불러오는 중입니다.
+                      </p>
+                    ) : memoryRetrievalLogs.length === 0 ? (
+                      <p className="px-2 py-3 text-xs leading-relaxed text-slate-400">
+                        아직 retrieval log가 없습니다. 사용자가 채팅을 보내면
+                        query와 검색된 memory가 여기에 기록됩니다.
+                      </p>
+                    ) : (
+                      <div className="space-y-2">
+                        {memoryRetrievalLogs.map((log) => (
+                          <button
+                            key={log.id}
+                            type="button"
+                            onClick={() => setSelectedMemoryRetrievalId(log.id)}
+                            className={`w-full rounded-xl border px-3 py-3 text-left transition ${
+                              selectedMemoryRetrieval?.id === log.id
+                                ? "border-slate-300 bg-white shadow-sm"
+                                : "border-transparent bg-white/60 hover:border-slate-200 hover:bg-white"
+                            }`}
+                          >
+                            <div className="flex items-start justify-between gap-2">
+                              <p className="line-clamp-2 text-xs font-semibold leading-relaxed text-slate-800">
+                                {log.query || "(empty query)"}
+                              </p>
+                              <span className="shrink-0 rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-500">
+                                {log.retrieved.length} used
+                              </span>
+                            </div>
+                            <div className="mt-2 flex flex-wrap gap-1.5 text-[11px] text-slate-400">
+                              <span>
+                                {log.createdAt
+                                  ? new Date(log.createdAt).toLocaleString(
+                                      "ko-KR",
+                                      {
+                                        month: "numeric",
+                                        day: "numeric",
+                                        hour: "2-digit",
+                                        minute: "2-digit",
+                                      },
+                                    )
+                                  : "—"}
+                              </span>
+                              {log.missionId && <span>{log.missionId}</span>}
+                            </div>
+                            <p className="mt-2 line-clamp-1 text-[11px] text-slate-400">
+                              Top memory: {log.retrieved[0]?.semantic || "—"}
+                            </p>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  <div className="h-full overflow-y-auto overscroll-contain p-5">
+                    {isLoadingMemoryRetrievals ? (
+                      <div className="flex h-full min-h-80 items-center justify-center text-sm text-slate-400">
+                        Retrieval logs를 불러오는 중입니다.
+                      </div>
+                    ) : !selectedMemoryRetrieval ? (
+                      <div className="flex h-full min-h-80 items-center justify-center text-sm text-slate-400">
+                        선택된 retrieval log가 없습니다.
+                      </div>
+                    ) : (
+                      <div className="space-y-5">
+                        <section className="space-y-3">
+                          <div className="flex flex-wrap items-start justify-between gap-3">
+                            <div>
+                              <h3 className="text-lg font-semibold text-slate-900">
+                                Memory used for this turn
+                              </h3>
+                              <p className="mt-1 text-sm text-slate-500">
+                                The user message was embedded, compared with
+                                saved semantic memories, and the closest matches
+                                were sent to the agent.
+                              </p>
+                            </div>
+                            <div className="flex flex-wrap gap-2">
+                              <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700">
+                                {selectedMemoryRetrieval.retrieved.length} used
+                              </span>
+                              {selectedMemoryRetrieval.missionId && (
+                                <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-500">
+                                  {selectedMemoryRetrieval.missionId}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                          <div className="grid gap-2 md:grid-cols-3">
+                            <div className="rounded-xl bg-slate-50 px-3 py-3">
+                              <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+                                1. Query
+                              </p>
+                              <p className="mt-1 line-clamp-3 text-xs leading-relaxed text-slate-700">
+                                {selectedMemoryRetrieval.query || "—"}
+                              </p>
+                            </div>
+                            <div className="rounded-xl bg-slate-50 px-3 py-3">
+                              <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+                                2. Search
+                              </p>
+                              <p className="mt-1 text-xs leading-relaxed text-slate-700">
+                                Vector similarity over semantic memory, no LLM
+                                ranking.
+                              </p>
+                            </div>
+                            <div className="rounded-xl bg-slate-50 px-3 py-3">
+                              <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+                                3. Learning
+                              </p>
+                              <p className="mt-1 text-xs leading-relaxed text-slate-700">
+                                Used memories are reinforced; nearby unused
+                                candidates decay slightly.
+                              </p>
+                            </div>
+                          </div>
+                          <div className="flex flex-wrap gap-2 text-xs text-slate-400">
+                            <span>
+                              {selectedMemoryRetrieval.createdAt
+                                ? new Date(
+                                    selectedMemoryRetrieval.createdAt,
+                                  ).toLocaleString("ko-KR")
+                                : "—"}
+                            </span>
+                            {selectedMemoryRetrieval.missionId && (
+                              <span>{selectedMemoryRetrieval.missionId}</span>
+                            )}
+                            {selectedMemoryRetrieval.queryEmbeddingModel && (
+                              <span>
+                                {selectedMemoryRetrieval.queryEmbeddingModel}
+                              </span>
+                            )}
+                          </div>
+                        </section>
+
+                        <section>
+                          <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">
+                            Used memories
+                          </p>
+                          <div className="space-y-3">
+                            {selectedMemoryRetrieval.retrieved.map(
+                              (item, index) => {
+                                const delta =
+                                  selectedMemoryRetrieval.scoreDeltas.find(
+                                    (candidate) =>
+                                      candidate.memoryId === item.memoryId &&
+                                      candidate.semanticItemId ===
+                                        item.semanticItemId,
+                                  );
+                                return (
+                                  <div
+                                    key={item.id}
+                                    className="rounded-2xl border border-slate-100 bg-white p-4 text-xs shadow-sm"
+                                  >
+                                    <div className="flex flex-wrap items-start justify-between gap-3">
+                                      <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-400">
+                                        <span className="rounded-full bg-slate-900 px-2 py-0.5 font-semibold text-white">
+                                          #{index + 1}
+                                        </span>
+                                        <span className="rounded-full bg-emerald-50 px-2 py-0.5 font-semibold text-emerald-700">
+                                          Match {formatScore(item.similarity)}
+                                        </span>
+                                        {item.semantic && (
+                                          <span className="rounded-full bg-violet-50 px-2 py-0.5 font-semibold text-violet-600">
+                                            Semantic
+                                          </span>
+                                        )}
+                                        {item.episode && (
+                                          <span className="rounded-full bg-sky-50 px-2 py-0.5 font-semibold text-sky-600">
+                                            Episodic
+                                          </span>
+                                        )}
+                                        <span>
+                                          Strength{" "}
+                                          {formatScore(item.retentionScore)}
+                                        </span>
+                                        <span>used {item.retrievedCount}x</span>
+                                        {item.source?.missionId && (
+                                          <span>{item.source.missionId}</span>
+                                        )}
+                                      </div>
+                                    </div>
+                                    <p className="mt-3 wrap-anywhere text-sm leading-relaxed text-slate-800">
+                                      {item.semantic ||
+                                        "(semantic item not found)"}
+                                    </p>
+                                    <details className="mt-3 rounded-xl bg-slate-50 px-3 py-2">
+                                      <summary className="cursor-pointer text-[11px] font-semibold text-slate-500">
+                                        Technical details
+                                      </summary>
+                                      <div className="mt-2 grid gap-2 text-[11px] text-slate-500 sm:grid-cols-2 lg:grid-cols-4">
+                                        <span>
+                                          usage {formatScore(item.usageScore)}
+                                        </span>
+                                        <span>
+                                          decay {formatScore(item.decayScore)}
+                                        </span>
+                                        <span>
+                                          usage delta{" "}
+                                          {formatScore(delta?.usageDelta)}
+                                        </span>
+                                        <span>
+                                          decay delta{" "}
+                                          {formatScore(delta?.decayDelta)}
+                                        </span>
+                                      </div>
+                                      <p className="mt-2 wrap-anywhere text-[11px] text-slate-400">
+                                        {item.memoryId}:{item.semanticItemId}
+                                      </p>
+                                    </details>
+                                  </div>
+                                );
+                              },
+                            )}
+                          </div>
+                        </section>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ) : memoryViewTab === "forgetting" ? (
+                <div className="grid h-full grid-cols-[minmax(260px,360px)_1fr] overflow-hidden">
+                  <div className="h-full overflow-y-auto overscroll-contain border-r border-slate-100 bg-slate-50/60 p-3">
+                    {memoryForgettingError && (
+                      <p className="mb-3 rounded-xl bg-red-50 px-3 py-2 text-xs text-red-500">
+                        {memoryForgettingError}
+                      </p>
+                    )}
+                    {isLoadingMemoryForgetting ? (
+                      <p className="px-2 py-3 text-xs text-slate-400">
+                        Forgetting 후보를 불러오는 중입니다.
+                      </p>
+                    ) : memoryForgettingCandidates.length === 0 ? (
+                      <p className="px-2 py-3 text-xs leading-relaxed text-slate-400">
+                        현재 archive 후보가 없습니다. Retrieval이 누적되면 낮은
+                        strength, 오래 쓰이지 않은 semantic, 중복 semantic이
+                        여기에 표시됩니다.
+                      </p>
+                    ) : (
+                      <div className="space-y-2">
+                        {memoryForgettingCandidates.map((candidate) => (
+                          <button
+                            key={candidate.id}
+                            type="button"
+                            onClick={() =>
+                              setSelectedMemoryForgettingId(candidate.id)
+                            }
+                            className={`w-full rounded-xl border px-3 py-3 text-left transition ${
+                              selectedMemoryForgetting?.id === candidate.id
+                                ? "border-slate-300 bg-white shadow-sm"
+                                : "border-transparent bg-white/60 hover:border-slate-200 hover:bg-white"
+                            }`}
+                          >
+                            <div className="flex items-start justify-between gap-2">
+                              <p className="line-clamp-2 text-xs font-semibold leading-relaxed text-slate-800">
+                                {candidate.semantic}
+                              </p>
+                              <span className="shrink-0 rounded-full bg-rose-50 px-2 py-0.5 text-[11px] font-semibold text-rose-600">
+                                {candidate.reason}
+                              </span>
+                            </div>
+                            <div className="mt-2 flex flex-wrap gap-1.5 text-[11px] text-slate-400">
+                              <span>
+                                Strength {formatScore(candidate.retentionScore)}
+                              </span>
+                              <span>used {candidate.retrievedCount}x</span>
+                              {candidate.source?.missionId && (
+                                <span>{candidate.source.missionId}</span>
+                              )}
+                            </div>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  <div className="h-full overflow-y-auto overscroll-contain p-5">
+                    {isLoadingMemoryForgetting ? (
+                      <div className="flex h-full min-h-80 items-center justify-center text-sm text-slate-400">
+                        Forgetting 후보를 불러오는 중입니다.
+                      </div>
+                    ) : !selectedMemoryForgetting ? (
+                      <div className="flex h-full min-h-80 items-center justify-center text-sm text-slate-400">
+                        선택된 archive 후보가 없습니다.
+                      </div>
+                    ) : (
+                      <div className="space-y-5">
+                        <section className="space-y-3">
+                          <div className="flex flex-wrap items-start justify-between gap-3">
+                            <div>
+                              <h3 className="text-lg font-semibold text-slate-900">
+                                Archive candidate
+                              </h3>
+                              <p className="mt-1 max-w-2xl text-sm text-slate-500">
+                                자동 삭제하지 않고 연구자가 후보를 확인한 뒤
+                                semantic item만 soft archive합니다.
+                              </p>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                archiveMemoryCandidate(selectedMemoryForgetting)
+                              }
+                              disabled={
+                                archivingMemoryCandidateId ===
+                                selectedMemoryForgetting.id
+                              }
+                              className="rounded-xl bg-slate-900 px-4 py-2 text-xs font-semibold text-white transition hover:bg-slate-700 disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-500"
+                            >
+                              {archivingMemoryCandidateId ===
+                              selectedMemoryForgetting.id
+                                ? "Archiving..."
+                                : "Archive"}
+                            </button>
+                          </div>
+                          <div className="flex flex-wrap gap-2">
+                            <span className="rounded-full bg-rose-50 px-2.5 py-1 text-xs font-semibold text-rose-600">
+                              {selectedMemoryForgetting.reason}
+                            </span>
+                            <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-500">
+                              Strength{" "}
+                              {formatScore(
+                                selectedMemoryForgetting.retentionScore,
+                              )}
+                            </span>
+                            <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-500">
+                              used {selectedMemoryForgetting.retrievedCount}x
+                            </span>
+                          </div>
+                          <p className="rounded-xl bg-slate-50 px-3 py-3 text-xs leading-relaxed text-slate-600">
+                            {selectedMemoryForgetting.reasonLabel}
+                          </p>
+                        </section>
+
+                        <section>
+                          <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">
+                            Semantic
+                          </p>
+                          <p className="wrap-anywhere rounded-2xl border border-slate-100 bg-white p-4 text-sm leading-relaxed text-slate-800 shadow-sm">
+                            {selectedMemoryForgetting.semantic}
+                          </p>
+                          {selectedMemoryForgetting.keywords &&
+                            selectedMemoryForgetting.keywords.length > 0 && (
+                              <div className="mt-3 flex flex-wrap gap-1">
+                                {selectedMemoryForgetting.keywords.map(
+                                  (keyword) => (
+                                    <span
+                                      key={keyword}
+                                      className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-500"
+                                    >
+                                      {keyword}
+                                    </span>
+                                  ),
+                                )}
+                              </div>
+                            )}
+                        </section>
+
+                        {selectedMemoryForgetting.duplicate && (
+                          <section>
+                            <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">
+                              Similar semantic kept
+                            </p>
+                            <div className="rounded-2xl border border-emerald-100 bg-emerald-50 p-4 text-xs">
+                              <div className="mb-2 flex flex-wrap gap-2 text-[11px] font-semibold text-emerald-700">
+                                <span>
+                                  Match{" "}
+                                  {formatScore(
+                                    selectedMemoryForgetting.duplicate
+                                      .similarity,
+                                  )}
+                                </span>
+                                <span>
+                                  {selectedMemoryForgetting.duplicate.memoryId}:
+                                  {
+                                    selectedMemoryForgetting.duplicate
+                                      .semanticItemId
+                                  }
+                                </span>
+                              </div>
+                              <p className="wrap-anywhere leading-relaxed text-emerald-900">
+                                {selectedMemoryForgetting.duplicate.semantic}
+                              </p>
+                            </div>
+                          </section>
+                        )}
+
+                        <details className="rounded-xl bg-slate-50 px-3 py-2">
+                          <summary className="cursor-pointer text-[11px] font-semibold text-slate-500">
+                            Technical details
+                          </summary>
+                          <div className="mt-2 grid gap-2 text-[11px] text-slate-500 sm:grid-cols-2 lg:grid-cols-4">
+                            <span>
+                              importance{" "}
+                              {formatScore(
+                                selectedMemoryForgetting.importanceScore,
+                              )}
+                            </span>
+                            <span>
+                              usage{" "}
+                              {formatScore(selectedMemoryForgetting.usageScore)}
+                            </span>
+                            <span>
+                              decay{" "}
+                              {formatScore(selectedMemoryForgetting.decayScore)}
+                            </span>
+                            <span>
+                              last retrieved{" "}
+                              {selectedMemoryForgetting.lastRetrievedAt
+                                ? new Date(
+                                    selectedMemoryForgetting.lastRetrievedAt,
+                                  ).toLocaleDateString("ko-KR")
+                                : "—"}
+                            </span>
+                          </div>
+                          <p className="mt-2 wrap-anywhere text-[11px] text-slate-400">
+                            {selectedMemoryForgetting.memoryId}:
+                            {selectedMemoryForgetting.semanticItemId}
+                          </p>
+                        </details>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <div className="grid h-full grid-cols-[minmax(220px,320px)_1fr] overflow-hidden">
+                  <div className="h-full overflow-y-auto overscroll-contain border-r border-slate-100 bg-slate-50/60">
+                    <div className="border-b border-slate-100 bg-slate-50/95 p-4">
+                      <div className="space-y-2">
+                        <button
+                          type="button"
+                          onClick={generateMemoryClusters}
+                          disabled={
+                            isLoadingMemoryClusters ||
+                            isClusteringMemory ||
+                            clusterableMemoryItems.length === 0
+                          }
+                          className="w-full rounded-xl bg-slate-900 px-3 py-2 text-xs font-semibold text-white transition hover:bg-slate-700 disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-500"
+                        >
+                          {isClusteringMemory
+                            ? "Generating..."
+                            : `Regenerate all (${clusterableMemoryItems.length})`}
+                        </button>
+                      </div>
+                      <div className="mt-4 space-y-2 border-t border-slate-200 pt-3">
+                        <button
+                          type="button"
+                          onClick={copyMemoryClustersJson}
+                          disabled={activeMemoryClusters.length === 0}
+                          className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+                        >
+                          Copy current JSON
+                        </button>
+                      </div>
+                      {memoryClusterError && (
+                        <p className="mt-2 text-xs text-red-500">
+                          {memoryClusterError}
+                        </p>
+                      )}
+                      {memoryGraphClusterDiagnostics?.graph && (
                         <div className="mt-3 rounded-xl border border-slate-200 bg-white p-3">
                           <div className="flex items-center justify-between gap-3">
                             <p className="text-xs font-semibold text-slate-600">
@@ -1994,7 +2112,10 @@ export default function AdminPage() {
                             </span>
                             <span>
                               singleton{" "}
-                              {memoryGraphClusterDiagnostics.graph.singletonCount}
+                              {
+                                memoryGraphClusterDiagnostics.graph
+                                  .singletonCount
+                              }
                             </span>
                             <span>
                               min sim{" "}
@@ -2011,218 +2132,241 @@ export default function AdminPage() {
                           </div>
                         </div>
                       )}
+                    </div>
+                    <div className="p-3">
+                      {isLoadingMemoryClusters ? (
+                        <p className="px-2 py-3 text-xs text-slate-400">
+                          저장된 클러스터를 불러오는 중입니다.
+                        </p>
+                      ) : clusterableMemoryItems.length === 0 ? (
+                        <p className="px-2 py-3 text-xs text-slate-400">
+                          현재 필터에 semantic memory가 없습니다.
+                        </p>
+                      ) : activeMemoryClusters.length === 0 ? (
+                        <p className="px-2 py-3 text-xs leading-relaxed text-slate-400">
+                          저장된 클러스터가 없습니다.
+                        </p>
+                      ) : (
+                        <div className="space-y-2">
+                          {activeMemoryClusters.map((cluster) => (
+                            <button
+                              key={cluster.id}
+                              type="button"
+                              onClick={() =>
+                                setSelectedMemoryClusterId(cluster.id)
+                              }
+                              className={`w-full rounded-xl border px-3 py-3 text-left transition ${
+                                selectedMemoryCluster?.id === cluster.id
+                                  ? "border-slate-300 bg-white shadow-sm"
+                                  : "border-transparent bg-white/60 hover:border-slate-200 hover:bg-white"
+                              }`}
+                            >
+                              <div className="flex items-start justify-between gap-2">
+                                <p className="text-sm font-semibold text-slate-800">
+                                  {cluster.label}
+                                </p>
+                                <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-500">
+                                  {cluster.count}
+                                </span>
+                              </div>
+                              <p className="mt-1 line-clamp-2 text-xs leading-relaxed text-slate-500">
+                                {cluster.summary}
+                              </p>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
                   </div>
-                  <div className="p-3">
-                    {isLoadingMemoryClusters ? (
-                      <p className="px-2 py-3 text-xs text-slate-400">
-                        저장된 클러스터를 불러오는 중입니다.
-                      </p>
-                    ) : clusterableMemoryItems.length === 0 ? (
-                      <p className="px-2 py-3 text-xs text-slate-400">
-                        현재 필터에 semantic memory가 없습니다.
-                      </p>
-                    ) : activeMemoryClusters.length === 0 ? (
-                      <p className="px-2 py-3 text-xs leading-relaxed text-slate-400">
-                        저장된 클러스터가 없습니다. 현재 필터링된 semantic memory를 기준으로 생성할 수 있습니다.
-                      </p>
-                    ) : (
-                      <div className="space-y-2">
-                        {activeMemoryClusters.map((cluster) => (
+                  <div className="flex h-full min-h-0 flex-col overflow-hidden">
+                    <div className="flex shrink-0 items-center justify-between gap-3 border-b border-slate-100 bg-white px-5 py-3">
+                      <div className="inline-flex rounded-lg border border-slate-200 bg-slate-50 p-1">
+                        {(["graph", "detail"] as const).map((tab) => (
                           <button
-                            key={cluster.id}
+                            key={tab}
                             type="button"
-                            onClick={() =>
-                              setSelectedMemoryClusterId(cluster.id)
-                            }
-                            className={`w-full rounded-xl border px-3 py-3 text-left transition ${
-                              selectedMemoryCluster?.id === cluster.id
-                                ? "border-slate-300 bg-white shadow-sm"
-                                : "border-transparent bg-white/60 hover:border-slate-200 hover:bg-white"
+                            onClick={() => setMemoryClusterViewTab(tab)}
+                            className={`rounded-md px-3 py-1.5 text-xs font-semibold transition ${
+                              memoryClusterViewTab === tab
+                                ? "bg-white text-slate-900 shadow-sm"
+                                : "text-slate-500 hover:text-slate-900"
                             }`}
                           >
-                            <div className="flex items-start justify-between gap-2">
-                              <p className="text-sm font-semibold text-slate-800">
-                                {cluster.label}
-                              </p>
-                              <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-500">
-                                {cluster.count}
-                              </span>
-                            </div>
-                            <p className="mt-1 line-clamp-2 text-xs leading-relaxed text-slate-500">
-                              {cluster.summary}
-                            </p>
+                            {tab === "graph" ? "Graph" : "Detail"}
                           </button>
                         ))}
                       </div>
-                    )}
-                  </div>
-                </div>
-                <div className="flex h-full min-h-0 flex-col overflow-hidden">
-                  <div className="flex shrink-0 items-center justify-between gap-3 border-b border-slate-100 bg-white px-5 py-3">
-                    <div className="inline-flex rounded-lg border border-slate-200 bg-slate-50 p-1">
-                      {(["graph", "detail"] as const).map((tab) => (
-                        <button
-                          key={tab}
-                          type="button"
-                          onClick={() => setMemoryClusterViewTab(tab)}
-                          className={`rounded-md px-3 py-1.5 text-xs font-semibold transition ${
-                            memoryClusterViewTab === tab
-                              ? "bg-white text-slate-900 shadow-sm"
-                              : "text-slate-500 hover:text-slate-900"
-                          }`}
-                        >
-                          {tab === "graph" ? "Graph" : "Detail"}
-                        </button>
-                      ))}
+                      <span className="text-xs text-slate-400">
+                        Similarity Graph · {activeMemoryClusters.length}{" "}
+                        clusters · {clusterableMemoryItems.length} semantic
+                        nodes
+                      </span>
                     </div>
-                    <span className="text-xs text-slate-400">
-                      Similarity Graph ·{" "}
-                      {activeMemoryClusters.length} clusters ·{" "}
-                      {clusterableMemoryItems.length} semantic nodes
-                    </span>
-                  </div>
-                  <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-5">
-                  {isLoadingMemoryClusters ? (
-                    <div className="flex h-full min-h-80 items-center justify-center text-sm text-slate-400">
-                      저장된 클러스터를 불러오는 중입니다.
-                    </div>
-                  ) : !selectedMemoryCluster ? (
-                    <div className="flex h-full min-h-80 items-center justify-center text-sm text-slate-400">
-                      저장된 클러스터가 없으면 Regenerate를 눌러 새로 생성할 수 있습니다.
-                    </div>
-                  ) : memoryClusterViewTab === "graph" ? (
-                    <div className="h-full min-h-128 overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm">
-                      <MemoryClusterGraph
-                        clusters={activeMemoryClusters}
-                        items={clusterableMemoryItems}
-                        selectedClusterId={selectedMemoryCluster.id}
-                        onSelectCluster={setSelectedMemoryClusterId}
-                        fill
-                      />
-                    </div>
-                  ) : (
-                    <div className="space-y-5">
-                      <div>
-                        <div className="flex flex-wrap items-center gap-2">
-                          <h3 className="text-lg font-semibold text-slate-900">
-                            {selectedMemoryCluster.label}
-                          </h3>
-                          <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-500">
-                            {selectedClusterItems.length} items
-                          </span>
+                    <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-5">
+                      {isLoadingMemoryClusters ? (
+                        <div className="flex h-full min-h-80 items-center justify-center text-sm text-slate-400">
+                          저장된 클러스터를 불러오는 중입니다.
                         </div>
-                        <p className="mt-2 max-w-3xl text-sm leading-relaxed text-slate-500">
-                          {selectedMemoryCluster.summary}
-                        </p>
-                        {selectedMemoryCluster.relatedActions.length > 0 && (
-                          <div className="mt-3 flex flex-wrap gap-1.5">
-                            {selectedMemoryCluster.relatedActions.map(
-                              (action) => (
-                                <span
-                                  key={action}
-                                  className="rounded-full bg-amber-50 px-2.5 py-1 text-xs font-medium text-amber-700"
-                                >
-                                  {action}
-                                </span>
-                              ),
-                            )}
-                          </div>
-                        )}
-                      </div>
-                      {selectedMemoryCluster.representativeItems.length > 0 && (
-                        <section>
-                          <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">
-                            Representative semantics
-                          </p>
-                          <div className="space-y-2">
-                            {selectedMemoryCluster.representativeItems.map(
-                              (item, index) => (
-                                <p
-                                  key={index}
-                                  className="rounded-xl bg-indigo-50 px-3 py-2 text-xs leading-relaxed text-indigo-700"
-                                >
-                                  {item}
-                                </p>
-                              ),
-                            )}
-                          </div>
-                        </section>
-                      )}
-                      <section>
-                        <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">
-                          Included memory items
-                        </p>
-                        <div className="space-y-3">
-                          {selectedClusterItems.map((item) => (
-                            <div
-                              key={item.id}
-                              className="rounded-2xl border border-slate-100 bg-white p-4 text-xs shadow-sm"
-                            >
-                              <p className="wrap-anywhere text-sm leading-relaxed text-slate-800">
-                                {item.semantic}
-                              </p>
-                              <div className="mt-3 flex flex-wrap items-center gap-2 text-[11px] text-slate-400">
-                                {item.timestamp ? (
-                                  <span>
-                                    {new Date(
-                                      item.timestamp as number,
-                                    ).toLocaleString("ko-KR", {
-                                      month: "numeric",
-                                      day: "numeric",
-                                      hour: "2-digit",
-                                      minute: "2-digit",
-                                    })}
-                                  </span>
-                                ) : null}
-                                {item.action ? (
-                                  <span className="rounded-full bg-amber-50 px-2 py-0.5 font-medium text-amber-700">
-                                    {item.action}
-                                  </span>
-                                ) : null}
-                                <span>{item.row.source?.missionId ?? "—"}</span>
-                              </div>
-                              {item.episode && (
-                                <p className="mt-3 wrap-anywhere text-slate-500">
-                                  {item.episode}
-                                </p>
-                              )}
-                              {item.input && (
-                                <p className="mt-2 wrap-anywhere text-slate-400">
-                                  Input: {item.input}
-                                </p>
-                              )}
+                      ) : !selectedMemoryCluster ? (
+                        <div className="flex h-full min-h-80 items-center justify-center text-sm text-slate-400">
+                          저장된 클러스터가 없으면 Regenerate를 눌러 새로 생성할
+                          수 있습니다.
+                        </div>
+                      ) : memoryClusterViewTab === "graph" ? (
+                        <div className="h-full min-h-128 overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm">
+                          <MemoryClusterGraph
+                            clusters={activeMemoryClusters}
+                            items={clusterableMemoryItems}
+                            selectedClusterId={selectedMemoryCluster.id}
+                            onSelectCluster={setSelectedMemoryClusterId}
+                            fill
+                          />
+                        </div>
+                      ) : (
+                        <div className="space-y-5">
+                          <div>
+                            <div className="flex flex-wrap items-center gap-2">
+                              <h3 className="text-lg font-semibold text-slate-900">
+                                {selectedMemoryCluster.label}
+                              </h3>
+                              <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-500">
+                                {selectedClusterItems.length} items
+                              </span>
                             </div>
-                          ))}
+                            <p className="mt-2 max-w-3xl text-sm leading-relaxed text-slate-500">
+                              {selectedMemoryCluster.summary}
+                            </p>
+                            {selectedMemoryCluster.relatedActions.length >
+                              0 && (
+                              <div className="mt-3 flex flex-wrap gap-1.5">
+                                {selectedMemoryCluster.relatedActions.map(
+                                  (action) => (
+                                    <span
+                                      key={action}
+                                      className="rounded-full bg-amber-50 px-2.5 py-1 text-xs font-medium text-amber-700"
+                                    >
+                                      {action}
+                                    </span>
+                                  ),
+                                )}
+                              </div>
+                            )}
+                          </div>
+                          {selectedMemoryCluster.representativeItems.length >
+                            0 && (
+                            <section>
+                              <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">
+                                Representative semantics
+                              </p>
+                              <div className="space-y-2">
+                                {selectedMemoryCluster.representativeItems.map(
+                                  (item, index) => (
+                                    <p
+                                      key={index}
+                                      className="rounded-xl bg-indigo-50 px-3 py-2 text-xs leading-relaxed text-indigo-700"
+                                    >
+                                      {item}
+                                    </p>
+                                  ),
+                                )}
+                              </div>
+                            </section>
+                          )}
+                          <section>
+                            <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">
+                              Included memory items
+                            </p>
+                            <div className="space-y-3">
+                              {selectedClusterItems.map((item) => (
+                                <div
+                                  key={item.id}
+                                  className="rounded-2xl border border-slate-100 bg-white p-4 text-xs shadow-sm"
+                                >
+                                  <p className="wrap-anywhere text-sm leading-relaxed text-slate-800">
+                                    {item.semantic}
+                                  </p>
+                                  <div className="mt-3 flex flex-wrap items-center gap-2 text-[11px] text-slate-400">
+                                    {item.timestamp ? (
+                                      <span>
+                                        {new Date(
+                                          item.timestamp as number,
+                                        ).toLocaleString("ko-KR", {
+                                          month: "numeric",
+                                          day: "numeric",
+                                          hour: "2-digit",
+                                          minute: "2-digit",
+                                        })}
+                                      </span>
+                                    ) : null}
+                                    {item.action ? (
+                                      <span className="rounded-full bg-amber-50 px-2 py-0.5 font-medium text-amber-700">
+                                        {item.action}
+                                      </span>
+                                    ) : null}
+                                    <span>
+                                      {item.row.source?.missionId ?? "—"}
+                                    </span>
+                                  </div>
+                                  {item.episode && (
+                                    <p className="mt-3 wrap-anywhere text-slate-500">
+                                      {item.episode}
+                                    </p>
+                                  )}
+                                  {item.input && (
+                                    <p className="mt-2 wrap-anywhere text-slate-400">
+                                      Input: {item.input}
+                                    </p>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+                          </section>
                         </div>
-                      </section>
+                      )}
                     </div>
-                  )}
                   </div>
                 </div>
-              </div>
-            )}
+              )}
             </div>
             <div className="flex shrink-0 items-center justify-between border-t border-slate-100 px-6 py-4">
               <button
                 type="button"
                 onClick={() => {
                   if (visibleMemoryRows.length === 0) return;
-                  const headers = ["Timestamp", "Mission", "Action", "Input", "Episode", "Semantic", "Keywords"];
+                  const headers = [
+                    "Timestamp",
+                    "Mission",
+                    "Action",
+                    "Input",
+                    "Episode",
+                    "Semantic",
+                    "Keywords",
+                  ];
                   const escape = (v: string) => `"${v.replace(/"/g, '""')}"`;
                   const rows = visibleMemoryRows.map((row) => {
                     const semantics = semanticItems(row).join(" | ");
                     return [
-                      row.timestamp ? new Date(row.timestamp as number).toLocaleString("ko-KR") : "",
+                      row.timestamp
+                        ? new Date(row.timestamp as number).toLocaleString(
+                            "ko-KR",
+                          )
+                        : "",
                       row.source?.missionId ?? "",
                       row.agentActionCategory ?? "",
                       row.input ?? "",
                       row.episode ?? "",
                       semantics,
                       (row.keywords ?? []).join(", "),
-                    ].map(escape).join(",");
+                    ]
+                      .map(escape)
+                      .join(",");
                   });
-                  const csv = [headers.map(escape).join(","), ...rows].join("\n");
-                  const blob = new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8;" });
+                  const csv = [headers.map(escape).join(","), ...rows].join(
+                    "\n",
+                  );
+                  const blob = new Blob(["﻿" + csv], {
+                    type: "text/csv;charset=utf-8;",
+                  });
                   const url = URL.createObjectURL(blob);
                   const a = document.createElement("a");
                   a.href = url;
@@ -2236,11 +2380,15 @@ export default function AdminPage() {
               </button>
               <button
                 type="button"
-                onClick={() => deleteAllMemory(memoryModal.userId, memoryVersionTab)}
+                onClick={() =>
+                  deleteAllMemory(memoryModal.userId, memoryVersionTab)
+                }
                 disabled={isDeletingMemory}
                 className="rounded-2xl bg-red-50 px-4 py-2 text-xs font-semibold text-red-600 transition hover:bg-red-100 disabled:opacity-50"
               >
-                {isDeletingMemory ? "삭제 중..." : `v${memoryVersionTab} 메모리 삭제`}
+                {isDeletingMemory
+                  ? "삭제 중..."
+                  : `v${memoryVersionTab} 메모리 삭제`}
               </button>
             </div>
           </div>
@@ -2272,10 +2420,11 @@ export default function AdminPage() {
 
       <div className="mx-auto max-w-5xl space-y-8 px-4 py-10 lg:px-10">
         <section className="space-y-4">
-
           <div className="flex items-center justify-between">
             <div>
-              <h2 className="text-lg font-semibold text-slate-900">유저 목록</h2>
+              <h2 className="text-lg font-semibold text-slate-900">
+                유저 목록
+              </h2>
               <p className="text-sm text-slate-400">
                 미션 참여 기록과 세션 데이터를 유저별로 모아봅니다.
               </p>
@@ -2292,7 +2441,9 @@ export default function AdminPage() {
 
           {adminUsers.length === 0 ? (
             <div className="flex h-32 items-center justify-center rounded-3xl border border-dashed border-slate-200 bg-white text-sm text-slate-400">
-              {isLoadingUsers ? "유저 데이터를 불러오는 중입니다." : "아직 유저 데이터가 없습니다."}
+              {isLoadingUsers
+                ? "유저 데이터를 불러오는 중입니다."
+                : "아직 유저 데이터가 없습니다."}
             </div>
           ) : (
             <div className="grid gap-3 lg:grid-cols-2">
@@ -2391,255 +2542,300 @@ export default function AdminPage() {
         </section>
 
         <section className="space-y-4">
-        <div className="flex items-center justify-between">
-          <h2 className="text-lg font-semibold text-slate-900">미션 목록</h2>
-          <span className="text-sm text-slate-400">{missions.length}개</span>
-        </div>
-
-        <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
-          <div className="mb-3 flex items-center justify-between gap-3">
-            <div>
-              <p className="text-xs font-semibold text-slate-500">
-                온보딩 설정
-              </p>
-              <p className="mt-1 text-xs text-slate-400">
-                유저 {adminUsers.length}명
-              </p>
-            </div>
-            <button
-              type="button"
-              onClick={openOnboardingParticipants}
-              className="rounded-full p-1.5 text-slate-300 transition hover:bg-slate-50 hover:text-slate-600"
-              title="온보딩 유저 보기"
-            >
-              <UsersThreeIcon size={16} />
-            </button>
+          <div className="flex items-center justify-between">
+            <h2 className="text-lg font-semibold text-slate-900">미션 목록</h2>
+            <span className="text-sm text-slate-400">{missions.length}개</span>
           </div>
-          <div className="flex flex-wrap items-end gap-3">
-            <label className="space-y-1 text-xs font-semibold text-slate-500">
-              제한 시간
-              <div className="flex items-center gap-2">
-                <input
-                  type="number"
-                  min={1}
-                  value={onboardingSettings.durationMinutes}
-                  onChange={(e) =>
-                    setOnboardingSettings((prev) => ({
-                      ...prev,
-                      durationMinutes: Number(e.target.value) || 20,
-                    }))
-                  }
-                  className="block w-24 rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-700 outline-none focus:border-slate-400"
-                />
-                <span className="text-sm font-normal text-slate-400">분</span>
+
+          <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <div>
+                <p className="text-xs font-semibold text-slate-500">
+                  온보딩 설정
+                </p>
+                <p className="mt-1 text-xs text-slate-400">
+                  유저 {adminUsers.length}명
+                </p>
               </div>
-            </label>
-            <button
-              type="button"
-              onClick={saveOnboardingSettings}
-              disabled={isSavingOnboardingSettings}
-              className="rounded-2xl bg-slate-900 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-slate-700 disabled:opacity-50"
-            >
-              {isSavingOnboardingSettings ? "저장 중..." : "저장"}
-            </button>
+              <button
+                type="button"
+                onClick={openOnboardingParticipants}
+                className="rounded-full p-1.5 text-slate-300 transition hover:bg-slate-50 hover:text-slate-600"
+                title="온보딩 유저 보기"
+              >
+                <UsersThreeIcon size={16} />
+              </button>
+            </div>
+            <div className="flex flex-wrap items-end gap-3">
+              <label className="space-y-1 text-xs font-semibold text-slate-500">
+                제한 시간
+                <div className="flex items-center gap-2">
+                  <input
+                    type="number"
+                    min={1}
+                    value={onboardingSettings.durationMinutes}
+                    onChange={(e) =>
+                      setOnboardingSettings((prev) => ({
+                        ...prev,
+                        durationMinutes: Number(e.target.value) || 20,
+                      }))
+                    }
+                    className="block w-24 rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-700 outline-none focus:border-slate-400"
+                  />
+                  <span className="text-sm font-normal text-slate-400">분</span>
+                </div>
+              </label>
+              <button
+                type="button"
+                onClick={saveOnboardingSettings}
+                disabled={isSavingOnboardingSettings}
+                className="rounded-2xl bg-slate-900 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-slate-700 disabled:opacity-50"
+              >
+                {isSavingOnboardingSettings ? "저장 중..." : "저장"}
+              </button>
+            </div>
           </div>
-        </div>
 
-        {missions.length === 0 ? (
-          <div className="flex h-40 items-center justify-center rounded-3xl border border-dashed border-slate-200 bg-white text-sm text-slate-400">
-            아직 미션이 없습니다. 첫 미션을 만들어보세요.
-          </div>
-        ) : (
-          <div className="space-y-3">
-            {missions.map((mission) => {
-              const isEditing = editingId === mission.id;
+          {missions.length === 0 ? (
+            <div className="flex h-40 items-center justify-center rounded-3xl border border-dashed border-slate-200 bg-white text-sm text-slate-400">
+              아직 미션이 없습니다. 첫 미션을 만들어보세요.
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {missions.map((mission) => {
+                const isEditing = editingId === mission.id;
 
-              return (
-                <div
-                  key={mission.id}
-                  className="rounded-3xl border border-slate-100 bg-white px-6 py-5 shadow-sm"
-                >
-                  <div className="flex items-start gap-3">
-                    <div className="flex-1 min-w-0 space-y-3">
-                      {isEditing ? (
-                        <>
-                          <input
-                            autoFocus
-                            value={editFields.title ?? ""}
-                            onChange={(e) =>
-                              setEditFields((p) => ({
-                                ...p,
-                                title: e.target.value,
-                              }))
-                            }
-                            onKeyDown={(e) => {
-                              if (e.key === "Escape") setEditingId(null);
-                            }}
-                            placeholder="미션 제목"
-                            className="w-full rounded-xl border border-slate-200 px-3 py-1.5 text-sm font-semibold outline-none focus:border-slate-400"
-                          />
-                          <textarea
-                            value={editFields.description ?? ""}
-                            onChange={(e) =>
-                              setEditFields((p) => ({
-                                ...p,
-                                description: e.target.value,
-                              }))
-                            }
-                            placeholder="미션 설명 (선택)"
-                            rows={2}
-                            className="w-full resize-none rounded-xl border border-slate-200 px-3 py-1.5 text-sm text-slate-600 outline-none focus:border-slate-400"
-                          />
-                          <div className="flex items-center gap-2 text-xs text-slate-500">
-                            <span>디바이스</span>
-                            {(["desktop", "mobile"] as Device[]).map((d) => (
-                              <button
-                                key={d}
-                                type="button"
-                                onClick={() =>
-                                  setEditFields((p) => ({ ...p, device: d }))
-                                }
-                                className={`rounded-lg border px-3 py-1 text-xs font-semibold transition ${
-                                  (editFields.device ?? "desktop") === d
-                                    ? "border-slate-900 bg-slate-900 text-white"
-                                    : "border-slate-200 text-slate-500 hover:bg-slate-50"
-                                }`}
-                              >
-                                {d === "desktop" ? "PC" : "모바일"}
-                              </button>
-                            ))}
-                          </div>
-                          <div className="flex items-center gap-2 text-xs text-slate-500">
-                            <span>제한 시간 (분)</span>
+                return (
+                  <div
+                    key={mission.id}
+                    className="rounded-3xl border border-slate-100 bg-white px-6 py-5 shadow-sm"
+                  >
+                    <div className="flex items-start gap-3">
+                      <div className="flex-1 min-w-0 space-y-3">
+                        {isEditing ? (
+                          <>
                             <input
-                              type="number"
-                              min={0}
-                              value={(editFields.durationMinutes as number) ?? 30}
-                              onChange={(e) => setEditFields((p) => ({ ...p, durationMinutes: Number(e.target.value) }))}
-                              className="w-20 rounded-lg border border-slate-200 px-2 py-1 text-xs outline-none focus:border-slate-400"
+                              autoFocus
+                              value={editFields.title ?? ""}
+                              onChange={(e) =>
+                                setEditFields((p) => ({
+                                  ...p,
+                                  title: e.target.value,
+                                }))
+                              }
+                              onKeyDown={(e) => {
+                                if (e.key === "Escape") setEditingId(null);
+                              }}
+                              placeholder="미션 제목"
+                              className="w-full rounded-xl border border-slate-200 px-3 py-1.5 text-sm font-semibold outline-none focus:border-slate-400"
                             />
-                            <span className="text-slate-400">(0 = 제한 없음)</span>
-                          </div>
-                          <div className="space-y-3 rounded-2xl border border-slate-100 bg-slate-50 p-3">
-                            <div className="flex items-center justify-between">
-                              <p className="text-xs font-semibold text-slate-500">옵션</p>
+                            <textarea
+                              value={editFields.description ?? ""}
+                              onChange={(e) =>
+                                setEditFields((p) => ({
+                                  ...p,
+                                  description: e.target.value,
+                                }))
+                              }
+                              placeholder="미션 설명 (선택)"
+                              rows={2}
+                              className="w-full resize-none rounded-xl border border-slate-200 px-3 py-1.5 text-sm text-slate-600 outline-none focus:border-slate-400"
+                            />
+                            <div className="flex items-center gap-2 text-xs text-slate-500">
+                              <span>디바이스</span>
+                              {(["desktop", "mobile"] as Device[]).map((d) => (
+                                <button
+                                  key={d}
+                                  type="button"
+                                  onClick={() =>
+                                    setEditFields((p) => ({ ...p, device: d }))
+                                  }
+                                  className={`rounded-lg border px-3 py-1 text-xs font-semibold transition ${
+                                    (editFields.device ?? "desktop") === d
+                                      ? "border-slate-900 bg-slate-900 text-white"
+                                      : "border-slate-200 text-slate-500 hover:bg-slate-50"
+                                  }`}
+                                >
+                                  {d === "desktop" ? "PC" : "모바일"}
+                                </button>
+                              ))}
+                            </div>
+                            <div className="flex items-center gap-2 text-xs text-slate-500">
+                              <span>제한 시간 (분)</span>
+                              <input
+                                type="number"
+                                min={0}
+                                value={
+                                  (editFields.durationMinutes as number) ?? 30
+                                }
+                                onChange={(e) =>
+                                  setEditFields((p) => ({
+                                    ...p,
+                                    durationMinutes: Number(e.target.value),
+                                  }))
+                                }
+                                className="w-20 rounded-lg border border-slate-200 px-2 py-1 text-xs outline-none focus:border-slate-400"
+                              />
+                              <span className="text-slate-400">
+                                (0 = 제한 없음)
+                              </span>
+                            </div>
+                            <div className="space-y-3 rounded-2xl border border-slate-100 bg-slate-50 p-3">
+                              <div className="flex items-center justify-between">
+                                <p className="text-xs font-semibold text-slate-500">
+                                  옵션
+                                </p>
+                                <button
+                                  type="button"
+                                  onClick={addEditOption}
+                                  className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-500 hover:bg-slate-50"
+                                >
+                                  + 옵션 추가
+                                </button>
+                              </div>
+                              {normalizeOptions(
+                                editFields.options as MissionOption[],
+                              ).map((option, index) => (
+                                <div
+                                  key={option.id}
+                                  className="space-y-2 rounded-xl border border-slate-100 bg-white p-3"
+                                >
+                                  <div className="flex items-center justify-between">
+                                    <p className="text-xs font-semibold text-slate-400">
+                                      옵션 {index + 1}
+                                    </p>
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        removeEditOption(option.id)
+                                      }
+                                      className="text-xs text-red-400 hover:text-red-500"
+                                    >
+                                      삭제
+                                    </button>
+                                  </div>
+                                  <input
+                                    value={option.title}
+                                    onChange={(e) =>
+                                      updateEditOption(option.id, {
+                                        title: e.target.value,
+                                      })
+                                    }
+                                    placeholder="옵션 제목"
+                                    className="w-full rounded-lg border border-slate-200 px-3 py-1.5 text-xs outline-none focus:border-slate-400"
+                                  />
+                                  <textarea
+                                    value={option.description}
+                                    onChange={(e) =>
+                                      updateEditOption(option.id, {
+                                        description: e.target.value,
+                                      })
+                                    }
+                                    placeholder="옵션 설명"
+                                    rows={2}
+                                    className="w-full resize-none rounded-lg border border-slate-200 px-3 py-1.5 text-xs outline-none focus:border-slate-400"
+                                  />
+                                  {/* Content — markdown */}
+                                  <div className="space-y-1.5">
+                                    <p className="text-xs font-semibold text-slate-400">
+                                      콘텐츠 (마크다운)
+                                    </p>
+                                    <textarea
+                                      value={option.content}
+                                      onChange={(e) =>
+                                        updateEditOption(option.id, {
+                                          content: e.target.value,
+                                        })
+                                      }
+                                      placeholder={"## 서비스 개요\n- ..."}
+                                      rows={4}
+                                      className="w-full resize-y rounded-lg border border-slate-200 px-3 py-1.5 font-mono text-xs outline-none focus:border-slate-400"
+                                    />
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                            <div className="flex gap-2">
                               <button
-                                type="button"
-                                onClick={addEditOption}
-                                className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-500 hover:bg-slate-50"
+                                onClick={() => saveEdit(mission.id)}
+                                className="rounded-xl bg-slate-900 px-4 py-1.5 text-xs font-semibold text-white transition hover:bg-slate-700"
                               >
-                                + 옵션 추가
+                                저장
+                              </button>
+                              <button
+                                onClick={() => setEditingId(null)}
+                                className="rounded-xl border border-slate-200 px-4 py-1.5 text-xs font-semibold text-slate-600 transition hover:bg-slate-50"
+                              >
+                                취소
                               </button>
                             </div>
-                            {normalizeOptions(editFields.options as MissionOption[]).map((option, index) => (
-                              <div key={option.id} className="space-y-2 rounded-xl border border-slate-100 bg-white p-3">
-                                <div className="flex items-center justify-between">
-                                  <p className="text-xs font-semibold text-slate-400">옵션 {index + 1}</p>
-                                  <button
-                                    type="button"
-                                    onClick={() => removeEditOption(option.id)}
-                                    className="text-xs text-red-400 hover:text-red-500"
-                                  >
-                                    삭제
-                                  </button>
-                                </div>
-                                <input
-                                  value={option.title}
-                                  onChange={(e) => updateEditOption(option.id, { title: e.target.value })}
-                                  placeholder="옵션 제목"
-                                  className="w-full rounded-lg border border-slate-200 px-3 py-1.5 text-xs outline-none focus:border-slate-400"
-                                />
-                                <textarea
-                                  value={option.description}
-                                  onChange={(e) => updateEditOption(option.id, { description: e.target.value })}
-                                  placeholder="옵션 설명"
-                                  rows={2}
-                                  className="w-full resize-none rounded-lg border border-slate-200 px-3 py-1.5 text-xs outline-none focus:border-slate-400"
-                                />
-                                {/* Content — markdown */}
-                                <div className="space-y-1.5">
-                                  <p className="text-xs font-semibold text-slate-400">콘텐츠 (마크다운)</p>
-                                  <textarea
-                                    value={option.content}
-                                    onChange={(e) => updateEditOption(option.id, { content: e.target.value })}
-                                    placeholder={"## 서비스 개요\n- ..."}
-                                    rows={4}
-                                    className="w-full resize-y rounded-lg border border-slate-200 px-3 py-1.5 font-mono text-xs outline-none focus:border-slate-400"
-                                  />
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                          <div className="flex gap-2">
-                            <button
-                              onClick={() => saveEdit(mission.id)}
-                              className="rounded-xl bg-slate-900 px-4 py-1.5 text-xs font-semibold text-white transition hover:bg-slate-700"
-                            >
-                              저장
-                            </button>
-                            <button
-                              onClick={() => setEditingId(null)}
-                              className="rounded-xl border border-slate-200 px-4 py-1.5 text-xs font-semibold text-slate-600 transition hover:bg-slate-50"
-                            >
-                              취소
-                            </button>
-                          </div>
-                        </>
-                      ) : (
-                        <>
-                          <div className="flex items-center gap-3">
-                            <p className="text-sm font-semibold text-slate-900 truncate">
-                              {mission.title}
+                          </>
+                        ) : (
+                          <>
+                            <div className="flex items-center gap-3">
+                              <p className="text-sm font-semibold text-slate-900 truncate">
+                                {mission.title}
+                              </p>
+                              <span className="shrink-0 rounded-full bg-slate-100 px-2.5 py-0.5 text-xs text-slate-500">
+                                {(mission.device ?? "desktop") === "desktop" ? (
+                                  <>
+                                    <MonitorIcon size={12} className="inline" />{" "}
+                                    PC
+                                  </>
+                                ) : (
+                                  <>
+                                    <DeviceMobileIcon
+                                      size={12}
+                                      className="inline"
+                                    />{" "}
+                                    모바일
+                                  </>
+                                )}
+                              </span>
+                            </div>
+                            {mission.description && (
+                              <p className="text-xs text-slate-500 leading-relaxed">
+                                {mission.description}
+                              </p>
+                            )}
+                            <p className="text-xs text-slate-400">
+                              옵션 {mission.options?.length ?? 0}개
                             </p>
-                            <span className="shrink-0 rounded-full bg-slate-100 px-2.5 py-0.5 text-xs text-slate-500">
-                              {(mission.device ?? "desktop") === "desktop"
-                                ? <><MonitorIcon size={12} className="inline" /> PC</>
-                                : <><DeviceMobileIcon size={12} className="inline" /> 모바일</>}
-                            </span>
-                          </div>
-                          {mission.description && (
-                            <p className="text-xs text-slate-500 leading-relaxed">
-                              {mission.description}
-                            </p>
-                          )}
-                          <p className="text-xs text-slate-400">
-                            옵션 {mission.options?.length ?? 0}개
-                          </p>
-                        </>
+                          </>
+                        )}
+                      </div>
+
+                      {!isEditing && (
+                        <div className="flex shrink-0 items-center gap-1">
+                          <button
+                            onClick={() => openParticipants(mission.id)}
+                            className="rounded-full p-1.5 text-slate-300 transition hover:bg-slate-50 hover:text-slate-600"
+                            title="참여자 보기"
+                          >
+                            <UsersThreeIcon size={16} />
+                          </button>
+                          <button
+                            onClick={() => startEdit(mission)}
+                            className="rounded-full p-1.5 text-slate-300 transition hover:bg-slate-50 hover:text-slate-600"
+                            title="수정"
+                          >
+                            <PencilSimpleIcon size={16} />
+                          </button>
+                          <button
+                            onClick={() => deleteMission(mission.id)}
+                            className="rounded-full p-1.5 text-slate-300 transition hover:bg-red-50 hover:text-red-400"
+                            title="삭제"
+                          >
+                            <XIcon size={16} />
+                          </button>
+                        </div>
                       )}
                     </div>
-
-                    {!isEditing && (
-                      <div className="flex shrink-0 items-center gap-1">
-                        <button
-                          onClick={() => openParticipants(mission.id)}
-                          className="rounded-full p-1.5 text-slate-300 transition hover:bg-slate-50 hover:text-slate-600"
-                          title="참여자 보기"
-                        >
-                          <UsersThreeIcon size={16} />
-                        </button>
-                        <button
-                          onClick={() => startEdit(mission)}
-                          className="rounded-full p-1.5 text-slate-300 transition hover:bg-slate-50 hover:text-slate-600"
-                          title="수정"
-                        >
-                          <PencilSimpleIcon size={16} />
-                        </button>
-                        <button
-                          onClick={() => deleteMission(mission.id)}
-                          className="rounded-full p-1.5 text-slate-300 transition hover:bg-red-50 hover:text-red-400"
-                          title="삭제"
-                        >
-                          <XIcon size={16} />
-                        </button>
-                      </div>
-                    )}
                   </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
+                );
+              })}
+            </div>
+          )}
         </section>
       </div>
 
@@ -2673,70 +2869,71 @@ export default function AdminPage() {
                 participants.map((p) => {
                   const badge = onboardingBadge(p.onboardingStatus);
                   return (
-                  <div
-                    key={p.id}
-                    className="flex items-center gap-3 rounded-2xl border border-slate-100 px-4 py-3"
-                  >
-                    {p.photoURL ? (
-                      <img
-                        src={p.photoURL}
-                        alt=""
-                        className="h-8 w-8 rounded-full object-cover"
-                      />
-                    ) : (
-                      <div className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-900 text-xs font-semibold text-white">
-                        {(p.displayName ?? p.email ?? "?")
-                          .charAt(0)
-                          .toUpperCase()}
-                      </div>
-                    )}
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate text-sm font-semibold text-slate-900">
-                        {p.displayName ?? p.email ?? p.id}
-                      </p>
-                      {p.displayName && p.email && (
-                        <p className="truncate text-xs text-slate-400">
-                          {p.email}
+                    <div
+                      key={p.id}
+                      className="flex items-center gap-3 rounded-2xl border border-slate-100 px-4 py-3"
+                    >
+                      {p.photoURL ? (
+                        <img
+                          src={p.photoURL}
+                          alt=""
+                          className="h-8 w-8 rounded-full object-cover"
+                        />
+                      ) : (
+                        <div className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-900 text-xs font-semibold text-white">
+                          {(p.displayName ?? p.email ?? "?")
+                            .charAt(0)
+                            .toUpperCase()}
+                        </div>
+                      )}
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-sm font-semibold text-slate-900">
+                          {p.displayName ?? p.email ?? p.id}
                         </p>
-                      )}
-                      <span
-                        className={`mt-1 inline-flex rounded-full px-2 py-0.5 text-[11px] font-semibold ${badge.style}`}
-                      >
-                        {badge.label}
-                      </span>
-                      {p.isAdmin && (
-                        <span className="ml-1 mt-1 inline-flex rounded-full bg-indigo-50 px-2 py-0.5 text-[11px] font-semibold text-indigo-700">
-                          관리자
+                        {p.displayName && p.email && (
+                          <p className="truncate text-xs text-slate-400">
+                            {p.email}
+                          </p>
+                        )}
+                        <span
+                          className={`mt-1 inline-flex rounded-full px-2 py-0.5 text-[11px] font-semibold ${badge.style}`}
+                        >
+                          {badge.label}
                         </span>
-                      )}
+                        {p.isAdmin && (
+                          <span className="ml-1 mt-1 inline-flex rounded-full bg-indigo-50 px-2 py-0.5 text-[11px] font-semibold text-indigo-700">
+                            관리자
+                          </span>
+                        )}
+                      </div>
+                      <div className="ml-auto flex items-center gap-1">
+                        <Link
+                          href={`/main/${participantsMissionId}?viewAs=${p.id}`}
+                          className="rounded-full p-1.5 text-slate-400 transition hover:bg-slate-50 hover:text-slate-700"
+                          onClick={closeParticipants}
+                          title="세션 보기"
+                        >
+                          <ArrowRightIcon size={14} />
+                        </Link>
+                        <button
+                          type="button"
+                          onClick={() => deleteUserData(p)}
+                          className="rounded-full p-1.5 text-slate-300 transition hover:bg-red-50 hover:text-red-500"
+                          title={
+                            p.isAdmin ? "관리자 기록 삭제" : "유저 데이터 삭제"
+                          }
+                        >
+                          <XIcon size={14} />
+                        </button>
+                      </div>
                     </div>
-                    <div className="ml-auto flex items-center gap-1">
-                      <Link
-                        href={`/main/${participantsMissionId}?viewAs=${p.id}`}
-                        className="rounded-full p-1.5 text-slate-400 transition hover:bg-slate-50 hover:text-slate-700"
-                        onClick={closeParticipants}
-                        title="세션 보기"
-                      >
-                        <ArrowRightIcon size={14} />
-                      </Link>
-                      <button
-                        type="button"
-                        onClick={() => deleteUserData(p)}
-                        className="rounded-full p-1.5 text-slate-300 transition hover:bg-red-50 hover:text-red-500"
-                        title={p.isAdmin ? "관리자 기록 삭제" : "유저 데이터 삭제"}
-                      >
-                        <XIcon size={14} />
-                      </button>
-                    </div>
-                  </div>
-                );
+                  );
                 })
               )}
             </div>
           </div>
         </div>
       )}
-
     </div>
   );
 }
