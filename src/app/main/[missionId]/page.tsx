@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { firebaseAuth, db, storage } from "@/lib/firebase";
 import { getIdToken, onAuthStateChanged } from "firebase/auth";
 import { doc, getDoc, setDoc, onSnapshot } from "firebase/firestore";
@@ -59,22 +60,100 @@ type ActivityLogEvent = {
 
 type MemoryRecord = {
   id: string;
+  action?: string;
+  keyword?: string[];
   category?: string[];
   subcategory?: string[];
   keywords?: string[];
+  episodic?: string;
   episode?: string;
-  semantic?: string;
+  semantic?: string | null;
+  input?: string;
+  output?: string;
+  link?: string | null;
+  weight?: number;
+  retentionScore?: number;
+  similarity?: number;
+  retrievedCount?: number;
   timestamp?: number;
   createdAt?: number;
 };
 
-type MemoryContext = {
-  episodic: MemoryRecord[];
-  semantic: MemoryRecord[];
-};
-
 type MemoryRetrievalResponse = {
   retrieved?: MemoryRecord[];
+};
+
+const CHAT_REMARK_PLUGINS = [remarkGfm];
+
+const CHAT_MARKDOWN_COMPONENTS = {
+  p: ({ children }: { children?: React.ReactNode }) => (
+    <p className="mb-2 last:mb-0">{children}</p>
+  ),
+  ul: ({ children }: { children?: React.ReactNode }) => (
+    <ul className="mb-2 ml-4 list-disc space-y-1">{children}</ul>
+  ),
+  ol: ({ children }: { children?: React.ReactNode }) => (
+    <ol className="mb-2 ml-4 list-decimal space-y-1">{children}</ol>
+  ),
+  li: ({ children }: { children?: React.ReactNode }) => <li>{children}</li>,
+  strong: ({ children }: { children?: React.ReactNode }) => (
+    <strong className="font-semibold">{children}</strong>
+  ),
+  code: ({ children }: { children?: React.ReactNode }) => (
+    <code className="rounded bg-slate-200 px-1 py-0.5 font-mono text-xs text-slate-800">
+      {children}
+    </code>
+  ),
+  pre: ({ children }: { children?: React.ReactNode }) => (
+    <pre className="mt-1 max-h-36 overflow-y-auto rounded-xl bg-slate-800 p-3 text-xs text-slate-100">
+      {children}
+    </pre>
+  ),
+  h1: ({ children }: { children?: React.ReactNode }) => (
+    <h1 className="mb-1 text-base font-semibold">{children}</h1>
+  ),
+  h2: ({ children }: { children?: React.ReactNode }) => (
+    <h2 className="mb-1 text-sm font-semibold">{children}</h2>
+  ),
+  h3: ({ children }: { children?: React.ReactNode }) => (
+    <h3 className="mb-1 text-sm font-medium">{children}</h3>
+  ),
+  a: ({
+    href,
+    children,
+  }: {
+    href?: string;
+    children?: React.ReactNode;
+  }) => (
+    <a
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="text-indigo-500 underline underline-offset-2 hover:text-indigo-700"
+    >
+      {children}
+    </a>
+  ),
+  table: ({ children }: { children?: React.ReactNode }) => (
+    <div className="my-3 block max-w-full overflow-x-auto overscroll-x-contain rounded-xl border border-slate-200">
+      <table className="w-max min-w-full table-auto border-collapse text-left text-xs">
+        {children}
+      </table>
+    </div>
+  ),
+  thead: ({ children }: { children?: React.ReactNode }) => (
+    <thead className="bg-slate-50 text-slate-600">{children}</thead>
+  ),
+  th: ({ children }: { children?: React.ReactNode }) => (
+    <th className="whitespace-nowrap border-b border-slate-200 px-3 py-2 font-semibold">
+      {children}
+    </th>
+  ),
+  td: ({ children }: { children?: React.ReactNode }) => (
+    <td className="whitespace-nowrap border-t border-slate-100 px-3 py-2 align-top text-slate-700">
+      {children}
+    </td>
+  ),
 };
 
 type Reference = {
@@ -788,6 +867,53 @@ function cloneWithComputedStyles(doc: Document) {
   return clonedRoot;
 }
 
+async function scaleScreenshot(
+  capture: { dataUrl: string; width: number; height: number; sections: unknown[] },
+  maxWidth: number,
+): Promise<{ dataUrl: string; width: number; height: number; sections: unknown[] }> {
+  if (!capture.dataUrl.startsWith("data:image/png") || capture.width <= maxWidth) return capture;
+  const scale = maxWidth / capture.width;
+  const newW = maxWidth;
+  const newH = Math.round(capture.height * scale);
+  const img = new Image();
+  await new Promise<void>((resolve) => {
+    img.onload = () => resolve();
+    img.onerror = () => resolve(); // fallback: keep original on error
+    img.src = capture.dataUrl;
+  });
+  if (!img.naturalWidth) return capture;
+  const canvas = document.createElement("canvas");
+  canvas.width = newW;
+  canvas.height = newH;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return capture;
+  ctx.drawImage(img, 0, 0, newW, newH);
+  return { ...capture, dataUrl: canvas.toDataURL("image/png"), width: newW, height: newH };
+}
+
+async function svgDataUrlToPng(svgDataUrl: string, timeoutMs = 8000): Promise<string> {
+  const img = new Image();
+  await Promise.race([
+    new Promise<void>((resolve, reject) => {
+      img.onload = () => resolve();
+      img.onerror = () => reject(new Error("SVG image load failed"));
+      img.src = svgDataUrl;
+    }),
+    new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error("SVG load timeout")), timeoutMs),
+    ),
+  ]);
+  const canvas = document.createElement("canvas");
+  canvas.width = img.naturalWidth || 1536;
+  canvas.height = img.naturalHeight || 1400;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("no 2d context");
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.drawImage(img, 0, 0);
+  return canvas.toDataURL("image/png");
+}
+
 async function captureMockupScreenshot(
   html: string,
   device: Device,
@@ -905,6 +1031,22 @@ html, body { min-height: 0 !important; height: auto !important; }
   var lastHeight = 0;
   var reportCount = 0;
   var MAX_REPORTS = 6;
+  var initialVh = window.innerHeight || 900;
+  function freezeVhUnits() {
+    var vhRe = /(\d*\.?\d+)vh/g;
+    function replaceVh(s) { return s.replace(vhRe, function(_, n) { return (parseFloat(n) * initialVh / 100).toFixed(1) + 'px'; }); }
+    var els = document.querySelectorAll('*[style]');
+    for (var i = 0; i < els.length; i++) {
+      var s = els[i].getAttribute('style');
+      if (s && s.indexOf('vh') !== -1) els[i].setAttribute('style', replaceVh(s));
+    }
+    var tags = document.querySelectorAll('style');
+    for (var j = 0; j < tags.length; j++) {
+      var c = tags[j].textContent;
+      if (c && c.indexOf('vh') !== -1) tags[j].textContent = replaceVh(c);
+    }
+  }
+  freezeVhUnits();
   function measure(){
     if (reportCount >= MAX_REPORTS) return;
     var body = document.body;
@@ -1568,10 +1710,6 @@ export default function MainScreenPage() {
     (uid: string) => doc(db, "sessions", uid, "missions", missionId),
     [missionId],
   );
-  const [memoryContext, setMemoryContext] = useState<MemoryContext>({
-    episodic: [],
-    semantic: [],
-  });
   const [isCompletingSession, setIsCompletingSession] = useState(false);
   const [sessionCompleted, setSessionCompleted] = useState(false);
   const [showLobbyWarning, setShowLobbyWarning] = useState(false);
@@ -1703,7 +1841,7 @@ export default function MainScreenPage() {
   );
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const chatBottomRef = useRef<HTMLDivElement>(null);
+  const chatScrollRef = useRef<HTMLDivElement>(null);
   const ideaSectionRef = useRef<HTMLElement>(null);
   const styleSectionRef = useRef<HTMLElement>(null);
   const mockupSectionRef = useRef<HTMLElement>(null);
@@ -1894,21 +2032,6 @@ export default function MainScreenPage() {
             router.replace(`/main/${ONBOARDING_MISSION_ID}`);
           }
         });
-      getIdToken(user)
-        .then((token) =>
-          fetch("/api/memory/bootstrap", {
-            headers: { Authorization: `Bearer ${token}` },
-          }),
-        )
-        .then((res) => (res.ok ? res.json() : null))
-        .then((memory) => {
-          if (!memory) return;
-          setMemoryContext({
-            episodic: Array.isArray(memory.episodic) ? memory.episodic : [],
-            semantic: Array.isArray(memory.semantic) ? memory.semantic : [],
-          });
-        })
-        .catch(() => {});
     });
   }, [isOnboardingMission, router]);
 
@@ -2258,7 +2381,9 @@ export default function MainScreenPage() {
   }, [timerStartedAt, timerEndedAt, sessionCompleted, missionDurationMinutes]);
 
   useEffect(() => {
-    chatBottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    const el = chatScrollRef.current;
+    if (!el) return;
+    el.scrollTop = el.scrollHeight;
   }, [messages]);
 
   // Listen for element selection from iframe
@@ -2725,16 +2850,10 @@ export default function MainScreenPage() {
       const turnMemoryContext =
         retrievedMemory && retrievedMemory.length > 0
           ? {
-              episodic: memoryContext.episodic.slice(0, 20),
+              episodic: [],
               semantic: retrievedMemory,
             }
-          : memoryContext;
-      if (retrievedMemory && retrievedMemory.length > 0) {
-        setMemoryContext((prev) => ({
-          ...prev,
-          semantic: retrievedMemory,
-        }));
-      }
+          : { episodic: [], semantic: [] };
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -3241,11 +3360,16 @@ export default function MainScreenPage() {
               activeBoard?.html || currentIdeaBoards.at(-1)?.html || "";
             const presentationMockupDevice =
               activeBoard?.device || currentIdeaBoards.at(-1)?.device || device;
-            const mockupScreenshot = presentationMockupHtml
+            const rawScreenshot = presentationMockupHtml
               ? await captureMockupScreenshot(
                   presentationMockupHtml,
                   presentationMockupDevice,
                 )
+              : null;
+            // Scale screenshot down to 880px wide (the compose SVG's mockup render width)
+            // to keep request/response bodies small while preserving full visual quality.
+            const mockupScreenshot = rawScreenshot
+              ? await scaleScreenshot(rawScreenshot, 880)
               : null;
             const presRes = await fetch("/api/presentation", {
               method: "POST",
@@ -3275,11 +3399,21 @@ export default function MainScreenPage() {
                   async (slide, i) => {
                     if (!slide.imageUrl.startsWith("data:")) return slide;
                     try {
+                      let uploadDataUrl = slide.imageUrl;
+                      if (slide.imageUrl.startsWith("data:image/svg+xml")) {
+                        console.log(`[presentation] slide ${i} converting SVG to PNG`);
+                        uploadDataUrl = await svgDataUrlToPng(slide.imageUrl);
+                      }
                       const imgRef = storageRef(
                         storage,
                         `presentations/${uid}/${missionId}/slide-${i}.png`,
                       );
-                      await uploadString(imgRef, slide.imageUrl, "data_url");
+                      await Promise.race([
+                        uploadString(imgRef, uploadDataUrl, "data_url"),
+                        new Promise<never>((_, reject) =>
+                          setTimeout(() => reject(new Error("upload timeout")), 15000),
+                        ),
+                      ]);
                       const url = await getDownloadURL(imgRef);
                       console.log(`[presentation] slide ${i} uploaded`);
                       return { ...slide, imageUrl: url };
@@ -3457,7 +3591,6 @@ export default function MainScreenPage() {
     missionTitle,
     missionBrief,
     userId,
-    memoryContext,
     isReadOnly,
     isOnboardingMission,
     missionId,
@@ -3645,16 +3778,6 @@ export default function MainScreenPage() {
           window.localStorage.removeItem(`vda:onboarding-required:${userId}`);
           window.localStorage.setItem(`vda:onboarding-completed:${userId}`, "true");
         }
-      }
-      const memoryRes = await fetch("/api/memory/bootstrap", {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (memoryRes.ok) {
-        const memory = await memoryRes.json();
-        setMemoryContext({
-          episodic: Array.isArray(memory.episodic) ? memory.episodic : [],
-          semantic: Array.isArray(memory.semantic) ? memory.semantic : [],
-        });
       }
       setTimerEndedAt(completedAt);
       setSessionCompleted(true);
@@ -5525,7 +5648,10 @@ export default function MainScreenPage() {
           {/* Right panel: agent chat */}
           <aside className="flex h-full w-full max-w-md flex-col overflow-hidden border-l border-slate-200 bg-white">
             {/* Messages */}
-            <div className="flex-1 space-y-4 overflow-y-auto p-6">
+            <div
+              ref={chatScrollRef}
+              className="flex-1 space-y-4 overflow-y-auto p-6"
+            >
               {messages.length === 0 && (
                 <div className="flex h-full flex-col items-center justify-center gap-2 text-center text-sm text-slate-400">
                   <p className="font-medium text-slate-500">디자인 에이전트</p>
@@ -5554,10 +5680,10 @@ export default function MainScreenPage() {
               {messages.map((msg, msgIdx) => (
                 <div
                   key={msg.id}
-                  className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
+                  className={`flex min-w-0 ${msg.role === "user" ? "justify-end" : "justify-start"}`}
                 >
                   <div
-                    className={`max-w-[85%] rounded-2xl px-4 py-3 text-sm leading-relaxed ${
+                    className={`min-w-0 max-w-[85%] overflow-hidden rounded-2xl px-4 py-3 text-sm leading-relaxed ${
                       msg.role === "user"
                         ? "bg-slate-900 text-white"
                         : "border border-slate-100 bg-slate-50 text-slate-700"
@@ -5612,104 +5738,6 @@ export default function MainScreenPage() {
                     ) : msg.content ? (
                       (() => {
                         const parts = processMessageContent(msg.content);
-                        const mdComponents = {
-                          p: ({ children }: { children?: React.ReactNode }) => (
-                            <p className="mb-2 last:mb-0">{children}</p>
-                          ),
-                          ul: ({
-                            children,
-                          }: {
-                            children?: React.ReactNode;
-                          }) => (
-                            <ul className="mb-2 ml-4 list-disc space-y-1">
-                              {children}
-                            </ul>
-                          ),
-                          ol: ({
-                            children,
-                          }: {
-                            children?: React.ReactNode;
-                          }) => (
-                            <ol className="mb-2 ml-4 list-decimal space-y-1">
-                              {children}
-                            </ol>
-                          ),
-                          li: ({
-                            children,
-                          }: {
-                            children?: React.ReactNode;
-                          }) => <li>{children}</li>,
-                          strong: ({
-                            children,
-                          }: {
-                            children?: React.ReactNode;
-                          }) => (
-                            <strong className="font-semibold">
-                              {children}
-                            </strong>
-                          ),
-                          code: ({
-                            children,
-                          }: {
-                            children?: React.ReactNode;
-                          }) => (
-                            <code className="rounded bg-slate-200 px-1 py-0.5 font-mono text-xs text-slate-800">
-                              {children}
-                            </code>
-                          ),
-                          pre: ({
-                            children,
-                          }: {
-                            children?: React.ReactNode;
-                          }) => (
-                            <pre className="mt-1 max-h-36 overflow-y-auto rounded-xl bg-slate-800 p-3 text-xs text-slate-100">
-                              {children}
-                            </pre>
-                          ),
-                          h1: ({
-                            children,
-                          }: {
-                            children?: React.ReactNode;
-                          }) => (
-                            <h1 className="mb-1 text-base font-semibold">
-                              {children}
-                            </h1>
-                          ),
-                          h2: ({
-                            children,
-                          }: {
-                            children?: React.ReactNode;
-                          }) => (
-                            <h2 className="mb-1 text-sm font-semibold">
-                              {children}
-                            </h2>
-                          ),
-                          h3: ({
-                            children,
-                          }: {
-                            children?: React.ReactNode;
-                          }) => (
-                            <h3 className="mb-1 text-sm font-medium">
-                              {children}
-                            </h3>
-                          ),
-                          a: ({
-                            href,
-                            children,
-                          }: {
-                            href?: string;
-                            children?: React.ReactNode;
-                          }) => (
-                            <a
-                              href={href}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="text-indigo-500 underline underline-offset-2 hover:text-indigo-700"
-                            >
-                              {children}
-                            </a>
-                          ),
-                        };
                         const isStreamingThis =
                           isLoading && msgIdx === messages.length - 1;
                         return (
@@ -5718,7 +5746,8 @@ export default function MainScreenPage() {
                               part.type === "text" ? (
                                 <ReactMarkdown
                                   key={i}
-                                  components={mdComponents}
+                                  remarkPlugins={CHAT_REMARK_PLUGINS}
+                                  components={CHAT_MARKDOWN_COMPONENTS}
                                 >
                                   {part.content}
                                 </ReactMarkdown>
@@ -5778,7 +5807,6 @@ export default function MainScreenPage() {
                   </div>
                 </div>
               ))}
-              <div ref={chatBottomRef} />
             </div>
 
             {/* Input */}

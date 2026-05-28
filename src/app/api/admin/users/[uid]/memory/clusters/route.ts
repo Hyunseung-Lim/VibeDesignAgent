@@ -25,12 +25,14 @@ const DEFAULT_MEMORY_VERSION = "0.1.1";
 
 type ClusterInputItem = {
   id: string;
-  semantic: string;
-  episode?: string;
-  input?: string;
   action?: string;
+  keyword?: string[];
+  episodic?: string;
+  semantic?: string;
+  input?: string;
+  output?: string;
+  link?: string;
   timestamp?: number;
-  keywords?: string[];
 };
 
 type MemoryCluster = {
@@ -176,14 +178,20 @@ function parseGraphCommunityDiagnostics(
 
 function embeddingText(item: ClusterInputItem) {
   return [
-    `Semantic: ${item.semantic}`,
-    item.episode ? `Episode: ${item.episode}` : "",
-    item.input ? `Input: ${item.input}` : "",
     item.action ? `Action: ${item.action}` : "",
-    item.keywords?.length ? `Keywords: ${item.keywords.join(", ")}` : "",
+    item.keyword?.length ? `Keywords: ${item.keyword.join(", ")}` : "",
+    item.episodic ? `Episodic: ${item.episodic}` : "",
+    item.semantic ? `Semantic: ${item.semantic}` : "",
+    item.input ? `Input: ${item.input}` : "",
+    item.output ? `Output: ${item.output}` : "",
+    item.link ? `Link: ${item.link}` : "",
   ]
     .filter(Boolean)
     .join("\n");
+}
+
+function itemSummary(item: ClusterInputItem) {
+  return item.semantic || item.episodic || item.input || item.output || item.action || item.id;
 }
 
 function l2Normalize(vector: number[]) {
@@ -221,7 +229,7 @@ function representativeItems(
   clusterVectors: number[][],
 ) {
   if (clusterItems.length <= 3) {
-    return clusterItems.map((item) => item.semantic);
+    return clusterItems.map(itemSummary);
   }
   const centroid = meanVector(clusterVectors, clusterVectors[0].length);
   return clusterItems
@@ -231,7 +239,7 @@ function representativeItems(
     }))
     .sort((a, b) => b.similarity - a.similarity)
     .slice(0, 3)
-    .map(({ item }) => item.semantic);
+    .map(({ item }) => itemSummary(item));
 }
 
 function clusterId(index: number) {
@@ -306,11 +314,12 @@ Use natural researcher-friendly labels. Avoid awkward noun stacks and avoid inve
               const item = itemsById.get(id);
               return {
                 id,
-                semantic: item?.semantic ?? "",
-                episode: item?.episode ?? "",
-                input: item?.input ?? "",
                 action: item?.action ?? "",
-                keywords: item?.keywords ?? [],
+                keyword: item?.keyword ?? [],
+                episodic: item?.episodic ?? "",
+                semantic: item?.semantic ?? "",
+                input: item?.input ?? "",
+                output: item?.output ?? "",
               };
             }),
           })),
@@ -597,14 +606,20 @@ export async function POST(
   const items = (body.items ?? [])
     .map((item) => ({
       id: String(item.id ?? "").trim(),
-      semantic: String(item.semantic ?? "").trim(),
-      episode: String(item.episode ?? "").trim().slice(0, 700),
-      input: String(item.input ?? "").trim().slice(0, 500),
       action: String(item.action ?? "").trim(),
+      keyword: stringArray(item.keyword).slice(0, 8),
+      episodic: String(item.episodic ?? "").trim().slice(0, 700),
+      semantic: String(item.semantic ?? "").trim() || undefined,
+      input: String(item.input ?? "").trim().slice(0, 500),
+      output: String(item.output ?? "").trim().slice(0, 500),
+      link: String(item.link ?? "").trim().slice(0, 300) || undefined,
       timestamp: Number(item.timestamp ?? 0),
-      keywords: stringArray(item.keywords).slice(0, 8),
     }))
-    .filter((item) => item.id && item.semantic)
+    .filter(
+      (item) =>
+        item.id &&
+        (item.action || item.episodic || item.semantic || item.input || item.output || item.keyword.length > 0),
+    )
     .slice(0, MAX_ITEMS);
 
   if (items.length === 0) {

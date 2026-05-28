@@ -6,6 +6,7 @@ import {
   getFirestoreDocument,
   getGoogleAccessToken,
   listFirestoreDocumentIds,
+  patchFirestoreDocument,
   verifyFirebaseIdToken,
 } from "@/lib/server/firebaseAdminRest";
 import { isAdminEmail } from "@/lib/admin";
@@ -84,12 +85,13 @@ async function loadSessions(uid: string, token: string) {
 }
 
 async function loadMemories(uid: string, token: string) {
-  const [episodicMemories, semanticMemories, memories_0_1_1] = await Promise.all([
+  const [episodicMemories, semanticMemories, memories_0_1_1, memories_0_1_2] = await Promise.all([
     loadCollection(`users/${uid}/episodicMemories`, token),
     loadCollection(`users/${uid}/semanticMemories`, token),
     loadCollection(`users/${uid}/memories_0_1_1`, token),
+    loadCollection(`users/${uid}/memories_0_1_2`, token),
   ]);
-  return { episodicMemories, semanticMemories, memories_0_1_1 };
+  return { episodicMemories, semanticMemories, memories_0_1_1, memories_0_1_2 };
 }
 
 async function loadParticipantRecords(uid: string, token: string) {
@@ -232,6 +234,17 @@ async function deleteStorage(uid: string, token: string) {
   return objects.length;
 }
 
+async function resetOnboardingRecord(uid: string, token: string) {
+  await patchFirestoreDocument(
+    `users/${uid}`,
+    {
+      onboardingCompleted: false,
+      onboardingCompletedAt: null,
+    },
+    token,
+  );
+}
+
 export async function POST(
   request: Request,
   { params }: { params: Promise<{ uid: string }> },
@@ -293,6 +306,7 @@ export async function POST(
   const sessionDeleteResult = await deleteSessions(uid, firestoreToken);
   const deletedParticipantRecords = await deleteParticipantRecords(uid, firestoreToken);
   const deletedStorageFiles = await deleteStorage(uid, storageToken);
+  await resetOnboardingRecord(uid, firestoreToken);
 
   return Response.json({
     ok: true,

@@ -497,8 +497,8 @@ export async function POST(request: Request) {
   // Always generate exactly one slide
   const results = await Promise.allSettled(
     slides.slice(0, 1).map(async (slide: SlideInput) => {
-      if (typeof mockupScreenshot === "string" && mockupScreenshot.startsWith("data:image/")) {
-        const imageUrl = composePresentationSlide(
+      if (typeof mockupScreenshot === "string" && mockupScreenshot.startsWith("data:image/png")) {
+        const svgDataUrl = composePresentationSlide(
           slide,
           title,
           mockupScreenshot,
@@ -508,15 +508,10 @@ export async function POST(request: Request) {
           Number(mockupScreenshotHeight),
           normalizedMockupSections,
         );
-        try {
-          const objectName = `presentations/${uid}/${missionId}/slide-${Date.now()}-${randomUUID()}.svg`;
-          const uploadedUrl = await uploadPresentationImage(imageUrl, objectName);
-          return { title: slide.title, content: slide.content, imageUrl: uploadedUrl ?? imageUrl };
-        } catch (err) {
-          const message = err instanceof Error ? err.message : String(err);
-          console.warn("[presentation] composed slide storage upload failed:", message);
-          return { title: slide.title, content: slide.content, imageUrl };
-        }
+        // Return SVG data URL directly. Screenshot is pre-scaled to 880px on the client,
+        // so this stays well under 1 MB and transmits reliably.
+        // The client converts SVG → PNG via canvas and uploads the PNG to Firebase.
+        return { title: slide.title, content: slide.content, imageUrl: svgDataUrl };
       }
 
       const prompt = [

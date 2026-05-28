@@ -10,6 +10,7 @@ import { isAdminEmail } from "@/lib/admin";
 export const runtime = "nodejs";
 
 const VERSIONED_MEMORY_COLLECTION = "memories_0_1_1";
+const LATEST_MEMORY_COLLECTION = "memories_0_1_2";
 
 function jsonArray(value: unknown) {
   if (Array.isArray(value)) return value.map(String).filter(Boolean);
@@ -42,31 +43,48 @@ async function load(uid: string, collection: "episodicMemories" | "semanticMemor
   ) as Promise<Array<Record<string, unknown> & { id: string; type: "episodic" | "semantic" }>>;
 }
 
-async function loadVersioned(uid: string, token: string) {
+async function loadVersionedCollection(uid: string, collection: string, token: string) {
   const ids = await listFirestoreDocumentIds(
-    `users/${uid}/${VERSIONED_MEMORY_COLLECTION}`,
+    `users/${uid}/${collection}`,
     token,
   );
   const docs = await Promise.all(
     ids.map(async (id) => {
       const doc =
         ((await getFirestoreDocument(
-          `users/${uid}/${VERSIONED_MEMORY_COLLECTION}/${id}`,
+          `users/${uid}/${collection}/${id}`,
           token,
         )) ?? {}) as Record<string, unknown>;
+      const schemaVersion = String(
+        doc.schemaVersion ?? (collection === LATEST_MEMORY_COLLECTION ? "0.1.2" : "0.1.1"),
+      );
       return {
         id,
-        version: String(doc.schemaVersion ?? "0.1.1"),
+        version: schemaVersion,
         type: String(doc.type ?? "interaction"),
         ...doc,
-        episode: doc.content,
-        semantic: jsonArray(doc.semantic).join("\n"),
-        keywords: jsonArray(doc.keywords),
+        episode: doc.episodic ?? doc.content,
+        episodic: doc.episodic ?? doc.content,
+        semantic:
+          typeof doc.semantic === "string"
+            ? doc.semantic
+            : jsonArray(doc.semantic).join("\n"),
+        keywords: jsonArray(doc.keyword).length
+          ? jsonArray(doc.keyword)
+          : jsonArray(doc.keywords),
         timestamp: Number(doc.timestamp ?? doc.occurredAt ?? doc.createdAt ?? 0),
       };
     }),
   );
   return docs.filter((doc) => doc.type === "interaction");
+}
+
+async function loadVersioned(uid: string, token: string) {
+  const [latest, previous] = await Promise.all([
+    loadVersionedCollection(uid, LATEST_MEMORY_COLLECTION, token),
+    loadVersionedCollection(uid, VERSIONED_MEMORY_COLLECTION, token),
+  ]);
+  return [...latest, ...previous];
 }
 
 function legacyCompatibilityIds(
@@ -97,9 +115,11 @@ export async function DELETE(
   const token = await getFirebaseAccessToken();
 
   let deleted = 0;
-  if (version === "0.1.1") {
-    const ids = await listFirestoreDocumentIds(`users/${uid}/${VERSIONED_MEMORY_COLLECTION}`, token);
-    await Promise.all(ids.map((id) => deleteFirestoreDocument(`users/${uid}/${VERSIONED_MEMORY_COLLECTION}/${id}`, token)));
+  if (version === "0.1.2" || version === "0.1.1") {
+    const collection =
+      version === "0.1.2" ? LATEST_MEMORY_COLLECTION : VERSIONED_MEMORY_COLLECTION;
+    const ids = await listFirestoreDocumentIds(`users/${uid}/${collection}`, token);
+    await Promise.all(ids.map((id) => deleteFirestoreDocument(`users/${uid}/${collection}/${id}`, token)));
     deleted = ids.length;
   } else {
     const [episodicIds, semanticIds] = await Promise.all([
@@ -145,7 +165,8 @@ export async function GET(
     memories,
     counts: {
       "0.1.0": legacy.length,
-      "0.1.1": versioned.length,
+      "0.1.1": versioned.filter((doc) => doc.version === "0.1.1").length,
+      "0.1.2": versioned.filter((doc) => doc.version === "0.1.2").length,
     },
   });
 }

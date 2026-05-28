@@ -11,41 +11,43 @@ import {
 export const runtime = "nodejs";
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-const MEMORY_COLLECTION = "memories_0_1_1";
+const MEMORY_COLLECTION = "memories_0_1_2";
+const LEGACY_MEMORY_COLLECTION = "memories_0_1_1";
 const RETRIEVAL_LOG_COLLECTION = "memoryRetrievalLogs";
 const EMBEDDING_MODEL = "text-embedding-3-large";
 const MAX_MEMORY_DOCS = 200;
-const MAX_CANDIDATES = 20;
 const DEFAULT_LIMIT = 5;
-
-type SemanticItem = {
-  id: string;
-  semantic: string;
-  embedding?: number[];
-  embeddingModel?: string;
-  importanceScore?: number;
-  usageScore?: number;
-  decayScore?: number;
-  retentionScore?: number;
-  lastRetrievedAt?: number | null;
-  retrievedCount?: number;
-  duplicateOf?: string | null;
-  archivedAt?: number | null;
-  archiveReason?: string | null;
-  createdAt?: number;
-  updatedAt?: number;
-};
 
 type MemoryDoc = Record<string, unknown> & {
   id: string;
-  semanticItems?: SemanticItem[];
+  embedding?: unknown;
+  semanticItems?: Array<Record<string, unknown>>;
 };
 
 type Candidate = {
+  id: string;
+  memoryId: string;
+  semanticItemId: string | null;
+  path: string;
   doc: MemoryDoc;
-  item: SemanticItem;
-  itemIndex: number;
+  itemIndex: number | null;
+  episodic: string;
+  semantic: string | null;
+  action: string;
+  keyword: string[];
+  input: string;
+  output: string;
+  link: string | null;
+  embedding: number[];
+  embeddingSource: string;
+  weight: number;
+  retrievedCount: number;
+  lastRetrievedAt: number | null;
+  timestamp: unknown;
+  source: unknown;
+  schemaVersion: string;
   similarity: number;
+  legacy: boolean;
 };
 
 function stringArray(value: unknown) {
@@ -65,6 +67,16 @@ function numberArray(value: unknown) {
     : [];
 }
 
+function numberValue(value: unknown, fallback = 0) {
+  return typeof value === "number" && Number.isFinite(value)
+    ? value
+    : fallback;
+}
+
+function timestampValue(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
 function l2Normalize(vector: number[]) {
   const norm = Math.sqrt(vector.reduce((sum, value) => sum + value * value, 0));
   if (!norm) return vector;
@@ -74,9 +86,7 @@ function l2Normalize(vector: number[]) {
 function cosineSimilarity(a: number[], b: number[]) {
   let sum = 0;
   const length = Math.min(a.length, b.length);
-  for (let index = 0; index < length; index += 1) {
-    sum += a[index] * b[index];
-  }
+  for (let index = 0; index < length; index += 1) sum += a[index] * b[index];
   return sum;
 }
 
@@ -93,90 +103,31 @@ function stableHash(value: string) {
   return createHash("sha256").update(value).digest("hex").slice(0, 16);
 }
 
+function buildEmbeddingText(candidate: Pick<Candidate, "action" | "keyword" | "episodic" | "semantic" | "input" | "output" | "link">) {
+  return [
+    candidate.action ? `Action: ${candidate.action}` : "",
+    candidate.keyword.length ? `Keywords: ${candidate.keyword.join(", ")}` : "",
+    candidate.episodic ? `Episodic: ${candidate.episodic}` : "",
+    candidate.semantic ? `Semantic: ${candidate.semantic}` : "",
+    candidate.input ? `Input: ${candidate.input}` : "",
+    candidate.output ? `Output: ${candidate.output}` : "",
+    candidate.link ? `Link: ${candidate.link}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
 function retrievalLogId(now: number, query: string) {
   return `${now}-${stableHash(query)}`;
 }
 
-function normalizeSemanticItems(doc: MemoryDoc, now: number) {
-  const existingItems = Array.isArray(doc.semanticItems)
-    ? doc.semanticItems
-    : [];
-  const semantic = stringArray(doc.semantic);
-  if (existingItems.length > 0) {
-    return existingItems
-      .map((item, index) => ({
-        ...item,
-        id: String(item.id ?? `semantic-${index}`),
-        semantic: String(item.semantic ?? semantic[index] ?? "").trim(),
-        embedding: numberArray(item.embedding),
-        importanceScore: Number(item.importanceScore ?? 0.5),
-        usageScore: Number(item.usageScore ?? 0),
-        decayScore: Number(item.decayScore ?? 0),
-        retentionScore: Number(item.retentionScore ?? 0.5),
-        lastRetrievedAt:
-          typeof item.lastRetrievedAt === "number" ? item.lastRetrievedAt : null,
-        retrievedCount: Number(item.retrievedCount ?? 0),
-        duplicateOf: item.duplicateOf ? String(item.duplicateOf) : null,
-        archivedAt: typeof item.archivedAt === "number" ? item.archivedAt : null,
-        archiveReason: item.archiveReason ? String(item.archiveReason) : null,
-        createdAt: Number(item.createdAt ?? doc.createdAt ?? now),
-        updatedAt: Number(item.updatedAt ?? doc.updatedAt ?? now),
-      }))
-      .filter((item) => item.semantic);
-  }
-
-  return semantic.map((item, index) => ({
-    id: `semantic-${index}`,
-    semantic: item,
-    embedding: [],
-    embeddingModel: EMBEDDING_MODEL,
-    importanceScore: 0.5,
-    usageScore: 0,
-    decayScore: 0,
-    retentionScore: 0.5,
-    lastRetrievedAt: null,
-    retrievedCount: 0,
-    duplicateOf: null,
-    archivedAt: null,
-    archiveReason: null,
-    createdAt: Number(doc.createdAt ?? doc.timestamp ?? now),
-    updatedAt: Number(doc.updatedAt ?? doc.createdAt ?? now),
-  }));
-}
-
-function recencyBoost(lastRetrievedAt: number | null, now: number) {
-  if (!lastRetrievedAt) return 0;
-  const days = Math.max(0, (now - lastRetrievedAt) / 86_400_000);
-  return Math.max(0, 0.18 - days * 0.01);
-}
-
-function ageDecay(createdAt: number, now: number) {
-  const days = Math.max(0, (now - createdAt) / 86_400_000);
-  return Math.min(0.4, days * 0.002);
-}
-
-function retentionScore(item: SemanticItem, now: number) {
-  return Number(
-    (
-      Number(item.importanceScore ?? 0.5) +
-      Number(item.usageScore ?? 0) +
-      recencyBoost(item.lastRetrievedAt ?? null, now) -
-      ageDecay(Number(item.createdAt ?? now), now) -
-      Number(item.decayScore ?? 0)
-    ).toFixed(4),
-  );
-}
-
-async function loadMemoryDocs(uid: string, token: string) {
-  const ids = await listFirestoreDocumentIds(
-    `users/${uid}/${MEMORY_COLLECTION}`,
-    token,
-  );
+async function loadCollectionDocs(uid: string, collection: string, token: string) {
+  const ids = await listFirestoreDocumentIds(`users/${uid}/${collection}`, token);
   const docs = await Promise.all(
     ids.slice(-MAX_MEMORY_DOCS).map(async (id) => {
       const data =
         ((await getFirestoreDocument(
-          `users/${uid}/${MEMORY_COLLECTION}/${id}`,
+          `users/${uid}/${collection}/${id}`,
           token,
         )) ?? {}) as Record<string, unknown>;
       return { id, ...data } as MemoryDoc;
@@ -185,109 +136,176 @@ async function loadMemoryDocs(uid: string, token: string) {
   return docs.filter((doc) => doc.type === "interaction");
 }
 
-async function ensureEmbeddings(uid: string, docs: MemoryDoc[], token: string) {
+function v2Candidate(uid: string, doc: MemoryDoc): Candidate | null {
+  const episodic = String(doc.episodic ?? doc.episode ?? doc.content ?? "").trim();
+  const semantic =
+    typeof doc.semantic === "string" && doc.semantic.trim()
+      ? doc.semantic.trim()
+      : null;
+  const embedding = numberArray(doc.embedding);
+  if (!episodic || timestampValue(doc.archivedAt)) return null;
+  return {
+    id: doc.id,
+    memoryId: doc.id,
+    semanticItemId: null,
+    path: `users/${uid}/${MEMORY_COLLECTION}/${encodeURIComponent(doc.id)}`,
+    doc,
+    itemIndex: null,
+    episodic,
+    semantic,
+    action: String(doc.action ?? doc.agentActionCategory ?? "agent_response"),
+    keyword: stringArray(doc.keyword).length
+      ? stringArray(doc.keyword)
+      : stringArray(doc.keywords),
+    input: String(doc.input ?? ""),
+    output: String(doc.output ?? ""),
+    link: doc.link ? String(doc.link) : null,
+    embedding,
+    embeddingSource: String(doc.embeddingSource ?? (semantic ? "semantic" : "episodic")),
+    weight: numberValue(doc.weight, 0.5),
+    retrievedCount: numberValue(doc.retrievedCount),
+    lastRetrievedAt: timestampValue(doc.lastRetrievedAt),
+    timestamp: doc.timestamp ?? doc.occurredAt ?? doc.createdAt,
+    source: doc.source ?? null,
+    schemaVersion: String(doc.schemaVersion ?? "0.1.2"),
+    similarity: -Infinity,
+    legacy: false,
+  };
+}
+
+function legacyCandidates(uid: string, doc: MemoryDoc): Candidate[] {
+  const semanticItems = Array.isArray(doc.semanticItems) ? doc.semanticItems : [];
+  const semantic = stringArray(doc.semantic);
+  return semanticItems
+    .map((item, index): Candidate | null => {
+      const semanticText = String(item.semantic ?? semantic[index] ?? "").trim();
+      const archivedAt = timestampValue(item.archivedAt);
+      if (!semanticText || archivedAt) return null;
+      const semanticItemId = String(item.id ?? `semantic-${index}`);
+      return {
+        id: `${doc.id}:${semanticItemId}`,
+        memoryId: doc.id,
+        semanticItemId,
+        path: `users/${uid}/${LEGACY_MEMORY_COLLECTION}/${encodeURIComponent(doc.id)}`,
+        doc,
+        itemIndex: index,
+        episodic: String(doc.content ?? doc.episode ?? "").trim(),
+        semantic: semanticText,
+        action: String(doc.agentActionCategory ?? "agent_response"),
+        keyword: stringArray(doc.keywords),
+        input: String(doc.input ?? ""),
+        output: String(doc.output ?? ""),
+        link: null,
+        embedding: numberArray(item.embedding),
+        embeddingSource: "semantic",
+        weight: numberValue(item.retentionScore, 0.5),
+        retrievedCount: numberValue(item.retrievedCount),
+        lastRetrievedAt: timestampValue(item.lastRetrievedAt),
+        timestamp: doc.timestamp ?? doc.occurredAt ?? doc.createdAt,
+        source: doc.source ?? null,
+        schemaVersion: String(doc.schemaVersion ?? "0.1.1"),
+        similarity: -Infinity,
+        legacy: true,
+      };
+    })
+    .filter((item): item is Candidate => Boolean(item));
+}
+
+async function ensureV2Embeddings(candidates: Candidate[], token: string) {
+  // Regenerate: missing embedding OR built with old single-field method (not "combined")
+  const stale = candidates.filter(
+    (candidate) =>
+      !candidate.legacy &&
+      (candidate.embedding.length === 0 || candidate.embeddingSource !== "combined"),
+  );
+  if (stale.length === 0) return;
   const now = Date.now();
-  const missing: Array<{ doc: MemoryDoc; item: SemanticItem; index: number }> =
-    [];
-
-  docs.forEach((doc) => {
-    const items = normalizeSemanticItems(doc, now);
-    doc.semanticItems = items;
-    items.forEach((item, index) => {
-      if (!item.embedding || item.embedding.length === 0) {
-        missing.push({ doc, item, index });
-      }
-    });
-  });
-
-  if (missing.length === 0) return docs;
-  const embeddings = await embedTexts(missing.map(({ item }) => item.semantic));
-  const changedDocs = new Map<string, MemoryDoc>();
-  missing.forEach(({ doc, index }, missingIndex) => {
-    if (!doc.semanticItems) return;
-    doc.semanticItems[index] = {
-      ...doc.semanticItems[index],
-      embedding: embeddings[missingIndex] ?? [],
-      embeddingModel: EMBEDDING_MODEL,
-      updatedAt: now,
-    };
-    changedDocs.set(doc.id, doc);
-  });
-
+  const embeddings = await embedTexts(
+    stale.map((candidate) => buildEmbeddingText(candidate)),
+  );
   await Promise.all(
-    Array.from(changedDocs.values()).map((doc) =>
-      patchFirestoreDocument(
-        `users/${uid}/${MEMORY_COLLECTION}/${encodeURIComponent(doc.id)}`,
+    stale.map((candidate, index) => {
+      candidate.embedding = embeddings[index] ?? [];
+      candidate.embeddingSource = "combined";
+      candidate.doc.embedding = candidate.embedding;
+      candidate.doc.embeddingSource = "combined";
+      candidate.doc.embeddingModel = EMBEDDING_MODEL;
+      candidate.doc.updatedAt = now;
+      return patchFirestoreDocument(
+        candidate.path,
         {
-          semanticItems: doc.semanticItems ?? [],
+          embedding: candidate.embedding,
+          embeddingSource: "combined",
+          embeddingModel: EMBEDDING_MODEL,
           updatedAt: now,
         },
         token,
-      ),
-    ),
+      );
+    }),
   );
-
-  return docs;
 }
 
-function updateCandidateScores(
-  uid: string,
-  candidates: Candidate[],
-  retrieved: Candidate[],
-  now: number,
-) {
-  const retrievedIds = new Set(
-    retrieved.map((candidate) => `${candidate.doc.id}:${candidate.item.id}`),
+async function loadCandidates(uid: string, token: string) {
+  const v2Docs = await loadCollectionDocs(uid, MEMORY_COLLECTION, token);
+  const v2 = v2Docs
+    .map((doc) => v2Candidate(uid, doc))
+    .filter((item): item is Candidate => Boolean(item));
+  if (v2.length > 0) {
+    await ensureV2Embeddings(v2, token);
+    return v2;
+  }
+  const legacyDocs = await loadCollectionDocs(uid, LEGACY_MEMORY_COLLECTION, token);
+  return legacyDocs.flatMap((doc) => legacyCandidates(uid, doc));
+}
+
+function nextWeight(candidate: Candidate, wasRetrieved: boolean) {
+  if (!wasRetrieved) return candidate.weight;
+  const gain = 0.04 / Math.sqrt(candidate.retrievedCount + 1);
+  return Number(Math.min(1, candidate.weight + gain).toFixed(4));
+}
+
+async function updateRetrievedWeights(retrieved: Candidate[], token: string, now: number) {
+  const deltas = await Promise.all(
+    retrieved.map(async (candidate) => {
+      const previousWeight = candidate.weight;
+      const weight = nextWeight(candidate, true);
+      const retrievedCount = candidate.retrievedCount + 1;
+      if (candidate.legacy && candidate.itemIndex != null) {
+        const semanticItems = Array.isArray(candidate.doc.semanticItems)
+          ? [...candidate.doc.semanticItems]
+          : [];
+        semanticItems[candidate.itemIndex] = {
+          ...(semanticItems[candidate.itemIndex] ?? {}),
+          retentionScore: weight,
+          retrievedCount,
+          lastRetrievedAt: now,
+          updatedAt: now,
+        };
+        await patchFirestoreDocument(
+          candidate.path,
+          { semanticItems, updatedAt: now },
+          token,
+        );
+      } else {
+        await patchFirestoreDocument(
+          candidate.path,
+          { weight, retrievedCount, lastRetrievedAt: now, updatedAt: now },
+          token,
+        );
+      }
+      candidate.weight = weight;
+      candidate.retrievedCount = retrievedCount;
+      candidate.lastRetrievedAt = now;
+      return {
+        memoryId: candidate.memoryId,
+        semanticItemId: candidate.semanticItemId,
+        previousWeight,
+        weight,
+        weightDelta: Number((weight - previousWeight).toFixed(4)),
+      };
+    }),
   );
-  const touchedDocs = new Map<string, MemoryDoc>();
-  const scoreDeltas: Array<{
-    memoryId: string;
-    semanticItemId: string;
-    usageDelta: number;
-    decayDelta: number;
-    retentionScore: number;
-  }> = [];
-
-  candidates.slice(0, MAX_CANDIDATES).forEach((candidate) => {
-    const key = `${candidate.doc.id}:${candidate.item.id}`;
-    const current = candidate.doc.semanticItems?.[candidate.itemIndex];
-    if (!current) return;
-    const wasRetrieved = retrievedIds.has(key);
-    const retrievedCount = Number(current.retrievedCount ?? 0);
-    const usageDelta = wasRetrieved
-      ? Number((0.03 / Math.sqrt(retrievedCount + 1)).toFixed(4))
-      : 0;
-    const decayDelta = wasRetrieved ? 0 : 0.005;
-    const nextItem: SemanticItem = {
-      ...current,
-      usageScore: Number((Number(current.usageScore ?? 0) + usageDelta).toFixed(4)),
-      decayScore: Number((Number(current.decayScore ?? 0) + decayDelta).toFixed(4)),
-      retrievedCount: wasRetrieved ? retrievedCount + 1 : retrievedCount,
-      lastRetrievedAt: wasRetrieved ? now : (current.lastRetrievedAt ?? null),
-      updatedAt: now,
-    };
-    nextItem.retentionScore = retentionScore(nextItem, now);
-    candidate.doc.semanticItems![candidate.itemIndex] = nextItem;
-    touchedDocs.set(candidate.doc.id, candidate.doc);
-    scoreDeltas.push({
-      memoryId: candidate.doc.id,
-      semanticItemId: candidate.item.id,
-      usageDelta,
-      decayDelta,
-      retentionScore: nextItem.retentionScore,
-    });
-  });
-
-  return {
-    patches: Array.from(touchedDocs.values()).map((doc) => ({
-      path: `users/${uid}/${MEMORY_COLLECTION}/${encodeURIComponent(doc.id)}`,
-      data: {
-        semanticItems: doc.semanticItems ?? [],
-        updatedAt: now,
-      },
-    })),
-    scoreDeltas,
-  };
+  return deltas;
 }
 
 export async function POST(request: Request) {
@@ -310,49 +328,35 @@ export async function POST(request: Request) {
     return Response.json({ error: "query required" }, { status: 400 });
   }
 
-  const token = await getFirebaseAccessToken();
-  const now = Date.now();
-  const [queryEmbedding] = await embedTexts([query]);
-  const docs = await ensureEmbeddings(
-    user.localId,
-    await loadMemoryDocs(user.localId, token),
-    token,
-  );
-
-  const candidates = docs
-    .flatMap((doc) =>
-      (doc.semanticItems ?? []).map((item, itemIndex) => ({
-        doc,
-        item,
-        itemIndex,
+  let retrieved: Candidate[] = [];
+  try {
+    const token = await getFirebaseAccessToken();
+    const now = Date.now();
+    const [queryEmbedding] = await embedTexts([query]);
+    const candidates = (await loadCandidates(user.localId, token))
+      .map((candidate) => ({
+        ...candidate,
         similarity:
-          item.archivedAt || !item.embedding || item.embedding.length === 0
+          candidate.embedding.length === 0
             ? -Infinity
-            : cosineSimilarity(queryEmbedding, item.embedding),
-      })),
-    )
-    .filter((candidate) => Number.isFinite(candidate.similarity))
-    .sort((a, b) => b.similarity - a.similarity);
+            : cosineSimilarity(queryEmbedding, candidate.embedding),
+      }))
+      .filter((candidate) => Number.isFinite(candidate.similarity))
+      .sort((a, b) => b.similarity - a.similarity);
 
-  const retrieved = candidates.slice(0, limit);
-  const { patches, scoreDeltas } = updateCandidateScores(
-    user.localId,
-    candidates,
-    retrieved,
-    now,
-  );
+    retrieved = candidates.slice(0, limit);
+    const scoreDeltas = await updateRetrievedWeights(retrieved, token, now);
 
-  await Promise.all([
-    ...patches.map((patch) => patchFirestoreDocument(patch.path, patch.data, token)),
-    patchFirestoreDocument(
+    await patchFirestoreDocument(
       `users/${user.localId}/${RETRIEVAL_LOG_COLLECTION}/${retrievalLogId(now, query)}`,
       {
         query: query.slice(0, 1000),
         queryEmbeddingModel: EMBEDDING_MODEL,
         missionId: missionId || null,
-        retrievedMemoryIds: retrieved.map(
-          (candidate) => `${candidate.doc.id}:${candidate.item.id}`,
-        ),
+        memoryVersion: retrieved.some((candidate) => candidate.legacy)
+          ? "0.1.1"
+          : "0.1.2",
+        retrievedMemoryIds: retrieved.map((candidate) => candidate.id),
         similarities: retrieved.map((candidate) =>
           Number(candidate.similarity.toFixed(4)),
         ),
@@ -360,28 +364,35 @@ export async function POST(request: Request) {
         createdAt: now,
       },
       token,
-    ),
-  ]);
+    );
+  } catch (error) {
+    console.warn("[memory/retrieve] unavailable, continuing without memory", error);
+    return Response.json({ query, retrieved: [], unavailable: true });
+  }
 
   return Response.json({
     query,
-    retrieved: retrieved.map((candidate) => {
-      const current = candidate.doc.semanticItems?.[candidate.itemIndex] ?? candidate.item;
-      return {
-        id: `${candidate.doc.id}-${candidate.item.id}`,
-        memoryId: candidate.doc.id,
-        semanticItemId: candidate.item.id,
-        type: "semantic",
-        semantic: candidate.item.semantic,
-        episode: String(candidate.doc.content ?? "").trim(),
-        source: candidate.doc.source,
-        timestamp:
-          candidate.doc.timestamp ?? candidate.doc.occurredAt ?? candidate.doc.createdAt,
-        schemaVersion: candidate.doc.schemaVersion,
-        similarity: Number(candidate.similarity.toFixed(4)),
-        retentionScore: current.retentionScore ?? retentionScore(current, now),
-        retrievedCount: current.retrievedCount ?? 0,
-      };
-    }),
+    retrieved: retrieved.map((candidate) => ({
+      id: candidate.id,
+      memoryId: candidate.memoryId,
+      semanticItemId: candidate.semanticItemId,
+      type: "memory",
+      action: candidate.action,
+      keyword: candidate.keyword,
+      episodic: candidate.episodic,
+      episode: candidate.episodic,
+      semantic: candidate.semantic,
+      input: candidate.input,
+      output: candidate.output,
+      link: candidate.link,
+      embeddingSource: candidate.embeddingSource,
+      source: candidate.source,
+      timestamp: candidate.timestamp,
+      schemaVersion: candidate.schemaVersion,
+      similarity: Number(candidate.similarity.toFixed(4)),
+      weight: candidate.weight,
+      retentionScore: candidate.weight,
+      retrievedCount: candidate.retrievedCount,
+    })),
   });
 }

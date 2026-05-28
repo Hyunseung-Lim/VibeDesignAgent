@@ -118,12 +118,13 @@
 ### 4.7 메모리 (Memory)
 - **생성 단위**: 세션 중 interaction turn마다 `/api/memory/drafts`에서 memory draft 생성
 - **확정 시점**: 사용자가 `세션 종료` 버튼을 누르면 `/api/memory/complete-session`에서 draft를 통합해 장기 메모리로 저장
-- **버전 관리**: admin memory modal에서 v0.1.0 / v0.1.1을 분리 조회
-- **현재 활용**: 세션 시작 시 `/api/memory/bootstrap`으로 memory를 로드하고, 각 채팅 turn 직전에 `/api/memory/retrieve`로 현재 query와 가까운 semantic memory top 5를 검색해 채팅 context에 주입
+- **버전 관리**: admin memory modal에서 v0.1.0 / v0.1.1 / v0.1.2를 분리 조회
+- **현재 활용**: 각 채팅 turn 직전에 `/api/memory/retrieve`로 현재 query와 가까운 memory top 5를 검색해 채팅 context에 주입
+- **Legacy**: `GET /api/memory/bootstrap`은 세션 시작 시 memory를 preload하던 구 방식이며, 현재 main client에서는 호출하지 않음
 - **Retrieval 쿼리 구성**: `[user text] + Mission: [parentMissionTitle] + Active idea: [description]` — 선택된 옵션 이름(페르소나 등)은 제외해 임베딩 노이즈 방지
 - **Admin 관측**: researcher가 user별 memory rows, semantic item, cluster 결과, retrieval log/score delta, forgetting/archive 후보를 확인 가능
-- **Retrieval MVP**: semantic memory item에 embedding과 score metadata를 저장하고, retrieve된 item은 usage score를 천천히 올리며 candidate pool의 미선택 item에는 작은 decay를 적용
-- **Forgetting MVP**: 자동 삭제 없이 low retention/stale/duplicate 후보를 표시하고, researcher가 선택한 semantic item만 `archivedAt` 기반으로 soft archive
+- **Retrieval MVP**: v0.1.2 memory document에 embedding과 `weight` metadata를 저장하고, retrieve된 memory의 weight를 천천히 올림
+- **Forgetting MVP**: low-weight/duplicate 후보를 `archivedAt` 기반으로 soft archive
 
 #### 메모리 클러스터링
 - 경로: `POST /api/admin/users/[uid]/memory/clusters`
@@ -211,8 +212,8 @@ type PresentationSlide = {
 | `POST /api/presentation` | gpt-image-2/gpt-image-1로 프레젠테이션 이미지 생성 |
 | `POST /api/memory/drafts` | interaction turn 단위 memory draft 생성 |
 | `POST /api/memory/complete-session` | 세션 종료 시 draft를 장기 메모리로 확정 |
-| `GET /api/memory/bootstrap` | 세션 시작 시 user memory 로드 |
-| `POST /api/memory/retrieve` | query embedding 기반 semantic memory top 5 검색 및 retrieval score 업데이트 |
+| `GET /api/memory/bootstrap` | Legacy: 세션 시작 시 user memory preload. 현재 main client에서는 미사용 |
+| `POST /api/memory/retrieve` | query embedding 기반 memory top 5 검색 및 weight 업데이트 |
 | `POST /api/admin/missions` | 미션 생성 (관리자 전용) |
 | `GET /api/admin/users/[uid]/memory` | admin memory table 조회 |
 | `GET/POST /api/admin/users/[uid]/memory/clusters` | admin memory cluster 캐시 조회/생성 |
@@ -300,34 +301,47 @@ FIREBASE_MEASUREMENT_ID
 ### 9.8 Memory forgetting/archive MVP
 - `GET /api/admin/users/[uid]/memory/forgetting`에서 archive candidate를 산출하고 자동 soft archive
 - 후보 기준:
-  - `retentionScore < 0.28`
-  - semantic embedding cosine similarity가 `0.92` 이상인 duplicate pair
-- duplicate 후보는 retentionScore와 retrievedCount가 낮은 쪽을 archive target으로 제안
+  - v0.1.2 memory `weight < 0.28`
+  - memory embedding cosine similarity가 `0.92` 이상인 duplicate pair
+- duplicate 후보는 weight와 retrievedCount가 낮은 쪽을 archive target으로 제안
 - Admin memory modal의 Forgetting 탭에서 이번 호출에 자동 archive된 item을 확인 가능
-- Admin memory modal의 Archived 탭에서 archivedAt, archiveReason, score metadata 확인 가능
-- archive된 semantic item은 retrieval 대상에서 제외됨
+- Admin memory modal의 Archived 탭에서 archivedAt, archiveReason, weight metadata 확인 가능
+- archive된 memory는 retrieval 대상에서 제외됨
+
+### 9.9 Memory schema v0.1.2
+- 새 collection: `users/{uid}/memories_0_1_2`
+- interaction turn 1개당 episodic memory는 반드시 1개 생성
+- semantic memory는 durable insight가 있을 때만 0~1개 생성
+- Episodic/Semantic 생성 input field를 aMem 방식에 맞춰 `action`, `keyword`, `episodic`, `semantic`, `input`, `output`, `link`로 통일
+- `importanceScore`, `usageScore`, `decayScore`, `retentionScore` 세부 필드를 hMem 방식의 단일 `weight`로 통합
+- retrieval은 v0.1.2를 우선 사용하고, 새 데이터가 없으면 v0.1.1 semanticItems를 fallback adapter로 읽음
+- semantic이 있으면 semantic text를 embedding하고, 없으면 episodic text를 embedding fallback으로 사용
 
 ---
 
 ## 10. 메모리 Retrieval / Forgetting 개발 계획
 
-> **상태**: 1~7단계 모두 구현 완료. 실제 구현 내용은 9.3, 9.4(현 9.8) 참조. 아래는 설계 기록으로 보존.
+> **상태**: v0.1.2 기준으로 재정리됨. v0.1.1의 semanticItems/retentionScore 설계는 fallback adapter로만 유지.
 
 ### 10.1 목표
-- 세션 시작 또는 interaction 중 필요한 memory를 vector similarity 기반으로 retrieve
+- interaction 중 필요한 memory를 vector similarity 기반으로 retrieve
 - retrieve 결과를 관측 가능하게 기록해 연구자가 어떤 memory가 사용됐는지 확인
-- 사용된 memory는 천천히 강화하고, low-retention 또는 중복 memory는 archive 후보로 낮춤
+- 사용된 memory는 `weight`를 천천히 강화하고, low-weight 또는 중복 memory는 archive 후보로 낮춤
 - 초기에는 hard delete 대신 `archivedAt` 기반 soft archive로 운영
 
 ### 10.2 개발 순서
 
-#### 1단계: Memory metadata 확장
-- semantic memory item마다 관리용 metadata 추가
+#### 1단계: Memory schema v0.1.2
+- interaction memory document마다 아래 필드 저장
 ```typescript
-importanceScore: number
-usageScore: number
-decayScore: number
-retentionScore: number
+action: string
+keyword: string[]
+episodic: string
+semantic: string | null
+input: string
+output: string
+link: string | null
+weight: number
 lastRetrievedAt: number | null
 retrievedCount: number
 createdAt: number
@@ -337,11 +351,11 @@ duplicateOf?: string | null
 archivedAt?: number | null
 archiveReason?: string | null
 ```
-- 기존 memory row와 호환되도록 optional field로 시작
-- 점수는 바로 의사결정에 쓰기보다 admin에서 먼저 관측
+- `episodic`은 항상 생성하고 `semantic`은 clearly supported durable insight가 있을 때만 0~1개 생성
 
 #### 2단계: Memory embedding 저장
-- `/api/memory/complete-session`에서 semantic memory 확정 시 embedding 생성
+- `/api/memory/complete-session`에서 v0.1.2 memory 확정 시 embedding 생성
+- semantic이 있으면 semantic, 없으면 episodic을 embedding source로 사용
 - 모델은 클러스터링과 동일하게 `text-embedding-3-large`로 시작
 - 저장 비용/문서 크기 문제가 커지면 embedding subcollection 분리 검토
 
@@ -374,41 +388,32 @@ createdAt
 #### 5단계: 가점/감점 시스템
 - retrieve된 memory:
 ```typescript
-usageGain = 0.03 / Math.sqrt(retrievedCount + 1)
-usageScore += usageGain
+weightGain = 0.04 / Math.sqrt(retrievedCount + 1)
+weight = min(1, weight + weightGain)
 retrievedCount += 1
 lastRetrievedAt = now
 ```
-- retrieve 후보였지만 선택되지 않은 memory는 아주 작은 decay만 적용
-- score가 너무 빠르게 커지지 않도록 sublinear growth 사용
-- 최종 점수 예시:
-```typescript
-retentionScore =
-  importanceScore +
-  usageScore +
-  recencyBoost -
-  ageDecay -
-  redundancyPenalty
-```
+- retrieve 후보였지만 선택되지 않은 memory에는 별도 decay를 누적하지 않음
+- weight가 너무 빠르게 커지지 않도록 sublinear growth 사용
 
 #### 6단계: 망각 후보 산출
 - 구현됨: hard delete 없이 archive candidate를 자동 soft archive
 - 후보 기준:
-  - retentionScore가 threshold 아래
-  - 유사 semantic memory가 더 높은 retentionScore로 존재
+  - weight가 threshold 아래
+  - 유사 memory가 더 높은 weight로 존재
 - soft archive:
 ```typescript
 archivedAt = now
-archiveReason = "low-retention" | "duplicate" | "manual"
+archiveReason = "low-weight" | "duplicate" | "manual"
 ```
 
 #### 7단계: 중복 semantic 정리
 - 구현됨: cosine similarity가 높은 memory pair를 duplicate candidate로 표시
 - 초기 threshold 후보: `similarity > 0.92`
 - 남길 memory 기준:
-  - retentionScore가 높은 것
+  - weight가 높은 것
   - 최근 retrieve된 것
-  - 더 구체적이고 긴 semantic
+  - 더 구체적이고 긴 episodic/semantic
   - 여러 session에서 반복된 패턴
 - 자동 archive는 researcher 검토 후 feature flag로 켜기
 

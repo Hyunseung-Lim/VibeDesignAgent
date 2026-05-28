@@ -61,15 +61,19 @@ type AdminMemoryRow = {
   type: "episodic" | "semantic" | "interaction" | string;
   input?: string;
   output?: string;
+  link?: string | null;
   timestamp?: number;
   category?: string[];
   subcategory?: string[];
+  keyword?: string[];
   keywords?: string[];
   episode?: string;
   semantic?: string;
+  weight?: number;
   semanticItems?: Array<{
     semantic?: string;
     retentionScore?: number;
+    weight?: number;
     archivedAt?: number | null;
   }>;
   agentActionCategory?: string;
@@ -77,7 +81,7 @@ type AdminMemoryRow = {
 };
 
 type MemoryCounts = Record<string, number>;
-type MemoryVersionTab = "0.1.0" | "0.1.1";
+type MemoryVersionTab = "0.1.0" | "0.1.1" | "0.1.2";
 type MemorySortKey =
   | "timestamp"
   | "action"
@@ -130,14 +134,16 @@ type MemoryGraphClusterDiagnostics = {
 type MemoryRetrievalItem = {
   id: string;
   memoryId: string;
-  semanticItemId: string;
+  semanticItemId: string | null;
   semantic: string;
+  episodic?: string;
   episode?: string;
   similarity: number | null;
+  weight?: number | null;
   retentionScore: number | null;
   retrievedCount: number;
-  usageScore: number;
-  decayScore: number;
+  usageScore?: number;
+  decayScore?: number;
   archivedAt?: number | null;
   source?: { missionId?: string; draftId?: string } | null;
   timestamp?: number | null;
@@ -145,9 +151,11 @@ type MemoryRetrievalItem = {
 
 type MemoryRetrievalScoreDelta = {
   memoryId?: string;
-  semanticItemId?: string;
+  semanticItemId?: string | null;
   usageDelta?: number;
   decayDelta?: number;
+  weight?: number;
+  weightDelta?: number;
   retentionScore?: number;
 };
 
@@ -163,15 +171,17 @@ type MemoryRetrievalLog = {
 
 type MemoryForgettingCandidate = {
   id: string;
-  reason: "low-retention" | "stale" | "duplicate";
+  reason: "low-retention" | "low-weight" | "stale" | "duplicate";
   reasonLabel: string;
   memoryId: string;
-  semanticItemId: string;
-  semantic: string;
+  semanticItemId: string | null;
+  semantic: string | null;
+  episodic?: string;
+  weight?: number | null;
   retentionScore: number | null;
   importanceScore: number;
-  usageScore: number;
-  decayScore: number;
+  usageScore?: number;
+  decayScore?: number;
   retrievedCount: number;
   lastRetrievedAt: number | null;
   createdAt: number | null;
@@ -182,8 +192,9 @@ type MemoryForgettingCandidate = {
   keywords?: string[];
   duplicate?: {
     memoryId: string;
-    semanticItemId: string;
-    semantic: string;
+    semanticItemId: string | null;
+    semantic: string | null;
+    episodic?: string;
     similarity: number;
   };
 };
@@ -236,11 +247,14 @@ function semanticItems(row: AdminMemoryRow) {
 }
 
 function semanticRetentionScores(row: AdminMemoryRow) {
+  if (typeof row.weight === "number" && Number.isFinite(row.weight)) {
+    return [row.weight];
+  }
   return Array.isArray(row.semanticItems)
     ? row.semanticItems.map((item) =>
-        typeof item.retentionScore === "number" &&
-        Number.isFinite(item.retentionScore)
-          ? item.retentionScore
+        typeof (item.weight ?? item.retentionScore) === "number" &&
+        Number.isFinite(item.weight ?? item.retentionScore)
+          ? (item.weight ?? item.retentionScore)
           : null,
       )
     : [];
@@ -358,7 +372,7 @@ export default function AdminPage() {
     counts: MemoryCounts;
   } | null>(null);
   const [memoryVersionTab, setMemoryVersionTab] =
-    useState<MemoryVersionTab>("0.1.1");
+    useState<MemoryVersionTab>("0.1.2");
   const [memorySortKey, setMemorySortKey] =
     useState<MemorySortKey>("timestamp");
   const [memorySortDirection, setMemorySortDirection] =
@@ -723,7 +737,13 @@ export default function AdminPage() {
       if (!res.ok) throw new Error("메모리 조회 실패");
       const data = await res.json();
       const counts = data.counts ?? {};
-      setMemoryVersionTab((counts["0.1.1"] ?? 0) > 0 ? "0.1.1" : "0.1.0");
+      setMemoryVersionTab(
+        (counts["0.1.2"] ?? 0) > 0
+          ? "0.1.2"
+          : (counts["0.1.1"] ?? 0) > 0
+            ? "0.1.1"
+            : "0.1.0",
+      );
       resetMemoryFilters();
       setMemoryViewTab("table");
       setMemoryClusterViewTab("graph");
@@ -1022,19 +1042,29 @@ export default function AdminPage() {
   ]);
   const clusterableMemoryItems = useMemo(
     () =>
-      visibleMemoryRows.flatMap((row) =>
-        semanticItems(row).map((semantic, index) => ({
-          id: `${row.id}-semantic-${index}`,
+      visibleMemoryRows
+        .filter(
+          (row) =>
+            row.episode ||
+            row.semantic ||
+            row.input ||
+            row.output ||
+            (row.keyword ?? row.keywords ?? []).length > 0,
+        )
+        .map((row) => ({
+          id: row.id,
           memoryId: row.id,
-          semantic,
-          episode: row.episode ?? "",
+          semantic: row.semantic ?? "",
+          episodic: row.episode ?? "",
           input: row.input ?? "",
+          output: row.output ?? "",
+          link: row.link ?? "",
           action: row.agentActionCategory ?? "",
           timestamp: row.timestamp ?? 0,
-          keywords: row.keywords ?? [],
+          keyword: row.keyword ?? row.keywords ?? [],
+          keywords: row.keyword ?? row.keywords ?? [],
           row,
         })),
-      ),
     [visibleMemoryRows],
   );
   const clusterableItemById = useMemo(
@@ -1074,12 +1104,14 @@ export default function AdminPage() {
       .map((item) =>
         [
           item.id,
-          item.semantic,
-          item.episode,
-          item.input,
           item.action,
+          item.keyword.join(","),
+          item.episodic,
+          item.semantic,
+          item.input,
+          item.output,
+          item.link,
           item.timestamp,
-          item.keywords.join(","),
         ].join(":"),
       )
       .join("|");
@@ -1272,12 +1304,14 @@ export default function AdminPage() {
             memoryVersion: memoryVersionTab,
             items: clusterableMemoryItems.map((item) => ({
               id: item.id,
-              semantic: item.semantic,
-              episode: item.episode,
-              input: item.input,
               action: item.action,
+              keyword: item.keyword,
+              episodic: item.episodic,
+              semantic: item.semantic || undefined,
+              input: item.input,
+              output: item.output,
+              link: item.link,
               timestamp: item.timestamp,
-              keywords: item.keywords,
             })),
           }),
         },
@@ -1312,7 +1346,7 @@ export default function AdminPage() {
         id: item.id,
         memoryId: item.memoryId,
         semantic: item.semantic,
-        episode: item.episode,
+        episode: item.episodic,
         input: item.input,
         action: item.action,
         timestamp: item.timestamp,
@@ -1365,8 +1399,9 @@ export default function AdminPage() {
                 </p>
                 <p className="text-xs text-slate-400">{memoryModal.userName}</p>
                 <p className="mt-1 text-xs text-slate-400">
-                  v0.1.0 {memoryModal.counts["0.1.0"] ?? 0}개 · v0.1.1{" "}
-                  {memoryModal.counts["0.1.1"] ?? 0}개
+                  v0.1.2 {memoryModal.counts["0.1.2"] ?? 0}개 · v0.1.1{" "}
+                  {memoryModal.counts["0.1.1"] ?? 0}개 · v0.1.0{" "}
+                  {memoryModal.counts["0.1.0"] ?? 0}개
                 </p>
               </div>
               <button
@@ -1421,7 +1456,7 @@ export default function AdminPage() {
                 {(memoryViewTab === "table" ||
                   memoryViewTab === "clusters") && (
                   <div className="inline-flex rounded-lg border border-slate-200 bg-slate-50 p-1">
-                    {(["0.1.1", "0.1.0"] as const).map((version) => (
+                    {(["0.1.2", "0.1.1", "0.1.0"] as const).map((version) => (
                       <button
                         key={version}
                         type="button"
@@ -1513,9 +1548,9 @@ export default function AdminPage() {
                         <option value="timestamp">Timestamp</option>
                         <option value="action">Action</option>
                         <option value="semantic">Semantic count</option>
-                        <option value="retentionMax">Retention max</option>
-                        <option value="retentionMin">Retention min</option>
-                        <option value="retentionAvg">Retention avg</option>
+                        <option value="retentionMax">Weight max</option>
+                        <option value="retentionMin">Weight min</option>
+                        <option value="retentionAvg">Weight avg</option>
                       </select>
                     </label>
                     <button
@@ -1577,7 +1612,7 @@ export default function AdminPage() {
                             "Input",
                             "Episode",
                             "Semantic",
-                            "Retention",
+                            "Weight",
                             "Keywords",
                           ].map((label) => (
                             <th
@@ -2544,9 +2579,9 @@ export default function AdminPage() {
                                       {item.row.source?.missionId ?? "—"}
                                     </span>
                                   </div>
-                                  {item.episode && (
+                                  {item.episodic && (
                                     <p className="mt-3 wrap-anywhere text-slate-500">
-                                      {item.episode}
+                                      {item.episodic}
                                     </p>
                                   )}
                                   {item.input && (

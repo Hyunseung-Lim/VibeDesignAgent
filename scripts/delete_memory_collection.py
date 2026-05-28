@@ -3,7 +3,7 @@ Delete a versioned memory subcollection for all users.
 
 Usage:
     python3 scripts/delete_memory_collection.py
-    python3 scripts/delete_memory_collection.py --collection memories_0_1_1 --write
+    python3 scripts/delete_memory_collection.py --collection memories_0_1_2 --write
 
 Default mode is a dry run. Use --write to actually delete documents.
 """
@@ -15,7 +15,7 @@ from firebase_admin import auth, credentials, firestore
 
 
 KEY_FILE = "vibedesignagent-key.json"
-DEFAULT_COLLECTION = "memories_0_1_1"
+DEFAULT_COLLECTION = "memories_0_1_2"
 
 
 def init_firestore():

@@ -10,13 +10,13 @@ import {
 export const runtime = "nodejs";
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-const MEMORY_SCHEMA_VERSION = "0.1.1";
+const MEMORY_SCHEMA_VERSION = "0.1.2";
 const FIRST_SESSION_TURN = "This is the first turn of this session.";
 
 type EncodedMemory = {
   keywords: string[];
   episode: string;
-  semantic: string[];
+  semantic: string | null;
 };
 
 const MEMORY_PROMPT = `# Task
@@ -92,14 +92,13 @@ Return exactly this JSON shape:
   // including the user request, relevant prior context, agent action/output,
   // and immediate outcome, feedback, or decision.
 
-  "semantic": [
-    // One-sentence English inferences about the user's intent, preferences, traits, tendencies, working style, or communication style.
-    // Keep each semantic item atomic; split it into separate items if it contains multiple separable ideas.
-    // Pay attention to the user's stance, tone, emphasized points, and explicitly mentioned details, and infer the underlying reasons behind them.
-    // Do NOT include simple factual statements about what the user said or did.
-    // Do NOT force or fabricate inferences.
-    // Return [] when there is no clearly supported inference.
-  ]
+  "semantic": null
+  // Optional one-sentence English durable insight about the user's intent, preferences, traits, tendencies, working style, or communication style.
+  // Return a single information-rich insight when the current interaction clearly supports one.
+  // Extract as much useful long-term insight as one semantic memory can reasonably hold, while keeping it grounded and readable.
+  // Do NOT include simple factual statements about what the user said or did.
+  // Do NOT force or fabricate inferences.
+  // Return null when there is no clearly supported durable inference.
 }`;
 
 function stringArray(value: unknown, fallback: string[] = []) {
@@ -121,6 +120,12 @@ function jsonArray(value: unknown) {
 function parseMemory(raw: string): EncodedMemory {
   try {
     const parsed = JSON.parse(raw) as Partial<EncodedMemory>;
+    const semantic =
+      typeof parsed.semantic === "string"
+        ? parsed.semantic.trim()
+        : Array.isArray(parsed.semantic)
+          ? stringArray(parsed.semantic)[0]
+          : null;
     return {
       keywords: stringArray(parsed.keywords, [
         "conversation",
@@ -128,13 +133,13 @@ function parseMemory(raw: string): EncodedMemory {
         "response",
       ]).slice(0, 10),
       episode: String(parsed.episode ?? "").trim(),
-      semantic: stringArray(parsed.semantic).slice(0, 6),
+      semantic: semantic || null,
     };
   } catch {
     return {
       keywords: ["conversation", "request", "response"],
       episode: "",
-      semantic: [],
+      semantic: null,
     };
   }
 }
@@ -302,9 +307,9 @@ export async function POST(request: Request) {
       keywordsJson: JSON.stringify(encoded.keywords),
       episode: encoded.episode.slice(0, 2000),
       semanticJson: JSON.stringify(
-        encoded.semantic.map((item) => item.slice(0, 2000)),
+        encoded.semantic ? [encoded.semantic.slice(0, 2000)] : [],
       ),
-      semantic: encoded.semantic.join("\n").slice(0, 4000),
+      semantic: encoded.semantic?.slice(0, 2000) ?? "",
       previousEpisode: String(previousDraft?.episode ?? "").slice(0, 2000),
       previousOutput: String(previousDraft?.output ?? "").slice(0, 12000),
       agentActionCategory,

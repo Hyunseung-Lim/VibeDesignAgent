@@ -9,44 +9,25 @@ import {
 
 export const runtime = "nodejs";
 
-const MEMORY_COLLECTION = "memories_0_1_1";
+const MEMORY_COLLECTION = "memories_0_1_2";
 const MAX_DUPLICATE_SCAN_ITEMS = 220;
 const DUPLICATE_SIMILARITY_THRESHOLD = 0.92;
-const LOW_RETENTION_THRESHOLD = 0.28;
-
-type SemanticItem = {
-  id?: unknown;
-  semantic?: unknown;
-  embedding?: unknown;
-  importanceScore?: unknown;
-  usageScore?: unknown;
-  decayScore?: unknown;
-  retentionScore?: unknown;
-  lastRetrievedAt?: unknown;
-  retrievedCount?: unknown;
-  duplicateOf?: unknown;
-  archivedAt?: unknown;
-  archiveReason?: unknown;
-  createdAt?: unknown;
-  updatedAt?: unknown;
-};
+const LOW_WEIGHT_THRESHOLD = 0.28;
 
 type MemoryDoc = Record<string, unknown> & {
   id: string;
-  semanticItems?: SemanticItem[];
 };
 
 type ForgettingCandidate = {
   id: string;
-  reason: "low-retention" | "stale" | "duplicate";
+  reason: "low-weight" | "duplicate";
   reasonLabel: string;
   memoryId: string;
-  semanticItemId: string;
-  semantic: string;
+  semanticItemId: string | null;
+  episodic: string;
+  semantic: string | null;
+  weight: number | null;
   retentionScore: number | null;
-  importanceScore: number;
-  usageScore: number;
-  decayScore: number;
   retrievedCount: number;
   lastRetrievedAt: number | null;
   createdAt: number | null;
@@ -57,13 +38,14 @@ type ForgettingCandidate = {
   keywords: string[];
   duplicate?: {
     memoryId: string;
-    semanticItemId: string;
-    semantic: string;
+    semanticItemId: string | null;
+    semantic: string | null;
+    episodic: string;
     similarity: number;
   };
 };
 
-type IndexedSemanticItem = ForgettingCandidate & {
+type IndexedMemory = ForgettingCandidate & {
   embedding: number[];
 };
 
@@ -123,53 +105,51 @@ async function loadMemoryDocs(uid: string, token: string) {
   );
 }
 
-function flattenSemanticItems(docs: MemoryDoc[]) {
-  return docs.flatMap((doc) => {
-    const semanticItems = Array.isArray(doc.semanticItems)
-      ? doc.semanticItems
-      : [];
-    return semanticItems
-      .map((item, index): IndexedSemanticItem | null => {
-        const semantic = String(item.semantic ?? "").trim();
-        if (!semantic || timestampValue(item.archivedAt)) return null;
-        const semanticItemId = String(item.id ?? `semantic-${index}`);
-        const retentionScore =
-          typeof item.retentionScore === "number" &&
-          Number.isFinite(item.retentionScore)
-            ? item.retentionScore
-            : null;
-        return {
-          id: `${doc.id}:${semanticItemId}`,
-          reason: "low-retention",
-          reasonLabel: "",
-          memoryId: doc.id,
-          semanticItemId,
-          semantic,
-          retentionScore,
-          importanceScore: numberValue(item.importanceScore, 0.5),
-          usageScore: numberValue(item.usageScore),
-          decayScore: numberValue(item.decayScore),
-          retrievedCount: numberValue(item.retrievedCount),
-          lastRetrievedAt: timestampValue(item.lastRetrievedAt),
-          createdAt: timestampValue(item.createdAt ?? doc.createdAt),
-          source: doc.source ?? null,
-          keywords: stringArray(doc.keywords),
-          embedding: embeddingValue(item.embedding),
-        };
-      })
-      .filter((item): item is IndexedSemanticItem => Boolean(item));
-  });
+function indexedMemoriesFromDocs(docs: MemoryDoc[]) {
+  return docs
+    .map((doc): IndexedMemory | null => {
+      const episodic = String(doc.episodic ?? doc.episode ?? doc.content ?? "").trim();
+      const semantic =
+        typeof doc.semantic === "string" && doc.semantic.trim()
+          ? doc.semantic.trim()
+          : null;
+      if (!episodic || timestampValue(doc.archivedAt)) return null;
+      const weight =
+        typeof doc.weight === "number" && Number.isFinite(doc.weight)
+          ? doc.weight
+          : null;
+      return {
+        id: doc.id,
+        reason: "low-weight",
+        reasonLabel: "",
+        memoryId: doc.id,
+        semanticItemId: null,
+        episodic,
+        semantic,
+        weight,
+        retentionScore: weight,
+        retrievedCount: numberValue(doc.retrievedCount),
+        lastRetrievedAt: timestampValue(doc.lastRetrievedAt),
+        createdAt: timestampValue(doc.createdAt),
+        source: doc.source ?? null,
+        keywords: stringArray(doc.keyword).length
+          ? stringArray(doc.keyword)
+          : stringArray(doc.keywords),
+        embedding: embeddingValue(doc.embedding),
+      };
+    })
+    .filter((item): item is IndexedMemory => Boolean(item));
 }
 
 function addCandidate(
   candidates: Map<string, ForgettingCandidate>,
-  item: IndexedSemanticItem,
+  item: IndexedMemory,
   reason: ForgettingCandidate["reason"],
   reasonLabel: string,
   duplicate?: ForgettingCandidate["duplicate"],
 ) {
   if (candidates.has(item.id)) return;
-  const candidate: Omit<IndexedSemanticItem, "embedding"> & {
+  const candidate: Omit<IndexedMemory, "embedding"> & {
     embedding?: number[];
   } = { ...item };
   delete candidate.embedding;
@@ -181,19 +161,16 @@ function addCandidate(
   });
 }
 
-function buildCandidates(items: IndexedSemanticItem[]) {
+function buildCandidates(items: IndexedMemory[]) {
   const candidates = new Map<string, ForgettingCandidate>();
 
   items.forEach((item) => {
-    if (
-      item.retentionScore != null &&
-      item.retentionScore < LOW_RETENTION_THRESHOLD
-    ) {
+    if (item.weight != null && item.weight < LOW_WEIGHT_THRESHOLD) {
       addCandidate(
         candidates,
         item,
-        "low-retention",
-        `retentionScore가 ${LOW_RETENTION_THRESHOLD}보다 낮습니다.`,
+        "low-weight",
+        `weight가 ${LOW_WEIGHT_THRESHOLD}보다 낮습니다.`,
       );
     }
   });
@@ -212,11 +189,11 @@ function buildCandidates(items: IndexedSemanticItem[]) {
       const right = duplicateScanItems[rightIndex];
       const similarity = cosineSimilarity(left.embedding, right.embedding);
       if (similarity < DUPLICATE_SIMILARITY_THRESHOLD) continue;
-      const leftScore = left.retentionScore ?? 0.5;
-      const rightScore = right.retentionScore ?? 0.5;
+      const leftWeight = left.weight ?? 0.5;
+      const rightWeight = right.weight ?? 0.5;
       const archiveTarget =
-        leftScore < rightScore ||
-        (leftScore === rightScore &&
+        leftWeight < rightWeight ||
+        (leftWeight === rightWeight &&
           left.retrievedCount <= right.retrievedCount)
           ? left
           : right;
@@ -225,11 +202,12 @@ function buildCandidates(items: IndexedSemanticItem[]) {
         candidates,
         archiveTarget,
         "duplicate",
-        `semantic vector similarity가 ${DUPLICATE_SIMILARITY_THRESHOLD} 이상입니다.`,
+        `memory vector similarity가 ${DUPLICATE_SIMILARITY_THRESHOLD} 이상입니다.`,
         {
           memoryId: keepTarget.memoryId,
-          semanticItemId: keepTarget.semanticItemId,
+          semanticItemId: null,
           semantic: keepTarget.semantic,
+          episodic: keepTarget.episodic,
           similarity,
         },
       );
@@ -237,10 +215,10 @@ function buildCandidates(items: IndexedSemanticItem[]) {
   }
 
   return Array.from(candidates.values()).sort((a, b) => {
-    const reasonOrder = { duplicate: 0, "low-retention": 1, stale: 2 };
+    const reasonOrder = { duplicate: 0, "low-weight": 1 };
     const reasonDiff = reasonOrder[a.reason] - reasonOrder[b.reason];
     if (reasonDiff !== 0) return reasonDiff;
-    return (a.retentionScore ?? 1) - (b.retentionScore ?? 1);
+    return (a.weight ?? 1) - (b.weight ?? 1);
   });
 }
 
@@ -252,110 +230,81 @@ function sortArchivedItems(items: ForgettingCandidate[]) {
 
 function archivedItemsFromDocs(docs: MemoryDoc[]) {
   return sortArchivedItems(
-    docs.flatMap((doc) => {
-      const semanticItems = Array.isArray(doc.semanticItems)
-        ? doc.semanticItems
-        : [];
-      return semanticItems
-        .map((item, index): ForgettingCandidate | null => {
-          const semantic = String(item.semantic ?? "").trim();
-          const archivedAt = timestampValue(item.archivedAt);
-          if (!semantic || !archivedAt) return null;
-          const semanticItemId = String(item.id ?? `semantic-${index}`);
-          const archiveReason = item.archiveReason
-            ? String(item.archiveReason)
-            : "archived";
-          return {
-            id: `${doc.id}:${semanticItemId}`,
-            reason: archiveReason.includes("duplicate")
-              ? "duplicate"
-              : archiveReason.includes("low-retention")
-                ? "low-retention"
-                : "stale",
-            reasonLabel: `archivedAt ${new Date(archivedAt).toISOString()}`,
-            memoryId: doc.id,
-            semanticItemId,
-            semantic,
-            retentionScore:
-              typeof item.retentionScore === "number" &&
-              Number.isFinite(item.retentionScore)
-                ? item.retentionScore
-                : null,
-            importanceScore: numberValue(item.importanceScore, 0.5),
-            usageScore: numberValue(item.usageScore),
-            decayScore: numberValue(item.decayScore),
-            retrievedCount: numberValue(item.retrievedCount),
-            lastRetrievedAt: timestampValue(item.lastRetrievedAt),
-            createdAt: timestampValue(item.createdAt ?? doc.createdAt),
-            archivedAt,
-            archiveReason,
-            duplicateOf: item.duplicateOf ? String(item.duplicateOf) : null,
-            source: doc.source ?? null,
-            keywords: stringArray(doc.keywords),
-          };
-        })
-        .filter((item): item is ForgettingCandidate => Boolean(item));
-    }),
+    docs
+      .map((doc): ForgettingCandidate | null => {
+        const episodic = String(doc.episodic ?? doc.episode ?? doc.content ?? "").trim();
+        const semantic =
+          typeof doc.semantic === "string" && doc.semantic.trim()
+            ? doc.semantic.trim()
+            : null;
+        const archivedAt = timestampValue(doc.archivedAt);
+        if (!episodic || !archivedAt) return null;
+        const archiveReason = doc.archiveReason
+          ? String(doc.archiveReason)
+          : "archived";
+        const weight =
+          typeof doc.weight === "number" && Number.isFinite(doc.weight)
+            ? doc.weight
+            : null;
+        return {
+          id: doc.id,
+          reason: archiveReason.includes("duplicate")
+            ? "duplicate"
+            : "low-weight",
+          reasonLabel: `archivedAt ${new Date(archivedAt).toISOString()}`,
+          memoryId: doc.id,
+          semanticItemId: null,
+          episodic,
+          semantic,
+          weight,
+          retentionScore: weight,
+          retrievedCount: numberValue(doc.retrievedCount),
+          lastRetrievedAt: timestampValue(doc.lastRetrievedAt),
+          createdAt: timestampValue(doc.createdAt),
+          archivedAt,
+          archiveReason,
+          duplicateOf: doc.duplicateOf ? String(doc.duplicateOf) : null,
+          source: doc.source ?? null,
+          keywords: stringArray(doc.keyword).length
+            ? stringArray(doc.keyword)
+            : stringArray(doc.keywords),
+        };
+      })
+      .filter((item): item is ForgettingCandidate => Boolean(item)),
   );
 }
 
 async function autoArchiveCandidates(
   uid: string,
-  docs: MemoryDoc[],
   candidates: ForgettingCandidate[],
   token: string,
 ) {
   if (candidates.length === 0) return [];
   const now = Date.now();
-  const candidateById = new Map(candidates.map((item) => [item.id, item]));
-  const touchedDocs = new Map<string, MemoryDoc>();
-  const archived: ForgettingCandidate[] = [];
-
-  docs.forEach((doc) => {
-    const semanticItems = Array.isArray(doc.semanticItems)
-      ? [...doc.semanticItems]
-      : [];
-    let touched = false;
-    semanticItems.forEach((item, index) => {
-      const semanticItemId = String(item.id ?? `semantic-${index}`);
-      const candidate = candidateById.get(`${doc.id}:${semanticItemId}`);
-      if (!candidate || timestampValue(item.archivedAt)) return;
-      semanticItems[index] = {
-        ...(item as Record<string, unknown>),
-        archivedAt: now,
-        archiveReason: `auto-${candidate.reason}`,
-        duplicateOf: candidate.duplicate
-          ? `${candidate.duplicate.memoryId}:${candidate.duplicate.semanticItemId}`
-          : null,
-        updatedAt: now,
-      };
-      touched = true;
-      archived.push({
-        ...candidate,
-        archivedAt: now,
-        archiveReason: `auto-${candidate.reason}`,
-        duplicateOf: candidate.duplicate
-          ? `${candidate.duplicate.memoryId}:${candidate.duplicate.semanticItemId}`
-          : null,
-      });
-    });
-    if (touched) {
-      doc.semanticItems = semanticItems;
-      touchedDocs.set(doc.id, doc);
-    }
-  });
-
   await Promise.all(
-    Array.from(touchedDocs.values()).map((doc) =>
+    candidates.map((candidate) =>
       patchFirestoreDocument(
-        `users/${uid}/${MEMORY_COLLECTION}/${encodeURIComponent(doc.id)}`,
-        { semanticItems: doc.semanticItems ?? [] },
+        `users/${uid}/${MEMORY_COLLECTION}/${encodeURIComponent(candidate.memoryId)}`,
+        {
+          archivedAt: now,
+          archiveReason: `auto-${candidate.reason}`,
+          duplicateOf: candidate.duplicate
+            ? candidate.duplicate.memoryId
+            : null,
+          updatedAt: now,
+        },
         token,
       ),
     ),
   );
-
-  return sortArchivedItems(archived);
+  return sortArchivedItems(
+    candidates.map((candidate) => ({
+      ...candidate,
+      archivedAt: now,
+      archiveReason: `auto-${candidate.reason}`,
+      duplicateOf: candidate.duplicate ? candidate.duplicate.memoryId : null,
+    })),
+  );
 }
 
 export async function GET(
@@ -368,16 +317,16 @@ export async function GET(
   const { uid } = await params;
   const token = await getFirebaseAccessToken();
   const docs = await loadMemoryDocs(uid, token);
-  const items = flattenSemanticItems(docs);
+  const items = indexedMemoriesFromDocs(docs);
   const candidates = buildCandidates(items);
-  const autoArchived = await autoArchiveCandidates(uid, docs, candidates, token);
+  const autoArchived = await autoArchiveCandidates(uid, candidates, token);
 
   return Response.json({
     candidates: autoArchived,
     archived: archivedItemsFromDocs(docs),
     thresholds: {
       duplicateSimilarity: DUPLICATE_SIMILARITY_THRESHOLD,
-      lowRetention: LOW_RETENTION_THRESHOLD,
+      lowWeight: LOW_WEIGHT_THRESHOLD,
     },
   });
 }
@@ -392,40 +341,25 @@ export async function PATCH(
   const { uid } = await params;
   const body = (await request.json().catch(() => null)) as {
     memoryId?: unknown;
-    semanticItemId?: unknown;
     reason?: unknown;
     duplicateOf?: unknown;
   } | null;
   const memoryId = String(body?.memoryId ?? "");
-  const semanticItemId = String(body?.semanticItemId ?? "");
-  if (!memoryId || !semanticItemId) {
+  if (!memoryId) {
     return Response.json({ error: "missing memory item" }, { status: 400 });
   }
 
   const token = await getFirebaseAccessToken();
-  const path = `users/${uid}/${MEMORY_COLLECTION}/${memoryId}`;
-  const data =
-    ((await getFirestoreDocument(path, token)) ?? {}) as Record<string, unknown>;
-  const semanticItems = Array.isArray(data.semanticItems)
-    ? [...data.semanticItems]
-    : [];
-  const index = semanticItems.findIndex(
-    (item) =>
-      String((item as SemanticItem).id ?? "") === semanticItemId,
-  );
-  if (index < 0) {
-    return Response.json({ error: "semantic item not found" }, { status: 404 });
-  }
-
   const now = Date.now();
-  semanticItems[index] = {
-    ...(semanticItems[index] as Record<string, unknown>),
-    archivedAt: now,
-    archiveReason: String(body?.reason ?? "manual-forgetting"),
-    duplicateOf: body?.duplicateOf ?? null,
-    updatedAt: now,
-  };
-
-  await patchFirestoreDocument(path, { semanticItems }, token);
+  await patchFirestoreDocument(
+    `users/${uid}/${MEMORY_COLLECTION}/${encodeURIComponent(memoryId)}`,
+    {
+      archivedAt: now,
+      archiveReason: String(body?.reason ?? "manual-forgetting"),
+      duplicateOf: body?.duplicateOf ?? null,
+      updatedAt: now,
+    },
+    token,
+  );
   return Response.json({ ok: true, archivedAt: now });
 }

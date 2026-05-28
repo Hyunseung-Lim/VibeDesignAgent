@@ -83,6 +83,7 @@ def backup_user_data(uid: str) -> Path:
         "episodicMemories": export_collection_documents(user_ref.collection("episodicMemories")),
         "semanticMemories": export_collection_documents(user_ref.collection("semanticMemories")),
         "memories_0_1_1": export_collection_documents(user_ref.collection("memories_0_1_1")),
+        "memories_0_1_2": export_collection_documents(user_ref.collection("memories_0_1_2")),
     }
 
     storage_dir = backup_dir / "presentations"
@@ -122,7 +123,8 @@ def backup_user_data(uid: str) -> Path:
         "  Memories: "
         f"{len(memories['episodicMemories'])} episodic, "
         f"{len(memories['semanticMemories'])} semantic, "
-        f"{len(memories['memories_0_1_1'])} v0.1.1"
+        f"{len(memories['memories_0_1_1'])} v0.1.1, "
+        f"{len(memories['memories_0_1_2'])} v0.1.2"
     )
     print(f"  Storage files: {len(storage_files)}")
     return backup_dir

@@ -2,6 +2,54 @@ import OpenAI from "openai";
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
+function truncateText(value: unknown, maxLength: number) {
+  const text = typeof value === "string" ? value : "";
+  if (text.length <= maxLength) return text;
+  return `${text.slice(0, maxLength)}\n...[truncated]`;
+}
+
+function compactMemoryContext(memoryContext: unknown) {
+  const context = memoryContext as
+    | { episodic?: unknown[]; semantic?: unknown[] }
+    | null
+    | undefined;
+  if (!context) return null;
+  const compactItem = (item: unknown) => {
+    const record = item as Record<string, unknown>;
+    return {
+      action: truncateText(record.action, 80),
+      keyword: Array.isArray(record.keyword)
+        ? record.keyword.map(String).slice(0, 8)
+        : Array.isArray(record.keywords)
+          ? record.keywords.map(String).slice(0, 8)
+          : undefined,
+      episodic: truncateText(record.episodic ?? record.episode, 500),
+      semantic:
+        typeof record.semantic === "string"
+          ? truncateText(record.semantic, 500)
+          : null,
+      input: truncateText(record.input, 500),
+      output: truncateText(record.output, 700),
+      link: typeof record.link === "string" ? record.link : null,
+      weight:
+        typeof record.weight === "number"
+          ? record.weight
+          : typeof record.retentionScore === "number"
+            ? record.retentionScore
+            : undefined,
+      similarity:
+        typeof record.similarity === "number" ? record.similarity : undefined,
+    };
+  };
+  const episodic = Array.isArray(context.episodic)
+    ? context.episodic.slice(0, 8).map(compactItem)
+    : [];
+  const semantic = Array.isArray(context.semantic)
+    ? context.semantic.slice(0, 8).map(compactItem)
+    : [];
+  return { episodic, semantic };
+}
+
 const SYSTEM_PROMPT = `You are a UI/UX design agent. You help designers by:
 1. Generating HTML/CSS mockups from descriptions
 2. Editing specific UI elements when a selected element is provided
@@ -37,6 +85,7 @@ OUTPUT RULES:
   - Do NOT use [EDIT_MOCKUP] when the user asks for a new layout, new structure, another version, fresh canvas, or completely different design. Use [GENERATE_MOCKUP] for those requests.
   - Preserve the existing screen structure, visual style, content hierarchy, and unrelated sections. Only change the requested details.
   - Example: [EDIT_MOCKUP: Change the primary button color to coral red, increase the font size of the headline to 28px, and add a subtle drop shadow to the card component.]
+- When the user says '다시 만들어줘', '다시 해줘', 're-do', 'try again', or any redo/retry phrase without specifying a new action: look at the MOST RECENT '이전 액션:' tag in the conversation history to determine what to repeat. If the last action was 'presentation requested', create a new presentation. If the last action was 'mockup generation requested', use [GENERATE_MOCKUP]. If the last action was 'mockup edit requested', use [EDIT_MOCKUP]. Do NOT default to mockup editing just because mockup HTML exists in context.
 - IMPORTANT: Do NOT output HTML or code blocks for UI mockups — Stitch AI generates the visual design from the text prompt.
 - To create or revise the 디자인 스타일 for the active note: write 1 sentence explaining what you're defining. Then output [CREATE_DESIGN_SPEC: {"content": "markdown content"}] on its own line. The app stores exactly one 디자인 스타일 inside the current 시안. If a style already exists, this action replaces and updates that style instead of creating a second one. The content should include: color tokens, typography rules, spacing system, component patterns, do/don't constraints, and brand tone.
   - Use this when the user asks to define a design system, set style rules, or create a new design spec variant.
@@ -88,35 +137,36 @@ export async function POST(request: Request) {
   if (missionTitle || missionBrief) {
     systemMessages.push({
       role: "system",
-      content: `Current mission context:\nTitle: ${missionTitle || "(없음)"}\nBrief: ${missionBrief || "(없음)"}`,
+      content: `Current mission context:\nTitle: ${truncateText(missionTitle || "(없음)", 300)}\nBrief: ${truncateText(missionBrief || "(없음)", 1800)}`,
     });
   }
 
   if (memoryContext) {
+    const compactMemory = compactMemoryContext(memoryContext);
     systemMessages.push({
       role: "system",
-      content: `User memory loaded at session start. Semantic memories describe durable user preferences or working patterns. Episodic memories describe relevant prior interactions. Use only what is helpful; do not mention memory unless it directly improves the answer.\n${JSON.stringify(memoryContext)}`,
+      content: `User memory loaded at session start or retrieved for this turn. Each memory may include action, keyword, episodic, semantic, input, output, link, and weight. Episodic memories describe prior interactions; semantic memories describe durable user preferences or working patterns. Use only what is helpful; do not mention memory unless it directly improves the answer.\n${JSON.stringify(compactMemory)}`,
     });
   }
 
   if (designSpec) {
     systemMessages.push({
       role: "system",
-      content: `Applied 디자인 스타일 for the current 시안:\n${designSpec}\n\nAlways follow these constraints when generating or editing mockups for this 시안. If the user asks to change the style, update this single note-level 디자인 스타일 with [CREATE_DESIGN_SPEC: {...}].`,
+      content: `Applied 디자인 스타일 for the current 시안:\n${truncateText(designSpec, 2500)}\n\nAlways follow these constraints when generating or editing mockups for this 시안. If the user asks to change the style, update this single note-level 디자인 스타일 with [CREATE_DESIGN_SPEC: {...}].`,
     });
   }
 
   if (Array.isArray(citedTexts) && citedTexts.length > 0) {
     systemMessages.push({
       role: "system",
-      content: `The user has cited the following text excerpts from the mission panel. Use them as direct context for your response:\n${citedTexts.map((t: string, i: number) => `[인용 ${i + 1}] ${t}`).join("\n\n")}`,
+      content: `The user has cited the following text excerpts from the mission panel. Use them as direct context for your response:\n${citedTexts.map((t: string, i: number) => `[인용 ${i + 1}] ${truncateText(t, 1200)}`).join("\n\n")}`,
     });
   }
 
   if (activeIdea) {
     systemMessages.push({
       role: "system",
-      content: `The user is currently working on this note:\nTitle: ${activeIdea.title}\nContent: ${activeIdea.description || "(내용 없음)"}\n\nAll mockups and presentations generated in this conversation should be designed for this note.\n\nFor [GENERATE_MOCKUP], treat the Content above as a binding product brief and visual style guide. Include the most important details directly in the generated mockup prompt so the downstream design generator receives them.`,
+      content: `The user is currently working on this note:\nTitle: ${truncateText(activeIdea.title, 200)}\nContent: ${truncateText(activeIdea.description || "(내용 없음)", 3000)}\n\nAll mockups and presentations generated in this conversation should be designed for this note.\n\nFor [GENERATE_MOCKUP], treat the Content above as a binding product brief and visual style guide. Include the most important details directly in the generated mockup prompt so the downstream design generator receives them.`,
     });
   }
 
@@ -137,20 +187,25 @@ export async function POST(request: Request) {
   if (mockupHtml) {
     systemMessages.push({
       role: "system",
-      content: `Current mockup HTML exists. The next mockup-related request should be treated as an edit unless the user explicitly asks for a new/different mockup, a new design, a new layout, a new structure, a new concept, another version, or a fresh canvas.\n\nCurrent mockup HTML:\n\`\`\`html\n${mockupHtml}\n\`\`\``,
+      content: `Current mockup HTML exists. The next mockup-related request should be treated as an edit unless the user explicitly asks for a new/different mockup, a new design, a new layout, a new structure, a new concept, another version, or a fresh canvas.\n\nCurrent mockup HTML:\n\`\`\`html\n${truncateText(mockupHtml, 12000)}\n\`\`\``,
     });
   }
 
   if (selectedElement) {
     systemMessages.push({
       role: "system",
-      content: `The user has selected this element for editing:\nSelector: ${selectedElement.selector}\nHTML: ${selectedElement.outerHTML}`,
+      content: `The user has selected this element for editing:\nSelector: ${selectedElement.selector}\nHTML: ${truncateText(selectedElement.outerHTML, 3000)}`,
     });
   }
 
   // Build messages, injecting cited reference images into the last user message
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const builtMessages: any[] = [...messages];
+  const builtMessages: any[] = Array.isArray(messages)
+    ? messages.slice(-12).map((message: { role?: string; content?: string }) => ({
+        role: message.role,
+        content: truncateText(message.content, 6000),
+      }))
+    : [];
 
   if (citedReferences?.length > 0) {
     const titles: string[] = citedReferences.map(
@@ -186,33 +241,63 @@ export async function POST(request: Request) {
 
   const hasRefUrls = citedReferences?.some((r: { url?: string }) => r.url);
 
-  const stream = await openai.responses.create({
-    model: "gpt-5.4",
-    tools: [{ type: "web_search_preview" }],
-    tool_choice: hasRefUrls ? "required" : "auto",
-    input: [...systemMessages, ...builtMessages] as Parameters<
-      typeof openai.responses.create
-    >[0]["input"],
-    stream: true,
-  });
+  let stream: Awaited<ReturnType<typeof openai.responses.create>>;
+  try {
+    stream = await openai.responses.create({
+      model: "gpt-5.4",
+      tools: [{ type: "web_search_preview" }],
+      tool_choice: hasRefUrls ? "required" : "auto",
+      input: [...systemMessages, ...builtMessages] as Parameters<
+        typeof openai.responses.create
+      >[0]["input"],
+      stream: true,
+    });
+  } catch (error) {
+    const code =
+      typeof error === "object" && error && "code" in error
+        ? String((error as { code?: unknown }).code)
+        : "";
+    if (code === "context_length_exceeded") {
+      return new Response(
+        "입력 내용이 너무 길어서 처리하지 못했습니다. 현재 시안/목업/대화 맥락을 줄인 뒤 다시 시도해주세요.",
+        { status: 413, headers: { "Content-Type": "text/plain; charset=utf-8" } },
+      );
+    }
+    throw error;
+  }
 
   const encoder = new TextEncoder();
   const readable = new ReadableStream({
     async start(controller) {
       let webSearched = false;
-      for await (const event of stream) {
-        if (
-          event.type === "response.web_search_call.searching" &&
-          !webSearched
-        ) {
-          webSearched = true;
-          controller.enqueue(encoder.encode("[WEB_SEARCHED]\n"));
+      try {
+        for await (const event of stream) {
+          if (
+            event.type === "response.web_search_call.searching" &&
+            !webSearched
+          ) {
+            webSearched = true;
+            controller.enqueue(encoder.encode("[WEB_SEARCHED]\n"));
+          }
+          if (event.type === "response.output_text.delta") {
+            controller.enqueue(encoder.encode(event.delta));
+          }
         }
-        if (event.type === "response.output_text.delta") {
-          controller.enqueue(encoder.encode(event.delta));
-        }
+      } catch (error) {
+        const code =
+          typeof error === "object" && error && "code" in error
+            ? String((error as { code?: unknown }).code)
+            : "";
+        controller.enqueue(
+          encoder.encode(
+            code === "context_length_exceeded"
+              ? "입력 내용이 너무 길어서 처리하지 못했습니다. 현재 시안/목업/대화 맥락을 줄인 뒤 다시 시도해주세요."
+              : "응답 생성 중 오류가 발생했습니다. 다시 시도해주세요.",
+          ),
+        );
+      } finally {
+        controller.close();
       }
-      controller.close();
     },
   });
 

@@ -8,7 +8,8 @@ import { isAdminEmail } from "@/lib/admin";
 
 export const runtime = "nodejs";
 
-const MEMORY_COLLECTION = "memories_0_1_1";
+const MEMORY_COLLECTION = "memories_0_1_2";
+const LEGACY_MEMORY_COLLECTION = "memories_0_1_1";
 const RETRIEVAL_LOG_COLLECTION = "memoryRetrievalLogs";
 const MAX_LOGS = 100;
 
@@ -16,6 +17,7 @@ type SemanticItem = {
   id?: unknown;
   semantic?: unknown;
   retentionScore?: unknown;
+  weight?: unknown;
   retrievedCount?: unknown;
   usageScore?: unknown;
   decayScore?: unknown;
@@ -35,6 +37,7 @@ type NormalizedSemanticItem = {
   id: string;
   semantic: string;
   retentionScore?: number;
+  weight?: number;
   retrievedCount: number;
   usageScore: number;
   decayScore: number;
@@ -52,6 +55,26 @@ function numberArray(value: unknown) {
 }
 
 function semanticItemsForDoc(doc: MemoryDoc): NormalizedSemanticItem[] {
+  if (doc.schemaVersion === "0.1.2" || typeof doc.episodic === "string") {
+    return [
+      {
+        id: String(doc.id),
+        semantic:
+          typeof doc.semantic === "string" && doc.semantic.trim()
+            ? doc.semantic
+            : String(doc.episodic ?? doc.content ?? ""),
+        retentionScore:
+          typeof doc.weight === "number" ? doc.weight : undefined,
+        weight: typeof doc.weight === "number" ? doc.weight : undefined,
+        retrievedCount:
+          typeof doc.retrievedCount === "number" ? doc.retrievedCount : 0,
+        usageScore: 0,
+        decayScore: 0,
+        archivedAt:
+          typeof doc.archivedAt === "number" ? doc.archivedAt : undefined,
+      },
+    ];
+  }
   const semanticItems = Array.isArray(doc.semanticItems)
     ? doc.semanticItems
     : [];
@@ -86,20 +109,23 @@ function semanticItemsForDoc(doc: MemoryDoc): NormalizedSemanticItem[] {
 }
 
 async function loadMemoryIndex(uid: string, token: string) {
-  const ids = await listFirestoreDocumentIds(
-    `users/${uid}/${MEMORY_COLLECTION}`,
-    token,
-  );
-  const docs = await Promise.all(
-    ids.map(async (id) => {
-      const data =
-        ((await getFirestoreDocument(
-          `users/${uid}/${MEMORY_COLLECTION}/${id}`,
-          token,
-        )) ?? {}) as Record<string, unknown>;
-      return { id, ...data } as MemoryDoc;
-    }),
-  );
+  const docs = (
+    await Promise.all(
+      [MEMORY_COLLECTION, LEGACY_MEMORY_COLLECTION].map(async (collection) => {
+        const ids = await listFirestoreDocumentIds(`users/${uid}/${collection}`, token);
+        return Promise.all(
+          ids.map(async (id) => {
+            const data =
+              ((await getFirestoreDocument(
+                `users/${uid}/${collection}/${id}`,
+                token,
+              )) ?? {}) as Record<string, unknown>;
+            return { id, ...data } as MemoryDoc;
+          }),
+        );
+      }),
+    )
+  ).flat();
   const index = new Map<string, ReturnType<typeof semanticItemsForDoc>[number] & {
     memoryId: string;
     source?: unknown;
@@ -109,7 +135,7 @@ async function loadMemoryIndex(uid: string, token: string) {
 
   docs.forEach((doc) => {
     semanticItemsForDoc(doc).forEach((item) => {
-      index.set(`${doc.id}:${item.id}`, {
+      index.set(doc.schemaVersion === "0.1.2" ? doc.id : `${doc.id}:${item.id}`, {
         ...item,
         memoryId: doc.id,
         source: doc.source,
@@ -174,6 +200,7 @@ export async function GET(
               semantic: item?.semantic ?? "",
               similarity: similarities[index] ?? null,
               retentionScore: item?.retentionScore ?? null,
+              weight: item?.weight ?? item?.retentionScore ?? null,
               retrievedCount: item?.retrievedCount ?? 0,
               usageScore: item?.usageScore ?? 0,
               decayScore: item?.decayScore ?? 0,

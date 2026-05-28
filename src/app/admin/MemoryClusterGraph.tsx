@@ -21,10 +21,14 @@ type ClusterableMemoryItem = {
   id: string;
   memoryId: string;
   semantic: string;
-  episode: string;
+  episodic: string;
+  episode?: string;
   input: string;
+  output?: string;
+  link?: string;
   action: string;
   timestamp: number;
+  keyword: string[];
   keywords: string[];
   row?: {
     source?: { missionId?: string; draftId?: string };
