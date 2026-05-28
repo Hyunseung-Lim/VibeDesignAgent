@@ -298,15 +298,14 @@ FIREBASE_MEASUREMENT_ID
 - 페르소나 이름("🎬 Daniel Park" 등) 같은 옵션 타이틀이 임베딩 벡터에 노이즈를 추가하는 문제 제거
 
 ### 9.8 Memory forgetting/archive MVP
-- `GET /api/admin/users/[uid]/memory/forgetting`에서 archive candidate를 산출
+- `GET /api/admin/users/[uid]/memory/forgetting`에서 archive candidate를 산출하고 자동 soft archive
 - 후보 기준:
   - `retentionScore < 0.28`
-  - 생성/마지막 retrieve 후 14일 이상 쓰이지 않고 `retrievedCount = 0`
   - semantic embedding cosine similarity가 `0.92` 이상인 duplicate pair
 - duplicate 후보는 retentionScore와 retrievedCount가 낮은 쪽을 archive target으로 제안
-- Admin memory modal의 Forgetting 탭에서 후보 reason, score, duplicate counterpart를 확인 가능
-- `PATCH /api/admin/users/[uid]/memory/forgetting`으로 semantic item 단위 soft archive
-- archive된 semantic item은 retrieval 대상에서 제외되며, 현재 단계에서는 자동 archive를 수행하지 않음
+- Admin memory modal의 Forgetting 탭에서 이번 호출에 자동 archive된 item을 확인 가능
+- Admin memory modal의 Archived 탭에서 archivedAt, archiveReason, score metadata 확인 가능
+- archive된 semantic item은 retrieval 대상에서 제외됨
 
 ---
 
@@ -317,7 +316,7 @@ FIREBASE_MEASUREMENT_ID
 ### 10.1 목표
 - 세션 시작 또는 interaction 중 필요한 memory를 vector similarity 기반으로 retrieve
 - retrieve 결과를 관측 가능하게 기록해 연구자가 어떤 memory가 사용됐는지 확인
-- 사용된 memory는 천천히 강화하고, 오래 쓰이지 않거나 중복된 memory는 archive 후보로 낮춤
+- 사용된 memory는 천천히 강화하고, low-retention 또는 중복 memory는 archive 후보로 낮춤
 - 초기에는 hard delete 대신 `archivedAt` 기반 soft archive로 운영
 
 ### 10.2 개발 순서
@@ -393,10 +392,9 @@ retentionScore =
 ```
 
 #### 6단계: 망각 후보 산출
-- 구현됨: 초기에는 자동 삭제하지 않고 archive candidate만 표시
+- 구현됨: hard delete 없이 archive candidate를 자동 soft archive
 - 후보 기준:
   - retentionScore가 threshold 아래
-  - 장기간 retrieve되지 않음
   - 유사 semantic memory가 더 높은 retentionScore로 존재
 - soft archive:
 ```typescript
@@ -415,9 +413,9 @@ archiveReason = "low-retention" | "duplicate" | "manual"
 - 자동 archive는 researcher 검토 후 feature flag로 켜기
 
 ### 10.3 운영 원칙
-- 처음부터 자동 삭제하지 않는다.
-- 연구자가 retrieval, score 변화, archive 후보를 확인할 수 있게 만든다.
-- 충분히 관측한 뒤 자동 archive threshold를 적용한다.
+- hard delete하지 않는다.
+- 연구자가 retrieval, score 변화, archive 결과를 확인할 수 있게 만든다.
+- formative 실험 기간이 3일이므로 시간 기반 stale 기준은 자동 archive에 사용하지 않는다.
 - memory가 사라지는 것보다 "왜 사라졌는지 설명 가능함"을 우선한다.
 
 ---

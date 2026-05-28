@@ -67,16 +67,32 @@ type AdminMemoryRow = {
   keywords?: string[];
   episode?: string;
   semantic?: string;
+  semanticItems?: Array<{
+    semantic?: string;
+    retentionScore?: number;
+    archivedAt?: number | null;
+  }>;
   agentActionCategory?: string;
   source?: { missionId?: string; draftId?: string };
 };
 
 type MemoryCounts = Record<string, number>;
 type MemoryVersionTab = "0.1.0" | "0.1.1";
-type MemorySortKey = "timestamp" | "action" | "semantic";
+type MemorySortKey =
+  | "timestamp"
+  | "action"
+  | "semantic"
+  | "retentionMax"
+  | "retentionMin"
+  | "retentionAvg";
 type SortDirection = "asc" | "desc";
 type SemanticFilter = "all" | "with" | "without";
-type MemoryViewTab = "table" | "clusters" | "retrievals" | "forgetting";
+type MemoryViewTab =
+  | "table"
+  | "clusters"
+  | "retrievals"
+  | "forgetting"
+  | "archived";
 type MemoryClusterViewTab = "graph" | "detail";
 
 type MemoryCluster = {
@@ -159,6 +175,9 @@ type MemoryForgettingCandidate = {
   retrievedCount: number;
   lastRetrievedAt: number | null;
   createdAt: number | null;
+  archivedAt?: number | null;
+  archiveReason?: string | null;
+  duplicateOf?: string | null;
   source?: { missionId?: string; draftId?: string } | null;
   keywords?: string[];
   duplicate?: {
@@ -214,6 +233,34 @@ function semanticItems(row: AdminMemoryRow) {
         .map((item) => item.trim())
         .filter(Boolean)
     : [];
+}
+
+function semanticRetentionScores(row: AdminMemoryRow) {
+  return Array.isArray(row.semanticItems)
+    ? row.semanticItems.map((item) =>
+        typeof item.retentionScore === "number" &&
+        Number.isFinite(item.retentionScore)
+          ? item.retentionScore
+          : null,
+      )
+    : [];
+}
+
+function numericRetentionScores(row: AdminMemoryRow) {
+  return semanticRetentionScores(row).filter(
+    (score): score is number => typeof score === "number",
+  );
+}
+
+function retentionSortValue(row: AdminMemoryRow, mode: MemorySortKey) {
+  const scores = numericRetentionScores(row);
+  if (scores.length === 0) return null;
+  if (mode === "retentionMax") return Math.max(...scores);
+  if (mode === "retentionMin") return Math.min(...scores);
+  if (mode === "retentionAvg") {
+    return scores.reduce((sum, score) => sum + score, 0) / scores.length;
+  }
+  return null;
 }
 
 function dateInputValue(timestamp?: number) {
@@ -351,15 +398,18 @@ export default function AdminPage() {
   const [memoryForgettingCandidates, setMemoryForgettingCandidates] = useState<
     MemoryForgettingCandidate[]
   >([]);
+  const [memoryArchivedItems, setMemoryArchivedItems] = useState<
+    MemoryForgettingCandidate[]
+  >([]);
   const [selectedMemoryForgettingId, setSelectedMemoryForgettingId] = useState<
+    string | null
+  >(null);
+  const [selectedMemoryArchivedId, setSelectedMemoryArchivedId] = useState<
     string | null
   >(null);
   const [isLoadingMemoryForgetting, setIsLoadingMemoryForgetting] =
     useState(false);
   const [memoryForgettingError, setMemoryForgettingError] = useState<
-    string | null
-  >(null);
-  const [archivingMemoryCandidateId, setArchivingMemoryCandidateId] = useState<
     string | null
   >(null);
   const [isLoadingMemory, setIsLoadingMemory] = useState(false);
@@ -943,6 +993,18 @@ export default function AdminPage() {
       if (memorySortKey === "semantic") {
         return (semanticItems(a).length - semanticItems(b).length) * direction;
       }
+      if (
+        memorySortKey === "retentionMax" ||
+        memorySortKey === "retentionMin" ||
+        memorySortKey === "retentionAvg"
+      ) {
+        const aValue = retentionSortValue(a, memorySortKey);
+        const bValue = retentionSortValue(b, memorySortKey);
+        if (aValue == null && bValue == null) return 0;
+        if (aValue == null) return 1;
+        if (bValue == null) return -1;
+        return (aValue - bValue) * direction;
+      }
       return (
         (a.agentActionCategory ?? "").localeCompare(
           b.agentActionCategory ?? "",
@@ -1002,6 +1064,10 @@ export default function AdminPage() {
       (candidate) => candidate.id === selectedMemoryForgettingId,
     ) ??
     memoryForgettingCandidates[0] ??
+    null;
+  const selectedMemoryArchived =
+    memoryArchivedItems.find((item) => item.id === selectedMemoryArchivedId) ??
+    memoryArchivedItems[0] ??
     null;
   const clusterInputSignature = useMemo(() => {
     const rawSignature = clusterableMemoryItems
@@ -1120,7 +1186,11 @@ export default function AdminPage() {
 
   useEffect(() => {
     setMemoryForgettingError(null);
-    if (!memoryModal || memoryViewTab !== "forgetting") return;
+    if (
+      !memoryModal ||
+      (memoryViewTab !== "forgetting" && memoryViewTab !== "archived")
+    )
+      return;
     let cancelled = false;
     const loadForgettingCandidates = async () => {
       const token = await getAdminToken();
@@ -1141,11 +1211,20 @@ export default function AdminPage() {
         const candidates = Array.isArray(data?.candidates)
           ? (data.candidates as MemoryForgettingCandidate[])
           : [];
+        const archived = Array.isArray(data?.archived)
+          ? (data.archived as MemoryForgettingCandidate[])
+          : [];
         setMemoryForgettingCandidates(candidates);
+        setMemoryArchivedItems(archived);
         setSelectedMemoryForgettingId((current) =>
           current && candidates.some((candidate) => candidate.id === current)
             ? current
             : (candidates[0]?.id ?? null),
+        );
+        setSelectedMemoryArchivedId((current) =>
+          current && archived.some((item) => item.id === current)
+            ? current
+            : (archived[0]?.id ?? null),
         );
       } catch (error) {
         if (cancelled) return;
@@ -1265,50 +1344,6 @@ export default function AdminPage() {
     await navigator.clipboard.writeText(JSON.stringify(payload, null, 2));
   };
 
-  const archiveMemoryCandidate = async (
-    candidate: MemoryForgettingCandidate,
-  ) => {
-    if (!memoryModal) return;
-    const token = await getAdminToken();
-    if (!token) return;
-    setArchivingMemoryCandidateId(candidate.id);
-    setMemoryForgettingError(null);
-    try {
-      const res = await fetch(
-        `/api/admin/users/${encodeURIComponent(
-          memoryModal.userId,
-        )}/memory/forgetting`,
-        {
-          method: "PATCH",
-          headers: {
-            Authorization: `Bearer ${token}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            memoryId: candidate.memoryId,
-            semanticItemId: candidate.semanticItemId,
-            reason: candidate.reason,
-            duplicateOf: candidate.duplicate
-              ? `${candidate.duplicate.memoryId}:${candidate.duplicate.semanticItemId}`
-              : null,
-          }),
-        },
-      );
-      const data = await res.json().catch(() => null);
-      if (!res.ok) throw new Error(data?.error ?? "archive failed");
-      setMemoryForgettingCandidates((current) => {
-        const next = current.filter((item) => item.id !== candidate.id);
-        setSelectedMemoryForgettingId(next[0]?.id ?? null);
-        return next;
-      });
-    } catch (error) {
-      console.error("[admin] memory candidate archive failed", error);
-      setMemoryForgettingError("Archive 처리에 실패했습니다.");
-    } finally {
-      setArchivingMemoryCandidateId(null);
-    }
-  };
-
   if (!ready) return null;
 
   return (
@@ -1353,7 +1388,13 @@ export default function AdminPage() {
               <div className="flex flex-wrap items-end gap-3">
                 <div className="inline-flex rounded-lg border border-slate-200 bg-slate-50 p-1">
                   {(
-                    ["table", "clusters", "retrievals", "forgetting"] as const
+                    [
+                      "table",
+                      "clusters",
+                      "retrievals",
+                      "forgetting",
+                      "archived",
+                    ] as const
                   ).map((tab) => (
                     <button
                       key={tab}
@@ -1371,7 +1412,9 @@ export default function AdminPage() {
                           ? "Clusters"
                           : tab === "retrievals"
                             ? "Retrievals"
-                            : "Forgetting"}
+                            : tab === "forgetting"
+                              ? "Forgetting"
+                              : "Archived"}
                     </button>
                   ))}
                 </div>
@@ -1470,6 +1513,9 @@ export default function AdminPage() {
                         <option value="timestamp">Timestamp</option>
                         <option value="action">Action</option>
                         <option value="semantic">Semantic count</option>
+                        <option value="retentionMax">Retention max</option>
+                        <option value="retentionMin">Retention min</option>
+                        <option value="retentionAvg">Retention avg</option>
                       </select>
                     </label>
                     <button
@@ -1503,7 +1549,12 @@ export default function AdminPage() {
                 )}
                 {memoryViewTab === "forgetting" && (
                   <span className="ml-auto text-xs text-slate-400">
-                    {memoryForgettingCandidates.length} archive candidates
+                    {memoryForgettingCandidates.length} auto archived
+                  </span>
+                )}
+                {memoryViewTab === "archived" && (
+                  <span className="ml-auto text-xs text-slate-400">
+                    {memoryArchivedItems.length} archived memories
                   </span>
                 )}
               </div>
@@ -1526,6 +1577,7 @@ export default function AdminPage() {
                             "Input",
                             "Episode",
                             "Semantic",
+                            "Retention",
                             "Keywords",
                           ].map((label) => (
                             <th
@@ -1540,6 +1592,7 @@ export default function AdminPage() {
                       <tbody>
                         {visibleMemoryRows.map((row) => {
                           const semantics = semanticItems(row);
+                          const retentionScores = semanticRetentionScores(row);
                           return (
                             <tr
                               key={`${row.version ?? "unknown"}-${row.type}-${row.id}`}
@@ -1586,6 +1639,24 @@ export default function AdminPage() {
                                         className="inline-block max-w-full wrap-anywhere rounded-lg bg-indigo-50 px-2.5 py-1 text-xs leading-snug text-indigo-700"
                                       >
                                         {s}
+                                      </span>
+                                    ))}
+                                  </div>
+                                )}
+                              </td>
+                              <td className="whitespace-nowrap border-b border-slate-100 px-3 py-3">
+                                {semantics.length === 0 ? (
+                                  <span className="text-slate-300">—</span>
+                                ) : (
+                                  <div className="flex flex-col gap-1">
+                                    {semantics.map((_, index) => (
+                                      <span
+                                        key={index}
+                                        className="inline-block rounded-lg bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-600"
+                                      >
+                                        {formatScore(
+                                          retentionScores[index] ?? null,
+                                        )}
                                       </span>
                                     ))}
                                   </div>
@@ -1757,7 +1828,7 @@ export default function AdminPage() {
 
                         <section>
                           <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">
-                            Used memories
+                            retrieved[]
                           </p>
                           <div className="space-y-3">
                             {selectedMemoryRetrieval.retrieved.map(
@@ -1780,25 +1851,31 @@ export default function AdminPage() {
                                           #{index + 1}
                                         </span>
                                         <span className="rounded-full bg-emerald-50 px-2 py-0.5 font-semibold text-emerald-700">
-                                          Match {formatScore(item.similarity)}
+                                          similarity{" "}
+                                          {formatScore(item.similarity)}
                                         </span>
                                         {item.semantic && (
                                           <span className="rounded-full bg-violet-50 px-2 py-0.5 font-semibold text-violet-600">
-                                            Semantic
+                                            semantic
                                           </span>
                                         )}
                                         {item.episode && (
                                           <span className="rounded-full bg-sky-50 px-2 py-0.5 font-semibold text-sky-600">
-                                            Episodic
+                                            episode
                                           </span>
                                         )}
                                         <span>
-                                          Strength{" "}
+                                          retentionScore{" "}
                                           {formatScore(item.retentionScore)}
                                         </span>
-                                        <span>used {item.retrievedCount}x</span>
+                                        <span>
+                                          retrievedCount {item.retrievedCount}
+                                        </span>
                                         {item.source?.missionId && (
-                                          <span>{item.source.missionId}</span>
+                                          <span>
+                                            source.missionId{" "}
+                                            {item.source.missionId}
+                                          </span>
                                         )}
                                       </div>
                                     </div>
@@ -1808,26 +1885,33 @@ export default function AdminPage() {
                                     </p>
                                     <details className="mt-3 rounded-xl bg-slate-50 px-3 py-2">
                                       <summary className="cursor-pointer text-[11px] font-semibold text-slate-500">
-                                        Technical details
+                                        Fields
                                       </summary>
                                       <div className="mt-2 grid gap-2 text-[11px] text-slate-500 sm:grid-cols-2 lg:grid-cols-4">
                                         <span>
-                                          usage {formatScore(item.usageScore)}
+                                          usageScore{" "}
+                                          {formatScore(item.usageScore)}
                                         </span>
                                         <span>
-                                          decay {formatScore(item.decayScore)}
+                                          decayScore{" "}
+                                          {formatScore(item.decayScore)}
                                         </span>
                                         <span>
-                                          usage delta{" "}
+                                          scoreDeltas[].usageDelta{" "}
                                           {formatScore(delta?.usageDelta)}
                                         </span>
                                         <span>
-                                          decay delta{" "}
+                                          scoreDeltas[].decayDelta{" "}
                                           {formatScore(delta?.decayDelta)}
+                                        </span>
+                                        <span>
+                                          scoreDeltas[].retentionScore{" "}
+                                          {formatScore(delta?.retentionScore)}
                                         </span>
                                       </div>
                                       <p className="mt-2 wrap-anywhere text-[11px] text-slate-400">
-                                        {item.memoryId}:{item.semanticItemId}
+                                        memoryId {item.memoryId} ·
+                                        semanticItemId {item.semanticItemId}
                                       </p>
                                     </details>
                                   </div>
@@ -1850,13 +1934,12 @@ export default function AdminPage() {
                     )}
                     {isLoadingMemoryForgetting ? (
                       <p className="px-2 py-3 text-xs text-slate-400">
-                        Forgetting 후보를 불러오는 중입니다.
+                        Forgetting 후보를 자동 archive하는 중입니다.
                       </p>
                     ) : memoryForgettingCandidates.length === 0 ? (
                       <p className="px-2 py-3 text-xs leading-relaxed text-slate-400">
-                        현재 archive 후보가 없습니다. Retrieval이 누적되면 낮은
-                        strength, 오래 쓰이지 않은 semantic, 중복 semantic이
-                        여기에 표시됩니다.
+                        새로 자동 archive된 후보가 없습니다. 전체 archive
+                        기록은 Archived 탭에서 확인할 수 있습니다.
                       </p>
                     ) : (
                       <div className="space-y-2">
@@ -1883,9 +1966,20 @@ export default function AdminPage() {
                             </div>
                             <div className="mt-2 flex flex-wrap gap-1.5 text-[11px] text-slate-400">
                               <span>
-                                Strength {formatScore(candidate.retentionScore)}
+                                retentionScore{" "}
+                                {formatScore(candidate.retentionScore)}
                               </span>
-                              <span>used {candidate.retrievedCount}x</span>
+                              <span>
+                                retrievedCount {candidate.retrievedCount}
+                              </span>
+                              {candidate.archivedAt && (
+                                <span>
+                                  archivedAt{" "}
+                                  {new Date(
+                                    candidate.archivedAt,
+                                  ).toLocaleString("ko-KR")}
+                                </span>
+                              )}
                               {candidate.source?.missionId && (
                                 <span>{candidate.source.missionId}</span>
                               )}
@@ -1898,11 +1992,11 @@ export default function AdminPage() {
                   <div className="h-full overflow-y-auto overscroll-contain p-5">
                     {isLoadingMemoryForgetting ? (
                       <div className="flex h-full min-h-80 items-center justify-center text-sm text-slate-400">
-                        Forgetting 후보를 불러오는 중입니다.
+                        Forgetting 후보를 자동 archive하는 중입니다.
                       </div>
                     ) : !selectedMemoryForgetting ? (
                       <div className="flex h-full min-h-80 items-center justify-center text-sm text-slate-400">
-                        선택된 archive 후보가 없습니다.
+                        새로 자동 archive된 후보가 없습니다.
                       </div>
                     ) : (
                       <div className="space-y-5">
@@ -1910,43 +2004,36 @@ export default function AdminPage() {
                           <div className="flex flex-wrap items-start justify-between gap-3">
                             <div>
                               <h3 className="text-lg font-semibold text-slate-900">
-                                Archive candidate
+                                Auto archived memory
                               </h3>
                               <p className="mt-1 max-w-2xl text-sm text-slate-500">
-                                자동 삭제하지 않고 연구자가 후보를 확인한 뒤
-                                semantic item만 soft archive합니다.
+                                Forgetting 기준에 걸린 semantic item을 자동
+                                soft archive했습니다.
                               </p>
                             </div>
-                            <button
-                              type="button"
-                              onClick={() =>
-                                archiveMemoryCandidate(selectedMemoryForgetting)
-                              }
-                              disabled={
-                                archivingMemoryCandidateId ===
-                                selectedMemoryForgetting.id
-                              }
-                              className="rounded-xl bg-slate-900 px-4 py-2 text-xs font-semibold text-white transition hover:bg-slate-700 disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-500"
-                            >
-                              {archivingMemoryCandidateId ===
-                              selectedMemoryForgetting.id
-                                ? "Archiving..."
-                                : "Archive"}
-                            </button>
                           </div>
                           <div className="flex flex-wrap gap-2">
                             <span className="rounded-full bg-rose-50 px-2.5 py-1 text-xs font-semibold text-rose-600">
                               {selectedMemoryForgetting.reason}
                             </span>
                             <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-500">
-                              Strength{" "}
+                              retentionScore{" "}
                               {formatScore(
                                 selectedMemoryForgetting.retentionScore,
                               )}
                             </span>
                             <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-500">
-                              used {selectedMemoryForgetting.retrievedCount}x
+                              retrievedCount{" "}
+                              {selectedMemoryForgetting.retrievedCount}
                             </span>
+                            {selectedMemoryForgetting.archivedAt && (
+                              <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-500">
+                                archivedAt{" "}
+                                {new Date(
+                                  selectedMemoryForgetting.archivedAt,
+                                ).toLocaleString("ko-KR")}
+                              </span>
+                            )}
                           </div>
                           <p className="rounded-xl bg-slate-50 px-3 py-3 text-xs leading-relaxed text-slate-600">
                             {selectedMemoryForgetting.reasonLabel}
@@ -2012,18 +2099,22 @@ export default function AdminPage() {
                           </summary>
                           <div className="mt-2 grid gap-2 text-[11px] text-slate-500 sm:grid-cols-2 lg:grid-cols-4">
                             <span>
-                              importance{" "}
+                              importanceScore{" "}
                               {formatScore(
                                 selectedMemoryForgetting.importanceScore,
                               )}
                             </span>
                             <span>
-                              usage{" "}
+                              usageScore{" "}
                               {formatScore(selectedMemoryForgetting.usageScore)}
                             </span>
                             <span>
-                              decay{" "}
+                              decayScore{" "}
                               {formatScore(selectedMemoryForgetting.decayScore)}
+                            </span>
+                            <span>
+                              archiveReason{" "}
+                              {selectedMemoryForgetting.archiveReason ?? "—"}
                             </span>
                             <span>
                               last retrieved{" "}
@@ -2037,6 +2128,152 @@ export default function AdminPage() {
                           <p className="mt-2 wrap-anywhere text-[11px] text-slate-400">
                             {selectedMemoryForgetting.memoryId}:
                             {selectedMemoryForgetting.semanticItemId}
+                          </p>
+                        </details>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ) : memoryViewTab === "archived" ? (
+                <div className="grid h-full grid-cols-[minmax(260px,360px)_1fr] overflow-hidden">
+                  <div className="h-full overflow-y-auto overscroll-contain border-r border-slate-100 bg-slate-50/60 p-3">
+                    {memoryForgettingError && (
+                      <p className="mb-3 rounded-xl bg-red-50 px-3 py-2 text-xs text-red-500">
+                        {memoryForgettingError}
+                      </p>
+                    )}
+                    {isLoadingMemoryForgetting ? (
+                      <p className="px-2 py-3 text-xs text-slate-400">
+                        Archived memory를 불러오는 중입니다.
+                      </p>
+                    ) : memoryArchivedItems.length === 0 ? (
+                      <p className="px-2 py-3 text-xs leading-relaxed text-slate-400">
+                        archivedAt이 기록된 semantic item이 없습니다.
+                      </p>
+                    ) : (
+                      <div className="space-y-2">
+                        {memoryArchivedItems.map((item) => (
+                          <button
+                            key={item.id}
+                            type="button"
+                            onClick={() => setSelectedMemoryArchivedId(item.id)}
+                            className={`w-full rounded-xl border px-3 py-3 text-left transition ${
+                              selectedMemoryArchived?.id === item.id
+                                ? "border-slate-300 bg-white shadow-sm"
+                                : "border-transparent bg-white/60 hover:border-slate-200 hover:bg-white"
+                            }`}
+                          >
+                            <div className="flex items-start justify-between gap-2">
+                              <p className="line-clamp-2 text-xs font-semibold leading-relaxed text-slate-800">
+                                {item.semantic}
+                              </p>
+                              <span className="shrink-0 rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-500">
+                                {item.archiveReason ?? item.reason}
+                              </span>
+                            </div>
+                            <div className="mt-2 flex flex-wrap gap-1.5 text-[11px] text-slate-400">
+                              <span>
+                                archivedAt{" "}
+                                {item.archivedAt
+                                  ? new Date(item.archivedAt).toLocaleString(
+                                      "ko-KR",
+                                    )
+                                  : "—"}
+                              </span>
+                              <span>
+                                retentionScore{" "}
+                                {formatScore(item.retentionScore)}
+                              </span>
+                            </div>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  <div className="h-full overflow-y-auto overscroll-contain p-5">
+                    {isLoadingMemoryForgetting ? (
+                      <div className="flex h-full min-h-80 items-center justify-center text-sm text-slate-400">
+                        Archived memory를 불러오는 중입니다.
+                      </div>
+                    ) : !selectedMemoryArchived ? (
+                      <div className="flex h-full min-h-80 items-center justify-center text-sm text-slate-400">
+                        선택된 archived memory가 없습니다.
+                      </div>
+                    ) : (
+                      <div className="space-y-5">
+                        <section className="space-y-3">
+                          <div>
+                            <h3 className="text-lg font-semibold text-slate-900">
+                              Archived memory
+                            </h3>
+                            <p className="mt-1 max-w-2xl text-sm text-slate-500">
+                              archivedAt이 있는 semantic item입니다. Retrieval
+                              대상에서는 제외됩니다.
+                            </p>
+                          </div>
+                          <div className="flex flex-wrap gap-2">
+                            <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-500">
+                              archiveReason{" "}
+                              {selectedMemoryArchived.archiveReason ?? "—"}
+                            </span>
+                            <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-500">
+                              archivedAt{" "}
+                              {selectedMemoryArchived.archivedAt
+                                ? new Date(
+                                    selectedMemoryArchived.archivedAt,
+                                  ).toLocaleString("ko-KR")
+                                : "—"}
+                            </span>
+                            <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-500">
+                              retentionScore{" "}
+                              {formatScore(
+                                selectedMemoryArchived.retentionScore,
+                              )}
+                            </span>
+                          </div>
+                        </section>
+
+                        <section>
+                          <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">
+                            Semantic
+                          </p>
+                          <p className="wrap-anywhere rounded-2xl border border-slate-100 bg-white p-4 text-sm leading-relaxed text-slate-800 shadow-sm">
+                            {selectedMemoryArchived.semantic}
+                          </p>
+                        </section>
+
+                        <details className="rounded-xl bg-slate-50 px-3 py-2">
+                          <summary className="cursor-pointer text-[11px] font-semibold text-slate-500">
+                            Fields
+                          </summary>
+                          <div className="mt-2 grid gap-2 text-[11px] text-slate-500 sm:grid-cols-2 lg:grid-cols-4">
+                            <span>
+                              importanceScore{" "}
+                              {formatScore(
+                                selectedMemoryArchived.importanceScore,
+                              )}
+                            </span>
+                            <span>
+                              usageScore{" "}
+                              {formatScore(selectedMemoryArchived.usageScore)}
+                            </span>
+                            <span>
+                              decayScore{" "}
+                              {formatScore(selectedMemoryArchived.decayScore)}
+                            </span>
+                            <span>
+                              retrievedCount{" "}
+                              {selectedMemoryArchived.retrievedCount}
+                            </span>
+                            <span>
+                              duplicateOf{" "}
+                              {selectedMemoryArchived.duplicateOf ?? "—"}
+                            </span>
+                          </div>
+                          <p className="mt-2 wrap-anywhere text-[11px] text-slate-400">
+                            memoryId {selectedMemoryArchived.memoryId} ·
+                            semanticItemId{" "}
+                            {selectedMemoryArchived.semanticItemId}
                           </p>
                         </details>
                       </div>

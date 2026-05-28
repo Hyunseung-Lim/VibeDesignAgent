@@ -13,7 +13,6 @@ const MEMORY_COLLECTION = "memories_0_1_1";
 const MAX_DUPLICATE_SCAN_ITEMS = 220;
 const DUPLICATE_SIMILARITY_THRESHOLD = 0.92;
 const LOW_RETENTION_THRESHOLD = 0.28;
-const STALE_DAYS_THRESHOLD = 14;
 
 type SemanticItem = {
   id?: unknown;
@@ -51,6 +50,9 @@ type ForgettingCandidate = {
   retrievedCount: number;
   lastRetrievedAt: number | null;
   createdAt: number | null;
+  archivedAt?: number | null;
+  archiveReason?: string | null;
+  duplicateOf?: string | null;
   source: unknown;
   keywords: string[];
   duplicate?: {
@@ -138,7 +140,7 @@ function flattenSemanticItems(docs: MemoryDoc[]) {
             : null;
         return {
           id: `${doc.id}:${semanticItemId}`,
-          reason: "stale",
+          reason: "low-retention",
           reasonLabel: "",
           memoryId: doc.id,
           semanticItemId,
@@ -180,8 +182,6 @@ function addCandidate(
 }
 
 function buildCandidates(items: IndexedSemanticItem[]) {
-  const now = Date.now();
-  const staleMs = STALE_DAYS_THRESHOLD * 24 * 60 * 60 * 1000;
   const candidates = new Map<string, ForgettingCandidate>();
 
   items.forEach((item) => {
@@ -194,20 +194,6 @@ function buildCandidates(items: IndexedSemanticItem[]) {
         item,
         "low-retention",
         `retentionScore가 ${LOW_RETENTION_THRESHOLD}보다 낮습니다.`,
-      );
-      return;
-    }
-    const referenceTime = item.lastRetrievedAt ?? item.createdAt;
-    if (
-      referenceTime &&
-      item.retrievedCount === 0 &&
-      now - referenceTime > staleMs
-    ) {
-      addCandidate(
-        candidates,
-        item,
-        "stale",
-        `${STALE_DAYS_THRESHOLD}일 이상 검색되지 않은 semantic입니다.`,
       );
     }
   });
@@ -258,6 +244,120 @@ function buildCandidates(items: IndexedSemanticItem[]) {
   });
 }
 
+function sortArchivedItems(items: ForgettingCandidate[]) {
+  return [...items].sort(
+    (a, b) => Number(b.archivedAt ?? 0) - Number(a.archivedAt ?? 0),
+  );
+}
+
+function archivedItemsFromDocs(docs: MemoryDoc[]) {
+  return sortArchivedItems(
+    docs.flatMap((doc) => {
+      const semanticItems = Array.isArray(doc.semanticItems)
+        ? doc.semanticItems
+        : [];
+      return semanticItems
+        .map((item, index): ForgettingCandidate | null => {
+          const semantic = String(item.semantic ?? "").trim();
+          const archivedAt = timestampValue(item.archivedAt);
+          if (!semantic || !archivedAt) return null;
+          const semanticItemId = String(item.id ?? `semantic-${index}`);
+          const archiveReason = item.archiveReason
+            ? String(item.archiveReason)
+            : "archived";
+          return {
+            id: `${doc.id}:${semanticItemId}`,
+            reason: archiveReason.includes("duplicate")
+              ? "duplicate"
+              : archiveReason.includes("low-retention")
+                ? "low-retention"
+                : "stale",
+            reasonLabel: `archivedAt ${new Date(archivedAt).toISOString()}`,
+            memoryId: doc.id,
+            semanticItemId,
+            semantic,
+            retentionScore:
+              typeof item.retentionScore === "number" &&
+              Number.isFinite(item.retentionScore)
+                ? item.retentionScore
+                : null,
+            importanceScore: numberValue(item.importanceScore, 0.5),
+            usageScore: numberValue(item.usageScore),
+            decayScore: numberValue(item.decayScore),
+            retrievedCount: numberValue(item.retrievedCount),
+            lastRetrievedAt: timestampValue(item.lastRetrievedAt),
+            createdAt: timestampValue(item.createdAt ?? doc.createdAt),
+            archivedAt,
+            archiveReason,
+            duplicateOf: item.duplicateOf ? String(item.duplicateOf) : null,
+            source: doc.source ?? null,
+            keywords: stringArray(doc.keywords),
+          };
+        })
+        .filter((item): item is ForgettingCandidate => Boolean(item));
+    }),
+  );
+}
+
+async function autoArchiveCandidates(
+  uid: string,
+  docs: MemoryDoc[],
+  candidates: ForgettingCandidate[],
+  token: string,
+) {
+  if (candidates.length === 0) return [];
+  const now = Date.now();
+  const candidateById = new Map(candidates.map((item) => [item.id, item]));
+  const touchedDocs = new Map<string, MemoryDoc>();
+  const archived: ForgettingCandidate[] = [];
+
+  docs.forEach((doc) => {
+    const semanticItems = Array.isArray(doc.semanticItems)
+      ? [...doc.semanticItems]
+      : [];
+    let touched = false;
+    semanticItems.forEach((item, index) => {
+      const semanticItemId = String(item.id ?? `semantic-${index}`);
+      const candidate = candidateById.get(`${doc.id}:${semanticItemId}`);
+      if (!candidate || timestampValue(item.archivedAt)) return;
+      semanticItems[index] = {
+        ...(item as Record<string, unknown>),
+        archivedAt: now,
+        archiveReason: `auto-${candidate.reason}`,
+        duplicateOf: candidate.duplicate
+          ? `${candidate.duplicate.memoryId}:${candidate.duplicate.semanticItemId}`
+          : null,
+        updatedAt: now,
+      };
+      touched = true;
+      archived.push({
+        ...candidate,
+        archivedAt: now,
+        archiveReason: `auto-${candidate.reason}`,
+        duplicateOf: candidate.duplicate
+          ? `${candidate.duplicate.memoryId}:${candidate.duplicate.semanticItemId}`
+          : null,
+      });
+    });
+    if (touched) {
+      doc.semanticItems = semanticItems;
+      touchedDocs.set(doc.id, doc);
+    }
+  });
+
+  await Promise.all(
+    Array.from(touchedDocs.values()).map((doc) =>
+      patchFirestoreDocument(
+        `users/${uid}/${MEMORY_COLLECTION}/${encodeURIComponent(doc.id)}`,
+        { semanticItems: doc.semanticItems ?? [] },
+        token,
+      ),
+    ),
+  );
+
+  return sortArchivedItems(archived);
+}
+
 export async function GET(
   request: Request,
   { params }: { params: Promise<{ uid: string }> },
@@ -269,13 +369,15 @@ export async function GET(
   const token = await getFirebaseAccessToken();
   const docs = await loadMemoryDocs(uid, token);
   const items = flattenSemanticItems(docs);
+  const candidates = buildCandidates(items);
+  const autoArchived = await autoArchiveCandidates(uid, docs, candidates, token);
 
   return Response.json({
-    candidates: buildCandidates(items),
+    candidates: autoArchived,
+    archived: archivedItemsFromDocs(docs),
     thresholds: {
       duplicateSimilarity: DUPLICATE_SIMILARITY_THRESHOLD,
       lowRetention: LOW_RETENTION_THRESHOLD,
-      staleDays: STALE_DAYS_THRESHOLD,
     },
   });
 }
