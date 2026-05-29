@@ -6,6 +6,7 @@ import {
   patchFirestoreDocument,
   verifyFirebaseIdToken,
 } from "@/lib/server/firebaseAdminRest";
+import { archiveDuplicateMemoriesForTargets } from "@/lib/server/memoryForgetting";
 
 export const runtime = "nodejs";
 
@@ -60,71 +61,76 @@ export async function POST(request: Request) {
   );
   const completedAt = Date.now();
 
-  await Promise.all(
-    drafts.map(async (draft) => {
-      const timestamp = Number(draft.timestamp ?? draft.createdAt ?? completedAt);
-      const keywords = jsonArray(draft.keywordsJson);
-      const semantic =
-        String(draft.semantic ?? "").trim() || jsonArray(draft.semanticJson)[0] || "";
-      const episodic = String(draft.episode ?? "").trim();
-      const action = String(draft.agentActionCategory ?? "agent_response");
-      const input = String(draft.input ?? "").trim();
-      const output = String(draft.output ?? "").trim();
-      const embeddingText = [
-        action ? `Action: ${action}` : "",
-        keywords.length ? `Keywords: ${keywords.join(", ")}` : "",
-        episodic ? `Episodic: ${episodic}` : "",
-        semantic ? `Semantic: ${semantic}` : "",
-        input ? `Input: ${input}` : "",
-        output ? `Output: ${output}` : "",
-      ].filter(Boolean).join("\n");
-      const [embedding] = await embedMemoryTexts(embeddingText ? [embeddingText] : []);
-      if (episodic) {
-        await patchFirestoreDocument(
-          `users/${user.localId}/${MEMORY_COLLECTION}/${encodeURIComponent(`interaction-${sourceId}-${draft.id}`)}`,
-          {
-            schemaVersion: String(draft.schemaVersion ?? MEMORY_SCHEMA_VERSION),
-            type: "interaction",
-            action: String(draft.agentActionCategory ?? "agent_response"),
-            keyword: keywords,
-            keywords,
-            episodic,
-            episode: episodic,
-            content: episodic,
-            semantic: semantic || null,
-            input: draft.input ?? "",
-            output: draft.output ?? "",
-            link: null,
-            embedding: embedding ?? [],
-            embeddingSource: "combined",
-            embeddingModel: EMBEDDING_MODEL,
-            weight: 0.5,
-            retrievedCount: 0,
-            lastRetrievedAt: null,
-            duplicateOf: null,
-            archivedAt: null,
-            archiveReason: null,
-            timestamp,
-            previousEpisode: draft.previousEpisode ?? "",
-            previousOutput: draft.previousOutput ?? "",
-            agentActionCategory: draft.agentActionCategory ?? "agent_response",
-            source: {
-              missionId,
-              draftId: draft.id,
+  const promotedMemoryIds = (
+    await Promise.all(
+      drafts.map(async (draft) => {
+        const timestamp = Number(draft.timestamp ?? draft.createdAt ?? completedAt);
+        const keywords = jsonArray(draft.keywordsJson);
+        const semantic =
+          String(draft.semantic ?? "").trim() || jsonArray(draft.semanticJson)[0] || "";
+        const episodic = String(draft.episode ?? "").trim();
+        const action = String(draft.agentActionCategory ?? "agent_response");
+        const input = String(draft.input ?? "").trim();
+        const output = String(draft.output ?? "").trim();
+        const embeddingText = [
+          action ? `Action: ${action}` : "",
+          keywords.length ? `Keywords: ${keywords.join(", ")}` : "",
+          episodic ? `Episodic: ${episodic}` : "",
+          semantic ? `Semantic: ${semantic}` : "",
+          input ? `Input: ${input}` : "",
+          output ? `Output: ${output}` : "",
+        ].filter(Boolean).join("\n");
+        const [embedding] = await embedMemoryTexts(embeddingText ? [embeddingText] : []);
+        let memoryId: string | null = null;
+        if (episodic) {
+          memoryId = `interaction-${sourceId}-${draft.id}`;
+          await patchFirestoreDocument(
+            `users/${user.localId}/${MEMORY_COLLECTION}/${encodeURIComponent(memoryId)}`,
+            {
+              schemaVersion: String(draft.schemaVersion ?? MEMORY_SCHEMA_VERSION),
+              type: "interaction",
+              action: String(draft.agentActionCategory ?? "agent_response"),
+              keyword: keywords,
+              keywords,
+              episodic,
+              episode: episodic,
+              content: episodic,
+              semantic: semantic || null,
+              input: draft.input ?? "",
+              output: draft.output ?? "",
+              link: null,
+              embedding: embedding ?? [],
+              embeddingSource: "combined",
+              embeddingModel: EMBEDDING_MODEL,
+              weight: 0.5,
+              retrievedCount: 0,
+              lastRetrievedAt: null,
+              duplicateOf: null,
+              archivedAt: null,
+              archiveReason: null,
+              timestamp,
+              previousEpisode: draft.previousEpisode ?? "",
+              previousOutput: draft.previousOutput ?? "",
+              agentActionCategory: draft.agentActionCategory ?? "agent_response",
+              source: {
+                missionId,
+                draftId: draft.id,
+              },
+              createdAt: completedAt,
+              ownerUid: user.localId,
             },
-            createdAt: completedAt,
-            ownerUid: user.localId,
-          },
+            token,
+          );
+        }
+        await patchFirestoreDocument(
+          `${draftPath}/${draft.id}`,
+          { status: "promoted", promotedAt: completedAt },
           token,
         );
-      }
-      await patchFirestoreDocument(
-        `${draftPath}/${draft.id}`,
-        { status: "promoted", promotedAt: completedAt },
-        token,
-      );
-    }),
-  );
+        return memoryId;
+      }),
+    )
+  ).filter((id): id is string => Boolean(id));
 
   await patchFirestoreDocument(
     sessionPath,
@@ -136,5 +142,29 @@ export async function POST(request: Request) {
     },
     token,
   );
-  return Response.json({ ok: true, promoted: drafts.length, completedAt });
+
+  let duplicateCleanup:
+    | { archived: number; error?: undefined }
+    | { archived: 0; error: string } = { archived: 0 };
+  try {
+    const archived = await archiveDuplicateMemoriesForTargets(
+      user.localId,
+      promotedMemoryIds,
+      token,
+    );
+    duplicateCleanup = { archived: archived.length };
+  } catch (error) {
+    console.warn("[memory/complete-session] duplicate cleanup failed", error);
+    duplicateCleanup = {
+      archived: 0,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+
+  return Response.json({
+    ok: true,
+    promoted: promotedMemoryIds.length,
+    completedAt,
+    duplicateCleanup,
+  });
 }

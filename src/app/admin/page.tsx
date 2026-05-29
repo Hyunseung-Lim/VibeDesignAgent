@@ -236,7 +236,7 @@ function semanticItems(row: AdminMemoryRow) {
     : [];
 }
 
-function semanticRetentionScores(row: AdminMemoryRow) {
+function memoryWeights(row: AdminMemoryRow) {
   if (typeof row.weight === "number" && Number.isFinite(row.weight)) {
     return [row.weight];
   }
@@ -250,19 +250,19 @@ function semanticRetentionScores(row: AdminMemoryRow) {
     : [];
 }
 
-function numericRetentionScores(row: AdminMemoryRow) {
-  return semanticRetentionScores(row).filter(
+function numericMemoryWeights(row: AdminMemoryRow) {
+  return memoryWeights(row).filter(
     (score): score is number => typeof score === "number",
   );
 }
 
-function retentionSortValue(row: AdminMemoryRow, mode: MemorySortKey) {
-  const scores = numericRetentionScores(row);
-  if (scores.length === 0) return null;
-  if (mode === "retentionMax") return Math.max(...scores);
-  if (mode === "retentionMin") return Math.min(...scores);
+function memoryWeightSortValue(row: AdminMemoryRow, mode: MemorySortKey) {
+  const weights = numericMemoryWeights(row);
+  if (weights.length === 0) return null;
+  if (mode === "retentionMax") return Math.max(...weights);
+  if (mode === "retentionMin") return Math.min(...weights);
   if (mode === "retentionAvg") {
-    return scores.reduce((sum, score) => sum + score, 0) / scores.length;
+    return weights.reduce((sum, weight) => sum + weight, 0) / weights.length;
   }
   return null;
 }
@@ -1008,8 +1008,8 @@ export default function AdminPage() {
         memorySortKey === "retentionMin" ||
         memorySortKey === "retentionAvg"
       ) {
-        const aValue = retentionSortValue(a, memorySortKey);
-        const bValue = retentionSortValue(b, memorySortKey);
+        const aValue = memoryWeightSortValue(a, memorySortKey);
+        const bValue = memoryWeightSortValue(b, memorySortKey);
         if (aValue == null && bValue == null) return 0;
         if (aValue == null) return 1;
         if (bValue == null) return -1;
@@ -1617,7 +1617,7 @@ export default function AdminPage() {
                       <tbody>
                         {visibleMemoryRows.map((row) => {
                           const semantics = semanticItems(row);
-                          const retentionScores = semanticRetentionScores(row);
+                          const weights = memoryWeights(row);
                           return (
                             <tr
                               key={`${row.version ?? "unknown"}-${row.type}-${row.id}`}
@@ -1670,18 +1670,16 @@ export default function AdminPage() {
                                 )}
                               </td>
                               <td className="whitespace-nowrap border-b border-slate-100 px-3 py-3">
-                                {semantics.length === 0 ? (
+                                {weights.length === 0 ? (
                                   <span className="text-slate-300">—</span>
                                 ) : (
                                   <div className="flex flex-col gap-1">
-                                    {semantics.map((_, index) => (
+                                    {weights.map((weight, index) => (
                                       <span
                                         key={index}
                                         className="inline-block rounded-lg bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-600"
                                       >
-                                        {formatScore(
-                                          retentionScores[index] ?? null,
-                                        )}
+                                        {formatScore(weight)}
                                       </span>
                                     ))}
                                   </div>
@@ -2183,6 +2181,12 @@ export default function AdminPage() {
                                 weight{" "}
                                 {formatScore(item.weight)}
                               </span>
+                              {item.duplicate && (
+                                <span>
+                                  similarTo{" "}
+                                  {formatScore(item.duplicate.similarity)}
+                                </span>
+                              )}
                             </div>
                           </button>
                         ))}
@@ -2240,6 +2244,42 @@ export default function AdminPage() {
                             {selectedMemoryArchived.semantic}
                           </p>
                         </section>
+
+                        {selectedMemoryArchived.duplicate && (
+                          <section>
+                            <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">
+                              Similar memory kept
+                            </p>
+                            <div className="rounded-2xl border border-emerald-100 bg-emerald-50 p-4 text-xs">
+                              <div className="mb-2 flex flex-wrap gap-2 text-[11px] font-semibold text-emerald-700">
+                                <span>
+                                  Match{" "}
+                                  {formatScore(
+                                    selectedMemoryArchived.duplicate
+                                      .similarity,
+                                  )}
+                                </span>
+                                <span>
+                                  {selectedMemoryArchived.duplicate.memoryId}:
+                                  {
+                                    selectedMemoryArchived.duplicate
+                                      .semanticItemId
+                                  }
+                                </span>
+                              </div>
+                              {selectedMemoryArchived.duplicate.semantic && (
+                                <p className="wrap-anywhere leading-relaxed text-emerald-900">
+                                  {selectedMemoryArchived.duplicate.semantic}
+                                </p>
+                              )}
+                              {selectedMemoryArchived.duplicate.episodic && (
+                                <p className="mt-2 wrap-anywhere leading-relaxed text-emerald-800/80">
+                                  {selectedMemoryArchived.duplicate.episodic}
+                                </p>
+                              )}
+                            </div>
+                          </section>
+                        )}
 
                         <details className="rounded-xl bg-slate-50 px-3 py-2">
                           <summary className="cursor-pointer text-[11px] font-semibold text-slate-500">

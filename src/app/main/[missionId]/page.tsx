@@ -85,6 +85,13 @@ type MemoryRetrievalResponse = {
 
 const CHAT_REMARK_PLUGINS = [remarkGfm];
 
+const SESSION_COMPLETION_STEPS = [
+  "이번 세션의 내용을 정리하고 있어요",
+  "다음 작업에 참고할 기억을 저장하고 있어요",
+  "이미 저장된 내용과 겹치는 부분을 정돈하고 있어요",
+  "세션이 저장되었어요",
+] as const;
+
 const CHAT_MARKDOWN_COMPONENTS = {
   p: ({ children }: { children?: React.ReactNode }) => (
     <p className="mb-2 last:mb-0">{children}</p>
@@ -1711,6 +1718,7 @@ export default function MainScreenPage() {
     [missionId],
   );
   const [isCompletingSession, setIsCompletingSession] = useState(false);
+  const [sessionCompletionStep, setSessionCompletionStep] = useState(0);
   const [sessionCompleted, setSessionCompleted] = useState(false);
   const [showLobbyWarning, setShowLobbyWarning] = useState(false);
   const [editMode, setEditMode] = useState(false);
@@ -1842,6 +1850,7 @@ export default function MainScreenPage() {
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const chatScrollRef = useRef<HTMLDivElement>(null);
+  const sessionCompletionTimeoutsRef = useRef<number[]>([]);
   const ideaSectionRef = useRef<HTMLElement>(null);
   const styleSectionRef = useRef<HTMLElement>(null);
   const mockupSectionRef = useRef<HTMLElement>(null);
@@ -1913,9 +1922,6 @@ export default function MainScreenPage() {
   }, [designContextMenu]);
 
   useEffect(() => {
-    const panel = missionPanelRef.current;
-    if (!panel) return;
-
     const showCiteMenu = (x: number, y: number, text: string) => {
       const el = citeMenuRef.current;
       if (!el) return;
@@ -1932,7 +1938,9 @@ export default function MainScreenPage() {
     };
 
     const handleMouseUp = (e: MouseEvent) => {
+      const panel = missionPanelRef.current;
       if ((e.target as HTMLElement).closest("[data-cite-menu]")) return;
+      if (!panel) return;
       if (!panel.contains(e.target as Node)) { hideCiteMenu(); return; }
       requestAnimationFrame(() => {
         const selection = window.getSelection();
@@ -3747,10 +3755,26 @@ export default function MainScreenPage() {
   };
   const isGeneratingCurrentIdeaMockup =
     isGeneratingMockup && generatingMockupIdeaId === activeIdeaId;
+  const clearSessionCompletionTimers = useCallback(() => {
+    sessionCompletionTimeoutsRef.current.forEach((timeoutId) => {
+      window.clearTimeout(timeoutId);
+    });
+    sessionCompletionTimeoutsRef.current = [];
+  }, []);
+  const startSessionCompletionProgress = useCallback(() => {
+    clearSessionCompletionTimers();
+    setSessionCompletionStep(0);
+    sessionCompletionTimeoutsRef.current = [
+      window.setTimeout(() => setSessionCompletionStep(1), 700),
+      window.setTimeout(() => setSessionCompletionStep(2), 1800),
+    ];
+  }, [clearSessionCompletionTimers]);
+  useEffect(() => clearSessionCompletionTimers, [clearSessionCompletionTimers]);
   const completeSession = async () => {
     if (isReadOnly || isCompletingSession || sessionCompleted || !missionId) return;
     const currentUser = firebaseAuth.currentUser;
     if (!currentUser) return;
+    startSessionCompletionProgress();
     setIsCompletingSession(true);
     try {
       const token = await getIdToken(currentUser, true);
@@ -3780,11 +3804,14 @@ export default function MainScreenPage() {
         }
       }
       setTimerEndedAt(completedAt);
+      setSessionCompletionStep(3);
       setSessionCompleted(true);
+      await new Promise((resolve) => window.setTimeout(resolve, 450));
     } catch (error) {
       console.warn("Unable to complete session", error);
       alert("세션 종료 및 메모리 확정에 실패했습니다. 잠시 후 다시 시도해주세요.");
     } finally {
+      clearSessionCompletionTimers();
       setIsCompletingSession(false);
     }
   };
@@ -4458,6 +4485,61 @@ export default function MainScreenPage() {
           )}
         </div>
       </header>
+
+      {isCompletingSession && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/35 px-4 backdrop-blur-sm">
+          <div
+            role="status"
+            aria-live="polite"
+            className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-2xl shadow-slate-900/20"
+          >
+            <div className="flex items-center gap-3">
+              <div className="h-9 w-9 shrink-0 animate-spin rounded-full border-2 border-slate-200 border-t-slate-900" />
+              <div>
+                <p className="text-sm font-semibold text-slate-900">
+                  세션을 마무리하는 중
+                </p>
+                <p className="mt-1 text-xs text-slate-500">
+                  잠시만 기다려주세요. 작업 내용이 저장되고 있어요.
+                </p>
+              </div>
+            </div>
+            <div className="mt-5 space-y-3">
+              {SESSION_COMPLETION_STEPS.map((step, index) => {
+                const isDone = index < sessionCompletionStep;
+                const isActive = index === sessionCompletionStep;
+                const label =
+                  index === SESSION_COMPLETION_STEPS.length - 1 &&
+                  isOnboardingMission
+                    ? "온보딩이 완료되었어요"
+                    : step;
+                return (
+                  <div key={step} className="flex items-center gap-3">
+                    <span
+                      className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full border text-[10px] font-semibold ${
+                        isDone
+                          ? "border-slate-900 bg-slate-900 text-white"
+                          : isActive
+                            ? "border-slate-900 bg-white text-slate-900"
+                            : "border-slate-200 bg-slate-50 text-slate-300"
+                      }`}
+                    >
+                      {isDone ? "✓" : index + 1}
+                    </span>
+                    <span
+                      className={`text-sm ${
+                        isDone || isActive ? "text-slate-900" : "text-slate-400"
+                      }`}
+                    >
+                      {label}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
 
       {missionOptions.length > 0 && !selectedOptionId ? (
         <main className="flex flex-1 flex-col overflow-hidden">
