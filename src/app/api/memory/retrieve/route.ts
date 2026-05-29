@@ -198,7 +198,7 @@ function legacyCandidates(uid: string, doc: MemoryDoc): Candidate[] {
         link: null,
         embedding: numberArray(item.embedding),
         embeddingSource: "semantic",
-        weight: numberValue(item.retentionScore, 0.5),
+        weight: numberValue(item.weight ?? item.retentionScore, 0.5),
         retrievedCount: numberValue(item.retrievedCount),
         lastRetrievedAt: timestampValue(item.lastRetrievedAt),
         timestamp: doc.timestamp ?? doc.occurredAt ?? doc.createdAt,
@@ -391,7 +391,6 @@ export async function POST(request: Request) {
       schemaVersion: candidate.schemaVersion,
       similarity: Number(candidate.similarity.toFixed(4)),
       weight: candidate.weight,
-      retentionScore: candidate.weight,
       retrievedCount: candidate.retrievedCount,
     })),
   });

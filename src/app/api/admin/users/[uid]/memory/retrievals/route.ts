@@ -16,11 +16,9 @@ const MAX_LOGS = 100;
 type SemanticItem = {
   id?: unknown;
   semantic?: unknown;
-  retentionScore?: unknown;
   weight?: unknown;
+  retentionScore?: unknown;
   retrievedCount?: unknown;
-  usageScore?: unknown;
-  decayScore?: unknown;
   archivedAt?: unknown;
 };
 
@@ -36,11 +34,8 @@ type RetrievalLogDoc = Record<string, unknown> & {
 type NormalizedSemanticItem = {
   id: string;
   semantic: string;
-  retentionScore?: number;
   weight?: number;
   retrievedCount: number;
-  usageScore: number;
-  decayScore: number;
   archivedAt?: number;
 };
 
@@ -63,13 +58,9 @@ function semanticItemsForDoc(doc: MemoryDoc): NormalizedSemanticItem[] {
           typeof doc.semantic === "string" && doc.semantic.trim()
             ? doc.semantic
             : String(doc.episodic ?? doc.content ?? ""),
-        retentionScore:
-          typeof doc.weight === "number" ? doc.weight : undefined,
         weight: typeof doc.weight === "number" ? doc.weight : undefined,
         retrievedCount:
           typeof doc.retrievedCount === "number" ? doc.retrievedCount : 0,
-        usageScore: 0,
-        decayScore: 0,
         archivedAt:
           typeof doc.archivedAt === "number" ? doc.archivedAt : undefined,
       },
@@ -86,14 +77,12 @@ function semanticItemsForDoc(doc: MemoryDoc): NormalizedSemanticItem[] {
     return semanticItems.map((item, index) => ({
       id: String(item.id ?? `semantic-${index}`),
       semantic: String(item.semantic ?? semantic[index] ?? ""),
-      retentionScore:
-        typeof item.retentionScore === "number"
-          ? item.retentionScore
+      weight:
+        typeof (item.weight ?? item.retentionScore) === "number"
+          ? Number(item.weight ?? item.retentionScore)
           : undefined,
       retrievedCount:
         typeof item.retrievedCount === "number" ? item.retrievedCount : 0,
-      usageScore: typeof item.usageScore === "number" ? item.usageScore : 0,
-      decayScore: typeof item.decayScore === "number" ? item.decayScore : 0,
       archivedAt:
         typeof item.archivedAt === "number" ? item.archivedAt : undefined,
     }));
@@ -103,8 +92,6 @@ function semanticItemsForDoc(doc: MemoryDoc): NormalizedSemanticItem[] {
     id: `semantic-${index}`,
     semantic: item,
     retrievedCount: 0,
-    usageScore: 0,
-    decayScore: 0,
   }));
 }
 
@@ -199,11 +186,8 @@ export async function GET(
               semanticItemId: item?.id ?? semanticItemId,
               semantic: item?.semantic ?? "",
               similarity: similarities[index] ?? null,
-              retentionScore: item?.retentionScore ?? null,
-              weight: item?.weight ?? item?.retentionScore ?? null,
+              weight: item?.weight ?? null,
               retrievedCount: item?.retrievedCount ?? 0,
-              usageScore: item?.usageScore ?? 0,
-              decayScore: item?.decayScore ?? 0,
               archivedAt: item?.archivedAt ?? null,
               source: item?.source ?? null,
               timestamp: item?.timestamp ?? null,

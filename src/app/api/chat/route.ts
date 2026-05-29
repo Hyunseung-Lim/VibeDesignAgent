@@ -32,11 +32,7 @@ function compactMemoryContext(memoryContext: unknown) {
       output: truncateText(record.output, 700),
       link: typeof record.link === "string" ? record.link : null,
       weight:
-        typeof record.weight === "number"
-          ? record.weight
-          : typeof record.retentionScore === "number"
-            ? record.retentionScore
-            : undefined,
+        typeof record.weight === "number" ? record.weight : undefined,
       similarity:
         typeof record.similarity === "number" ? record.similarity : undefined,
     };

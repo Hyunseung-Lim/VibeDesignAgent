@@ -27,7 +27,6 @@ type ForgettingCandidate = {
   episodic: string;
   semantic: string | null;
   weight: number | null;
-  retentionScore: number | null;
   retrievedCount: number;
   lastRetrievedAt: number | null;
   createdAt: number | null;
@@ -127,7 +126,6 @@ function indexedMemoriesFromDocs(docs: MemoryDoc[]) {
         episodic,
         semantic,
         weight,
-        retentionScore: weight,
         retrievedCount: numberValue(doc.retrievedCount),
         lastRetrievedAt: timestampValue(doc.lastRetrievedAt),
         createdAt: timestampValue(doc.createdAt),
@@ -257,7 +255,6 @@ function archivedItemsFromDocs(docs: MemoryDoc[]) {
           episodic,
           semantic,
           weight,
-          retentionScore: weight,
           retrievedCount: numberValue(doc.retrievedCount),
           lastRetrievedAt: timestampValue(doc.lastRetrievedAt),
           createdAt: timestampValue(doc.createdAt),

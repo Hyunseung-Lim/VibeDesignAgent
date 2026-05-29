@@ -140,10 +140,7 @@ type MemoryRetrievalItem = {
   episode?: string;
   similarity: number | null;
   weight?: number | null;
-  retentionScore: number | null;
   retrievedCount: number;
-  usageScore?: number;
-  decayScore?: number;
   archivedAt?: number | null;
   source?: { missionId?: string; draftId?: string } | null;
   timestamp?: number | null;
@@ -152,11 +149,8 @@ type MemoryRetrievalItem = {
 type MemoryRetrievalScoreDelta = {
   memoryId?: string;
   semanticItemId?: string | null;
-  usageDelta?: number;
-  decayDelta?: number;
   weight?: number;
   weightDelta?: number;
-  retentionScore?: number;
 };
 
 type MemoryRetrievalLog = {
@@ -171,17 +165,13 @@ type MemoryRetrievalLog = {
 
 type MemoryForgettingCandidate = {
   id: string;
-  reason: "low-retention" | "low-weight" | "stale" | "duplicate";
+  reason: "low-weight" | "duplicate";
   reasonLabel: string;
   memoryId: string;
   semanticItemId: string | null;
   semantic: string | null;
   episodic?: string;
   weight?: number | null;
-  retentionScore: number | null;
-  importanceScore: number;
-  usageScore?: number;
-  decayScore?: number;
   retrievedCount: number;
   lastRetrievedAt: number | null;
   createdAt: number | null;
@@ -1900,8 +1890,8 @@ export default function AdminPage() {
                                           </span>
                                         )}
                                         <span>
-                                          retentionScore{" "}
-                                          {formatScore(item.retentionScore)}
+                                          weight{" "}
+                                          {formatScore(item.weight)}
                                         </span>
                                         <span>
                                           retrievedCount {item.retrievedCount}
@@ -1924,24 +1914,12 @@ export default function AdminPage() {
                                       </summary>
                                       <div className="mt-2 grid gap-2 text-[11px] text-slate-500 sm:grid-cols-2 lg:grid-cols-4">
                                         <span>
-                                          usageScore{" "}
-                                          {formatScore(item.usageScore)}
+                                          scoreDeltas[].weight{" "}
+                                          {formatScore(delta?.weight)}
                                         </span>
                                         <span>
-                                          decayScore{" "}
-                                          {formatScore(item.decayScore)}
-                                        </span>
-                                        <span>
-                                          scoreDeltas[].usageDelta{" "}
-                                          {formatScore(delta?.usageDelta)}
-                                        </span>
-                                        <span>
-                                          scoreDeltas[].decayDelta{" "}
-                                          {formatScore(delta?.decayDelta)}
-                                        </span>
-                                        <span>
-                                          scoreDeltas[].retentionScore{" "}
-                                          {formatScore(delta?.retentionScore)}
+                                          scoreDeltas[].weightDelta{" "}
+                                          {formatScore(delta?.weightDelta)}
                                         </span>
                                       </div>
                                       <p className="mt-2 wrap-anywhere text-[11px] text-slate-400">
@@ -2001,8 +1979,8 @@ export default function AdminPage() {
                             </div>
                             <div className="mt-2 flex flex-wrap gap-1.5 text-[11px] text-slate-400">
                               <span>
-                                retentionScore{" "}
-                                {formatScore(candidate.retentionScore)}
+                                weight{" "}
+                                {formatScore(candidate.weight)}
                               </span>
                               <span>
                                 retrievedCount {candidate.retrievedCount}
@@ -2052,9 +2030,9 @@ export default function AdminPage() {
                               {selectedMemoryForgetting.reason}
                             </span>
                             <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-500">
-                              retentionScore{" "}
+                              weight{" "}
                               {formatScore(
-                                selectedMemoryForgetting.retentionScore,
+                                selectedMemoryForgetting.weight,
                               )}
                             </span>
                             <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-500">
@@ -2134,20 +2112,6 @@ export default function AdminPage() {
                           </summary>
                           <div className="mt-2 grid gap-2 text-[11px] text-slate-500 sm:grid-cols-2 lg:grid-cols-4">
                             <span>
-                              importanceScore{" "}
-                              {formatScore(
-                                selectedMemoryForgetting.importanceScore,
-                              )}
-                            </span>
-                            <span>
-                              usageScore{" "}
-                              {formatScore(selectedMemoryForgetting.usageScore)}
-                            </span>
-                            <span>
-                              decayScore{" "}
-                              {formatScore(selectedMemoryForgetting.decayScore)}
-                            </span>
-                            <span>
                               archiveReason{" "}
                               {selectedMemoryForgetting.archiveReason ?? "—"}
                             </span>
@@ -2216,8 +2180,8 @@ export default function AdminPage() {
                                   : "—"}
                               </span>
                               <span>
-                                retentionScore{" "}
-                                {formatScore(item.retentionScore)}
+                                weight{" "}
+                                {formatScore(item.weight)}
                               </span>
                             </div>
                           </button>
@@ -2260,9 +2224,9 @@ export default function AdminPage() {
                                 : "—"}
                             </span>
                             <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-500">
-                              retentionScore{" "}
+                              weight{" "}
                               {formatScore(
-                                selectedMemoryArchived.retentionScore,
+                                selectedMemoryArchived.weight,
                               )}
                             </span>
                           </div>
@@ -2282,20 +2246,6 @@ export default function AdminPage() {
                             Fields
                           </summary>
                           <div className="mt-2 grid gap-2 text-[11px] text-slate-500 sm:grid-cols-2 lg:grid-cols-4">
-                            <span>
-                              importanceScore{" "}
-                              {formatScore(
-                                selectedMemoryArchived.importanceScore,
-                              )}
-                            </span>
-                            <span>
-                              usageScore{" "}
-                              {formatScore(selectedMemoryArchived.usageScore)}
-                            </span>
-                            <span>
-                              decayScore{" "}
-                              {formatScore(selectedMemoryArchived.decayScore)}
-                            </span>
                             <span>
                               retrievedCount{" "}
                               {selectedMemoryArchived.retrievedCount}
