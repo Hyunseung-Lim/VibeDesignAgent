@@ -1725,6 +1725,19 @@ function formatReviewScore(value: number | null | undefined) {
     : "-";
 }
 
+function reviewReferenceLabel(reference: unknown) {
+  if (!reference || typeof reference !== "object") return String(reference);
+  const data = reference as Record<string, unknown>;
+  const title = typeof data.title === "string" ? data.title : "";
+  const url = typeof data.url === "string" ? data.url : "";
+  const id = typeof data.id === "string" ? data.id : "";
+  return title || url || id || "레퍼런스";
+}
+
+function stringifyReviewJson(value: unknown) {
+  return JSON.stringify(value, null, 2) ?? "null";
+}
+
 export default function MainScreenPage() {
   const { missionId } = useParams<{ missionId: string }>();
   const router = useRouter();
@@ -1818,6 +1831,12 @@ export default function MainScreenPage() {
   const [reviewTurnsById, setReviewTurnsById] = useState<
     Record<string, ReviewTurn>
   >({});
+  const [rawPromptModal, setRawPromptModal] = useState<{
+    turnId: string;
+    rawPrompt: unknown;
+    rawPromptSanitization?: unknown;
+    rawResponseMeta?: unknown;
+  } | null>(null);
 
   const isViewingAsAdmin = !!(viewAs && isAdmin);
   const isReadOnly = isReviewMode || isViewingAsAdmin;
@@ -4491,6 +4510,62 @@ export default function MainScreenPage() {
           </button>
         </div>
       )}
+      {rawPromptModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 px-4 backdrop-blur-sm">
+          <div className="flex max-h-[86vh] w-full max-w-4xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl shadow-slate-900/25">
+            <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4">
+              <div>
+                <p className="text-sm font-semibold text-slate-900">
+                  Raw prompt
+                </p>
+                <p className="mt-0.5 text-xs text-slate-400">
+                  turn {rawPromptModal.turnId}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setRawPromptModal(null)}
+                className="rounded-full p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
+                aria-label="raw prompt 닫기"
+              >
+                <XIcon size={16} />
+              </button>
+            </div>
+            <div className="min-h-0 flex-1 overflow-y-auto p-5">
+              <div className="space-y-4">
+                <section>
+                  <p className="mb-2 text-xs font-semibold uppercase text-slate-400">
+                    Sanitized raw prompt
+                  </p>
+                  <pre className="max-h-[46vh] overflow-y-auto whitespace-pre-wrap break-words rounded-xl bg-slate-950 p-4 text-xs leading-relaxed text-slate-100">
+                    {stringifyReviewJson(rawPromptModal.rawPrompt)}
+                  </pre>
+                </section>
+                {rawPromptModal.rawPromptSanitization != null && (
+                  <section>
+                    <p className="mb-2 text-xs font-semibold uppercase text-slate-400">
+                      Sanitization
+                    </p>
+                    <pre className="max-h-48 overflow-y-auto whitespace-pre-wrap break-words rounded-xl bg-slate-50 p-4 text-xs leading-relaxed text-slate-600">
+                      {stringifyReviewJson(rawPromptModal.rawPromptSanitization)}
+                    </pre>
+                  </section>
+                )}
+                {rawPromptModal.rawResponseMeta != null && (
+                  <section>
+                    <p className="mb-2 text-xs font-semibold uppercase text-slate-400">
+                      Response meta
+                    </p>
+                    <pre className="max-h-48 overflow-y-auto whitespace-pre-wrap break-words rounded-xl bg-slate-50 p-4 text-xs leading-relaxed text-slate-600">
+                      {stringifyReviewJson(rawPromptModal.rawResponseMeta)}
+                    </pre>
+                  </section>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
       {/* Read-only banner */}
       {isReadOnly && (
         <div className="flex items-center justify-between bg-amber-50 border-b border-amber-200 px-6 py-2 text-xs text-amber-700">
@@ -5870,6 +5945,15 @@ export default function MainScreenPage() {
                     ? reviewTurnsById[msg.reviewTurnId ?? msg.id]
                     : null;
                 const retrievedReviewMemories = reviewTurn?.retrieved ?? [];
+                const promptCompact = reviewTurn?.promptCompact;
+                const hasPromptContext = Boolean(
+                  reviewTurn?.query ||
+                    promptCompact?.missionBrief ||
+                    promptCompact?.activeIdea ||
+                    (promptCompact?.citedTexts?.length ?? 0) > 0 ||
+                    (promptCompact?.citedReferences?.length ?? 0) > 0,
+                );
+                const reviewTurnId = msg.reviewTurnId ?? msg.id;
                 return (
                   <div
                     key={msg.id}
@@ -6037,6 +6121,114 @@ export default function MainScreenPage() {
                             ))}
                           </div>
                         </div>
+                      )}
+                    {msg.role === "assistant" && hasPromptContext && (
+                      <details className="group mt-3 border-t border-slate-200 pt-3">
+                        <summary className="flex cursor-pointer list-none items-center justify-between gap-3 text-xs font-semibold text-slate-500 marker:hidden">
+                          <span>프롬프트 컨텍스트</span>
+                          <span className="text-slate-400 group-open:hidden">
+                            보기
+                          </span>
+                          <span className="hidden text-slate-400 group-open:inline">
+                            접기
+                          </span>
+                        </summary>
+                        <div className="mt-2 space-y-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-600">
+                          {reviewTurn?.query && (
+                            <div>
+                              <p className="font-semibold text-slate-400">
+                                검색 질의
+                              </p>
+                              <p className="mt-1 whitespace-pre-wrap leading-relaxed">
+                                {reviewTurn.query}
+                              </p>
+                            </div>
+                          )}
+                          {promptCompact?.missionBrief && (
+                            <div>
+                              <p className="font-semibold text-slate-400">
+                                미션 설명
+                              </p>
+                              <p className="mt-1 whitespace-pre-wrap leading-relaxed">
+                                {promptCompact.missionBrief}
+                              </p>
+                            </div>
+                          )}
+                          {promptCompact?.activeIdea && (
+                            <div>
+                              <p className="font-semibold text-slate-400">
+                                활성 아이디어
+                              </p>
+                              {promptCompact.activeIdea.title && (
+                                <p className="mt-1 font-semibold text-slate-700">
+                                  {promptCompact.activeIdea.title}
+                                </p>
+                              )}
+                              {promptCompact.activeIdea.description && (
+                                <p className="mt-1 whitespace-pre-wrap leading-relaxed">
+                                  {promptCompact.activeIdea.description}
+                                </p>
+                              )}
+                            </div>
+                          )}
+                          {(promptCompact?.citedTexts?.length ?? 0) > 0 && (
+                            <div>
+                              <p className="font-semibold text-slate-400">
+                                인용 텍스트
+                              </p>
+                              <div className="mt-1 space-y-1">
+                                {promptCompact?.citedTexts?.map((text, index) => (
+                                  <p
+                                    key={`${msg.id}-cited-text-${index}`}
+                                    className="rounded-lg bg-slate-50 px-2 py-1 leading-relaxed"
+                                  >
+                                    {text}
+                                  </p>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                          {(promptCompact?.citedReferences?.length ?? 0) >
+                            0 && (
+                            <div>
+                              <p className="font-semibold text-slate-400">
+                                인용 레퍼런스
+                              </p>
+                              <div className="mt-1 flex flex-wrap gap-1">
+                                {promptCompact?.citedReferences?.map(
+                                  (reference, index) => (
+                                    <span
+                                      key={`${msg.id}-cited-reference-${index}`}
+                                      className="max-w-full truncate rounded-full bg-slate-50 px-2 py-0.5 text-[11px] font-semibold text-slate-500"
+                                    >
+                                      {reviewReferenceLabel(reference)}
+                                    </span>
+                                  ),
+                                )}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      </details>
+                    )}
+                    {msg.role === "assistant" &&
+                      isViewingAsAdmin &&
+                      reviewTurn?.rawPrompt != null && (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setRawPromptModal({
+                              turnId: reviewTurnId,
+                              rawPrompt: reviewTurn.rawPrompt,
+                              rawPromptSanitization:
+                                reviewTurn.rawPromptSanitization,
+                              rawResponseMeta: reviewTurn.rawResponseMeta,
+                            })
+                          }
+                          className="mt-3 w-full rounded-xl border border-indigo-100 bg-indigo-50 px-3 py-2 text-left text-xs font-semibold text-indigo-600 transition hover:border-indigo-200 hover:bg-indigo-100"
+                        >
+                          Raw prompt 보기
+                        </button>
                       )}
                   </div>
                 </div>

@@ -544,7 +544,7 @@ archiveReason = "low-weight" | "duplicate" | "manual"
 - [x] 채팅 로그를 read-only로 표시
 - [x] assistant bubble에 사용된 retrieved memory badge 표시
 - [x] memory badge에서 `weight`, `similarity`, source mission/session 표시
-- [ ] LLM prompt/context 열람 토글 추가
+- [x] LLM prompt/context 열람 토글 추가
 - [ ] archived memory가 있으면 archive reason과 duplicate 근거 표시
 
 구현 메모:
@@ -552,6 +552,8 @@ archiveReason = "low-weight" | "duplicate" | "manual"
 - `/admin` 유저/참여자 세션 카드에도 `리뷰` 진입점을 추가하고 `/main/{missionId}?viewAs={uid}&review=1`로 연다.
 - `/main/{missionId}?review=1`은 일반 사용자 세션도 읽기 전용으로 열고, 기존 채팅 로그 위에 저장된 `reviewTurns` 데이터를 연결한다.
 - assistant bubble은 `reviewTurnId`/message id로 `reviewTurns/{turnId}`를 찾아 retrieved memory, `weight`, `similarity`, source mission을 표시한다.
+- assistant bubble의 `프롬프트 컨텍스트` 토글에서 retrieval query, 미션 설명 전체, 활성 아이디어, 인용 텍스트/레퍼런스를 확인할 수 있다.
+- admin이 리뷰 화면을 열면 assistant bubble의 `Raw prompt 보기` 버튼으로 sanitized `rawPrompt`, sanitize 내역, response meta를 모달에서 확인할 수 있다.
 
 ### 12.4 3단계: 세션 전후 메모리 변화 시각화
 - [ ] memory view와 session view를 분리
