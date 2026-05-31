@@ -358,6 +358,7 @@ export default function LobbyPage() {
                     ? { hasActivity: true, timerStartedAt: null }
                     : null);
                 const status = derivedStatus(progress, mission.durationMinutes);
+                const isCompleted = progress?.status === "completed";
                 return (
                   <article
                     key={mission.id}
@@ -432,6 +433,18 @@ export default function LobbyPage() {
                           : "시간 제한 없음"}
                       </span>
                     </div>
+                    {isCompleted && (
+                      <button
+                        type="button"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          router.push(`/main/${mission.id}?review=1`);
+                        }}
+                        className="mt-4 w-full rounded-2xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:border-slate-400 hover:bg-slate-50"
+                      >
+                        리뷰 보기
+                      </button>
+                    )}
                   </article>
                 );
               })}

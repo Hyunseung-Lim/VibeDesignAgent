@@ -2765,13 +2765,23 @@ export default function AdminPage() {
                         </span>
                       ) : (
                         missionIds.map((missionId) => (
-                          <Link
+                          <span
                             key={missionId}
-                            href={`/main/${missionId}?viewAs=${user.id}`}
-                            className="rounded-full border border-slate-200 px-3 py-1 text-xs font-semibold text-slate-500 transition hover:bg-slate-50 hover:text-slate-900"
+                            className="inline-flex overflow-hidden rounded-full border border-slate-200 text-xs font-semibold"
                           >
-                            {missionTitle(missionId)}
-                          </Link>
+                            <Link
+                              href={`/main/${missionId}?viewAs=${user.id}`}
+                              className="px-3 py-1 text-slate-500 transition hover:bg-slate-50 hover:text-slate-900"
+                            >
+                              {missionTitle(missionId)}
+                            </Link>
+                            <Link
+                              href={`/main/${missionId}?viewAs=${user.id}&review=1`}
+                              className="border-l border-slate-200 px-2.5 py-1 text-indigo-500 transition hover:bg-indigo-50 hover:text-indigo-700"
+                            >
+                              리뷰
+                            </Link>
+                          </span>
                         ))
                       )}
                     </div>
@@ -3176,6 +3186,14 @@ export default function AdminPage() {
                           title="세션 보기"
                         >
                           <ArrowRightIcon size={14} />
+                        </Link>
+                        <Link
+                          href={`/main/${participantsMissionId}?viewAs=${p.id}&review=1`}
+                          className="rounded-full px-2 py-1 text-[11px] font-semibold text-indigo-400 transition hover:bg-indigo-50 hover:text-indigo-700"
+                          onClick={closeParticipants}
+                          title="리뷰 보기"
+                        >
+                          리뷰
                         </Link>
                         <button
                           type="button"

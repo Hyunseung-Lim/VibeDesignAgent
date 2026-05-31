@@ -433,3 +433,208 @@ archiveReason = "low-weight" | "duplicate" | "manual"
 - E2E 테스트
 - Memory forgetting / archive pipeline 자동화
 - Forgetting threshold tuning 및 automatic archive feature flag
+
+---
+
+## 12. 메모리 리뷰/온보딩 개선 로드맵
+
+이 섹션은 향후 작업을 하나씩 체크하며 진행하기 위한 실행 문서다. 원칙은 **데이터 계약 → 사용자 리뷰 경험 → 온보딩 입력 모델 → 어드민/UI 정리** 순서로 진행한다.
+
+### 12.1 진행 원칙
+- 화면부터 만들기보다 memory/retrieval/review에 필요한 데이터 계약을 먼저 고정한다.
+- 사용자에게는 "어떤 기억이 참고되었는지"를 설명 가능하게 보여주고, 연구자에게는 prompt/raw context를 더 자세히 확인할 수 있게 한다.
+- 직접 입력 메모리와 interaction에서 학습된 메모리는 source/type을 분리한다.
+- table view 제거는 대체 관측 UI가 충분히 생긴 뒤 진행한다.
+
+### 12.2 1단계: 리뷰 기능 데이터 계약 정의
+- [x] 완료 미션의 리뷰 진입점 정의
+  - `/lobby` 완료 미션 카드에 상시 노출되는 `리뷰` 버튼
+  - 세션 종료 버튼을 누른 뒤 완료 상태에서 이어서 볼 수 있는 `리뷰` 진입
+  - admin 사용자 세션 카드의 `리뷰` 진입
+- [x] 리뷰 화면 형태 결정
+  - 별도 review page/modal을 새로 만들지 않고 기존 `/main/[missionId]` read-only 흐름을 확장한다.
+- [x] 리뷰에 표시할 데이터 범위 정의
+  - 채팅 로그
+  - assistant bubble별 retrieved memory
+  - retrieved memory의 `weight`, `similarity`, `source`
+  - 해당 turn의 LLM input/prompt compact view
+  - 세션 종료 전후 생성/변경/archived memory
+- [x] prompt 노출 범위 정의
+  - 사용자용: memory/retrieval context 중심
+  - 연구자용: raw prompt/input JSON까지 표시 가능
+- [x] 리뷰 화면 공유/내보내기 필요 여부
+  - 별도 공유/내보내기 기능은 만들지 않는다.
+- [x] 일반 사용자와 admin researcher 모드 구분 방식
+  - 1차 구현에서는 별도 구분 없이 같은 read-only 확장을 사용한다.
+  - 단, 이후 admin-only raw debug view를 추가할 수 있게 데이터/API는 확장 가능하게 둔다.
+- [x] assistant bubble별 retrieval/prompt 데이터 저장 위치 결정
+  - 기존 session document에 모두 넣지 않고 별도 review/debug subcollection으로 분리한다.
+  - 이유: session document는 이미 `messages`, artboards, ideas를 저장해 커지기 쉬우므로 prompt/raw context까지 포함하면 Firestore 문서 크기와 저장 빈도 리스크가 커진다.
+  - 권장 경로: `sessions/{uid}/missions/{missionId}/reviewTurns/{turnId}`
+  - session `messages[]`에는 필요 시 `reviewTurnId`만 연결 필드로 둔다.
+- [x] 필요한 Firestore/API 응답 필드 확정
+  - `reviewTurns/{turnId}` 필드:
+  - `turnId`는 assistant message id를 사용한다. 즉 assistant bubble id와 `reviewTurns/{turnId}`를 1:1로 연결한다.
+  - `turnId`와 `assistantMessageId`는 문서 id와 중복되므로 문서 필드에는 저장하지 않는다.
+  - 사용자용 prompt compact view에는 `missionBrief` 전체를 표시한다.
+  - `rawPrompt`도 1차 구현부터 저장한다.
+  - `rawPrompt` 열람은 admin-only debug view로 분리한다.
+  - `rawPrompt` 저장 전 sanitize를 수행하고, 제거된 항목의 흔적은 `rawPromptSanitization`에 남긴다.
+  - raw prompt sanitize 대상:
+    - API key
+    - auth token
+    - base64 image/data URI
+    - HTML 코드 전체
+  - HTML은 길이 기준으로 자르지 않고, HTML이 있었다는 흔적만 남긴다. 예: `[html 코드]`
+  - `rawResponseMeta`는 request id/model/error와 token usage까지 저장한다.
+```typescript
+{
+  userMessageId: string,
+  createdAt: number,
+  query: string,
+  retrieved: Array<{
+    memoryId: string,
+    episodic: string,
+    semantic: string | null,
+    weight: number,
+    similarity: number,
+    source: { missionId?: string, draftId?: string } | null
+  }>,
+  promptCompact: {
+    missionBrief?: string, // 전체 표시
+    activeIdea?: unknown,
+    citedTexts?: string[],
+    citedReferences?: unknown[]
+  },
+  rawPrompt?: unknown, // sanitize 후 저장, admin-only 열람
+  rawPromptSanitization?: {
+    removedApiKeys?: number,
+    removedAuthTokens?: number,
+    removedBase64Images?: number,
+    replacedHtmlBlocks?: number,
+    replacedFields?: Array<{
+      path: string,
+      originalLength: number,
+      replacement: string,
+      reason: string
+    }>
+  },
+  rawResponseMeta?: {
+    requestId?: string,
+    model?: string,
+    error?: unknown,
+    usage?: unknown
+  }
+}
+```
+
+#### 구현 메모
+- [x] `POST /api/chat`에서 assistant message id 기반 `reviewTurns/{turnId}` 저장 파이프라인 구현
+  - 클라이언트가 `/api/chat`에 Firebase ID token과 `review` metadata를 전달한다.
+  - 서버는 인증된 사용자에 한해 `sessions/{uid}/missions/{missionId}/reviewTurns/{assistantMessageId}`에 저장한다.
+  - 저장 대상: retrieved memory, `promptCompact`, sanitized `rawPrompt`, `rawPromptSanitization`, `rawResponseMeta`
+  - assistant message에는 `reviewTurnId`를 연결 필드로 둔다.
+- rawPrompt admin-only debug view는 1차 사용자 리뷰 구현에서 데이터 저장/API 계약까지만 포함하고, 상세 UI는 별도 admin 개선 단계에서 만든다.
+  - 이유: 12.3의 핵심은 사용자가 세션과 memory 활용을 이해하는 리뷰 화면이며, rawPrompt debug UI까지 같이 만들면 범위가 커진다.
+  - 단, 12.3 구현 중 admin이 최소 확인할 수 있도록 JSON/debug placeholder 또는 임시 raw fetch 경로를 남길 수 있다.
+
+### 12.3 2단계: 사용자 리뷰 화면 구현
+- [x] 완료 미션 카드에 `리뷰` 버튼 추가
+- [x] 리뷰 화면/모달 기본 레이아웃 구현
+- [x] 채팅 로그를 read-only로 표시
+- [x] assistant bubble에 사용된 retrieved memory badge 표시
+- [x] memory badge에서 `weight`, `similarity`, source mission/session 표시
+- [ ] LLM prompt/context 열람 토글 추가
+- [ ] archived memory가 있으면 archive reason과 duplicate 근거 표시
+
+구현 메모:
+- `/lobby` 완료 미션 카드에 `리뷰 보기` 버튼을 추가하고 `/main/{missionId}?review=1`로 진입한다.
+- `/admin` 유저/참여자 세션 카드에도 `리뷰` 진입점을 추가하고 `/main/{missionId}?viewAs={uid}&review=1`로 연다.
+- `/main/{missionId}?review=1`은 일반 사용자 세션도 읽기 전용으로 열고, 기존 채팅 로그 위에 저장된 `reviewTurns` 데이터를 연결한다.
+- assistant bubble은 `reviewTurnId`/message id로 `reviewTurns/{turnId}`를 찾아 retrieved memory, `weight`, `similarity`, source mission을 표시한다.
+
+### 12.4 3단계: 세션 전후 메모리 변화 시각화
+- [ ] memory view와 session view를 분리
+  - memory view: 현재 장기 메모리 중심
+  - session view: 특정 세션에서 생성/사용/변경된 메모리 중심
+- [ ] 세션 시작 전 memory snapshot 기준 정의
+- [ ] 세션 중 draft memory 표시
+- [ ] 세션 종료 후 promoted memory 표시
+- [ ] duplicate merge/archive 결과 표시
+- [ ] 직접 입력 memory와 interaction memory를 다른 배지/색으로 구분
+
+#### 추가로 결정 필요
+- snapshot을 실제로 저장할지, 기존 로그에서 계산할지
+- 시각화를 사용자용 설명형으로 할지, 연구자용 디버깅형으로 할지
+
+### 12.5 4단계: 채팅 스트리밍/스크롤 UX 개선
+- [ ] 생성 중 사용자가 위로 스크롤하면 auto-scroll 중단
+- [ ] 사용자가 하단 근처에 있을 때만 auto-scroll 유지
+- [ ] auto-scroll이 중단된 상태에서 새 응답이 오면 "새 메시지" 표시
+- [ ] 긴 markdown/table/code block 렌더링 중 레이아웃 점프 확인
+- [ ] 채팅 bubble 텍스트 출력 버벅임 원인 분리
+  - SSE chunk 빈도
+  - React state update 빈도
+  - markdown re-render 비용
+  - auto-scroll 호출 빈도
+
+### 12.6 5단계: 온보딩/직접 입력 메모리 설계
+- [ ] 모든 세션 시작 시 "나에 대해 알았으면 하는 정보" 입력 UI 추가
+- [ ] UI 방식 결정
+  - 세션 시작 modal
+  - lobby profile panel
+  - mission 시작 전 collapsible panel
+  - chat 첫 메시지 전 inline prompt
+- [ ] 직접 입력 메모리 타입 정의
+```typescript
+{
+  type: "profile_input",
+  source: { kind: "user_profile" },
+  editable: true,
+  input: string,
+  semantic: string | null,
+  weight: number,
+  updatedAt: number
+}
+```
+- [ ] interaction 학습 메모리와 직접 입력 메모리 구분 처리
+- [ ] 이전 세션 입력 내용을 불러와 수정하는 upsert 방식 구현
+- [ ] revision log 또는 supersedes 정책 결정
+- [ ] 직접 입력값 retrieval 활용 방식 설계
+
+#### 추가로 결정 필요
+- 입력을 매 세션 필수로 받을지, 선택으로 둘지
+- 직접 입력 메모리를 일반 memory와 같은 collection에 둘지, 별도 profile memory collection에 둘지
+- profile memory의 weight 기본값과 retrieval 우선순위
+
+### 12.7 6단계: 직접 입력 메모리 retrieval 정책
+- [ ] retrieval quota 정책 결정
+  - 예: top 5 중 profile input 최대 2개 + interaction memory 최대 3개
+- [ ] profile memory를 항상 주입할지, query similarity 기반으로만 주입할지 결정
+- [ ] profile memory의 수정/삭제가 retrieval log에 어떻게 남을지 정의
+- [ ] prompt에서 직접 입력 메모리를 별도 섹션으로 표시
+
+### 12.8 7단계: 어드민 정리
+- [ ] table view 대체 UI 기준 충족 여부 확인
+- [ ] admin table view 제거
+- [ ] cluster/retrieval/forgetting/archive 중심으로 admin memory view 재구성
+- [ ] raw JSON/export는 필요한 경우 별도 debug drawer로 이동
+
+### 12.9 8단계: 메모리 셀렉터 모듈화와 전체 UI 개선
+- [ ] 공통 `MemoryCard` 컴포넌트
+- [ ] 공통 `MemorySelector` 컴포넌트
+- [ ] 공통 `RetrievedMemoryBadge` 컴포넌트
+- [ ] 공통 `PromptViewer` 컴포넌트
+- [ ] 공통 `SessionMemoryDiff` 컴포넌트
+- [ ] 사용자 뷰와 admin 뷰의 용어/색상/상태 표시 통일
+- [ ] 전체 UI polish
+
+### 12.10 우선순위 제안
+1. 리뷰 기능 데이터 계약 정의
+2. 완료 미션 카드 리뷰 버튼 + 기본 리뷰 화면
+3. 채팅 auto-scroll/버벅임 해결
+4. 세션별 메모리 변화 시각화
+5. 직접 입력 메모리 타입/저장 방식 설계
+6. 직접 입력 메모리 retrieval 정책
+7. admin table view 제거
+8. 메모리 컴포넌트 모듈화와 전체 UI 개선

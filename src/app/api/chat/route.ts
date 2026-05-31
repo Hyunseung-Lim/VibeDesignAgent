@@ -1,6 +1,24 @@
 import OpenAI from "openai";
+import {
+  getFirebaseAccessToken,
+  patchFirestoreDocument,
+  verifyFirebaseIdToken,
+} from "@/lib/server/firebaseAdminRest";
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
+type PromptSanitization = {
+  removedApiKeys: number;
+  removedAuthTokens: number;
+  removedBase64Images: number;
+  replacedHtmlBlocks: number;
+  replacedFields: Array<{
+    path: string;
+    originalLength: number;
+    replacement: string;
+    reason: string;
+  }>;
+};
 
 function truncateText(value: unknown, maxLength: number) {
   const text = typeof value === "string" ? value : "";
@@ -44,6 +62,101 @@ function compactMemoryContext(memoryContext: unknown) {
     ? context.semantic.slice(0, 8).map(compactItem)
     : [];
   return { episodic, semantic };
+}
+
+function createPromptSanitization(): PromptSanitization {
+  return {
+    removedApiKeys: 0,
+    removedAuthTokens: 0,
+    removedBase64Images: 0,
+    replacedHtmlBlocks: 0,
+    replacedFields: [],
+  };
+}
+
+function sanitizePromptString(
+  value: string,
+  path: string,
+  sanitization: PromptSanitization,
+) {
+  let next = value;
+  const originalLength = value.length;
+  const htmlFencePattern = /```html[\s\S]*?```/gi;
+  if (htmlFencePattern.test(next)) {
+    htmlFencePattern.lastIndex = 0;
+    next = next.replace(htmlFencePattern, () => {
+      sanitization.replacedHtmlBlocks += 1;
+      return "```html\n[html 코드]\n```";
+    });
+  }
+  if (/<\/?[a-z][\s\S]*?>/i.test(next)) {
+    sanitization.replacedHtmlBlocks += 1;
+    next = "[html 코드]";
+  }
+  const base64Pattern = /data:image\/[a-zA-Z0-9.+-]+;base64,[A-Za-z0-9+/=]+/g;
+  next = next.replace(base64Pattern, () => {
+    sanitization.removedBase64Images += 1;
+    return "[base64 image removed]";
+  });
+  const apiKeyPattern = /\b(?:sk-[A-Za-z0-9_-]{16,}|AIza[0-9A-Za-z_-]{20,})\b/g;
+  next = next.replace(apiKeyPattern, () => {
+    sanitization.removedApiKeys += 1;
+    return "[api key removed]";
+  });
+  const authPattern =
+    /\b(?:Bearer\s+[A-Za-z0-9._~+/-]+=*|eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)\b/g;
+  next = next.replace(authPattern, () => {
+    sanitization.removedAuthTokens += 1;
+    return "[auth token removed]";
+  });
+  if (next !== value) {
+    sanitization.replacedFields.push({
+      path,
+      originalLength,
+      replacement: "[sanitized]",
+      reason: "sensitive-or-heavy-content",
+    });
+  }
+  return next;
+}
+
+function sanitizeRawPrompt(value: unknown, path = "rawPrompt") {
+  const sanitization = createPromptSanitization();
+  const visit = (item: unknown, currentPath: string): unknown => {
+    if (typeof item === "string") {
+      return sanitizePromptString(item, currentPath, sanitization);
+    }
+    if (Array.isArray(item)) {
+      return item.map((child, index) => visit(child, `${currentPath}[${index}]`));
+    }
+    if (item && typeof item === "object") {
+      return Object.fromEntries(
+        Object.entries(item as Record<string, unknown>).map(([key, child]) => [
+          key,
+          visit(child, `${currentPath}.${key}`),
+        ]),
+      );
+    }
+    return item;
+  };
+  return {
+    rawPrompt: visit(value, path),
+    rawPromptSanitization: sanitization,
+  };
+}
+
+function compactReferences(references: unknown) {
+  return Array.isArray(references)
+    ? references.slice(0, 8).map((reference) => {
+        const record = reference as Record<string, unknown>;
+        return {
+          id: typeof record.id === "string" ? record.id : undefined,
+          title: truncateText(record.title, 200),
+          url: typeof record.url === "string" ? record.url : undefined,
+          imageUrl: typeof record.imageUrl === "string" ? record.imageUrl : undefined,
+        };
+      })
+    : undefined;
 }
 
 const SYSTEM_PROMPT = `You are a UI/UX design agent. You help designers by:
@@ -105,6 +218,7 @@ When reference images are provided, you MUST analyze them directly and describe 
 Always write surrounding text in the same language the user is using.`;
 
 export async function POST(request: Request) {
+  const user = await verifyFirebaseIdToken(request).catch(() => null);
   const {
     messages,
     mockupHtml,
@@ -117,7 +231,22 @@ export async function POST(request: Request) {
     memoryContext,
     designSpec,
     citedTexts,
+    review,
   } = await request.json();
+  const reviewConfig = (review && typeof review === "object"
+    ? review
+    : null) as {
+    missionId?: unknown;
+    turnId?: unknown;
+    userMessageId?: unknown;
+    assistantMessageId?: unknown;
+    query?: unknown;
+  } | null;
+  const reviewMissionId = String(reviewConfig?.missionId ?? "").trim();
+  const reviewTurnId = String(
+    reviewConfig?.turnId ?? reviewConfig?.assistantMessageId ?? "",
+  ).trim();
+  const canStoreReviewTurn = Boolean(user && reviewMissionId && reviewTurnId);
   const deviceLabel =
     device === "mobile" ? "모바일 (390×844px)" : "PC (1280×900px)";
 
@@ -236,6 +365,68 @@ export async function POST(request: Request) {
   }
 
   const hasRefUrls = citedReferences?.some((r: { url?: string }) => r.url);
+  const rawPromptInput = [...systemMessages, ...builtMessages] as Parameters<
+    typeof openai.responses.create
+  >[0]["input"];
+  const { rawPrompt, rawPromptSanitization } =
+    sanitizeRawPrompt(rawPromptInput);
+  const promptCompact = {
+    missionBrief: typeof missionBrief === "string" ? missionBrief : undefined,
+    activeIdea: activeIdea
+      ? {
+          title: truncateText(activeIdea.title, 200),
+          description: truncateText(activeIdea.description, 3000),
+        }
+      : undefined,
+    citedTexts: Array.isArray(citedTexts)
+      ? citedTexts.map((text: unknown) => truncateText(text, 1200))
+      : undefined,
+    citedReferences: compactReferences(citedReferences),
+  };
+
+  const storeReviewTurn = async (meta: Record<string, unknown>) => {
+    if (!canStoreReviewTurn || !user) return;
+    try {
+      const token = await getFirebaseAccessToken();
+      const retrieved = Array.isArray(memoryContext?.semantic)
+        ? memoryContext.semantic.map((item: unknown) => {
+            const record = item as Record<string, unknown>;
+            return {
+              memoryId: String(record.memoryId ?? record.id ?? ""),
+              episodic: truncateText(record.episodic ?? record.episode, 700),
+              semantic:
+                typeof record.semantic === "string"
+                  ? truncateText(record.semantic, 700)
+                  : null,
+              weight:
+                typeof record.weight === "number" ? record.weight : null,
+              similarity:
+                typeof record.similarity === "number" ? record.similarity : null,
+              source:
+                record.source && typeof record.source === "object"
+                  ? record.source
+                  : null,
+            };
+          })
+        : [];
+      await patchFirestoreDocument(
+        `sessions/${user.localId}/missions/${encodeURIComponent(reviewMissionId)}/reviewTurns/${encodeURIComponent(reviewTurnId)}`,
+        {
+          userMessageId: String(reviewConfig?.userMessageId ?? ""),
+          createdAt: Date.now(),
+          query: truncateText(reviewConfig?.query, 1200),
+          retrieved,
+          promptCompact,
+          rawPrompt,
+          rawPromptSanitization,
+          rawResponseMeta: meta,
+        },
+        token,
+      );
+    } catch (error) {
+      console.warn("[api/chat] failed to store review turn", error);
+    }
+  };
 
   let stream: Awaited<ReturnType<typeof openai.responses.create>>;
   try {
@@ -243,9 +434,7 @@ export async function POST(request: Request) {
       model: "gpt-5.4",
       tools: [{ type: "web_search_preview" }],
       tool_choice: hasRefUrls ? "required" : "auto",
-      input: [...systemMessages, ...builtMessages] as Parameters<
-        typeof openai.responses.create
-      >[0]["input"],
+      input: rawPromptInput,
       stream: true,
     });
   } catch (error) {
@@ -266,17 +455,38 @@ export async function POST(request: Request) {
   const readable = new ReadableStream({
     async start(controller) {
       let webSearched = false;
+      let responseMeta: Record<string, unknown> = {
+        model: "gpt-5.4",
+        webSearched: false,
+      };
       try {
         for await (const event of stream) {
+          const typedEvent = event as {
+            type: string;
+            response?: {
+              id?: string;
+              model?: string;
+              usage?: unknown;
+            };
+          };
           if (
             event.type === "response.web_search_call.searching" &&
             !webSearched
           ) {
             webSearched = true;
+            responseMeta.webSearched = true;
             controller.enqueue(encoder.encode("[WEB_SEARCHED]\n"));
           }
           if (event.type === "response.output_text.delta") {
             controller.enqueue(encoder.encode(event.delta));
+          }
+          if (typedEvent.type === "response.completed" && typedEvent.response) {
+            responseMeta = {
+              ...responseMeta,
+              requestId: typedEvent.response.id,
+              model: typedEvent.response.model ?? responseMeta.model,
+              usage: typedEvent.response.usage,
+            };
           }
         }
       } catch (error) {
@@ -284,6 +494,13 @@ export async function POST(request: Request) {
           typeof error === "object" && error && "code" in error
             ? String((error as { code?: unknown }).code)
             : "";
+        responseMeta = {
+          ...responseMeta,
+          error:
+            error instanceof Error
+              ? { message: error.message, code }
+              : { message: String(error), code },
+        };
         controller.enqueue(
           encoder.encode(
             code === "context_length_exceeded"
@@ -292,6 +509,7 @@ export async function POST(request: Request) {
           ),
         );
       } finally {
+        await storeReviewTurn(responseMeta);
         controller.close();
       }
     },

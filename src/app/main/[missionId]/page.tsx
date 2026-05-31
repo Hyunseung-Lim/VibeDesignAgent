@@ -7,7 +7,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { firebaseAuth, db, storage } from "@/lib/firebase";
 import { getIdToken, onAuthStateChanged } from "firebase/auth";
-import { doc, getDoc, setDoc, onSnapshot } from "firebase/firestore";
+import { collection, doc, getDoc, setDoc, onSnapshot } from "firebase/firestore";
 import {
   ref as storageRef,
   uploadString,
@@ -42,6 +42,38 @@ type Message = {
   } | null;
   citedReferences?: { id: string; title: string; imageUrl?: string }[] | null;
   citedTexts?: string[] | null;
+  reviewTurnId?: string | null;
+};
+
+type ReviewTurnMemory = {
+  memoryId: string;
+  episodic?: string;
+  semantic?: string | null;
+  weight?: number | null;
+  similarity?: number | null;
+  source?: {
+    missionId?: string;
+    draftId?: string;
+  } | null;
+};
+
+type ReviewTurn = {
+  userMessageId?: string;
+  createdAt?: number;
+  query?: string;
+  retrieved?: ReviewTurnMemory[];
+  promptCompact?: {
+    missionBrief?: string;
+    activeIdea?: {
+      title?: string;
+      description?: string;
+    } | null;
+    citedTexts?: string[];
+    citedReferences?: unknown[];
+  };
+  rawPrompt?: unknown;
+  rawPromptSanitization?: unknown;
+  rawResponseMeta?: unknown;
 };
 
 type ActivityLogEvent = {
@@ -1687,11 +1719,18 @@ function normalizeArtboardPositionsByIdea(boards: Artboard[]) {
   });
 }
 
+function formatReviewScore(value: number | null | undefined) {
+  return typeof value === "number" && Number.isFinite(value)
+    ? value.toFixed(2)
+    : "-";
+}
+
 export default function MainScreenPage() {
   const { missionId } = useParams<{ missionId: string }>();
   const router = useRouter();
   const searchParams = useSearchParams();
   const viewAs = searchParams.get("viewAs"); // admin: view another user's session
+  const isReviewMode = searchParams.get("review") === "1";
   const isOnboardingMission = missionId === ONBOARDING_MISSION_ID;
 
   const [messages, setMessages] = useState<Message[]>([]);
@@ -1776,8 +1815,14 @@ export default function MainScreenPage() {
     percent: number;
     label: string;
   } | null>(null);
+  const [reviewTurnsById, setReviewTurnsById] = useState<
+    Record<string, ReviewTurn>
+  >({});
 
-  const isReadOnly = !!(viewAs && isAdmin);
+  const isViewingAsAdmin = !!(viewAs && isAdmin);
+  const isReadOnly = isReviewMode || isViewingAsAdmin;
+  const showReviewAnnotations = isReviewMode || isViewingAsAdmin;
+  const targetSessionUserId = isViewingAsAdmin ? viewAs : userId;
 
   const activeOption =
     missionOptions.find((option) => option.id === selectedOptionId) ??
@@ -2275,6 +2320,35 @@ export default function MainScreenPage() {
     return () => unsubMission();
   }, [userId, missionId, viewAs, isAdmin, isOnboardingMission]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  useEffect(() => {
+    if (!showReviewAnnotations || !targetSessionUserId || !missionId) {
+      setReviewTurnsById({});
+      return;
+    }
+
+    return onSnapshot(
+      collection(
+        db,
+        "sessions",
+        targetSessionUserId,
+        "missions",
+        missionId,
+        "reviewTurns",
+      ),
+      (snap) => {
+        setReviewTurnsById(
+          Object.fromEntries(
+            snap.docs.map((reviewTurnDoc) => [
+              reviewTurnDoc.id,
+              reviewTurnDoc.data() as ReviewTurn,
+            ]),
+          ),
+        );
+      },
+      () => setReviewTurnsById({}),
+    );
+  }, [showReviewAnnotations, targetSessionUserId, missionId]);
+
   // Save session to Firestore (debounced to avoid write storms during streaming)
   useEffect(() => {
     if (isReadOnly) return;
@@ -2750,6 +2824,7 @@ export default function MainScreenPage() {
       role: "assistant",
       content: "",
       createdAt: Date.now(),
+      reviewTurnId: assistantId,
     };
     const manualReference = parseManualReferencePrompt(text);
     const memoryInput = formatMemoryInputWithCitations(
@@ -2844,16 +2919,17 @@ export default function MainScreenPage() {
     try {
       const retrievalMissionLabel =
         parentMissionTitle || activeOption?.title || missionTitle || "";
+      const retrievalQuery = [
+        text,
+        retrievalMissionLabel ? `Mission: ${retrievalMissionLabel}` : "",
+        activeIdeaId
+          ? `Active idea: ${ideas.find((idea) => idea.id === activeIdeaId)?.description ?? ""}`
+          : "",
+      ]
+        .filter(Boolean)
+        .join("\n\n");
       const retrievedMemory = await retrieveMemoryForQuery(
-        [
-          text,
-          retrievalMissionLabel ? `Mission: ${retrievalMissionLabel}` : "",
-          activeIdeaId
-            ? `Active idea: ${ideas.find((idea) => idea.id === activeIdeaId)?.description ?? ""}`
-            : "",
-        ]
-          .filter(Boolean)
-          .join("\n\n"),
+        retrievalQuery,
       );
       const turnMemoryContext =
         retrievedMemory && retrievedMemory.length > 0
@@ -2862,9 +2938,14 @@ export default function MainScreenPage() {
               semantic: retrievedMemory,
             }
           : { episodic: [], semantic: [] };
+      const currentUser = firebaseAuth.currentUser;
+      const chatToken = currentUser ? await getIdToken(currentUser) : null;
       const res = await fetch("/api/chat", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...(chatToken ? { Authorization: `Bearer ${chatToken}` } : {}),
+        },
         signal: controller.signal,
         body: JSON.stringify({
           messages: [...messages, userMsg]
@@ -2893,6 +2974,12 @@ export default function MainScreenPage() {
             const appliedStyle = activeDesignStyle(idea);
             return appliedStyle ? `# ${appliedStyle.title}\n${appliedStyle.content}` : undefined;
           })(),
+          review: {
+            missionId,
+            turnId: assistantId,
+            userMessageId: userMsg.id,
+            query: retrievalQuery,
+          },
         }),
       });
 
@@ -4408,8 +4495,15 @@ export default function MainScreenPage() {
       {isReadOnly && (
         <div className="flex items-center justify-between bg-amber-50 border-b border-amber-200 px-6 py-2 text-xs text-amber-700">
           <span className="flex items-center gap-1">
-            <EyeIcon size={14} /> 읽기 전용 —
-            <strong>{viewAsName ?? viewAs}</strong>의 세션을 보고 있습니다
+            <EyeIcon size={14} />
+            {isViewingAsAdmin ? (
+              <>
+                읽기 전용 — <strong>{viewAsName ?? viewAs}</strong>의 세션을
+                보고 있습니다
+              </>
+            ) : (
+              <>리뷰 모드 — 완료된 세션을 읽기 전용으로 보고 있습니다</>
+            )}
           </span>
           <div className="flex items-center gap-2">
             <button
@@ -4422,12 +4516,14 @@ export default function MainScreenPage() {
               <DownloadSimpleIcon size={14} />
               로그 CSV
             </button>
-            <Link
-              href={`/admin`}
-              className="font-semibold underline underline-offset-2"
-            >
-              어드민으로 돌아가기
-            </Link>
+            {isViewingAsAdmin ? (
+              <Link
+                href={`/admin`}
+                className="font-semibold underline underline-offset-2"
+              >
+                어드민으로 돌아가기
+              </Link>
+            ) : null}
           </div>
         </div>
       )}
@@ -4481,6 +4577,15 @@ export default function MainScreenPage() {
                 : isCompletingSession
                   ? "메모리 확정 중..."
                   : "세션 종료"}
+            </button>
+          )}
+          {!isReadOnly && sessionCompleted && (
+            <button
+              type="button"
+              onClick={() => router.push(`/main/${missionId}?review=1`)}
+              className="rounded-full border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:border-slate-400 hover:bg-slate-50"
+            >
+              리뷰 보기
             </button>
           )}
         </div>
@@ -5759,18 +5864,24 @@ export default function MainScreenPage() {
                 </div>
               )}
 
-              {messages.map((msg, msgIdx) => (
-                <div
-                  key={msg.id}
-                  className={`flex min-w-0 ${msg.role === "user" ? "justify-end" : "justify-start"}`}
-                >
+              {messages.map((msg, msgIdx) => {
+                const reviewTurn =
+                  showReviewAnnotations && msg.role === "assistant"
+                    ? reviewTurnsById[msg.reviewTurnId ?? msg.id]
+                    : null;
+                const retrievedReviewMemories = reviewTurn?.retrieved ?? [];
+                return (
                   <div
-                    className={`min-w-0 max-w-[85%] overflow-hidden rounded-2xl px-4 py-3 text-sm leading-relaxed ${
-                      msg.role === "user"
-                        ? "bg-slate-900 text-white"
-                        : "border border-slate-100 bg-slate-50 text-slate-700"
-                    }`}
+                    key={msg.id}
+                    className={`flex min-w-0 ${msg.role === "user" ? "justify-end" : "justify-start"}`}
                   >
+                    <div
+                      className={`min-w-0 max-w-[85%] overflow-hidden rounded-2xl px-4 py-3 text-sm leading-relaxed ${
+                        msg.role === "user"
+                          ? "bg-slate-900 text-white"
+                          : "border border-slate-100 bg-slate-50 text-slate-700"
+                      }`}
+                    >
                     {msg.role === "user" ? (
                       <div className="space-y-1.5">
                         {msg.citedElement && (
@@ -5886,9 +5997,51 @@ export default function MainScreenPage() {
                         />
                       </span>
                     )}
+                    {msg.role === "assistant" &&
+                      retrievedReviewMemories.length > 0 && (
+                        <div className="mt-3 space-y-2 border-t border-slate-200 pt-3">
+                          <div className="flex items-center justify-between gap-3 text-xs">
+                            <span className="font-semibold text-slate-500">
+                              참고한 메모리
+                            </span>
+                            <span className="rounded-full bg-white px-2 py-0.5 font-semibold text-slate-400">
+                              {retrievedReviewMemories.length}개
+                            </span>
+                          </div>
+                          <div className="space-y-1.5">
+                            {retrievedReviewMemories.map((memory) => (
+                              <div
+                                key={memory.memoryId}
+                                className="rounded-xl border border-slate-200 bg-white px-3 py-2"
+                              >
+                                <p className="line-clamp-2 text-xs leading-relaxed text-slate-600">
+                                  {memory.semantic ||
+                                    memory.episodic ||
+                                    "내용 없는 메모리"}
+                                </p>
+                                <div className="mt-1.5 flex flex-wrap gap-1.5 text-[11px] font-semibold text-slate-400">
+                                  <span>
+                                    weight {formatReviewScore(memory.weight)}
+                                  </span>
+                                  <span>
+                                    similarity{" "}
+                                    {formatReviewScore(memory.similarity)}
+                                  </span>
+                                  {memory.source?.missionId && (
+                                    <span>
+                                      source {memory.source.missionId}
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
                   </div>
                 </div>
-              ))}
+                );
+              })}
             </div>
 
             {/* Input */}
