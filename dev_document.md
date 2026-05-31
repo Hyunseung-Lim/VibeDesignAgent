@@ -582,15 +582,12 @@ archiveReason = "low-weight" | "duplicate" | "manual"
 - 직접 입력 memory와 interaction memory 배지/색 구분 (12.4 미완료 항목)
 
 ### 12.5 4단계: 채팅 스트리밍/스크롤 UX 개선
-- [ ] 생성 중 사용자가 위로 스크롤하면 auto-scroll 중단
-- [ ] 사용자가 하단 근처에 있을 때만 auto-scroll 유지
-- [ ] auto-scroll이 중단된 상태에서 새 응답이 오면 "새 메시지" 표시
+- [x] auto-scroll 제거 — 스크롤 위치를 사용자에게 완전히 위임
 - [ ] 긴 markdown/table/code block 렌더링 중 레이아웃 점프 확인
 - [ ] 채팅 bubble 텍스트 출력 버벅임 원인 분리
   - SSE chunk 빈도
   - React state update 빈도
   - markdown re-render 비용
-  - auto-scroll 호출 빈도
 
 ### 12.6 5단계: 온보딩/직접 입력 메모리 설계
 - [ ] 모든 세션 시작 시 "나에 대해 알았으면 하는 정보" 입력 UI 추가

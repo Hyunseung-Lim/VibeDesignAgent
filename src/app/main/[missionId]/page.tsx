@@ -2,12 +2,24 @@
 
 import Link from "next/link";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { firebaseAuth, db, storage } from "@/lib/firebase";
 import { getIdToken, onAuthStateChanged } from "firebase/auth";
-import { collection, doc, getDoc, setDoc, onSnapshot } from "firebase/firestore";
+import {
+  collection,
+  doc,
+  getDoc,
+  setDoc,
+  onSnapshot,
+} from "firebase/firestore";
 import {
   ref as storageRef,
   uploadString,
@@ -197,13 +209,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
   h3: ({ children }: { children?: React.ReactNode }) => (
     <h3 className="mb-1 text-sm font-medium">{children}</h3>
   ),
-  a: ({
-    href,
-    children,
-  }: {
-    href?: string;
-    children?: React.ReactNode;
-  }) => (
+  a: ({ href, children }: { href?: string; children?: React.ReactNode }) => (
     <a
       href={href}
       target="_blank"
@@ -372,7 +378,10 @@ function normalizePresentationStatusText(text: string): string {
       /프레젠테이션이 생성되었습니다\./g,
       "프레젠테이션 이미지를 생성하고 있습니다.",
     )
-    .replace(/피치덱을 생성했습니다\./g, "프레젠테이션 이미지를 생성하고 있습니다.")
+    .replace(
+      /피치덱을 생성했습니다\./g,
+      "프레젠테이션 이미지를 생성하고 있습니다.",
+    )
     .replace(
       /피치덱이 생성되었습니다\./g,
       "프레젠테이션 이미지를 생성하고 있습니다.",
@@ -490,7 +499,8 @@ function createDefaultOnboardingMissionData() {
       {
         id: "onboarding-mobile",
         title: "모바일 자유주제",
-        description: "모바일 화면 기준으로 자유롭게 앱/웹 아이디어를 진행합니다.",
+        description:
+          "모바일 화면 기준으로 자유롭게 앱/웹 아이디어를 진행합니다.",
         device: "mobile" as Device,
         content:
           "자유주제로 온보딩, 홈 화면, 상세 화면, 예약/구독/커머스 등 원하는 모바일 화면을 만들어보세요.",
@@ -556,7 +566,10 @@ async function fetchAssetText(url: string, baseUrl: string) {
   }
 }
 
-function extractJsonActionPayload(text: string, tag: "CREATE_NOTE" | "UPDATE_NOTE") {
+function extractJsonActionPayload(
+  text: string,
+  tag: "CREATE_NOTE" | "UPDATE_NOTE",
+) {
   const start = text.indexOf(`[${tag}:`);
   if (start === -1) return null;
 
@@ -611,7 +624,9 @@ function parseUpdateNoteBlock(text: string): UpdateNoteData | null {
   }
 }
 
-function parseCreateDesignSpecBlock(text: string): { title: string; content: string } | null {
+function parseCreateDesignSpecBlock(
+  text: string,
+): { title: string; content: string } | null {
   const tag = "[CREATE_DESIGN_SPEC:";
   const start = text.indexOf(tag);
   if (start === -1) return null;
@@ -622,14 +637,30 @@ function parseCreateDesignSpecBlock(text: string): { title: string; content: str
   let escaped = false;
   for (let i = payloadStart; i < text.length; i++) {
     const char = text[i];
-    if (escaped) { escaped = false; continue; }
-    if (char === "\\") { escaped = true; continue; }
-    if (char === '"') { inString = !inString; continue; }
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (char === "\\") {
+      escaped = true;
+      continue;
+    }
+    if (char === '"') {
+      inString = !inString;
+      continue;
+    }
     if (inString) continue;
     if (char === "{") depth++;
-    if (char === "}") { depth--; if (depth === 0) {
-      try { return JSON.parse(text.slice(payloadStart, i + 1)); } catch { return null; }
-    }}
+    if (char === "}") {
+      depth--;
+      if (depth === 0) {
+        try {
+          return JSON.parse(text.slice(payloadStart, i + 1));
+        } catch {
+          return null;
+        }
+      }
+    }
   }
   return null;
 }
@@ -646,9 +677,7 @@ function elementText(el: Element, maxLength = 180) {
 }
 
 function nearestSectionElement(el: Element) {
-  return (
-    el.closest("section, article, header, nav, footer, main > div") ?? el
-  );
+  return el.closest("section, article, header, nav, footer, main > div") ?? el;
 }
 
 function sectionKind(label: string, tagName: string) {
@@ -712,7 +741,11 @@ function extractMockupCaptureSections(
   for (const heading of headings) {
     const section = nearestSectionElement(heading);
     const label = elementText(heading, 90);
-    addSection(section, label, sectionKind(label, section.tagName.toLowerCase()));
+    addSection(
+      section,
+      label,
+      sectionKind(label, section.tagName.toLowerCase()),
+    );
   }
 
   const footer = doc.querySelector("footer, [role='contentinfo']");
@@ -777,7 +810,11 @@ async function inlineCaptureAssets(doc: Document) {
   await Promise.all(
     Array.from(doc.querySelectorAll<HTMLStyleElement>("style")).map(
       async (style) => {
-        if (!style.textContent?.includes("url(") && !style.textContent?.includes("@import")) return;
+        if (
+          !style.textContent?.includes("url(") &&
+          !style.textContent?.includes("@import")
+        )
+          return;
         style.textContent = await inlineCssUrls(style.textContent, baseUrl);
       },
     ),
@@ -947,10 +984,24 @@ function cloneWithComputedStyles(doc: Document) {
 }
 
 async function scaleScreenshot(
-  capture: { dataUrl: string; width: number; height: number; sections: unknown[] },
+  capture: {
+    dataUrl: string;
+    width: number;
+    height: number;
+    sections: unknown[];
+  },
   maxWidth: number,
-): Promise<{ dataUrl: string; width: number; height: number; sections: unknown[] }> {
-  if (!capture.dataUrl.startsWith("data:image/png") || capture.width <= maxWidth) return capture;
+): Promise<{
+  dataUrl: string;
+  width: number;
+  height: number;
+  sections: unknown[];
+}> {
+  if (
+    !capture.dataUrl.startsWith("data:image/png") ||
+    capture.width <= maxWidth
+  )
+    return capture;
   const scale = maxWidth / capture.width;
   const newW = maxWidth;
   const newH = Math.round(capture.height * scale);
@@ -967,10 +1018,18 @@ async function scaleScreenshot(
   const ctx = canvas.getContext("2d");
   if (!ctx) return capture;
   ctx.drawImage(img, 0, 0, newW, newH);
-  return { ...capture, dataUrl: canvas.toDataURL("image/png"), width: newW, height: newH };
+  return {
+    ...capture,
+    dataUrl: canvas.toDataURL("image/png"),
+    width: newW,
+    height: newH,
+  };
 }
 
-async function svgDataUrlToPng(svgDataUrl: string, timeoutMs = 8000): Promise<string> {
+async function svgDataUrlToPng(
+  svgDataUrl: string,
+  timeoutMs = 8000,
+): Promise<string> {
   const img = new Image();
   await Promise.race([
     new Promise<void>((resolve, reject) => {
@@ -1298,16 +1357,23 @@ function splitPendingMockupCompletionText(content: string) {
 function normalizeActionBlockAliases(content: string) {
   return content
     .replace(/\[(?:목업\s*)?생성\s*요청\s*\]/g, "[GENERATE_MOCKUP: ]")
-    .replace(/\[(?:목업\s*)?생성\s*요청\s*:\s*([\s\S]*?)\]/g, "[GENERATE_MOCKUP: $1]")
+    .replace(
+      /\[(?:목업\s*)?생성\s*요청\s*:\s*([\s\S]*?)\]/g,
+      "[GENERATE_MOCKUP: $1]",
+    )
     .replace(/\[목업\s*생성\s*:\s*([\s\S]*?)\]/g, "[GENERATE_MOCKUP: $1]")
     .replace(/\[(?:목업\s*)?수정\s*요청\s*\]/g, "[EDIT_MOCKUP: ]")
-    .replace(/\[(?:목업\s*)?수정\s*요청\s*:\s*([\s\S]*?)\]/g, "[EDIT_MOCKUP: $1]")
+    .replace(
+      /\[(?:목업\s*)?수정\s*요청\s*:\s*([\s\S]*?)\]/g,
+      "[EDIT_MOCKUP: $1]",
+    )
     .replace(/\[목업\s*수정\s*:\s*([\s\S]*?)\]/g, "[EDIT_MOCKUP: $1]")
     .replace(/\[레퍼런스\s*검색\s*:\s*([\s\S]*?)\]/g, "[FETCH_REFERENCES: $1]");
 }
 
 function defaultMockupPromptForIdea(idea: Idea | null, targetDevice: Device) {
-  const deviceLabel = targetDevice === "mobile" ? "mobile app screen" : "desktop web page";
+  const deviceLabel =
+    targetDevice === "mobile" ? "mobile app screen" : "desktop web page";
   return [
     `Create a high-fidelity ${deviceLabel} UI mockup based on the active note.`,
     idea?.title ? `Note title: ${idea.title}` : "",
@@ -1338,10 +1404,19 @@ function cleanMessageContentForModel(content: string) {
   return content
     .replace(/\[CREATE_NOTE:\s*\{[\s\S]*?\}\]/g, "[노트 생성]")
     .replace(/\[UPDATE_NOTE:\s*\{[\s\S]*?\}\]/g, "[노트 수정]")
-    .replace(/\[GENERATE_MOCKUP:[\s\S]*?\]/g, "이전 액션: mockup generation requested.")
+    .replace(
+      /\[GENERATE_MOCKUP:[\s\S]*?\]/g,
+      "이전 액션: mockup generation requested.",
+    )
     .replace(/\[EDIT_MOCKUP:[\s\S]*?\]/g, "이전 액션: mockup edit requested.")
-    .replace(/```presentation\s*\n[\s\S]*?\n?\s*```/g, "이전 액션: presentation requested.")
-    .replace(/\[FETCH_REFERENCES(?::[^\]]+)?\]/g, "이전 액션: reference search requested.")
+    .replace(
+      /```presentation\s*\n[\s\S]*?\n?\s*```/g,
+      "이전 액션: presentation requested.",
+    )
+    .replace(
+      /\[FETCH_REFERENCES(?::[^\]]+)?\]/g,
+      "이전 액션: reference search requested.",
+    )
     .replace(/\[WEB_SEARCHED\]/g, "이전 액션: web search completed.")
     .replace(/\[CREATE_DESIGN_SPEC:\s*\{[\s\S]*?\}\]/g, "[디자인 스타일 추가]")
     .replace(/\n{3,}/g, "\n\n")
@@ -1393,7 +1468,9 @@ function parseManualReferencePrompt(text: string): Reference | null {
   };
 }
 
-async function hydrateManualReference(reference: Reference): Promise<Reference> {
+async function hydrateManualReference(
+  reference: Reference,
+): Promise<Reference> {
   if (reference.imageUrl) return reference;
 
   try {
@@ -1419,7 +1496,11 @@ function formatMemoryInputWithCitations(
   text: string,
   citedReferences: Reference[],
   citedTexts: string[],
-  citedElement: { artboardId: string; selector: string; outerHTML?: string } | null,
+  citedElement: {
+    artboardId: string;
+    selector: string;
+    outerHTML?: string;
+  } | null,
 ) {
   const sections = [`user input: ${text}`];
   if (citedReferences.length > 0) {
@@ -1628,7 +1709,8 @@ function nextDraftTitle(ideas: Idea[]) {
     .map((idea) => idea.title.match(/^시안\s*(\d+)$/)?.[1])
     .filter(Boolean)
     .map(Number);
-  const maxNumber = usedNumbers.length > 0 ? Math.max(...usedNumbers) : ideas.length;
+  const maxNumber =
+    usedNumbers.length > 0 ? Math.max(...usedNumbers) : ideas.length;
   return `시안 ${maxNumber + 1}`;
 }
 
@@ -1643,7 +1725,10 @@ function parseColorTokens(text: string): React.ReactNode[] {
     if (match.index > last) parts.push(text.slice(last, match.index));
     const hex = match[1];
     parts.push(
-      <span key={match.index} className="inline-flex items-center gap-1 align-middle">
+      <span
+        key={match.index}
+        className="inline-flex items-center gap-1 align-middle"
+      >
         <span
           className="inline-block h-3 w-3 shrink-0 rounded-sm border border-black/10"
           style={{ backgroundColor: hex }}
@@ -1962,15 +2047,25 @@ export default function MainScreenPage() {
   const activeOption =
     missionOptions.find((option) => option.id === selectedOptionId) ??
     (missionOptions.length === 1 ? missionOptions[0] : null);
-  const appendActivityLog = useCallback((event: Omit<ActivityLogEvent, "id" | "createdAt">) => {
-    setActivityLog((prev) => [
-      ...prev,
-      { id: crypto.randomUUID(), createdAt: Date.now(), ...event },
-    ].slice(-500));
-  }, []);
+  const appendActivityLog = useCallback(
+    (event: Omit<ActivityLogEvent, "id" | "createdAt">) => {
+      setActivityLog((prev) =>
+        [
+          ...prev,
+          { id: crypto.randomUUID(), createdAt: Date.now(), ...event },
+        ].slice(-500),
+      );
+    },
+    [],
+  );
 
   const encodeMemoryDraft = useCallback(
-    async (interactionId: string, input: string, output: string, timestamp: number) => {
+    async (
+      interactionId: string,
+      input: string,
+      output: string,
+      timestamp: number,
+    ) => {
       if (isReadOnly || !missionId || !input.trim() || !output.trim()) return;
       const currentUser = firebaseAuth.currentUser;
       if (!currentUser) return;
@@ -2030,6 +2125,8 @@ export default function MainScreenPage() {
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const chatScrollRef = useRef<HTMLDivElement>(null);
+  const [showScrollToBottom, setShowScrollToBottom] = useState(false);
+
   const sessionCompletionTimeoutsRef = useRef<number[]>([]);
   const ideaSectionRef = useRef<HTMLElement>(null);
   const styleSectionRef = useRef<HTMLElement>(null);
@@ -2121,11 +2218,17 @@ export default function MainScreenPage() {
       const panel = missionPanelRef.current;
       if ((e.target as HTMLElement).closest("[data-cite-menu]")) return;
       if (!panel) return;
-      if (!panel.contains(e.target as Node)) { hideCiteMenu(); return; }
+      if (!panel.contains(e.target as Node)) {
+        hideCiteMenu();
+        return;
+      }
       requestAnimationFrame(() => {
         const selection = window.getSelection();
         const text = selection?.toString().trim();
-        if (!text || text.length < 2) { hideCiteMenu(); return; }
+        if (!text || text.length < 2) {
+          hideCiteMenu();
+          return;
+        }
         const range = selection!.getRangeAt(0);
         const rect = range.getBoundingClientRect();
         if (!rect.width && !rect.height) return;
@@ -2205,10 +2308,14 @@ export default function MainScreenPage() {
               `vda:onboarding-completed:${user.uid}`,
               "true",
             );
-            window.localStorage.removeItem(`vda:onboarding-required:${user.uid}`);
+            window.localStorage.removeItem(
+              `vda:onboarding-required:${user.uid}`,
+            );
             return;
           }
-          window.localStorage.removeItem(`vda:onboarding-completed:${user.uid}`);
+          window.localStorage.removeItem(
+            `vda:onboarding-completed:${user.uid}`,
+          );
           router.replace(`/main/${ONBOARDING_MISSION_ID}`);
         })
         .catch(() => {
@@ -2485,7 +2592,11 @@ export default function MainScreenPage() {
   }, [showReviewAnnotations, targetSessionUserId, missionId]);
 
   useEffect(() => {
-    if (!showReviewAnnotations || !targetSessionUserId || reviewMemoryIds.length === 0) {
+    if (
+      !showReviewAnnotations ||
+      !targetSessionUserId ||
+      reviewMemoryIds.length === 0
+    ) {
       setReviewMemoryArchiveById({});
       return;
     }
@@ -2688,8 +2799,14 @@ export default function MainScreenPage() {
   useEffect(() => {
     const el = chatScrollRef.current;
     if (!el) return;
-    el.scrollTop = el.scrollHeight;
-  }, [messages]);
+    const handleScroll = () => {
+      setShowScrollToBottom(
+        el.scrollHeight - el.scrollTop - el.clientHeight > 100,
+      );
+    };
+    el.addEventListener("scroll", handleScroll, { passive: true });
+    return () => el.removeEventListener("scroll", handleScroll);
+  }, []);
 
   // Listen for element selection from iframe
   const editModeRef = useRef(false);
@@ -3018,7 +3135,6 @@ export default function MainScreenPage() {
     const text = inputText.trim();
     if (!text || !isMissionContextReady || isLoading || isGeneratingMockup)
       return;
-
     const userMsg: Message = {
       id: crypto.randomUUID(),
       role: "user",
@@ -3064,15 +3180,15 @@ export default function MainScreenPage() {
     setCitedTexts([]);
 
     if (manualReference) {
-      const alreadyExists = references.some(
-        (reference) => referenceMatches(reference, manualReference),
+      const alreadyExists = references.some((reference) =>
+        referenceMatches(reference, manualReference),
       );
       const hydratedReference = alreadyExists
         ? manualReference
         : await hydrateManualReference(manualReference);
       setReferences((prev) => {
-        const exists = prev.some(
-          (reference) => referenceMatches(reference, hydratedReference),
+        const exists = prev.some((reference) =>
+          referenceMatches(reference, hydratedReference),
         );
         if (exists) return prev;
         return [...prev, hydratedReference];
@@ -3126,9 +3242,14 @@ export default function MainScreenPage() {
       currentIdeaBoards.at(-1) ??
       null;
     const effectiveMissionTitle =
-      parentMissionTitle && activeOption && parentMissionTitle !== activeOption.title
+      parentMissionTitle &&
+      activeOption &&
+      parentMissionTitle !== activeOption.title
         ? `${parentMissionTitle} - ${activeOption.title}`
-        : activeOption?.title || parentMissionTitle || missionTitle || undefined;
+        : activeOption?.title ||
+          parentMissionTitle ||
+          missionTitle ||
+          undefined;
     const effectiveMissionBrief =
       [
         parentMissionBrief ? `[전체 미션 설명]\n${parentMissionBrief}` : "",
@@ -3151,9 +3272,7 @@ export default function MainScreenPage() {
       ]
         .filter(Boolean)
         .join("\n\n");
-      const retrievedMemory = await retrieveMemoryForQuery(
-        retrievalQuery,
-      );
+      const retrievedMemory = await retrieveMemoryForQuery(retrievalQuery);
       const turnMemoryContext =
         retrievedMemory && retrievedMemory.length > 0
           ? {
@@ -3195,7 +3314,9 @@ export default function MainScreenPage() {
           designSpec: (() => {
             const idea = ideas.find((i) => i.id === activeIdeaId);
             const appliedStyle = activeDesignStyle(idea);
-            return appliedStyle ? `# ${appliedStyle.title}\n${appliedStyle.content}` : undefined;
+            return appliedStyle
+              ? `# ${appliedStyle.title}\n${appliedStyle.content}`
+              : undefined;
           })(),
           review: {
             missionId,
@@ -3365,7 +3486,9 @@ export default function MainScreenPage() {
         );
       }
 
-      const generateMatch = fullText.match(/\[GENERATE_MOCKUP(?::\s*([\s\S]*?))?\]/);
+      const generateMatch = fullText.match(
+        /\[GENERATE_MOCKUP(?::\s*([\s\S]*?))?\]/,
+      );
       const editMatch = !generateMatch
         ? fullText.match(/\[EDIT_MOCKUP(?::\s*([\s\S]*?))?\]/)
         : null;
@@ -3428,13 +3551,17 @@ export default function MainScreenPage() {
           label: "새 아트보드 자리 잡는 중",
         });
         {
-          const ideaBoards = artboards.filter((a) => a.ideaId === (effectiveActiveIdeaId ?? ""));
+          const ideaBoards = artboards.filter(
+            (a) => a.ideaId === (effectiveActiveIdeaId ?? ""),
+          );
           const last = ideaBoards[ideaBoards.length - 1];
           setPendingArtboardSkeleton({
             ideaId: effectiveActiveIdeaId ?? "",
             label: `Design ${ideaBoards.length + 1}`,
             x: last
-              ? last.x + DEVICE_SIZE[last.device ?? "desktop"].width + ARTBOARD_GAP
+              ? last.x +
+                DEVICE_SIZE[last.device ?? "desktop"].width +
+                ARTBOARD_GAP
               : 0,
             y: 0,
             device,
@@ -3547,7 +3674,10 @@ export default function MainScreenPage() {
               return [...prev, primaryBoard, ...extraBoards];
             });
             setActiveArtboardId(primaryId);
-            setTimeout(() => fitToCanvasForIdea(effectiveActiveIdeaId ?? ""), 0);
+            setTimeout(
+              () => fitToCanvasForIdea(effectiveActiveIdeaId ?? ""),
+              0,
+            );
 
             const screensNeedingHtml = [
               ...(data.htmlPending ? [data.screenId] : []),
@@ -3557,7 +3687,10 @@ export default function MainScreenPage() {
             screensNeedingHtml.forEach((sid: string) => {
               setMockupProgress({
                 percent: 98,
-                label: sid === data.screenId ? "화면 HTML 준비 대기 중" : "추가 화면 불러오는 중",
+                label:
+                  sid === data.screenId
+                    ? "화면 HTML 준비 대기 중"
+                    : "추가 화면 불러오는 중",
               });
               fetch(
                 `/api/stitch/html?projectId=${data.projectId}&screenId=${sid}`,
@@ -3567,7 +3700,9 @@ export default function MainScreenPage() {
                   if (d.html)
                     setArtboards((prev) =>
                       prev.map((a) =>
-                        a.stitchScreenId === sid ? { ...a, html: d.html, htmlUpdatedAt: Date.now() } : a,
+                        a.stitchScreenId === sid
+                          ? { ...a, html: d.html, htmlUpdatedAt: Date.now() }
+                          : a,
                       ),
                     );
                 })
@@ -3578,7 +3713,12 @@ export default function MainScreenPage() {
             setArtboards((prev) =>
               prev.map((a) =>
                 a.id === targetId
-                  ? { ...a, html: data.html, stitchScreenId: data.screenId, htmlUpdatedAt: Date.now() }
+                  ? {
+                      ...a,
+                      html: data.html,
+                      stitchScreenId: data.screenId,
+                      htmlUpdatedAt: Date.now(),
+                    }
                   : a,
               ),
             );
@@ -3719,7 +3859,9 @@ export default function MainScreenPage() {
                     try {
                       let uploadDataUrl = slide.imageUrl;
                       if (slide.imageUrl.startsWith("data:image/svg+xml")) {
-                        console.log(`[presentation] slide ${i} converting SVG to PNG`);
+                        console.log(
+                          `[presentation] slide ${i} converting SVG to PNG`,
+                        );
                         uploadDataUrl = await svgDataUrlToPng(slide.imageUrl);
                       }
                       const imgRef = storageRef(
@@ -3729,7 +3871,10 @@ export default function MainScreenPage() {
                       await Promise.race([
                         uploadString(imgRef, uploadDataUrl, "data_url"),
                         new Promise<never>((_, reject) =>
-                          setTimeout(() => reject(new Error("upload timeout")), 15000),
+                          setTimeout(
+                            () => reject(new Error("upload timeout")),
+                            15000,
+                          ),
                         ),
                       ]);
                       const url = await getDownloadURL(imgRef);
@@ -3840,7 +3985,8 @@ export default function MainScreenPage() {
                   ? {
                       ...m,
                       content:
-                        m.content + `\n\n⚠️ 프레젠테이션 이미지 생성 실패: ${msg}`,
+                        m.content +
+                        `\n\n⚠️ 프레젠테이션 이미지 생성 실패: ${msg}`,
                     }
                   : m,
               ),
@@ -4081,7 +4227,8 @@ export default function MainScreenPage() {
   }, [clearSessionCompletionTimers]);
   useEffect(() => clearSessionCompletionTimers, [clearSessionCompletionTimers]);
   const completeSession = async () => {
-    if (isReadOnly || isCompletingSession || sessionCompleted || !missionId) return;
+    if (isReadOnly || isCompletingSession || sessionCompleted || !missionId)
+      return;
     const currentUser = firebaseAuth.currentUser;
     if (!currentUser) return;
     startSessionCompletionProgress();
@@ -4110,7 +4257,10 @@ export default function MainScreenPage() {
         });
         if (userId) {
           window.localStorage.removeItem(`vda:onboarding-required:${userId}`);
-          window.localStorage.setItem(`vda:onboarding-completed:${userId}`, "true");
+          window.localStorage.setItem(
+            `vda:onboarding-completed:${userId}`,
+            "true",
+          );
         }
       }
       setTimerEndedAt(completedAt);
@@ -4119,7 +4269,9 @@ export default function MainScreenPage() {
       await new Promise((resolve) => window.setTimeout(resolve, 450));
     } catch (error) {
       console.warn("Unable to complete session", error);
-      alert("세션 종료 및 메모리 확정에 실패했습니다. 잠시 후 다시 시도해주세요.");
+      alert(
+        "세션 종료 및 메모리 확정에 실패했습니다. 잠시 후 다시 시도해주세요.",
+      );
     } finally {
       clearSessionCompletionTimers();
       setIsCompletingSession(false);
@@ -4163,9 +4315,7 @@ export default function MainScreenPage() {
         content: idea.description,
         html: "",
         imageUrl: "",
-        createdAt: idea.createdAt
-          ? new Date(idea.createdAt).toISOString()
-          : "",
+        createdAt: idea.createdAt ? new Date(idea.createdAt).toISOString() : "",
         stitchScreenId: "",
         stitchPrompt: "",
       })),
@@ -4247,7 +4397,7 @@ export default function MainScreenPage() {
         outputType: event.section,
         outputTitle: event.outputTitle ?? "",
         link: event.link ?? "",
-        referenceLinks: event.section === "reference" ? event.link ?? "" : "",
+        referenceLinks: event.section === "reference" ? (event.link ?? "") : "",
         content: event.output ?? "",
         html: event.html ?? "",
         imageUrl: event.imageUrl ?? "",
@@ -4372,7 +4522,9 @@ export default function MainScreenPage() {
     });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
-    const sessionName = safeFilenamePart(viewAsName ?? viewAs ?? userId ?? "user");
+    const sessionName = safeFilenamePart(
+      viewAsName ?? viewAs ?? userId ?? "user",
+    );
     const missionName = safeFilenamePart(missionId ?? "mission");
     link.href = url;
     link.download = `${missionName}-${sessionName}-log.csv`;
@@ -4417,9 +4569,7 @@ export default function MainScreenPage() {
         }
       `}</style>
       {isGeneratingCurrentIdeaMockup && (
-        <div
-          className="pointer-events-none absolute left-1/2 top-4 z-20 flex -translate-x-1/2 items-center gap-3 rounded-full border border-white/10 bg-black/75 px-4 py-2 text-white shadow-lg backdrop-blur"
-        >
+        <div className="pointer-events-none absolute left-1/2 top-4 z-20 flex -translate-x-1/2 items-center gap-3 rounded-full border border-white/10 bg-black/75 px-4 py-2 text-white shadow-lg backdrop-blur">
           <div className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
           <p className="text-xs font-medium text-white/85">
             Stitch로 목업 {mockupOperation === "edit" ? "수정" : "생성"} 중...
@@ -4570,7 +4720,8 @@ export default function MainScreenPage() {
                   height: "100%",
                   flexDirection: "column",
                   gap: 24,
-                  padding: pendingArtboardSkeleton.device === "mobile" ? 24 : 40,
+                  padding:
+                    pendingArtboardSkeleton.device === "mobile" ? 24 : 40,
                 }}
               >
                 <div
@@ -4695,9 +4846,7 @@ export default function MainScreenPage() {
     emptyLabel: string,
   ) => {
     if (items.length === 0) {
-      return (
-        <p className="pl-5 text-xs text-slate-400">{emptyLabel}</p>
-      );
+      return <p className="pl-5 text-xs text-slate-400">{emptyLabel}</p>;
     }
     const visible = items.slice(0, 5);
     return (
@@ -4712,7 +4861,7 @@ export default function MainScreenPage() {
             kind !== "draft" &&
             Boolean(
               archiveStatus?.archivedAt ??
-                ("archivedAt" in item ? item.archivedAt : null),
+              ("archivedAt" in item ? item.archivedAt : null),
             );
 
           const dotClass = isArchived
@@ -4811,7 +4960,12 @@ export default function MainScreenPage() {
           className="flex items-center gap-1.5 rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white shadow-lg hover:bg-slate-700"
         >
           <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-            <path d="M1 3h10M1 6h6M1 9h8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+            <path
+              d="M1 3h10M1 6h6M1 9h8"
+              stroke="currentColor"
+              strokeWidth="1.5"
+              strokeLinecap="round"
+            />
           </svg>
           인용하기
         </button>
@@ -4872,7 +5026,9 @@ export default function MainScreenPage() {
                       Sanitization
                     </p>
                     <pre className="max-h-48 overflow-y-auto whitespace-pre-wrap break-words rounded-xl bg-slate-50 p-4 text-xs leading-relaxed text-slate-600">
-                      {stringifyReviewJson(rawPromptModal.rawPromptSanitization)}
+                      {stringifyReviewJson(
+                        rawPromptModal.rawPromptSanitization,
+                      )}
                     </pre>
                   </section>
                 )}
@@ -5235,7 +5391,10 @@ export default function MainScreenPage() {
       ) : (
         <main className="flex flex-1 overflow-hidden">
           {/* Left panel: content */}
-          <section ref={missionPanelRef} className="flex-1 space-y-6 overflow-y-auto pb-32 pt-8 pl-10 pr-6">
+          <section
+            ref={missionPanelRef}
+            className="flex-1 space-y-6 overflow-y-auto pb-32 pt-8 pl-10 pr-6"
+          >
             {/* Mission */}
             <div className="rounded-3xl border border-slate-200 bg-white p-6">
               <div className="flex items-center justify-between">
@@ -5430,22 +5589,22 @@ export default function MainScreenPage() {
                     <span className="h-3 w-3 animate-spin rounded-full border-2 border-slate-300 border-t-slate-500" />
                     레퍼런스 검색 중...
                   </span>
-	                )}
-	              </div>
-	              {referenceSearchError && !isFetchingRefs && (
-	                <div className="mt-4 rounded-2xl border border-amber-100 bg-amber-50 px-4 py-3 text-sm text-amber-700">
-	                  {referenceSearchError}
-	                </div>
-	              )}
-	              {references.length === 0 && !isFetchingRefs ? (
-	                referenceSearchError ? null : (
-	                <div className="mt-4 rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-6 text-center text-sm text-slate-400">
-	                  {
-	                    '채팅에서 "레퍼런스 찾아줘"라고 입력하면 관련 UI 이미지가 표시됩니다.'
-	                  }
-	                </div>
-	                )
-	              ) : (
+                )}
+              </div>
+              {referenceSearchError && !isFetchingRefs && (
+                <div className="mt-4 rounded-2xl border border-amber-100 bg-amber-50 px-4 py-3 text-sm text-amber-700">
+                  {referenceSearchError}
+                </div>
+              )}
+              {references.length === 0 && !isFetchingRefs ? (
+                referenceSearchError ? null : (
+                  <div className="mt-4 rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-6 text-center text-sm text-slate-400">
+                    {
+                      '채팅에서 "레퍼런스 찾아줘"라고 입력하면 관련 UI 이미지가 표시됩니다.'
+                    }
+                  </div>
+                )
+              ) : (
                 <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
                   {references.map((card) => {
                     const isSelected = selectedReferences.some(
@@ -5600,8 +5759,18 @@ export default function MainScreenPage() {
                             }`}
                             title="시안 삭제"
                           >
-                            <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor">
-                              <path d="M1 1l10 10M11 1L1 11" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+                            <svg
+                              width="12"
+                              height="12"
+                              viewBox="0 0 12 12"
+                              fill="currentColor"
+                            >
+                              <path
+                                d="M1 1l10 10M11 1L1 11"
+                                stroke="currentColor"
+                                strokeWidth="1.5"
+                                strokeLinecap="round"
+                              />
                             </svg>
                           </button>
                         )}
@@ -5758,7 +5927,8 @@ export default function MainScreenPage() {
                                     </ReactMarkdown>
                                   ) : (
                                     <p className="text-slate-400">
-                                      에이전트가 아직 노트 내용을 작성하지 않았습니다.
+                                      에이전트가 아직 노트 내용을 작성하지
+                                      않았습니다.
                                     </p>
                                   )}
                                 </div>
@@ -5786,142 +5956,162 @@ export default function MainScreenPage() {
                               className="space-y-3 scroll-mt-4"
                             >
                               <div className="overflow-hidden rounded-2xl border border-indigo-100 bg-indigo-50/40">
-                              <button
-                                type="button"
-                                onClick={() => setIsDesignSpecOpen((open) => !open)}
-                                className="flex w-full items-center justify-between px-4 py-3 text-left"
-                              >
-                                <span className="flex items-center gap-2">
-                                  <span className="flex h-7 w-7 items-center justify-center rounded-lg border border-indigo-100 bg-white text-xs font-semibold text-indigo-600">
-                                    Aa
-                                  </span>
-                                  <span className="space-y-0.5">
-                                    <span className="block text-xs font-semibold text-slate-800">
-                                      디자인 스타일
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setIsDesignSpecOpen((open) => !open)
+                                  }
+                                  className="flex w-full items-center justify-between px-4 py-3 text-left"
+                                >
+                                  <span className="flex items-center gap-2">
+                                    <span className="flex h-7 w-7 items-center justify-center rounded-lg border border-indigo-100 bg-white text-xs font-semibold text-indigo-600">
+                                      Aa
                                     </span>
-                                    <span className="block text-[11px] text-slate-500">
-                                      {idea.designStyle ? "현재 시안의 시각 규칙" : "아직 정의되지 않음"}
+                                    <span className="space-y-0.5">
+                                      <span className="block text-xs font-semibold text-slate-800">
+                                        디자인 스타일
+                                      </span>
+                                      <span className="block text-[11px] text-slate-500">
+                                        {idea.designStyle
+                                          ? "현재 시안의 시각 규칙"
+                                          : "아직 정의되지 않음"}
+                                      </span>
                                     </span>
                                   </span>
-                                </span>
-                                <span className="flex items-center gap-2 text-xs text-slate-500">
-                                  <span className={`rounded-full px-2 py-0.5 font-semibold ${
-                                    idea.designStyle
-                                      ? "bg-indigo-100 text-indigo-700"
-                                      : "bg-white text-slate-400"
-                                  }`}>
-                                    {idea.designStyle ? "설정됨" : "미정의"}
+                                  <span className="flex items-center gap-2 text-xs text-slate-500">
+                                    <span
+                                      className={`rounded-full px-2 py-0.5 font-semibold ${
+                                        idea.designStyle
+                                          ? "bg-indigo-100 text-indigo-700"
+                                          : "bg-white text-slate-400"
+                                      }`}
+                                    >
+                                      {idea.designStyle ? "설정됨" : "미정의"}
+                                    </span>
+                                    {isDesignSpecOpen ? "접기" : "펼치기"}
                                   </span>
-                                  {isDesignSpecOpen ? "접기" : "펼치기"}
-                                </span>
-                              </button>
-                              {isDesignSpecOpen && (
-                                <div className="space-y-3 border-t border-indigo-100 px-4 py-3">
-                                  {!idea.designStyle ? (
-                                    <p className="text-xs text-slate-500">
-                                      에이전트에게 이 시안의 디자인 스타일을 정의해달라고 요청하세요.
-                                    </p>
-                                  ) : (
-                                    (() => {
-                                      const style = idea.designStyle;
-                                      return (
-                                        <div className="space-y-3">
-                                          <div className="max-h-56 overflow-y-auto rounded-xl border border-indigo-100 bg-white px-4 py-3 text-xs text-slate-600">
-                                            <ReactMarkdown
-                                              components={{
-                                                h1: ({ children }) => (
-                                                  <h1 className="mb-2 mt-3 text-sm font-bold text-slate-900 first:mt-0">
-                                                    {children}
-                                                  </h1>
-                                                ),
-                                                h2: ({ children }) => (
-                                                  <h2 className="mb-1.5 mt-3 text-xs font-semibold uppercase text-slate-800 first:mt-0">
-                                                    {children}
-                                                  </h2>
-                                                ),
-                                                h3: ({ children }) => (
-                                                  <h3 className="mb-1 mt-2 text-xs font-semibold text-slate-700">
-                                                    {children}
-                                                  </h3>
-                                                ),
-                                                p: ({ children }) => (
-                                                  <p className="mb-1.5 leading-relaxed last:mb-0">
-                                                    {withColorTokens(children)}
-                                                  </p>
-                                                ),
-                                                ul: ({ children }) => (
-                                                  <ul className="mb-1.5 ml-4 list-disc space-y-0.5">
-                                                    {children}
-                                                  </ul>
-                                                ),
-                                                ol: ({ children }) => (
-                                                  <ol className="mb-1.5 ml-4 list-decimal space-y-0.5">
-                                                    {children}
-                                                  </ol>
-                                                ),
-                                                li: ({ children }) => (
-                                                  <li className="leading-relaxed">
-                                                    {withColorTokens(children)}
-                                                  </li>
-                                                ),
-                                                strong: ({ children }) => (
-                                                  <strong className="font-semibold text-slate-900">
-                                                    {children}
-                                                  </strong>
-                                                ),
-                                                em: ({ children }) => (
-                                                  <em className="italic text-slate-600">
-                                                    {children}
-                                                  </em>
-                                                ),
-                                                code: ({ children }) => {
-                                                  const text = String(children ?? "");
-                                                  const trimmed = text.trim();
-                                                  const isHex =
-                                                    /^#([0-9A-Fa-f]{6}|[0-9A-Fa-f]{3})$/.test(trimmed);
-                                                  return (
-                                                    <span className="inline-flex items-center gap-1 align-middle">
-                                                      {isHex && (
-                                                        <span
-                                                          className="inline-block h-3 w-3 shrink-0 rounded-sm border border-black/10"
-                                                          style={{ backgroundColor: trimmed }}
-                                                        />
+                                </button>
+                                {isDesignSpecOpen && (
+                                  <div className="space-y-3 border-t border-indigo-100 px-4 py-3">
+                                    {!idea.designStyle ? (
+                                      <p className="text-xs text-slate-500">
+                                        에이전트에게 이 시안의 디자인 스타일을
+                                        정의해달라고 요청하세요.
+                                      </p>
+                                    ) : (
+                                      (() => {
+                                        const style = idea.designStyle;
+                                        return (
+                                          <div className="space-y-3">
+                                            <div className="max-h-56 overflow-y-auto rounded-xl border border-indigo-100 bg-white px-4 py-3 text-xs text-slate-600">
+                                              <ReactMarkdown
+                                                components={{
+                                                  h1: ({ children }) => (
+                                                    <h1 className="mb-2 mt-3 text-sm font-bold text-slate-900 first:mt-0">
+                                                      {children}
+                                                    </h1>
+                                                  ),
+                                                  h2: ({ children }) => (
+                                                    <h2 className="mb-1.5 mt-3 text-xs font-semibold uppercase text-slate-800 first:mt-0">
+                                                      {children}
+                                                    </h2>
+                                                  ),
+                                                  h3: ({ children }) => (
+                                                    <h3 className="mb-1 mt-2 text-xs font-semibold text-slate-700">
+                                                      {children}
+                                                    </h3>
+                                                  ),
+                                                  p: ({ children }) => (
+                                                    <p className="mb-1.5 leading-relaxed last:mb-0">
+                                                      {withColorTokens(
+                                                        children,
                                                       )}
-                                                      <code className="rounded bg-indigo-50 px-1.5 py-0.5 font-mono text-[10px] text-indigo-700">
-                                                        {text}
-                                                      </code>
-                                                    </span>
-                                                  );
-                                                },
-                                                blockquote: ({ children }) => (
-                                                  <blockquote className="my-2 border-l-2 border-indigo-200 pl-3 italic text-slate-500">
-                                                    {children}
-                                                  </blockquote>
-                                                ),
-                                                hr: () => (
-                                                  <hr className="my-2 border-indigo-100" />
-                                                ),
-                                                a: ({ href, children }) => (
-                                                  <a
-                                                    href={href}
-                                                    target="_blank"
-                                                    rel="noopener noreferrer"
-                                                    className="text-indigo-600 underline underline-offset-2 hover:text-indigo-800"
-                                                  >
-                                                    {children}
-                                                  </a>
-                                                ),
-                                              }}
-                                            >
-                                              {style.content}
-                                            </ReactMarkdown>
+                                                    </p>
+                                                  ),
+                                                  ul: ({ children }) => (
+                                                    <ul className="mb-1.5 ml-4 list-disc space-y-0.5">
+                                                      {children}
+                                                    </ul>
+                                                  ),
+                                                  ol: ({ children }) => (
+                                                    <ol className="mb-1.5 ml-4 list-decimal space-y-0.5">
+                                                      {children}
+                                                    </ol>
+                                                  ),
+                                                  li: ({ children }) => (
+                                                    <li className="leading-relaxed">
+                                                      {withColorTokens(
+                                                        children,
+                                                      )}
+                                                    </li>
+                                                  ),
+                                                  strong: ({ children }) => (
+                                                    <strong className="font-semibold text-slate-900">
+                                                      {children}
+                                                    </strong>
+                                                  ),
+                                                  em: ({ children }) => (
+                                                    <em className="italic text-slate-600">
+                                                      {children}
+                                                    </em>
+                                                  ),
+                                                  code: ({ children }) => {
+                                                    const text = String(
+                                                      children ?? "",
+                                                    );
+                                                    const trimmed = text.trim();
+                                                    const isHex =
+                                                      /^#([0-9A-Fa-f]{6}|[0-9A-Fa-f]{3})$/.test(
+                                                        trimmed,
+                                                      );
+                                                    return (
+                                                      <span className="inline-flex items-center gap-1 align-middle">
+                                                        {isHex && (
+                                                          <span
+                                                            className="inline-block h-3 w-3 shrink-0 rounded-sm border border-black/10"
+                                                            style={{
+                                                              backgroundColor:
+                                                                trimmed,
+                                                            }}
+                                                          />
+                                                        )}
+                                                        <code className="rounded bg-indigo-50 px-1.5 py-0.5 font-mono text-[10px] text-indigo-700">
+                                                          {text}
+                                                        </code>
+                                                      </span>
+                                                    );
+                                                  },
+                                                  blockquote: ({
+                                                    children,
+                                                  }) => (
+                                                    <blockquote className="my-2 border-l-2 border-indigo-200 pl-3 italic text-slate-500">
+                                                      {children}
+                                                    </blockquote>
+                                                  ),
+                                                  hr: () => (
+                                                    <hr className="my-2 border-indigo-100" />
+                                                  ),
+                                                  a: ({ href, children }) => (
+                                                    <a
+                                                      href={href}
+                                                      target="_blank"
+                                                      rel="noopener noreferrer"
+                                                      className="text-indigo-600 underline underline-offset-2 hover:text-indigo-800"
+                                                    >
+                                                      {children}
+                                                    </a>
+                                                  ),
+                                                }}
+                                              >
+                                                {style.content}
+                                              </ReactMarkdown>
+                                            </div>
                                           </div>
-                                        </div>
-                                      );
-                                    })()
-                                  )}
-                                </div>
-                              )}
+                                        );
+                                      })()
+                                    )}
+                                  </div>
+                                )}
                               </div>
                             </section>
                           </>
@@ -6233,7 +6423,7 @@ export default function MainScreenPage() {
           </section>
 
           {/* Right panel: agent chat */}
-          <aside className="flex h-full w-full max-w-md flex-col overflow-hidden border-l border-slate-200 bg-white">
+          <aside className="relative flex h-full w-full max-w-md flex-col overflow-hidden border-l border-slate-200 bg-white">
             {/* Tab bar - review mode only */}
             {showReviewAnnotations && (
               <div className="flex flex-shrink-0 border-b border-slate-200">
@@ -6364,10 +6554,10 @@ export default function MainScreenPage() {
                 const promptCompact = reviewTurn?.promptCompact;
                 const hasPromptContext = Boolean(
                   reviewTurn?.query ||
-                    promptCompact?.missionBrief ||
-                    promptCompact?.activeIdea ||
-                    (promptCompact?.citedTexts?.length ?? 0) > 0 ||
-                    (promptCompact?.citedReferences?.length ?? 0) > 0,
+                  promptCompact?.missionBrief ||
+                  promptCompact?.activeIdea ||
+                  (promptCompact?.citedTexts?.length ?? 0) > 0 ||
+                  (promptCompact?.citedReferences?.length ?? 0) > 0,
                 );
                 const reviewTurnId = msg.reviewTurnId ?? msg.id;
                 return (
@@ -6382,347 +6572,354 @@ export default function MainScreenPage() {
                           : "border border-slate-100 bg-slate-50 text-slate-700"
                       }`}
                     >
-                    {msg.role === "user" ? (
-                      <div className="space-y-1.5">
-                        {msg.citedElement && (
-                          <div className="flex justify-end">
-                            <span className="flex items-center gap-1.5 rounded-full bg-white/20 px-2.5 py-0.5 text-xs text-white/80">
-                              <span className="h-1.5 w-1.5 rounded-full bg-indigo-300" />
-                              {msg.citedElement.selector}
-                            </span>
-                          </div>
-                        )}
-                        {msg.citedReferences &&
-                          msg.citedReferences.length > 0 && (
-                            <div className="flex flex-wrap justify-end gap-1">
-                              {msg.citedReferences.map((r) => (
-                                <span
-                                  key={r.id}
-                                  className="flex items-center gap-1 rounded-full bg-white/20 px-2 py-0.5 text-xs text-white/80"
-                                >
-                                  {r.imageUrl && (
-                                    <img
-                                      src={r.imageUrl}
-                                      alt=""
-                                      className="h-3.5 w-5 rounded object-cover opacity-80"
-                                    />
-                                  )}
-                                  <span className="max-w-32 truncate">
-                                    {r.title}
+                      {msg.role === "user" ? (
+                        <div className="space-y-1.5">
+                          {msg.citedElement && (
+                            <div className="flex justify-end">
+                              <span className="flex items-center gap-1.5 rounded-full bg-white/20 px-2.5 py-0.5 text-xs text-white/80">
+                                <span className="h-1.5 w-1.5 rounded-full bg-indigo-300" />
+                                {msg.citedElement.selector}
+                              </span>
+                            </div>
+                          )}
+                          {msg.citedReferences &&
+                            msg.citedReferences.length > 0 && (
+                              <div className="flex flex-wrap justify-end gap-1">
+                                {msg.citedReferences.map((r) => (
+                                  <span
+                                    key={r.id}
+                                    className="flex items-center gap-1 rounded-full bg-white/20 px-2 py-0.5 text-xs text-white/80"
+                                  >
+                                    {r.imageUrl && (
+                                      <img
+                                        src={r.imageUrl}
+                                        alt=""
+                                        className="h-3.5 w-5 rounded object-cover opacity-80"
+                                      />
+                                    )}
+                                    <span className="max-w-32 truncate">
+                                      {r.title}
+                                    </span>
                                   </span>
+                                ))}
+                              </div>
+                            )}
+                          {msg.citedTexts && msg.citedTexts.length > 0 && (
+                            <div className="flex flex-wrap justify-end gap-1">
+                              {msg.citedTexts.map((t, i) => (
+                                <span
+                                  key={i}
+                                  className="max-w-48 truncate rounded-full bg-white/20 px-2 py-0.5 text-xs text-white/80"
+                                >
+                                  &quot;{t}&quot;
                                 </span>
                               ))}
                             </div>
                           )}
-                        {msg.citedTexts && msg.citedTexts.length > 0 && (
-                          <div className="flex flex-wrap justify-end gap-1">
-                            {msg.citedTexts.map((t, i) => (
-                              <span
-                                key={i}
-                                className="max-w-48 truncate rounded-full bg-white/20 px-2 py-0.5 text-xs text-white/80"
-                              >
-                                &quot;{t}&quot;
+                          <div>{msg.content}</div>
+                        </div>
+                      ) : msg.content ? (
+                        (() => {
+                          const parts = processMessageContent(msg.content);
+                          const isStreamingThis =
+                            isLoading && msgIdx === messages.length - 1;
+                          return (
+                            <div className="space-y-2">
+                              {parts.map((part, i) =>
+                                part.type === "text" ? (
+                                  <ReactMarkdown
+                                    key={i}
+                                    remarkPlugins={CHAT_REMARK_PLUGINS}
+                                    components={CHAT_MARKDOWN_COMPONENTS}
+                                  >
+                                    {part.content}
+                                  </ReactMarkdown>
+                                ) : (
+                                  <CodeChip
+                                    key={i}
+                                    chipKey={`${msg.id}-${i}`}
+                                    chip={part.chip}
+                                    expanded={expandedChips.has(
+                                      `${msg.id}-${i}`,
+                                    )}
+                                    onToggle={(k: string) =>
+                                      setExpandedChips((prev) => {
+                                        const next = new Set(prev);
+                                        next.has(k)
+                                          ? next.delete(k)
+                                          : next.add(k);
+                                        return next;
+                                      })
+                                    }
+                                  />
+                                ),
+                              )}
+                              {isStreamingThis && (
+                                <span className="inline-flex items-center gap-0.5 ml-0.5">
+                                  <span
+                                    className="h-1.5 w-1.5 animate-bounce rounded-full bg-slate-400"
+                                    style={{ animationDelay: "0ms" }}
+                                  />
+                                  <span
+                                    className="h-1.5 w-1.5 animate-bounce rounded-full bg-slate-400"
+                                    style={{ animationDelay: "150ms" }}
+                                  />
+                                  <span
+                                    className="h-1.5 w-1.5 animate-bounce rounded-full bg-slate-400"
+                                    style={{ animationDelay: "300ms" }}
+                                  />
+                                </span>
+                              )}
+                            </div>
+                          );
+                        })()
+                      ) : (
+                        <span className="flex items-center gap-1.5 text-slate-400">
+                          <span
+                            className="h-1.5 w-1.5 animate-bounce rounded-full bg-slate-400"
+                            style={{ animationDelay: "0ms" }}
+                          />
+                          <span
+                            className="h-1.5 w-1.5 animate-bounce rounded-full bg-slate-400"
+                            style={{ animationDelay: "150ms" }}
+                          />
+                          <span
+                            className="h-1.5 w-1.5 animate-bounce rounded-full bg-slate-400"
+                            style={{ animationDelay: "300ms" }}
+                          />
+                        </span>
+                      )}
+                      {msg.role === "assistant" &&
+                        retrievedReviewMemories.length > 0 && (
+                          <div className="mt-3 space-y-2 border-t border-slate-200 pt-3">
+                            <div className="flex items-center justify-between gap-3 text-xs">
+                              <span className="font-semibold text-slate-500">
+                                참고한 메모리
                               </span>
-                            ))}
+                              <span className="rounded-full bg-white px-2 py-0.5 font-semibold text-slate-400">
+                                {retrievedReviewMemories.length}개
+                              </span>
+                            </div>
+                            <div className="space-y-1.5">
+                              {retrievedReviewMemories.map((memory) => {
+                                const archiveStatus =
+                                  reviewMemoryArchiveById[memory.memoryId];
+                                const isArchived = Boolean(
+                                  archiveStatus?.archivedAt,
+                                );
+                                return (
+                                  <div
+                                    key={memory.memoryId}
+                                    className="rounded-xl border border-slate-200 bg-white px-3 py-2"
+                                  >
+                                    <div className="flex items-start justify-between gap-2">
+                                      <p className="line-clamp-2 flex-1 text-xs leading-relaxed text-slate-600">
+                                        {memory.semantic ||
+                                          memory.episodic ||
+                                          "내용 없는 메모리"}
+                                      </p>
+                                      {isArchived && (
+                                        <span className="shrink-0 rounded-full bg-rose-50 px-2 py-0.5 text-[10px] font-semibold text-rose-500">
+                                          archived
+                                        </span>
+                                      )}
+                                    </div>
+                                    <div className="mt-1.5 flex flex-wrap gap-1.5 text-[11px] font-semibold text-slate-400">
+                                      <span>
+                                        weight{" "}
+                                        {formatReviewScore(memory.weight)}
+                                      </span>
+                                      {memory.weightDelta != null && (
+                                        <span className="text-emerald-500">
+                                          delta{" "}
+                                          {formatReviewDelta(
+                                            memory.weightDelta,
+                                          )}
+                                        </span>
+                                      )}
+                                      <span>
+                                        similarity{" "}
+                                        {formatReviewScore(memory.similarity)}
+                                      </span>
+                                      {memory.source?.missionId && (
+                                        <span>
+                                          source {memory.source.missionId}
+                                        </span>
+                                      )}
+                                    </div>
+                                    {isArchived && (
+                                      <div className="mt-2 rounded-lg border border-rose-100 bg-rose-50 px-2.5 py-2 text-[11px] leading-relaxed text-rose-700">
+                                        <div className="flex flex-wrap gap-x-2 gap-y-1 font-semibold">
+                                          <span>
+                                            reason{" "}
+                                            {archiveStatus?.archiveReason ??
+                                              "archived"}
+                                          </span>
+                                          <span>
+                                            archivedAt{" "}
+                                            {formatReviewDate(
+                                              archiveStatus?.archivedAt,
+                                            )}
+                                          </span>
+                                        </div>
+                                        {archiveStatus?.duplicate && (
+                                          <div className="mt-1.5 space-y-1 border-t border-rose-100 pt-1.5">
+                                            <p className="font-semibold">
+                                              duplicate 근거:{" "}
+                                              {formatReviewScore(
+                                                archiveStatus.duplicate
+                                                  .similarity,
+                                              )}{" "}
+                                              similarity
+                                            </p>
+                                            {archiveStatus.duplicate
+                                              .memoryId && (
+                                              <p className="break-words text-rose-500">
+                                                similarTo{" "}
+                                                {
+                                                  archiveStatus.duplicate
+                                                    .memoryId
+                                                }
+                                              </p>
+                                            )}
+                                            {archiveStatus.duplicate
+                                              .semantic && (
+                                              <p className="line-clamp-2">
+                                                {
+                                                  archiveStatus.duplicate
+                                                    .semantic
+                                                }
+                                              </p>
+                                            )}
+                                          </div>
+                                        )}
+                                        {!archiveStatus?.duplicate &&
+                                          archiveStatus?.duplicateOf && (
+                                            <p className="mt-1.5 break-words border-t border-rose-100 pt-1.5 text-rose-500">
+                                              duplicateOf{" "}
+                                              {archiveStatus.duplicateOf}
+                                            </p>
+                                          )}
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              })}
+                            </div>
                           </div>
                         )}
-                        <div>{msg.content}</div>
-                      </div>
-                    ) : msg.content ? (
-                      (() => {
-                        const parts = processMessageContent(msg.content);
-                        const isStreamingThis =
-                          isLoading && msgIdx === messages.length - 1;
-                        return (
-                          <div className="space-y-2">
-                            {parts.map((part, i) =>
-                              part.type === "text" ? (
-                                <ReactMarkdown
-                                  key={i}
-                                  remarkPlugins={CHAT_REMARK_PLUGINS}
-                                  components={CHAT_MARKDOWN_COMPONENTS}
-                                >
-                                  {part.content}
-                                </ReactMarkdown>
-                              ) : (
-                                <CodeChip
-                                  key={i}
-                                  chipKey={`${msg.id}-${i}`}
-                                  chip={part.chip}
-                                  expanded={expandedChips.has(`${msg.id}-${i}`)}
-                                  onToggle={(k: string) =>
-                                    setExpandedChips((prev) => {
-                                      const next = new Set(prev);
-                                      next.has(k)
-                                        ? next.delete(k)
-                                        : next.add(k);
-                                      return next;
-                                    })
-                                  }
-                                />
-                              ),
-                            )}
-                            {isStreamingThis && (
-                              <span className="inline-flex items-center gap-0.5 ml-0.5">
-                                <span
-                                  className="h-1.5 w-1.5 animate-bounce rounded-full bg-slate-400"
-                                  style={{ animationDelay: "0ms" }}
-                                />
-                                <span
-                                  className="h-1.5 w-1.5 animate-bounce rounded-full bg-slate-400"
-                                  style={{ animationDelay: "150ms" }}
-                                />
-                                <span
-                                  className="h-1.5 w-1.5 animate-bounce rounded-full bg-slate-400"
-                                  style={{ animationDelay: "300ms" }}
-                                />
-                              </span>
-                            )}
-                          </div>
-                        );
-                      })()
-                    ) : (
-                      <span className="flex items-center gap-1.5 text-slate-400">
-                        <span
-                          className="h-1.5 w-1.5 animate-bounce rounded-full bg-slate-400"
-                          style={{ animationDelay: "0ms" }}
-                        />
-                        <span
-                          className="h-1.5 w-1.5 animate-bounce rounded-full bg-slate-400"
-                          style={{ animationDelay: "150ms" }}
-                        />
-                        <span
-                          className="h-1.5 w-1.5 animate-bounce rounded-full bg-slate-400"
-                          style={{ animationDelay: "300ms" }}
-                        />
-                      </span>
-                    )}
-                    {msg.role === "assistant" &&
-                      retrievedReviewMemories.length > 0 && (
-                        <div className="mt-3 space-y-2 border-t border-slate-200 pt-3">
-                          <div className="flex items-center justify-between gap-3 text-xs">
-                            <span className="font-semibold text-slate-500">
-                              참고한 메모리
+                      {msg.role === "assistant" && hasPromptContext && (
+                        <details className="group mt-3 border-t border-slate-200 pt-3">
+                          <summary className="flex cursor-pointer list-none items-center justify-between gap-3 text-xs font-semibold text-slate-500 marker:hidden">
+                            <span>프롬프트 컨텍스트</span>
+                            <span className="text-slate-400 group-open:hidden">
+                              보기
                             </span>
-                            <span className="rounded-full bg-white px-2 py-0.5 font-semibold text-slate-400">
-                              {retrievedReviewMemories.length}개
+                            <span className="hidden text-slate-400 group-open:inline">
+                              접기
                             </span>
-                          </div>
-                          <div className="space-y-1.5">
-                            {retrievedReviewMemories.map((memory) => {
-                              const archiveStatus =
-                                reviewMemoryArchiveById[memory.memoryId];
-                              const isArchived = Boolean(
-                                archiveStatus?.archivedAt,
-                              );
-                              return (
-                                <div
-                                  key={memory.memoryId}
-                                  className="rounded-xl border border-slate-200 bg-white px-3 py-2"
-                                >
-                                  <div className="flex items-start justify-between gap-2">
-                                    <p className="line-clamp-2 flex-1 text-xs leading-relaxed text-slate-600">
-                                      {memory.semantic ||
-                                        memory.episodic ||
-                                        "내용 없는 메모리"}
-                                    </p>
-                                    {isArchived && (
-                                      <span className="shrink-0 rounded-full bg-rose-50 px-2 py-0.5 text-[10px] font-semibold text-rose-500">
-                                        archived
-                                      </span>
-                                    )}
-                                  </div>
-                                  <div className="mt-1.5 flex flex-wrap gap-1.5 text-[11px] font-semibold text-slate-400">
-                                    <span>
-                                      weight {formatReviewScore(memory.weight)}
-                                    </span>
-                                    {memory.weightDelta != null && (
-                                      <span className="text-emerald-500">
-                                        delta{" "}
-                                        {formatReviewDelta(
-                                          memory.weightDelta,
-                                        )}
-                                      </span>
-                                    )}
-                                    <span>
-                                      similarity{" "}
-                                      {formatReviewScore(memory.similarity)}
-                                    </span>
-                                    {memory.source?.missionId && (
-                                      <span>
-                                        source {memory.source.missionId}
-                                      </span>
-                                    )}
-                                  </div>
-                                  {isArchived && (
-                                    <div className="mt-2 rounded-lg border border-rose-100 bg-rose-50 px-2.5 py-2 text-[11px] leading-relaxed text-rose-700">
-                                      <div className="flex flex-wrap gap-x-2 gap-y-1 font-semibold">
-                                        <span>
-                                          reason{" "}
-                                          {archiveStatus?.archiveReason ??
-                                            "archived"}
-                                        </span>
-                                        <span>
-                                          archivedAt{" "}
-                                          {formatReviewDate(
-                                            archiveStatus?.archivedAt,
-                                          )}
-                                        </span>
-                                      </div>
-                                      {archiveStatus?.duplicate && (
-                                        <div className="mt-1.5 space-y-1 border-t border-rose-100 pt-1.5">
-                                          <p className="font-semibold">
-                                            duplicate 근거:{" "}
-                                            {formatReviewScore(
-                                              archiveStatus.duplicate
-                                                .similarity,
-                                            )}{" "}
-                                            similarity
-                                          </p>
-                                          {archiveStatus.duplicate.memoryId && (
-                                            <p className="break-words text-rose-500">
-                                              similarTo{" "}
-                                              {
-                                                archiveStatus.duplicate
-                                                  .memoryId
-                                              }
-                                            </p>
-                                          )}
-                                          {archiveStatus.duplicate.semantic && (
-                                            <p className="line-clamp-2">
-                                              {
-                                                archiveStatus.duplicate
-                                                  .semantic
-                                              }
-                                            </p>
-                                          )}
-                                        </div>
-                                      )}
-                                      {!archiveStatus?.duplicate &&
-                                        archiveStatus?.duplicateOf && (
-                                          <p className="mt-1.5 break-words border-t border-rose-100 pt-1.5 text-rose-500">
-                                            duplicateOf{" "}
-                                            {archiveStatus.duplicateOf}
-                                          </p>
-                                        )}
-                                    </div>
-                                  )}
-                                </div>
-                              );
-                            })}
-                          </div>
-                        </div>
-                      )}
-                    {msg.role === "assistant" && hasPromptContext && (
-                      <details className="group mt-3 border-t border-slate-200 pt-3">
-                        <summary className="flex cursor-pointer list-none items-center justify-between gap-3 text-xs font-semibold text-slate-500 marker:hidden">
-                          <span>프롬프트 컨텍스트</span>
-                          <span className="text-slate-400 group-open:hidden">
-                            보기
-                          </span>
-                          <span className="hidden text-slate-400 group-open:inline">
-                            접기
-                          </span>
-                        </summary>
-                        <div className="mt-2 space-y-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-600">
-                          {reviewTurn?.query && (
-                            <div>
-                              <p className="font-semibold text-slate-400">
-                                검색 질의
-                              </p>
-                              <p className="mt-1 whitespace-pre-wrap leading-relaxed">
-                                {reviewTurn.query}
-                              </p>
-                            </div>
-                          )}
-                          {promptCompact?.missionBrief && (
-                            <div>
-                              <p className="font-semibold text-slate-400">
-                                미션 설명
-                              </p>
-                              <p className="mt-1 whitespace-pre-wrap leading-relaxed">
-                                {promptCompact.missionBrief}
-                              </p>
-                            </div>
-                          )}
-                          {promptCompact?.activeIdea && (
-                            <div>
-                              <p className="font-semibold text-slate-400">
-                                활성 아이디어
-                              </p>
-                              {promptCompact.activeIdea.title && (
-                                <p className="mt-1 font-semibold text-slate-700">
-                                  {promptCompact.activeIdea.title}
+                          </summary>
+                          <div className="mt-2 space-y-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-600">
+                            {reviewTurn?.query && (
+                              <div>
+                                <p className="font-semibold text-slate-400">
+                                  검색 질의
                                 </p>
-                              )}
-                              {promptCompact.activeIdea.description && (
                                 <p className="mt-1 whitespace-pre-wrap leading-relaxed">
-                                  {promptCompact.activeIdea.description}
+                                  {reviewTurn.query}
                                 </p>
-                              )}
-                            </div>
-                          )}
-                          {(promptCompact?.citedTexts?.length ?? 0) > 0 && (
-                            <div>
-                              <p className="font-semibold text-slate-400">
-                                인용 텍스트
-                              </p>
-                              <div className="mt-1 space-y-1">
-                                {promptCompact?.citedTexts?.map((text, index) => (
-                                  <p
-                                    key={`${msg.id}-cited-text-${index}`}
-                                    className="rounded-lg bg-slate-50 px-2 py-1 leading-relaxed"
-                                  >
-                                    {text}
-                                  </p>
-                                ))}
                               </div>
-                            </div>
-                          )}
-                          {(promptCompact?.citedReferences?.length ?? 0) >
-                            0 && (
-                            <div>
-                              <p className="font-semibold text-slate-400">
-                                인용 레퍼런스
-                              </p>
-                              <div className="mt-1 flex flex-wrap gap-1">
-                                {promptCompact?.citedReferences?.map(
-                                  (reference, index) => (
-                                    <span
-                                      key={`${msg.id}-cited-reference-${index}`}
-                                      className="max-w-full truncate rounded-full bg-slate-50 px-2 py-0.5 text-[11px] font-semibold text-slate-500"
-                                    >
-                                      {reviewReferenceLabel(reference)}
-                                    </span>
-                                  ),
+                            )}
+                            {promptCompact?.missionBrief && (
+                              <div>
+                                <p className="font-semibold text-slate-400">
+                                  미션 설명
+                                </p>
+                                <p className="mt-1 whitespace-pre-wrap leading-relaxed">
+                                  {promptCompact.missionBrief}
+                                </p>
+                              </div>
+                            )}
+                            {promptCompact?.activeIdea && (
+                              <div>
+                                <p className="font-semibold text-slate-400">
+                                  활성 아이디어
+                                </p>
+                                {promptCompact.activeIdea.title && (
+                                  <p className="mt-1 font-semibold text-slate-700">
+                                    {promptCompact.activeIdea.title}
+                                  </p>
+                                )}
+                                {promptCompact.activeIdea.description && (
+                                  <p className="mt-1 whitespace-pre-wrap leading-relaxed">
+                                    {promptCompact.activeIdea.description}
+                                  </p>
                                 )}
                               </div>
-                            </div>
-                          )}
-                        </div>
-                      </details>
-                    )}
-                    {msg.role === "assistant" &&
-                      isViewingAsAdmin &&
-                      reviewTurn?.rawPrompt != null && (
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setRawPromptModal({
-                              turnId: reviewTurnId,
-                              rawPrompt: reviewTurn.rawPrompt,
-                              rawPromptSanitization:
-                                reviewTurn.rawPromptSanitization,
-                              rawResponseMeta: reviewTurn.rawResponseMeta,
-                            })
-                          }
-                          className="mt-3 w-full rounded-xl border border-indigo-100 bg-indigo-50 px-3 py-2 text-left text-xs font-semibold text-indigo-600 transition hover:border-indigo-200 hover:bg-indigo-100"
-                        >
-                          Raw prompt 보기
-                        </button>
+                            )}
+                            {(promptCompact?.citedTexts?.length ?? 0) > 0 && (
+                              <div>
+                                <p className="font-semibold text-slate-400">
+                                  인용 텍스트
+                                </p>
+                                <div className="mt-1 space-y-1">
+                                  {promptCompact?.citedTexts?.map(
+                                    (text, index) => (
+                                      <p
+                                        key={`${msg.id}-cited-text-${index}`}
+                                        className="rounded-lg bg-slate-50 px-2 py-1 leading-relaxed"
+                                      >
+                                        {text}
+                                      </p>
+                                    ),
+                                  )}
+                                </div>
+                              </div>
+                            )}
+                            {(promptCompact?.citedReferences?.length ?? 0) >
+                              0 && (
+                              <div>
+                                <p className="font-semibold text-slate-400">
+                                  인용 레퍼런스
+                                </p>
+                                <div className="mt-1 flex flex-wrap gap-1">
+                                  {promptCompact?.citedReferences?.map(
+                                    (reference, index) => (
+                                      <span
+                                        key={`${msg.id}-cited-reference-${index}`}
+                                        className="max-w-full truncate rounded-full bg-slate-50 px-2 py-0.5 text-[11px] font-semibold text-slate-500"
+                                      >
+                                        {reviewReferenceLabel(reference)}
+                                      </span>
+                                    ),
+                                  )}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        </details>
                       )}
+                      {msg.role === "assistant" &&
+                        isViewingAsAdmin &&
+                        reviewTurn?.rawPrompt != null && (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setRawPromptModal({
+                                turnId: reviewTurnId,
+                                rawPrompt: reviewTurn.rawPrompt,
+                                rawPromptSanitization:
+                                  reviewTurn.rawPromptSanitization,
+                                rawResponseMeta: reviewTurn.rawResponseMeta,
+                              })
+                            }
+                            className="mt-3 w-full rounded-xl border border-indigo-100 bg-indigo-50 px-3 py-2 text-left text-xs font-semibold text-indigo-600 transition hover:border-indigo-200 hover:bg-indigo-100"
+                          >
+                            Raw prompt 보기
+                          </button>
+                        )}
+                    </div>
                   </div>
-                </div>
                 );
               })}
             </div>
@@ -6753,16 +6950,32 @@ export default function MainScreenPage() {
               {!isReadOnly && citedTexts.length > 0 && (
                 <div className="mb-2 rounded-xl bg-slate-50 px-3 py-2 text-xs">
                   <div className="flex items-center justify-between mb-1.5">
-                    <span className="font-medium text-slate-600">텍스트 인용 ({citedTexts.length})</span>
-                    <button onClick={() => setCitedTexts([])} className="text-slate-400 hover:text-slate-600">전체 해제</button>
+                    <span className="font-medium text-slate-600">
+                      텍스트 인용 ({citedTexts.length})
+                    </span>
+                    <button
+                      onClick={() => setCitedTexts([])}
+                      className="text-slate-400 hover:text-slate-600"
+                    >
+                      전체 해제
+                    </button>
                   </div>
                   <div className="flex flex-col gap-1">
                     {citedTexts.map((t, i) => (
-                      <span key={i} className="flex items-start gap-1 rounded-lg bg-white border border-slate-200 px-2 py-1 text-slate-600">
-                        <span className="mt-0.5 shrink-0 text-slate-300">&quot;</span>
+                      <span
+                        key={i}
+                        className="flex items-start gap-1 rounded-lg bg-white border border-slate-200 px-2 py-1 text-slate-600"
+                      >
+                        <span className="mt-0.5 shrink-0 text-slate-300">
+                          &quot;
+                        </span>
                         <span className="line-clamp-1 flex-1">{t}</span>
                         <button
-                          onClick={() => setCitedTexts((prev) => prev.filter((_, j) => j !== i))}
+                          onClick={() =>
+                            setCitedTexts((prev) =>
+                              prev.filter((_, j) => j !== i),
+                            )
+                          }
                           className="shrink-0 text-slate-300 hover:text-slate-500"
                         >
                           <XIcon size={10} />
@@ -6859,6 +7072,17 @@ export default function MainScreenPage() {
                 </div>
               )}
             </div>
+            {showScrollToBottom && (
+              <button
+                onClick={() => {
+                  const el = chatScrollRef.current;
+                  if (el) el.scrollTop = el.scrollHeight;
+                }}
+                className="absolute bottom-20 left-1/2 -translate-x-1/2 flex items-center gap-1 rounded-full bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white shadow-lg transition hover:bg-slate-700"
+              >
+                ↓
+              </button>
+            )}
           </aside>
         </main>
       )}
@@ -6940,7 +7164,8 @@ export default function MainScreenPage() {
               세션이 아직 종료되지 않았어요
             </h2>
             <p className="mb-6 text-sm leading-relaxed text-slate-600">
-              <strong>세션 종료</strong> 버튼을 누르지 않으면 이번 세션의 메모리가 저장되지 않을 수 있습니다. 계속 나가시겠어요?
+              <strong>세션 종료</strong> 버튼을 누르지 않으면 이번 세션의
+              메모리가 저장되지 않을 수 있습니다. 계속 나가시겠어요?
             </p>
             <div className="flex gap-3">
               <button
@@ -6961,7 +7186,6 @@ export default function MainScreenPage() {
           </div>
         </div>
       )}
-
     </div>
   );
 }
