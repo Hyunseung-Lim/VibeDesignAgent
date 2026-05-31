@@ -48,6 +48,7 @@ type Candidate = {
   schemaVersion: string;
   similarity: number;
   legacy: boolean;
+  weightDelta?: number;
 };
 
 function stringArray(value: unknown) {
@@ -296,12 +297,13 @@ async function updateRetrievedWeights(retrieved: Candidate[], token: string, now
       candidate.weight = weight;
       candidate.retrievedCount = retrievedCount;
       candidate.lastRetrievedAt = now;
+      candidate.weightDelta = Number((weight - previousWeight).toFixed(4));
       return {
         memoryId: candidate.memoryId,
         semanticItemId: candidate.semanticItemId,
         previousWeight,
         weight,
-        weightDelta: Number((weight - previousWeight).toFixed(4)),
+        weightDelta: candidate.weightDelta,
       };
     }),
   );
@@ -391,6 +393,7 @@ export async function POST(request: Request) {
       schemaVersion: candidate.schemaVersion,
       similarity: Number(candidate.similarity.toFixed(4)),
       weight: candidate.weight,
+      weightDelta: candidate.weightDelta ?? 0,
       retrievedCount: candidate.retrievedCount,
     })),
   });

@@ -456,7 +456,7 @@ archiveReason = "low-weight" | "duplicate" | "manual"
 - [x] 리뷰에 표시할 데이터 범위 정의
   - 채팅 로그
   - assistant bubble별 retrieved memory
-  - retrieved memory의 `weight`, `similarity`, `source`
+  - retrieved memory의 `weight`, `weightDelta`, `similarity`, `source`
   - 해당 turn의 LLM input/prompt compact view
   - 세션 종료 전후 생성/변경/archived memory
 - [x] prompt 노출 범위 정의
@@ -497,6 +497,7 @@ archiveReason = "low-weight" | "duplicate" | "manual"
     episodic: string,
     semantic: string | null,
     weight: number,
+    weightDelta: number | null,
     similarity: number,
     source: { missionId?: string, draftId?: string } | null
   }>,
@@ -545,29 +546,40 @@ archiveReason = "low-weight" | "duplicate" | "manual"
 - [x] assistant bubble에 사용된 retrieved memory badge 표시
 - [x] memory badge에서 `weight`, `similarity`, source mission/session 표시
 - [x] LLM prompt/context 열람 토글 추가
-- [ ] archived memory가 있으면 archive reason과 duplicate 근거 표시
+- [x] archived memory가 있으면 archive reason과 duplicate 근거 표시
 
 구현 메모:
 - `/lobby` 완료 미션 카드에 `리뷰 보기` 버튼을 추가하고 `/main/{missionId}?review=1`로 진입한다.
 - `/admin` 유저/참여자 세션 카드에도 `리뷰` 진입점을 추가하고 `/main/{missionId}?viewAs={uid}&review=1`로 연다.
 - `/main/{missionId}?review=1`은 일반 사용자 세션도 읽기 전용으로 열고, 기존 채팅 로그 위에 저장된 `reviewTurns` 데이터를 연결한다.
-- assistant bubble은 `reviewTurnId`/message id로 `reviewTurns/{turnId}`를 찾아 retrieved memory, `weight`, `similarity`, source mission을 표시한다.
+- assistant bubble은 `reviewTurnId`/message id로 `reviewTurns/{turnId}`를 찾아 retrieved memory, `weight`, `weightDelta`, `similarity`, source mission을 표시한다.
 - assistant bubble의 `프롬프트 컨텍스트` 토글에서 retrieval query, 미션 설명 전체, 활성 아이디어, 인용 텍스트/레퍼런스를 확인할 수 있다.
 - admin이 리뷰 화면을 열면 assistant bubble의 `Raw prompt 보기` 버튼으로 sanitized `rawPrompt`, sanitize 내역, response meta를 모달에서 확인할 수 있다.
+- 리뷰 화면은 `/api/memory/archive-status`로 retrieved memory의 최신 archive 상태를 조회하고, archived memory에는 `archiveReason`, `archivedAt`, duplicate similarity/similarTo 근거를 표시한다.
 
 ### 12.4 3단계: 세션 전후 메모리 변화 시각화
-- [ ] memory view와 session view를 분리
+- [x] memory view와 session view를 분리
   - memory view: 현재 장기 메모리 중심
   - session view: 특정 세션에서 생성/사용/변경된 메모리 중심
 - [ ] 세션 시작 전 memory snapshot 기준 정의
-- [ ] 세션 중 draft memory 표시
-- [ ] 세션 종료 후 promoted memory 표시
-- [ ] duplicate merge/archive 결과 표시
+- [x] 세션 중 draft memory 표시
+- [x] 세션 종료 후 promoted memory 표시
+- [x] duplicate merge/archive 결과 표시
 - [ ] 직접 입력 memory와 interaction memory를 다른 배지/색으로 구분
+
+구현 메모:
+- `/api/memory/session-summary`에서 session `memoryDrafts`와 `source.missionId`가 현재 mission인 promoted memory를 조회한다.
+- 리뷰 모드에서 우측 패널 상단에 **채팅 / 메모리 변화** 탭 바를 추가한다. 탭 바는 `showReviewAnnotations`(리뷰 모드 또는 admin 뷰어)일 때만 표시된다.
+- **메모리 변화 탭** 에서 세로 타임라인으로 표시한다. 섹션 구성:
+  - `세션 중 참고됨` (파랑 점): `reviewTurns.retrieved` 기반, similarity를 가로 바로 시각화
+  - `세션에서 기억됨` (초록 점): promoted memory, weight를 가로 바로 시각화. archived된 항목은 취소선 + 로즈색 보관 사유로 인라인 표시
+  - `검토 중인 초안` (회색 빈 원): drafts 있을 때만 표시
+- 별도 `보관됨` 섹션을 두지 않고, archived된 promoted memory를 `기억됨` 섹션 안에서 구분한다. (이전 구현의 생성됨/보관됨 중복 문제 해결)
+- 채팅 탭으로 돌아갈 때 스크롤 위치를 유지하기 위해 채팅 div를 언마운트하지 않고 `hidden` 클래스로 숨긴다.
 
 #### 추가로 결정 필요
 - snapshot을 실제로 저장할지, 기존 로그에서 계산할지
-- 시각화를 사용자용 설명형으로 할지, 연구자용 디버깅형으로 할지
+- 직접 입력 memory와 interaction memory 배지/색 구분 (12.4 미완료 항목)
 
 ### 12.5 4단계: 채팅 스트리밍/스크롤 UX 개선
 - [ ] 생성 중 사용자가 위로 스크롤하면 auto-scroll 중단

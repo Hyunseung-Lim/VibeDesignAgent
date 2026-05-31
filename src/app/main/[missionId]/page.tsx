@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { firebaseAuth, db, storage } from "@/lib/firebase";
@@ -50,6 +50,7 @@ type ReviewTurnMemory = {
   episodic?: string;
   semantic?: string | null;
   weight?: number | null;
+  weightDelta?: number | null;
   similarity?: number | null;
   source?: {
     missionId?: string;
@@ -74,6 +75,45 @@ type ReviewTurn = {
   rawPrompt?: unknown;
   rawPromptSanitization?: unknown;
   rawResponseMeta?: unknown;
+};
+
+type ReviewMemoryArchiveStatus = {
+  memoryId: string;
+  archivedAt: number | null;
+  archiveReason: string | null;
+  duplicateOf: string | null;
+  duplicate?: {
+    memoryId?: string;
+    semanticItemId?: string | null;
+    semantic?: string | null;
+    episodic?: string;
+    similarity?: number;
+  } | null;
+};
+
+type SessionMemoryItem = {
+  id: string;
+  episodic?: string | null;
+  semantic?: string | null;
+  input?: string | null;
+  output?: string | null;
+  status?: string | null;
+  promotedAt?: number | null;
+  timestamp?: number | null;
+  weight?: number | null;
+  archivedAt?: number | null;
+  archiveReason?: string | null;
+  duplicateOf?: string | null;
+  duplicate?: {
+    memoryId?: string;
+    semantic?: string | null;
+    similarity?: number;
+  } | null;
+};
+
+type SessionMemorySummary = {
+  drafts: SessionMemoryItem[];
+  promoted: SessionMemoryItem[];
 };
 
 type ActivityLogEvent = {
@@ -1725,6 +1765,18 @@ function formatReviewScore(value: number | null | undefined) {
     : "-";
 }
 
+function formatReviewDelta(value: number | null | undefined) {
+  if (typeof value !== "number" || !Number.isFinite(value)) return "-";
+  const sign = value > 0 ? "+" : "";
+  return `${sign}${value.toFixed(2)}`;
+}
+
+function formatReviewDate(value: number | null | undefined) {
+  return typeof value === "number" && Number.isFinite(value)
+    ? new Date(value).toLocaleString("ko-KR")
+    : "-";
+}
+
 function reviewReferenceLabel(reference: unknown) {
   if (!reference || typeof reference !== "object") return String(reference);
   const data = reference as Record<string, unknown>;
@@ -1736,6 +1788,16 @@ function reviewReferenceLabel(reference: unknown) {
 
 function stringifyReviewJson(value: unknown) {
   return JSON.stringify(value, null, 2) ?? "null";
+}
+
+function memorySummaryText(item: SessionMemoryItem | ReviewTurnMemory) {
+  return (
+    item.semantic ||
+    item.episodic ||
+    ("input" in item ? item.input : "") ||
+    ("output" in item ? item.output : "") ||
+    "내용 없는 메모리"
+  );
 }
 
 export default function MainScreenPage() {
@@ -1837,11 +1899,65 @@ export default function MainScreenPage() {
     rawPromptSanitization?: unknown;
     rawResponseMeta?: unknown;
   } | null>(null);
+  const [reviewMemoryArchiveById, setReviewMemoryArchiveById] = useState<
+    Record<string, ReviewMemoryArchiveStatus>
+  >({});
+  const [sessionMemorySummary, setSessionMemorySummary] =
+    useState<SessionMemorySummary>({ drafts: [], promoted: [] });
+  const [rightPanelTab, setRightPanelTab] = useState<"chat" | "memory">("chat");
 
   const isViewingAsAdmin = !!(viewAs && isAdmin);
   const isReadOnly = isReviewMode || isViewingAsAdmin;
   const showReviewAnnotations = isReviewMode || isViewingAsAdmin;
   const targetSessionUserId = isViewingAsAdmin ? viewAs : userId;
+  const reviewMemoryIds = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          Object.values(reviewTurnsById)
+            .flatMap((turn) => turn.retrieved ?? [])
+            .map((memory) => memory.memoryId)
+            .filter(Boolean),
+        ),
+      ),
+    [reviewTurnsById],
+  );
+  const reviewMemoryIdsKey = reviewMemoryIds.join("|");
+  const usedReviewMemories = useMemo(() => {
+    const byId = new Map<string, ReviewTurnMemory>();
+    Object.values(reviewTurnsById).forEach((turn) => {
+      (turn.retrieved ?? []).forEach((memory) => {
+        if (memory.memoryId && !byId.has(memory.memoryId)) {
+          byId.set(memory.memoryId, memory);
+        }
+      });
+    });
+    return Array.from(byId.values());
+  }, [reviewTurnsById]);
+  const archivedSessionMemories = useMemo(() => {
+    const promotedArchived = sessionMemorySummary.promoted.filter(
+      (memory) => memory.archivedAt,
+    );
+    const retrievedArchived = usedReviewMemories
+      .map((memory) => reviewMemoryArchiveById[memory.memoryId])
+      .filter(
+        (memory): memory is ReviewMemoryArchiveStatus =>
+          Boolean(memory?.archivedAt) &&
+          !promotedArchived.some((item) => item.id === memory.memoryId),
+      )
+      .map((memory) => ({
+        id: memory.memoryId,
+        archivedAt: memory.archivedAt,
+        archiveReason: memory.archiveReason,
+        duplicateOf: memory.duplicateOf,
+        duplicate: memory.duplicate,
+      }));
+    return [...promotedArchived, ...retrievedArchived];
+  }, [
+    reviewMemoryArchiveById,
+    sessionMemorySummary.promoted,
+    usedReviewMemories,
+  ]);
 
   const activeOption =
     missionOptions.find((option) => option.id === selectedOptionId) ??
@@ -2366,6 +2482,94 @@ export default function MainScreenPage() {
       },
       () => setReviewTurnsById({}),
     );
+  }, [showReviewAnnotations, targetSessionUserId, missionId]);
+
+  useEffect(() => {
+    if (!showReviewAnnotations || !targetSessionUserId || reviewMemoryIds.length === 0) {
+      setReviewMemoryArchiveById({});
+      return;
+    }
+    const currentUser = firebaseAuth.currentUser;
+    if (!currentUser) {
+      setReviewMemoryArchiveById({});
+      return;
+    }
+    let cancelled = false;
+    getIdToken(currentUser)
+      .then((token) =>
+        fetch("/api/memory/archive-status", {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            targetUid: targetSessionUserId,
+            memoryIds: reviewMemoryIds,
+          }),
+        }),
+      )
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (cancelled) return;
+        const statuses =
+          data?.statuses && typeof data.statuses === "object"
+            ? (data.statuses as Record<string, ReviewMemoryArchiveStatus>)
+            : {};
+        setReviewMemoryArchiveById(statuses);
+      })
+      .catch(() => {
+        if (!cancelled) setReviewMemoryArchiveById({});
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    showReviewAnnotations,
+    targetSessionUserId,
+    reviewMemoryIdsKey,
+    reviewMemoryIds,
+  ]);
+
+  useEffect(() => {
+    if (!showReviewAnnotations || !targetSessionUserId || !missionId) {
+      setSessionMemorySummary({ drafts: [], promoted: [] });
+      return;
+    }
+    const currentUser = firebaseAuth.currentUser;
+    if (!currentUser) {
+      setSessionMemorySummary({ drafts: [], promoted: [] });
+      return;
+    }
+    let cancelled = false;
+    getIdToken(currentUser)
+      .then((token) =>
+        fetch("/api/memory/session-summary", {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            targetUid: targetSessionUserId,
+            missionId,
+          }),
+        }),
+      )
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (cancelled) return;
+        setSessionMemorySummary({
+          drafts: Array.isArray(data?.drafts) ? data.drafts : [],
+          promoted: Array.isArray(data?.promoted) ? data.promoted : [],
+        });
+      })
+      .catch(() => {
+        if (!cancelled) setSessionMemorySummary({ drafts: [], promoted: [] });
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [showReviewAnnotations, targetSessionUserId, missionId]);
 
   // Save session to Firestore (debounced to avoid write storms during streaming)
@@ -4464,6 +4668,127 @@ export default function MainScreenPage() {
   const contextMenuArtboard = designContextMenu
     ? artboards.find((artboard) => artboard.id === designContextMenu.artboardId)
     : null;
+  const renderMemoryScoreBar = (
+    value: number | null | undefined,
+    colorClass: string,
+  ) => {
+    if (value == null || !Number.isFinite(value)) return null;
+    const pct = Math.min(100, Math.max(0, Math.round(value * 100)));
+    return (
+      <div className="flex items-center gap-1.5">
+        <div className="h-1 w-14 overflow-hidden rounded-full bg-slate-100">
+          <div
+            className={`h-full rounded-full ${colorClass}`}
+            style={{ width: `${pct}%` }}
+          />
+        </div>
+        <span className="text-[10px] tabular-nums text-slate-400">
+          {formatReviewScore(value)}
+        </span>
+      </div>
+    );
+  };
+
+  const renderTimelineItems = (
+    items: Array<SessionMemoryItem | ReviewTurnMemory>,
+    kind: "retrieved" | "promoted" | "draft",
+    emptyLabel: string,
+  ) => {
+    if (items.length === 0) {
+      return (
+        <p className="pl-5 text-xs text-slate-400">{emptyLabel}</p>
+      );
+    }
+    const visible = items.slice(0, 5);
+    return (
+      <div>
+        {visible.map((item, idx) => {
+          const id = "memoryId" in item ? item.memoryId : item.id;
+          const archiveStatus =
+            "memoryId" in item
+              ? reviewMemoryArchiveById[item.memoryId]
+              : (item as SessionMemoryItem);
+          const isArchived =
+            kind !== "draft" &&
+            Boolean(
+              archiveStatus?.archivedAt ??
+                ("archivedAt" in item ? item.archivedAt : null),
+            );
+
+          const dotClass = isArchived
+            ? "bg-rose-300"
+            : kind === "retrieved"
+              ? "bg-blue-400"
+              : kind === "promoted"
+                ? "bg-emerald-400"
+                : "border-2 border-slate-300 bg-white";
+
+          const weight = "weight" in item ? item.weight : null;
+          const similarity = "similarity" in item ? item.similarity : null;
+          const weightDelta = "weightDelta" in item ? item.weightDelta : null;
+
+          return (
+            <div key={`${kind}-${id}`} className="flex gap-3">
+              <div className="flex flex-col items-center">
+                <div
+                  className={`mt-1 h-2 w-2 flex-shrink-0 rounded-full ${dotClass}`}
+                />
+                {idx < visible.length - 1 && (
+                  <div className="my-1 w-px flex-1 bg-slate-100" />
+                )}
+              </div>
+              <div
+                className={`min-w-0 flex-1 ${idx < visible.length - 1 ? "pb-3" : ""}`}
+              >
+                <p
+                  className={`line-clamp-2 text-xs leading-relaxed ${
+                    isArchived
+                      ? "text-slate-400 line-through decoration-rose-300"
+                      : "text-slate-700"
+                  }`}
+                >
+                  {memorySummaryText(item)}
+                </p>
+                <div className="mt-1 space-y-0.5">
+                  {kind === "retrieved" &&
+                    renderMemoryScoreBar(similarity, "bg-blue-300")}
+                  {kind === "promoted" &&
+                    !isArchived &&
+                    renderMemoryScoreBar(weight, "bg-emerald-400")}
+                  {kind === "promoted" &&
+                    !isArchived &&
+                    weightDelta != null &&
+                    weightDelta !== 0 && (
+                      <p
+                        className={`text-[10px] font-semibold ${
+                          weightDelta > 0
+                            ? "text-emerald-500"
+                            : "text-slate-400"
+                        }`}
+                      >
+                        {formatReviewDelta(weightDelta)}
+                      </p>
+                    )}
+                  {isArchived && (
+                    <p className="text-[10px] text-rose-400">
+                      {archiveStatus?.archiveReason ?? "보관됨"}
+                      {archiveStatus?.duplicate?.similarity != null &&
+                        ` · 유사도 ${formatReviewScore(archiveStatus.duplicate.similarity)}`}
+                    </p>
+                  )}
+                </div>
+              </div>
+            </div>
+          );
+        })}
+        {items.length > 5 && (
+          <p className="mt-1 pl-5 text-[11px] text-slate-400">
+            외 {items.length - 5}개 더 있음
+          </p>
+        )}
+      </div>
+    );
+  };
 
   return (
     <div className="flex h-screen flex-col bg-[#f5f5f5] text-slate-900">
@@ -5909,10 +6234,101 @@ export default function MainScreenPage() {
 
           {/* Right panel: agent chat */}
           <aside className="flex h-full w-full max-w-md flex-col overflow-hidden border-l border-slate-200 bg-white">
+            {/* Tab bar - review mode only */}
+            {showReviewAnnotations && (
+              <div className="flex flex-shrink-0 border-b border-slate-200">
+                <button
+                  onClick={() => setRightPanelTab("chat")}
+                  className={`flex flex-1 items-center justify-center gap-1.5 py-3 text-sm font-medium transition ${
+                    rightPanelTab === "chat"
+                      ? "border-b-2 border-slate-900 text-slate-900"
+                      : "text-slate-400 hover:text-slate-600"
+                  }`}
+                >
+                  채팅
+                  <span className="text-xs text-slate-300">
+                    {messages.length}
+                  </span>
+                </button>
+                <button
+                  onClick={() => setRightPanelTab("memory")}
+                  className={`flex flex-1 items-center justify-center gap-1.5 py-3 text-sm font-medium transition ${
+                    rightPanelTab === "memory"
+                      ? "border-b-2 border-slate-900 text-slate-900"
+                      : "text-slate-400 hover:text-slate-600"
+                  }`}
+                >
+                  메모리 변화
+                  <span className="text-xs text-slate-300">
+                    {usedReviewMemories.length +
+                      sessionMemorySummary.promoted.length}
+                  </span>
+                </button>
+              </div>
+            )}
+            {/* Memory panel */}
+            {showReviewAnnotations && rightPanelTab === "memory" && (
+              <div className="flex-1 space-y-5 overflow-y-auto p-5">
+                <section>
+                  <div className="mb-2.5 flex items-center gap-2">
+                    <div className="h-2 w-2 flex-shrink-0 rounded-full bg-blue-400" />
+                    <p className="text-xs font-semibold text-slate-600">
+                      세션 중 참고됨
+                    </p>
+                    <span className="text-[11px] text-slate-300">
+                      {usedReviewMemories.length}
+                    </span>
+                  </div>
+                  {renderTimelineItems(
+                    usedReviewMemories,
+                    "retrieved",
+                    "이 세션에서 참고한 기억이 없습니다.",
+                  )}
+                </section>
+                <section>
+                  <div className="mb-2.5 flex items-center gap-2">
+                    <div className="h-2 w-2 flex-shrink-0 rounded-full bg-emerald-400" />
+                    <p className="text-xs font-semibold text-slate-600">
+                      세션에서 기억됨
+                    </p>
+                    <span className="text-[11px] text-slate-300">
+                      {sessionMemorySummary.promoted.length}
+                    </span>
+                  </div>
+                  {renderTimelineItems(
+                    sessionMemorySummary.promoted,
+                    "promoted",
+                    "이 세션에서 새로 기억된 내용이 없습니다.",
+                  )}
+                </section>
+                {sessionMemorySummary.drafts.length > 0 && (
+                  <section>
+                    <div className="mb-2.5 flex items-center gap-2">
+                      <div className="h-1.5 w-1.5 flex-shrink-0 rounded-full border-2 border-slate-300" />
+                      <p className="text-xs font-semibold text-slate-400">
+                        검토 중인 초안
+                      </p>
+                      <span className="text-[11px] text-slate-300">
+                        {sessionMemorySummary.drafts.length}
+                      </span>
+                    </div>
+                    {renderTimelineItems(
+                      sessionMemorySummary.drafts,
+                      "draft",
+                      "",
+                    )}
+                  </section>
+                )}
+              </div>
+            )}
             {/* Messages */}
             <div
               ref={chatScrollRef}
-              className="flex-1 space-y-4 overflow-y-auto p-6"
+              className={`flex-1 space-y-4 overflow-y-auto p-6 ${
+                showReviewAnnotations && rightPanelTab === "memory"
+                  ? "hidden"
+                  : ""
+              }`}
             >
               {messages.length === 0 && (
                 <div className="flex h-full flex-col items-center justify-center gap-2 text-center text-sm text-slate-400">
@@ -6093,32 +6509,107 @@ export default function MainScreenPage() {
                             </span>
                           </div>
                           <div className="space-y-1.5">
-                            {retrievedReviewMemories.map((memory) => (
-                              <div
-                                key={memory.memoryId}
-                                className="rounded-xl border border-slate-200 bg-white px-3 py-2"
-                              >
-                                <p className="line-clamp-2 text-xs leading-relaxed text-slate-600">
-                                  {memory.semantic ||
-                                    memory.episodic ||
-                                    "내용 없는 메모리"}
-                                </p>
-                                <div className="mt-1.5 flex flex-wrap gap-1.5 text-[11px] font-semibold text-slate-400">
-                                  <span>
-                                    weight {formatReviewScore(memory.weight)}
-                                  </span>
-                                  <span>
-                                    similarity{" "}
-                                    {formatReviewScore(memory.similarity)}
-                                  </span>
-                                  {memory.source?.missionId && (
+                            {retrievedReviewMemories.map((memory) => {
+                              const archiveStatus =
+                                reviewMemoryArchiveById[memory.memoryId];
+                              const isArchived = Boolean(
+                                archiveStatus?.archivedAt,
+                              );
+                              return (
+                                <div
+                                  key={memory.memoryId}
+                                  className="rounded-xl border border-slate-200 bg-white px-3 py-2"
+                                >
+                                  <div className="flex items-start justify-between gap-2">
+                                    <p className="line-clamp-2 flex-1 text-xs leading-relaxed text-slate-600">
+                                      {memory.semantic ||
+                                        memory.episodic ||
+                                        "내용 없는 메모리"}
+                                    </p>
+                                    {isArchived && (
+                                      <span className="shrink-0 rounded-full bg-rose-50 px-2 py-0.5 text-[10px] font-semibold text-rose-500">
+                                        archived
+                                      </span>
+                                    )}
+                                  </div>
+                                  <div className="mt-1.5 flex flex-wrap gap-1.5 text-[11px] font-semibold text-slate-400">
                                     <span>
-                                      source {memory.source.missionId}
+                                      weight {formatReviewScore(memory.weight)}
                                     </span>
+                                    {memory.weightDelta != null && (
+                                      <span className="text-emerald-500">
+                                        delta{" "}
+                                        {formatReviewDelta(
+                                          memory.weightDelta,
+                                        )}
+                                      </span>
+                                    )}
+                                    <span>
+                                      similarity{" "}
+                                      {formatReviewScore(memory.similarity)}
+                                    </span>
+                                    {memory.source?.missionId && (
+                                      <span>
+                                        source {memory.source.missionId}
+                                      </span>
+                                    )}
+                                  </div>
+                                  {isArchived && (
+                                    <div className="mt-2 rounded-lg border border-rose-100 bg-rose-50 px-2.5 py-2 text-[11px] leading-relaxed text-rose-700">
+                                      <div className="flex flex-wrap gap-x-2 gap-y-1 font-semibold">
+                                        <span>
+                                          reason{" "}
+                                          {archiveStatus?.archiveReason ??
+                                            "archived"}
+                                        </span>
+                                        <span>
+                                          archivedAt{" "}
+                                          {formatReviewDate(
+                                            archiveStatus?.archivedAt,
+                                          )}
+                                        </span>
+                                      </div>
+                                      {archiveStatus?.duplicate && (
+                                        <div className="mt-1.5 space-y-1 border-t border-rose-100 pt-1.5">
+                                          <p className="font-semibold">
+                                            duplicate 근거:{" "}
+                                            {formatReviewScore(
+                                              archiveStatus.duplicate
+                                                .similarity,
+                                            )}{" "}
+                                            similarity
+                                          </p>
+                                          {archiveStatus.duplicate.memoryId && (
+                                            <p className="break-words text-rose-500">
+                                              similarTo{" "}
+                                              {
+                                                archiveStatus.duplicate
+                                                  .memoryId
+                                              }
+                                            </p>
+                                          )}
+                                          {archiveStatus.duplicate.semantic && (
+                                            <p className="line-clamp-2">
+                                              {
+                                                archiveStatus.duplicate
+                                                  .semantic
+                                              }
+                                            </p>
+                                          )}
+                                        </div>
+                                      )}
+                                      {!archiveStatus?.duplicate &&
+                                        archiveStatus?.duplicateOf && (
+                                          <p className="mt-1.5 break-words border-t border-rose-100 pt-1.5 text-rose-500">
+                                            duplicateOf{" "}
+                                            {archiveStatus.duplicateOf}
+                                          </p>
+                                        )}
+                                    </div>
                                   )}
                                 </div>
-                              </div>
-                            ))}
+                              );
+                            })}
                           </div>
                         </div>
                       )}

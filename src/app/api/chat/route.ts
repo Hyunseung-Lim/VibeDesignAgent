@@ -51,6 +51,8 @@ function compactMemoryContext(memoryContext: unknown) {
       link: typeof record.link === "string" ? record.link : null,
       weight:
         typeof record.weight === "number" ? record.weight : undefined,
+      weightDelta:
+        typeof record.weightDelta === "number" ? record.weightDelta : undefined,
       similarity:
         typeof record.similarity === "number" ? record.similarity : undefined,
     };
@@ -400,6 +402,10 @@ export async function POST(request: Request) {
                   : null,
               weight:
                 typeof record.weight === "number" ? record.weight : null,
+              weightDelta:
+                typeof record.weightDelta === "number"
+                  ? record.weightDelta
+                  : null,
               similarity:
                 typeof record.similarity === "number" ? record.similarity : null,
               source:
