@@ -18,6 +18,10 @@ const EMBEDDING_MODEL = "text-embedding-3-large";
 const MAX_MEMORY_DOCS = 200;
 const DEFAULT_LIMIT = 5;
 const PROFILE_MEMORY_MAX_CHARS = 240;
+const NEAR_MISS_LIMIT = 20;
+const NEAR_MISS_MIN_SIMILARITY = 0.55;
+const NEAR_MISS_WEIGHT_LOSS = 0.005;
+const MIN_MEMORY_WEIGHT = 0.1;
 
 type MemoryDoc = Record<string, unknown> & {
   id: string;
@@ -266,6 +270,12 @@ function nextWeight(candidate: Candidate, wasRetrieved: boolean) {
   return Number(Math.min(1, candidate.weight + gain).toFixed(4));
 }
 
+function nextNearMissWeight(candidate: Candidate) {
+  return Number(
+    Math.max(MIN_MEMORY_WEIGHT, candidate.weight - NEAR_MISS_WEIGHT_LOSS).toFixed(4),
+  );
+}
+
 async function updateRetrievedWeights(retrieved: Candidate[], token: string, now: number) {
   const deltas = await Promise.all(
     retrieved.map(async (candidate) => {
@@ -302,6 +312,63 @@ async function updateRetrievedWeights(retrieved: Candidate[], token: string, now
       return {
         memoryId: candidate.memoryId,
         semanticItemId: candidate.semanticItemId,
+        previousWeight,
+        weight,
+        weightDelta: candidate.weightDelta,
+      };
+    }),
+  );
+  return deltas;
+}
+
+async function updateNearMissWeights(
+  nearMisses: Candidate[],
+  token: string,
+  now: number,
+) {
+  const deltas = await Promise.all(
+    nearMisses.map(async (candidate) => {
+      const previousWeight = candidate.weight;
+      const weight = nextNearMissWeight(candidate);
+      if (weight === previousWeight) {
+        return {
+          memoryId: candidate.memoryId,
+          semanticItemId: candidate.semanticItemId,
+          similarity: Number(candidate.similarity.toFixed(4)),
+          previousWeight,
+          weight,
+          weightDelta: 0,
+        };
+      }
+
+      if (candidate.legacy && candidate.itemIndex != null) {
+        const semanticItems = Array.isArray(candidate.doc.semanticItems)
+          ? [...candidate.doc.semanticItems]
+          : [];
+        semanticItems[candidate.itemIndex] = {
+          ...(semanticItems[candidate.itemIndex] ?? {}),
+          retentionScore: weight,
+          updatedAt: now,
+        };
+        await patchFirestoreDocument(
+          candidate.path,
+          { semanticItems, updatedAt: now },
+          token,
+        );
+      } else {
+        await patchFirestoreDocument(
+          candidate.path,
+          { weight, updatedAt: now },
+          token,
+        );
+      }
+
+      candidate.weight = weight;
+      candidate.weightDelta = Number((weight - previousWeight).toFixed(4));
+      return {
+        memoryId: candidate.memoryId,
+        semanticItemId: candidate.semanticItemId,
+        similarity: Number(candidate.similarity.toFixed(4)),
         previousWeight,
         weight,
         weightDelta: candidate.weightDelta,
@@ -387,6 +454,10 @@ export async function POST(request: Request) {
 
     retrieved = ranked.slice(0, limit);
     const scoreDeltas = await updateRetrievedWeights(retrieved, token, now);
+    const nearMisses = ranked
+      .slice(limit, NEAR_MISS_LIMIT)
+      .filter((candidate) => candidate.similarity >= NEAR_MISS_MIN_SIMILARITY);
+    const nearMissDeltas = await updateNearMissWeights(nearMisses, token, now);
 
     await patchFirestoreDocument(
       `users/${user.localId}/${RETRIEVAL_LOG_COLLECTION}/${retrievalLogId(now, query)}`,
@@ -404,6 +475,7 @@ export async function POST(request: Request) {
         profileItemCount: profileItems.length,
         profileItemIds: profileItems.map((item) => item.id),
         scoreDeltas,
+        nearMissDeltas,
         createdAt: now,
       },
       token,

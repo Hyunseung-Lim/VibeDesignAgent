@@ -299,11 +299,11 @@ FIREBASE_MEASUREMENT_ID
 - `/api/memory/complete-session`에서 semantic item별 embedding과 score metadata를 저장
 - 기존 v0.1.1 memory 중 metadata가 없는 문서는 `/api/memory/retrieve` 호출 시 lazy backfill
 - `/api/memory/retrieve`는 LLM 없이 query embedding과 semantic item embedding의 cosine similarity로 top 5를 선택
-- retrieve된 memory는 `usageScore`, `retrievedCount`, `lastRetrievedAt`, `retentionScore`를 업데이트
-- top candidate 중 선택되지 않은 memory에는 작은 `decayScore`를 적용해 forgetting 압력을 누적
+- retrieve된 memory는 `weight`, `retrievedCount`, `lastRetrievedAt`를 업데이트
+- top 5에는 들지 못했지만 충분히 가까운 top 6~20 후보에는 작은 weight 감소를 적용해 forgetting 압력을 누적
 - retrieval log는 `users/{uid}/memoryRetrievalLogs/{logId}`에 저장
 - 메인 채팅 요청 전 현재 user input + mission/idea context를 query로 사용해 retrieve하고, 결과를 해당 turn의 memory context에 주입
-- Admin memory modal의 Retrievals 탭에서 query, retrieved memory, similarity, usage/decay/retention score delta를 확인 가능
+- Admin memory modal의 Retrievals 탭에서 query, retrieved memory, similarity, weight delta를 확인 가능
 
 ### 9.4 References API 개선
 - **성능**: `Promise.all` 대신 `withConcurrency(tasks, 4)`로 병렬 fetch 수 제한
@@ -409,6 +409,7 @@ queryEmbeddingModel
 retrievedMemoryIds
 similarities
 scoreDeltas
+nearMissDeltas
 missionId
 createdAt
 ```
@@ -422,8 +423,13 @@ weight = min(1, weight + weightGain)
 retrievedCount += 1
 lastRetrievedAt = now
 ```
-- retrieve 후보였지만 선택되지 않은 memory에는 별도 decay를 누적하지 않음
+- retrieve 후보였지만 선택되지 않은 near miss:
+```typescript
+if rank is 6..20 and similarity >= 0.55:
+  weight = max(0.1, weight - 0.005)
+```
 - weight가 너무 빠르게 커지지 않도록 sublinear growth 사용
+- near miss 감점은 프롬프트에 들어갈 만큼 강하지는 않지만 현재 query와 계속 경쟁하는 memory를 천천히 낮추기 위한 약한 신호로만 사용
 
 #### 6단계: 망각 후보 산출
 - 구현됨: hard delete 없이 archive candidate를 자동 soft archive

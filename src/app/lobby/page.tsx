@@ -359,20 +359,23 @@ export default function LobbyPage() {
                     : null);
                 const status = derivedStatus(progress, mission.durationMinutes);
                 const isCompleted = progress?.status === "completed";
+                const isLocked =
+                  (!isOnboardingMission && isOnboardingRequired) ||
+                  isCheckingOnboarding;
+                const openMission = () => {
+                  if (isCheckingOnboarding) return;
+                  if (isOnboardingRequired && !isOnboardingMission) {
+                    router.push(`/main/${ONBOARDING_MISSION_ID}`);
+                    return;
+                  }
+                  router.push(`/main/${mission.id}`);
+                };
                 return (
                   <article
                     key={mission.id}
-                    onClick={() => {
-                      if (isCheckingOnboarding) return;
-                      if (isOnboardingRequired && !isOnboardingMission) {
-                        router.push(`/main/${ONBOARDING_MISSION_ID}`);
-                        return;
-                      }
-                      router.push(`/main/${mission.id}`);
-                    }}
+                    onClick={openMission}
                     className={`rounded-3xl border border-slate-100 bg-white p-6 shadow-sm transition ${
-                      (!isOnboardingMission && isOnboardingRequired) ||
-                      isCheckingOnboarding
+                      isLocked
                         ? "cursor-not-allowed opacity-60"
                         : "cursor-pointer hover:bg-slate-50"
                     }`}
@@ -408,43 +411,45 @@ export default function LobbyPage() {
                           : "온보딩 완료 후 시작할 수 있습니다."}
                       </p>
                     )}
-                    <div className="mt-3 flex items-center gap-2">
-                      <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-500">
-                        {mission.device === "mobile" ? (
-                          <>
-                            <DeviceMobileIcon size={12} className="inline" />{" "}
-                            모바일
-                          </>
-                        ) : mission.device === "desktop" ? (
-                          <>
-                            <MonitorIcon size={12} className="inline" /> PC
-                          </>
-                        ) : (
-                          <>
-                            <MonitorIcon size={12} className="inline" /> PC ·{" "}
-                            <DeviceMobileIcon size={12} className="inline" />{" "}
-                            모바일
-                          </>
-                        )}
-                      </span>
-                      <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-500">
-                        {mission.durationMinutes
-                          ? `${mission.durationMinutes}분`
-                          : "시간 제한 없음"}
-                      </span>
+                    <div className="mt-3 flex items-center justify-between gap-3">
+                      <div className="flex min-w-0 flex-wrap items-center gap-2">
+                        <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-500">
+                          {mission.device === "mobile" ? (
+                            <>
+                              <DeviceMobileIcon size={12} className="inline" />{" "}
+                              모바일
+                            </>
+                          ) : mission.device === "desktop" ? (
+                            <>
+                              <MonitorIcon size={12} className="inline" /> PC
+                            </>
+                          ) : (
+                            <>
+                              <MonitorIcon size={12} className="inline" /> PC ·{" "}
+                              <DeviceMobileIcon size={12} className="inline" />{" "}
+                              모바일
+                            </>
+                          )}
+                        </span>
+                        <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-500">
+                          {mission.durationMinutes
+                            ? `${mission.durationMinutes}분`
+                            : "시간 제한 없음"}
+                        </span>
+                      </div>
+                      {isCompleted && (
+                        <button
+                          type="button"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            router.push(`/main/${mission.id}?review=1`);
+                          }}
+                          className="shrink-0 text-xs font-semibold text-slate-400 transition hover:text-slate-800"
+                        >
+                          리뷰 보기 →
+                        </button>
+                      )}
                     </div>
-                    {isCompleted && (
-                      <button
-                        type="button"
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          router.push(`/main/${mission.id}?review=1`);
-                        }}
-                        className="mt-4 w-full rounded-2xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:border-slate-400 hover:bg-slate-50"
-                      >
-                        리뷰 보기
-                      </button>
-                    )}
                   </article>
                 );
               })}

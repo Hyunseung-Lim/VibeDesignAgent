@@ -397,10 +397,29 @@ export async function POST(request: Request) {
             const record = item as Record<string, unknown>;
             return {
               memoryId: String(record.memoryId ?? record.id ?? ""),
+              type: typeof record.type === "string" ? record.type : "memory",
+              action:
+                typeof record.action === "string"
+                  ? truncateText(record.action, 120)
+                  : "",
+              keyword: Array.isArray(record.keyword)
+                ? record.keyword.map(String).slice(0, 12)
+                : [],
               episodic: truncateText(record.episodic ?? record.episode, 700),
               semantic:
                 typeof record.semantic === "string"
                   ? truncateText(record.semantic, 700)
+                  : null,
+              input: truncateText(record.input, 700),
+              output: truncateText(record.output, 900),
+              link: typeof record.link === "string" ? record.link : null,
+              embeddingSource:
+                typeof record.embeddingSource === "string"
+                  ? record.embeddingSource
+                  : null,
+              schemaVersion:
+                typeof record.schemaVersion === "string"
+                  ? record.schemaVersion
                   : null,
               weight:
                 typeof record.weight === "number" ? record.weight : null,
