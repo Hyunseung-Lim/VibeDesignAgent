@@ -41,6 +41,8 @@ import {
 } from "@phosphor-icons/react";
 import { isAdminEmail } from "@/lib/admin";
 const ONBOARDING_MISSION_ID = "onboarding";
+const PROFILE_MEMORY_MAX_ITEMS = 5;
+const PROFILE_MEMORY_MAX_CHARS = 240;
 
 type Message = {
   id: string;
@@ -1885,6 +1887,10 @@ function memorySummaryText(item: SessionMemoryItem | ReviewTurnMemory) {
   );
 }
 
+function truncateProfileInput(value: string) {
+  return value.trim().slice(0, PROFILE_MEMORY_MAX_CHARS);
+}
+
 export default function MainScreenPage() {
   const { missionId } = useParams<{ missionId: string }>();
   const router = useRouter();
@@ -2029,34 +2035,23 @@ export default function MainScreenPage() {
     });
     return Array.from(byId.values());
   }, [reviewTurnsById]);
-  const archivedSessionMemories = useMemo(() => {
-    const promotedArchived = sessionMemorySummary.promoted.filter(
-      (memory) => memory.archivedAt,
-    );
-    const retrievedArchived = usedReviewMemories
-      .map((memory) => reviewMemoryArchiveById[memory.memoryId])
-      .filter(
-        (memory): memory is ReviewMemoryArchiveStatus =>
-          Boolean(memory?.archivedAt) &&
-          !promotedArchived.some((item) => item.id === memory.memoryId),
-      )
-      .map((memory) => ({
-        id: memory.memoryId,
-        archivedAt: memory.archivedAt,
-        archiveReason: memory.archiveReason,
-        duplicateOf: memory.duplicateOf,
-        duplicate: memory.duplicate,
-      }));
-    return [...promotedArchived, ...retrievedArchived];
-  }, [
-    reviewMemoryArchiveById,
-    sessionMemorySummary.promoted,
-    usedReviewMemories,
-  ]);
-
   const activeOption =
     missionOptions.find((option) => option.id === selectedOptionId) ??
     (missionOptions.length === 1 ? missionOptions[0] : null);
+  const addProfileItem = useCallback(() => {
+    const input = truncateProfileInput(profileInput);
+    if (!input || profileItems.length >= PROFILE_MEMORY_MAX_ITEMS) return;
+    setProfileItems((prev) => [
+      ...prev.slice(0, PROFILE_MEMORY_MAX_ITEMS - 1),
+      {
+        id: crypto.randomUUID(),
+        input,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      },
+    ]);
+    setProfileInput("");
+  }, [profileInput, profileItems.length]);
   const appendActivityLog = useCallback(
     (event: Omit<ActivityLogEvent, "id" | "createdAt">) => {
       setActivityLog((prev) =>
@@ -5555,12 +5550,12 @@ export default function MainScreenPage() {
                   </p>
                   <span
                     className={`text-xs font-semibold tabular-nums ${
-                      profileItems.length >= 5
+                      profileItems.length >= PROFILE_MEMORY_MAX_ITEMS
                         ? "text-rose-400"
                         : "text-slate-300"
                     }`}
                   >
-                    {profileItems.length} / 5
+                    {profileItems.length} / {PROFILE_MEMORY_MAX_ITEMS}
                   </span>
                 </div>
                 <p className="mt-1 text-sm leading-relaxed text-slate-500">
@@ -5595,46 +5590,31 @@ export default function MainScreenPage() {
                     </p>
                   )}
                 </div>
-                {profileItems.length < 5 && (
+                {profileItems.length < PROFILE_MEMORY_MAX_ITEMS && (
                   <div className="mt-3 flex gap-2">
-                    <input
-                      type="text"
-                      value={profileInput}
-                      onChange={(e) => setProfileInput(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter" && profileInput.trim() && profileItems.length < 5) {
-                          e.preventDefault();
-                          setProfileItems((prev) => [
-                            ...prev,
-                            {
-                              id: crypto.randomUUID(),
-                              input: profileInput.trim(),
-                              createdAt: Date.now(),
-                              updatedAt: Date.now(),
-                            },
-                          ]);
-                          setProfileInput("");
-                        }
-                      }}
-                      placeholder="예: 브랜드 컬러는 네이비이고 바꿀 수 없어요"
-                      className="flex-1 rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-700 outline-none focus:border-slate-400 placeholder:text-slate-300"
-                    />
+                    <div className="flex-1">
+                      <input
+                        type="text"
+                        value={profileInput}
+                        maxLength={PROFILE_MEMORY_MAX_CHARS}
+                        onChange={(e) => setProfileInput(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" && profileInput.trim()) {
+                            e.preventDefault();
+                            addProfileItem();
+                          }
+                        }}
+                        placeholder="예: 브랜드 컬러는 네이비이고 바꿀 수 없어요"
+                        className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-700 outline-none focus:border-slate-400 placeholder:text-slate-300"
+                      />
+                      <p className="mt-1 text-right text-[11px] font-semibold text-slate-300">
+                        {profileInput.length} / {PROFILE_MEMORY_MAX_CHARS}
+                      </p>
+                    </div>
                     <button
-                      onClick={() => {
-                        if (!profileInput.trim() || profileItems.length >= 5) return;
-                        setProfileItems((prev) => [
-                          ...prev,
-                          {
-                            id: crypto.randomUUID(),
-                            input: profileInput.trim(),
-                            createdAt: Date.now(),
-                            updatedAt: Date.now(),
-                          },
-                        ]);
-                        setProfileInput("");
-                      }}
+                      onClick={addProfileItem}
                       disabled={!profileInput.trim()}
-                      className="rounded-xl bg-slate-100 px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-200 disabled:opacity-40"
+                      className="self-start rounded-xl bg-slate-100 px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-200 disabled:opacity-40"
                     >
                       추가
                     </button>
@@ -5649,16 +5629,7 @@ export default function MainScreenPage() {
               <button
                 onClick={() => {
                   if (profileInput.trim()) {
-                    setProfileItems((prev) => [
-                      ...prev,
-                      {
-                        id: crypto.randomUUID(),
-                        input: profileInput.trim(),
-                        createdAt: Date.now(),
-                        updatedAt: Date.now(),
-                      },
-                    ]);
-                    setProfileInput("");
+                    addProfileItem();
                   }
                   setProfileStep(3);
                 }}

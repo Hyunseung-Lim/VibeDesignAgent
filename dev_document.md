@@ -593,7 +593,7 @@ archiveReason = "low-weight" | "duplicate" | "manual"
 - [x] 세션 시작 전 memory snapshot 기준 정의 — 별도 snapshot 저장 불필요. 참고됨(retrieved) = 세션 전 기존 메모리, 기억됨(promoted) = 세션 중 신규 생성으로 암묵적으로 구분됨
 - [x] 세션 중 draft memory 표시
 - [x] 세션 종료 후 promoted memory 표시
-- [x] duplicate merge/archive 결과 표시
+- [x] duplicate archive 결과 표시
 - [x] 직접 입력 memory와 interaction memory를 다른 배지/색으로 구분
 
 구현 메모:
@@ -605,15 +605,21 @@ archiveReason = "low-weight" | "duplicate" | "manual"
   - `세션에서 기억됨` (초록 점): promoted memory. archived 항목은 취소선 + 로즈색 표시
   - `검토 중인 초안` (회색 빈 원): drafts 있을 때만 표시
 - `/api/memory/profile` GET에 `targetUid` param 추가 — admin이 다른 사용자의 profile 조회 가능
+- 중복 memory는 병합하지 않고 forgetting/archive 방식으로 처리한다. 세션 종료 시 중복 후보는 `archiveReason: auto-duplicate`, `duplicateOf`, `duplicate.similarity`를 남기고 soft archive된다.
 
 ### 12.5 4단계: 채팅 스트리밍/스크롤 UX 개선
 - [x] auto-scroll 제거 — 스크롤 위치를 사용자에게 완전히 위임
 - [x] 맨 아래로 ↓ floating 버튼 추가 — 스크롤 100px 이상 올라가면 표시, aside 기준 absolute 포지션
-- [ ] 긴 markdown/table/code block 렌더링 중 레이아웃 점프 확인
-- [ ] 채팅 bubble 텍스트 출력 버벅임 원인 분리
+- [x] 긴 markdown/table/code block 렌더링 중 레이아웃 점프 확인
+- [x] 채팅 bubble 텍스트 출력 버벅임 원인 분리
   - SSE chunk 빈도
   - React state update 빈도
   - markdown re-render 비용
+
+구현/점검 메모:
+- markdown table은 bubble 내부에서 독립 scroll container로 렌더링하고, table wrapper가 채팅 스크롤 위치를 되돌리지 않도록 처리했다.
+- 생성 중 강제 auto-scroll을 제거해 사용자가 위로 올린 위치를 유지한다. 버벅임의 주요 원인은 markdown 재렌더와 auto-scroll 호출이 겹치던 흐름으로 정리했다.
+- 남은 개선 후보는 SSE chunk batching/markdown memoization이지만, 12.5 범위의 사용자 체감 문제는 auto-scroll 제거와 table scroll 고정으로 닫는다.
 
 ### 12.6 5단계: 온보딩/직접 입력 메모리 설계
 - [x] 모든 세션 시작 시 "나에 대해 알았으면 하는 정보" 입력 UI 추가
@@ -622,7 +628,7 @@ archiveReason = "low-weight" | "duplicate" | "manual"
 - [x] interaction 학습 메모리와 직접 입력 메모리 구분 처리 (`type: "profile_input"`)
 - [x] 이전 세션 입력 내용을 불러와 수정하는 upsert 방식 구현
 - [x] 직접 입력값 retrieval 활용 방식 설계
-- [ ] revision log 또는 supersedes 정책 결정 (현재는 덮어쓰기)
+- [x] revision log 또는 supersedes 정책 결정 — current items + revisions subcollection
 
 #### 결정 사항
 - **UI**: 3단계 온보딩 페이지 (옵션 선택 화면과 동일한 full-page 패턴)
@@ -634,12 +640,17 @@ archiveReason = "low-weight" | "duplicate" | "manual"
 - **필수/선택**: 매 세션 필수(건너뛰기 없음). 항목이 0개여도 3단계에서 세션 시작 가능.
 - **미션별**: missionId를 문서 ID로 사용하므로 미션마다 독립적인 profile 데이터.
 - **weight**: 0.9 고정, retrieval 결과 최상단에 항상 주입 (similarity 계산 없이 포함).
+- **길이 제한**: 최대 5개, 항목당 240자. 프론트 입력과 서버 저장/retrieval에서 모두 제한한다.
+- **revision 정책**: runtime/retrieval은 최신 `items[]`만 사용하되, 변경 흔적은 `users/{uid}/profile_memories/{missionId}/revisions/{revisionId}`에 남긴다.
+- **미션별 history**: profile memory는 missionId별 문서와 revision subcollection을 가지므로, 같은 사용자라도 미션마다 현재 profile과 수정 이력이 다를 수 있다.
 
 구현 메모:
 - `GET /api/memory/profile?missionId=...` — 해당 미션의 profile items 조회
-- `POST /api/memory/profile` — items 배열을 upsert (전체 교체), 3단계에서 저장
+- `GET /api/memory/profile?missionId=...&includeRevisions=1` — 현재 items와 revision history 조회
+- `POST /api/memory/profile` — 현재 items 배열을 upsert하고, 이전/다음 items가 다르면 `revisions/{timestamp}`에 `previousItems`, `nextItems`, count, actor/source metadata 저장
 - `POST /api/memory/retrieve` — profile items를 `type: "profile_input"`으로 retrieved 앞에 prepend
 - `profileStep: 2 | 3` state로 2단계/3단계 페이지 전환 관리
+- profile input은 사용자가 명시적으로 제공한 standing background이므로 매 turn 항상 주입한다. interaction memory만 cosine similarity top-k retrieval을 탄다.
 
 ### 12.7 6단계: 직접 입력 메모리 retrieval 정책
 - [x] retrieval quota 정책 결정 — profile items 최대 5개 cap, interaction memory는 기존 limit(5) 유지
@@ -651,6 +662,7 @@ archiveReason = "low-weight" | "duplicate" | "manual"
 
 구현 메모:
 - `/api/memory/retrieve`: `loadProfileItems` 결과를 `.slice(0, 5)`로 cap
+- profile item은 항목당 240자로 잘라 standing background system message 크기를 제한
 - retrieval log: `profileItemIds` 배열 추가
 - `/api/chat`: `memoryContext.semantic`에서 `type === "profile_input"` 필터로 분리
   - profile items → "standing background" system message (언급하지 않고 암묵적으로 적용)

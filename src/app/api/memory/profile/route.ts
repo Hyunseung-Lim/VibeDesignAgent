@@ -2,26 +2,36 @@ import { isAdminEmail } from "@/lib/admin";
 import {
   getFirebaseAccessToken,
   getFirestoreDocument,
+  listFirestoreDocumentIds,
   patchFirestoreDocument,
   verifyFirebaseIdToken,
 } from "@/lib/server/firebaseAdminRest";
 
 export const runtime = "nodejs";
 
+const PROFILE_MEMORY_MAX_ITEMS = 5;
+const PROFILE_MEMORY_MAX_CHARS = 240;
+
 function stringOrNull(value: unknown) {
   return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function truncateProfileInput(value: string) {
+  return value.slice(0, PROFILE_MEMORY_MAX_CHARS);
 }
 
 function numberOrNow(value: unknown) {
   return typeof value === "number" && Number.isFinite(value) ? value : Date.now();
 }
 
-function sanitizeItem(raw: unknown): {
+type ProfileMemoryItem = {
   id: string;
   input: string;
   createdAt: number;
   updatedAt: number;
-} | null {
+};
+
+function sanitizeItem(raw: unknown): ProfileMemoryItem | null {
   if (!raw || typeof raw !== "object") return null;
   const item = raw as Record<string, unknown>;
   const input = stringOrNull(item.input);
@@ -29,10 +39,21 @@ function sanitizeItem(raw: unknown): {
   if (!input || !id) return null;
   return {
     id,
-    input,
+    input: truncateProfileInput(input),
     createdAt: numberOrNow(item.createdAt),
     updatedAt: numberOrNow(item.updatedAt),
   };
+}
+
+function isProfileMemoryItem(item: ProfileMemoryItem | null): item is ProfileMemoryItem {
+  return Boolean(item);
+}
+
+function itemsChanged(previousItems: ProfileMemoryItem[], nextItems: ProfileMemoryItem[]) {
+  return (
+    JSON.stringify(previousItems.map(({ id, input }) => ({ id, input }))) !==
+    JSON.stringify(nextItems.map(({ id, input }) => ({ id, input })))
+  );
 }
 
 export async function GET(request: Request) {
@@ -46,6 +67,7 @@ export async function GET(request: Request) {
   }
 
   const requestedTargetUid = url.searchParams.get("targetUid");
+  const includeRevisions = url.searchParams.get("includeRevisions") === "1";
   const targetUid = requestedTargetUid ?? user.localId;
   if (targetUid !== user.localId && !isAdminEmail(user.email)) {
     return Response.json({ error: "forbidden" }, { status: 403 });
@@ -58,10 +80,34 @@ export async function GET(request: Request) {
   )) as Record<string, unknown> | null;
 
   const items = Array.isArray(doc?.items)
-    ? doc.items.map(sanitizeItem).filter(Boolean)
+    ? doc.items.map(sanitizeItem).filter(isProfileMemoryItem)
     : [];
 
-  return Response.json({ missionId, items });
+  const revisions = includeRevisions
+    ? (
+        await Promise.all(
+          (
+            await listFirestoreDocumentIds(
+              `users/${targetUid}/profile_memories/${encodeURIComponent(missionId)}/revisions`,
+              token,
+            )
+          ).map(async (id) => {
+            const revision =
+              ((await getFirestoreDocument(
+                `users/${targetUid}/profile_memories/${encodeURIComponent(missionId)}/revisions/${encodeURIComponent(id)}`,
+                token,
+              )) ?? {}) as Record<string, unknown>;
+            return { id, ...revision };
+          }),
+        )
+      ).sort(
+        (a, b) =>
+          Number((b as Record<string, unknown>).createdAt ?? 0) -
+          Number((a as Record<string, unknown>).createdAt ?? 0),
+      )
+    : undefined;
+
+  return Response.json({ missionId, items, revisions });
 }
 
 export async function POST(request: Request) {
@@ -75,14 +121,51 @@ export async function POST(request: Request) {
   }
 
   const rawItems = Array.isArray(body.items) ? body.items : [];
-  const items = rawItems.map(sanitizeItem).filter(Boolean);
+  const items = rawItems
+    .map(sanitizeItem)
+    .filter(isProfileMemoryItem)
+    .slice(0, PROFILE_MEMORY_MAX_ITEMS);
 
   const token = await getFirebaseAccessToken();
+  const documentPath = `users/${user.localId}/profile_memories/${encodeURIComponent(missionId)}`;
+  const previousDoc = (await getFirestoreDocument(
+    documentPath,
+    token,
+  )) as Record<string, unknown> | null;
+  const previousItems = Array.isArray(previousDoc?.items)
+    ? previousDoc.items.map(sanitizeItem).filter(isProfileMemoryItem)
+    : [];
+  const now = Date.now();
+
   await patchFirestoreDocument(
-    `users/${user.localId}/profile_memories/${encodeURIComponent(missionId)}`,
-    { missionId, items, updatedAt: Date.now() },
+    documentPath,
+    { missionId, items, updatedAt: now },
     token,
   );
 
-  return Response.json({ ok: true, missionId, count: items.length });
+  let revisionId: string | null = null;
+  if (itemsChanged(previousItems, items)) {
+    revisionId = String(now);
+    await patchFirestoreDocument(
+      `${documentPath}/revisions/${revisionId}`,
+      {
+        missionId,
+        previousItems,
+        nextItems: items,
+        previousCount: previousItems.length,
+        nextCount: items.length,
+        createdAt: now,
+        actorUid: user.localId,
+        source: "session-start-profile-upsert",
+      },
+      token,
+    );
+  }
+
+  return Response.json({
+    ok: true,
+    missionId,
+    count: items.length,
+    revisionId,
+  });
 }

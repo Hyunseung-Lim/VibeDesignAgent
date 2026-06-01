@@ -17,6 +17,7 @@ const RETRIEVAL_LOG_COLLECTION = "memoryRetrievalLogs";
 const EMBEDDING_MODEL = "text-embedding-3-large";
 const MAX_MEMORY_DOCS = 200;
 const DEFAULT_LIMIT = 5;
+const PROFILE_MEMORY_MAX_CHARS = 240;
 
 type MemoryDoc = Record<string, unknown> & {
   id: string;
@@ -331,7 +332,10 @@ async function loadProfileItems(
           item.input.trim(),
       )
       .slice(0, 5) // cap at 5 profile items
-      .map((item) => ({ id: String(item.id), input: item.input.trim() }));
+      .map((item) => ({
+        id: String(item.id),
+        input: item.input.trim().slice(0, PROFILE_MEMORY_MAX_CHARS),
+      }));
   } catch {
     return [];
   }
