@@ -705,6 +705,15 @@ archiveReason = "low-weight" | "duplicate" | "manual"
 
 이 섹션은 0604 논의 기준의 최신 작업 큐다. 우선순위는 **사용자에게 바로 깨져 보이는 디버깅 → 메모리 뷰 정보 구조 정리 → 메모리 시스템 정책 → 프롬프트/에이전트 구조 → 어드민/컴포넌트 정리 → 데이터 생성/배포** 순서로 둔다.
 
+### 14.0 세션 플로우 개편 (추가 작업)
+- [x] 프레젠테이션 섹션 제거 → 미션 레벨 Final Design 선택으로 대체
+  - 구현: 아트보드 썸네일 그리드(scaled iframe), 시안별 그룹핑, Firestore 저장
+  - 구현: 최종 디자인 미선택 상태로 세션 종료 시 확인 경고
+- [x] 기존 세션 재진입 시 온보딩 화면으로 돌아가는 버그 수정
+  - 구현: messages/ideas/artboards 존재 시 profileModalConfirmed = true 처리
+- [x] 세션 데이터 로드 전 옵션·프로필 화면 flash 버그 수정
+  - 구현: sessionLoaded 플래그로 모든 사전 단계 화면 게이팅
+
 ### 14.1 디버깅
 - [x] 레퍼런스 추천 시 assistant chat bubble에 선택 이유와 간략 설명 포함
   - 현재 문제: 레퍼런스 섹션에는 카드만 추가되고, assistant 답변 안에는 각 레퍼런스를 왜 가져왔는지/어떤 레퍼런스인지 설명이 없음
@@ -720,17 +729,25 @@ archiveReason = "low-weight" | "duplicate" | "manual"
   - 구현: presentation API는 Storage URL이 만들어진 경우에만 imageUrl을 반환하고, client의 base64/data URL 임시 표시 및 재업로드 폴백 제거
 
 ### 14.2 메모리 뷰 개선
-- [ ] 사용자 뷰를 "뭐가 저장됐는지" 중심으로 재구성
+- [x] 사용자 뷰를 "뭐가 저장됐는지" 중심으로 재구성
   - 중심 정보: episodic/semantic 저장 내용, 직접 입력 profile memory, 세션에서 새로 기억된 항목
-  - retrieval/debug 정보는 사용자 기본 뷰에서 낮은 우선순위로 이동
-- [ ] retrieval 상세는 어드민 뷰에서만 표시
+  - 구현: 각 assistant 버블에 "기억 보기" 버튼 추가 → 해당 turn의 episodic/semantic을 사이드 패널로 표시
+- [x] retrieval 상세는 어드민 뷰에서만 표시
   - 대상: similarity, query, prompt/raw prompt, retrieval log 중심 정보
-- [ ] 메모리 상세를 modal/blur가 아닌 오른쪽 패널 왼쪽에 붙는 패널 방식으로 변경
+  - 구현: similarity bar, weight bar, "세션 중 참고됨" 섹션, "참고 메모리 N개" 버튼을 isViewingAsAdmin 전용으로 제한
+- [x] 메모리 상세를 modal/blur가 아닌 오른쪽 패널 왼쪽에 붙는 패널 방식으로 변경
   - 목표: 채팅/메모리 흐름을 가리지 않고 옆에서 비교 가능하게 만들기
-- [ ] 세션 전후 메모리 변화를 node view로 보여줄지 범위 결정
+  - 구현: retrieved 메모리(어드민)와 generated 메모리(기억 보기) 두 종류의 사이드 패널로 분리
+- [x] 세션 전후 메모리 변화를 node view로 보여줄지 범위 결정
   - 표현 목표: "이전엔 이랬는데 이 세션 이후엔 이렇게 됐다"
-  - 백엔드 고려: 이 세션 이전 weight snapshot을 저장할지, reviewTurn의 `weightDelta`와 promoted/archived 기록만으로 표시할지 결정
-  - 1차 제안: 전체 snapshot 저장은 보류하고, 세션에서 실제로 referenced/promoted/archived된 memory만 diff 대상으로 제한
+  - 1차 결정: 전체 memory snapshot과 별도 diff event 저장은 보류
+  - 범위: 세션에서 실제로 referenced/promoted/archived된 memory만 diff 대상으로 제한
+  - weight 변화: `memoryRetrievalLogs.scoreDeltas(previousWeight, weight, weightDelta)`에서 파생
+  - turn별 설명: `reviewTurns.retrieved`는 사용자에게 어떤 turn에서 어떤 memory가 쓰였는지 보여주는 용도로 사용하고, 세션 전체 weight diff의 source of truth로는 쓰지 않음
+  - promoted/archived 변화: 기존 promoted memory와 archive metadata를 사용
+  - 구현: `/api/memory/session-summary`가 전체 memory node와 기존 retrieval log 기반 `referenced` diff를 반환
+  - UI: 오른쪽 메모리 변화 패널은 요약/진입점만 표시하고, `전체 메모리 변화 보기` 버튼으로 full-screen overlay를 열어 `세션 이전`/`세션 이후` 전체 노드 변화를 비교
+  - 재검토 조건: node view에서 정확한 세션 단위 before/after가 제품적으로 중요해질 때만 touched-memory diff event 저장을 검토
 
 ### 14.3 메모리 시스템
 - [ ] 메모리 전체 크기를 weight decay 계산에 반영
@@ -773,11 +790,11 @@ archiveReason = "low-weight" | "duplicate" | "manual"
 - [ ] Deploy
 
 ### 14.9 다음 작업 순서
-1. 레퍼런스 추천 후 assistant chat bubble에 선택 이유와 간략 설명을 포함
-2. 첫 목업 생성 로딩 UX를 2번째 생성과 통일
-3. 프레젠테이션 이미지 Storage 폴백 제거
-4. 사용자 메모리 뷰를 저장 내용 중심으로 재구성
-5. retrieval/debug 정보는 admin-only로 분리
+1. ~~레퍼런스 추천 후 assistant chat bubble에 선택 이유와 간략 설명을 포함~~ ✅
+2. ~~첫 목업 생성 로딩 UX를 2번째 생성과 통일~~ ✅
+3. ~~프레젠테이션 이미지 Storage 폴백 제거~~ ✅
+4. ~~사용자 메모리 뷰를 저장 내용 중심으로 재구성~~ ✅
+5. ~~retrieval/debug 정보는 admin-only로 분리~~ ✅
 6. profile input retrieval 정책 재설계: 항상 주입/weight 제거 여부 반영
 7. memory count 기반 near-miss decay multiplier 설계 및 적용
 8. 공통 memory UI 컴포넌트 추출

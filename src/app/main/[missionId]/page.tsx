@@ -128,9 +128,42 @@ type SessionMemoryItem = {
   } | null;
 };
 
+type ReferencedSessionMemoryItem = SessionMemoryItem & {
+  memoryId: string;
+  semanticItemId?: string | null;
+  referenceCount?: number;
+  firstReferencedAt?: number | null;
+  lastReferencedAt?: number | null;
+  similarity?: number | null;
+  weightBefore?: number | null;
+  weightAfter?: number | null;
+  weightDelta?: number | null;
+};
+
 type SessionMemorySummary = {
   drafts: SessionMemoryItem[];
   promoted: SessionMemoryItem[];
+  referenced: ReferencedSessionMemoryItem[];
+  graphMemories: SessionMemoryItem[];
+  graphClusters: Array<{
+    id: string;
+    label: string;
+    summary: string;
+    count: number;
+    relatedActions: string[];
+    itemIds: string[];
+    representativeItems: string[];
+  }>;
+};
+
+type MemoryGraphFilter = "changed" | "all" | "referenced" | "promoted" | "archived";
+
+const EMPTY_SESSION_MEMORY_SUMMARY: SessionMemorySummary = {
+  drafts: [],
+  promoted: [],
+  referenced: [],
+  graphMemories: [],
+  graphClusters: [],
 };
 
 type ActivityLogEvent = {
@@ -1904,8 +1937,21 @@ export default function MainScreenPage() {
     Record<string, ReviewMemoryArchiveStatus>
   >({});
   const [sessionMemorySummary, setSessionMemorySummary] =
-    useState<SessionMemorySummary>({ drafts: [], promoted: [] });
+    useState<SessionMemorySummary>(EMPTY_SESSION_MEMORY_SUMMARY);
   const [rightPanelTab, setRightPanelTab] = useState<"chat" | "memory">("chat");
+  const [memoryGraphPhase, setMemoryGraphPhase] = useState<"before" | "after">(
+    "before",
+  );
+  const [memoryGraphFilter, setMemoryGraphFilter] =
+    useState<MemoryGraphFilter>("changed");
+  const [isMemoryDiffOpen, setIsMemoryDiffOpen] = useState(false);
+  const [selectedGraphMemoryId, setSelectedGraphMemoryId] = useState<
+    string | null
+  >(null);
+  const [selectedReferencedMemoryId, setSelectedReferencedMemoryId] = useState<
+    string | null
+  >(null);
+  const referencedMemoryRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const [reviewProfileItems, setReviewProfileItems] = useState<
     { id: string; input: string }[]
   >([]);
@@ -1927,17 +1973,27 @@ export default function MainScreenPage() {
     [reviewTurnsById],
   );
   const reviewMemoryIdsKey = reviewMemoryIds.join("|");
-  const usedReviewMemories = useMemo(() => {
-    const byId = new Map<string, ReviewTurnMemory>();
-    Object.values(reviewTurnsById).forEach((turn) => {
-      (turn.retrieved ?? []).forEach((memory) => {
-        if (memory.memoryId && !byId.has(memory.memoryId)) {
-          byId.set(memory.memoryId, memory);
-        }
-      });
-    });
-    return Array.from(byId.values());
-  }, [reviewTurnsById]);
+  const selectedGraphMemory = useMemo(() => {
+    if (!selectedGraphMemoryId) return null;
+    const memory =
+      sessionMemorySummary.graphMemories.find(
+        (item) => item.id === selectedGraphMemoryId,
+      ) ?? null;
+    if (!memory) return null;
+    const referenced =
+      sessionMemorySummary.referenced.find(
+        (item) => item.memoryId === selectedGraphMemoryId,
+      ) ?? null;
+    const promoted =
+      sessionMemorySummary.promoted.find(
+        (item) => item.id === selectedGraphMemoryId,
+      ) ?? null;
+    const cluster =
+      sessionMemorySummary.graphClusters.find((item) =>
+        item.itemIds.includes(selectedGraphMemoryId),
+      ) ?? null;
+    return { memory, referenced, promoted, cluster };
+  }, [selectedGraphMemoryId, sessionMemorySummary]);
   const activeOption =
     missionOptions.find((option) => option.id === selectedOptionId) ??
     (missionOptions.length === 1 ? missionOptions[0] : null);
@@ -2530,12 +2586,12 @@ export default function MainScreenPage() {
 
   useEffect(() => {
     if (!showReviewAnnotations || !targetSessionUserId || !missionId) {
-      setSessionMemorySummary({ drafts: [], promoted: [] });
+      setSessionMemorySummary(EMPTY_SESSION_MEMORY_SUMMARY);
       return;
     }
     const currentUser = firebaseAuth.currentUser;
     if (!currentUser) {
-      setSessionMemorySummary({ drafts: [], promoted: [] });
+      setSessionMemorySummary(EMPTY_SESSION_MEMORY_SUMMARY);
       return;
     }
     let cancelled = false;
@@ -2559,15 +2615,32 @@ export default function MainScreenPage() {
         setSessionMemorySummary({
           drafts: Array.isArray(data?.drafts) ? data.drafts : [],
           promoted: Array.isArray(data?.promoted) ? data.promoted : [],
+          referenced: Array.isArray(data?.referenced) ? data.referenced : [],
+          graphMemories: Array.isArray(data?.graphMemories)
+            ? data.graphMemories
+            : [],
+          graphClusters: Array.isArray(data?.graphClusters)
+            ? data.graphClusters
+            : [],
         });
       })
       .catch(() => {
-        if (!cancelled) setSessionMemorySummary({ drafts: [], promoted: [] });
+        if (!cancelled) {
+          setSessionMemorySummary(EMPTY_SESSION_MEMORY_SUMMARY);
+        }
       });
     return () => {
       cancelled = true;
     };
   }, [showReviewAnnotations, targetSessionUserId, missionId]);
+
+  useEffect(() => {
+    if (!isMemoryDiffOpen || !selectedReferencedMemoryId) return;
+    referencedMemoryRefs.current[selectedReferencedMemoryId]?.scrollIntoView({
+      behavior: "smooth",
+      block: "center",
+    });
+  }, [isMemoryDiffOpen, selectedReferencedMemoryId]);
 
   // Load profile memories for review panel (review mode)
   useEffect(() => {
@@ -4524,8 +4597,284 @@ export default function MainScreenPage() {
     );
   };
 
+  const renderSessionImpactGraph = (variant: "panel" | "overlay" = "overlay") => {
+    const isOverlay = variant === "overlay";
+    const clusterByItemId = new Map<
+      string,
+      { clusterId: string; clusterLabel: string; clusterIndex: number }
+    >();
+    sessionMemorySummary.graphClusters.forEach((cluster, clusterIndex) => {
+      cluster.itemIds.forEach((itemId) => {
+        if (clusterByItemId.has(itemId)) return;
+        clusterByItemId.set(itemId, {
+          clusterId: cluster.id,
+          clusterLabel: cluster.label,
+          clusterIndex,
+        });
+      });
+    });
+    const referencedByMemoryId = new Map(
+      sessionMemorySummary.referenced.map((item) => [item.memoryId, item]),
+    );
+    const promotedIds = new Set(
+      sessionMemorySummary.promoted.map((item) => item.id),
+    );
+    const allNodes = sessionMemorySummary.graphMemories
+      .map((memory) => {
+        const referenced = referencedByMemoryId.get(memory.id);
+        const isPromoted = promotedIds.has(memory.id);
+        const cluster = clusterByItemId.get(memory.id);
+        if (memoryGraphPhase === "before" && isPromoted) return null;
+        const weight =
+          memoryGraphPhase === "before" && referenced?.weightBefore != null
+            ? referenced.weightBefore
+            : memory.weight;
+        const isArchivedAfter = Boolean(memory.archivedAt);
+        const isSessionTouched = Boolean(referenced) || isPromoted;
+        const isArchived =
+          isArchivedAfter && (memoryGraphPhase === "after" || !isSessionTouched);
+        const isTouched = isSessionTouched;
+        const weightValue =
+          weight != null && Number.isFinite(weight) ? Math.max(0, weight) : 0.45;
+        const size = isOverlay
+          ? Math.max(6, Math.min(18, 6 + weightValue * 12))
+          : Math.max(5, Math.min(14, 5 + weightValue * 9));
+        const label = memorySummaryText(memory);
+        return {
+          id: memory.id,
+          label,
+          weight,
+          isTouched,
+          isPromoted,
+          isReferenced: Boolean(referenced),
+          referencedMemoryId: referenced?.memoryId ?? null,
+          isArchived,
+          clusterId: cluster?.clusterId ?? null,
+          clusterLabel: cluster?.clusterLabel ?? null,
+          clusterIndex: cluster?.clusterIndex ?? 999,
+          color: isArchived
+            ? "bg-rose-300"
+            : isPromoted
+              ? "bg-emerald-400"
+              : referenced
+                ? "bg-blue-400"
+                : "bg-slate-300",
+          ring: isTouched ? "ring-white" : "ring-transparent",
+          size,
+          meta:
+            memoryGraphPhase === "before" && referenced?.weightBefore != null
+              ? `이전 ${formatReviewScore(referenced.weightBefore)}`
+              : memoryGraphPhase === "after" && referenced?.weightAfter != null
+                ? `이후 ${formatReviewScore(referenced.weightAfter)}`
+                : isPromoted
+                  ? "새 기억"
+                  : isArchived
+                    ? memory.archiveReason ?? "archived"
+                    : weight != null
+                      ? `weight ${formatReviewScore(weight)}`
+          : "weight -",
+        };
+      })
+      .filter((node): node is NonNullable<typeof node> => Boolean(node))
+      .filter((node) => {
+        if (memoryGraphFilter === "all") return true;
+        if (memoryGraphFilter === "changed") {
+          return node.isReferenced || node.isPromoted || node.isArchived;
+        }
+        if (memoryGraphFilter === "referenced") return node.isReferenced;
+        if (memoryGraphFilter === "promoted") return node.isPromoted;
+        return node.isArchived;
+      })
+      .sort((a, b) => {
+        if (a.isTouched !== b.isTouched) return a.isTouched ? -1 : 1;
+        if (a.clusterIndex !== b.clusterIndex) return a.clusterIndex - b.clusterIndex;
+        return (b.weight ?? 0) - (a.weight ?? 0);
+      });
+    const visibleNodes = allNodes.slice(0, isOverlay ? 220 : 120);
+    const hiddenCount = Math.max(0, allNodes.length - visibleNodes.length);
+
+    if (visibleNodes.length === 0) {
+      return (
+        <p className="rounded-lg bg-slate-50 px-3 py-5 text-center text-xs text-slate-400">
+          아직 node view로 표시할 세션 메모리 변화가 없습니다.
+        </p>
+      );
+    }
+
+    const activeClusters = sessionMemorySummary.graphClusters.filter((cluster) =>
+      visibleNodes.some((node) => node.clusterId === cluster.id),
+    );
+    const clusterCenters = new Map<
+      string,
+      { x: number; y: number; label: string; count: number }
+    >();
+    activeClusters.forEach((cluster, index) => {
+      const total = Math.max(1, activeClusters.length);
+      const angle = -Math.PI / 2 + (Math.PI * 2 * index) / total;
+      const ring = Math.floor(index / Math.max(1, Math.min(total, 8)));
+      const radius = total === 1 ? 0 : Math.min(isOverlay ? 38 : 34, 20 + ring * 10);
+      const x = 50 + Math.cos(angle) * radius;
+      const y = 52 + Math.sin(angle) * radius * 0.78;
+      clusterCenters.set(cluster.id, {
+        x: Math.max(12, Math.min(88, x)),
+        y: Math.max(18, Math.min(84, y)),
+        label: cluster.label,
+        count: cluster.itemIds.length,
+      });
+    });
+    const clusterCounts = new Map<string, number>();
+    visibleNodes.forEach((node) => {
+      if (!node.clusterId) return;
+      clusterCounts.set(node.clusterId, (clusterCounts.get(node.clusterId) ?? 0) + 1);
+    });
+    const clusterSeen = new Map<string, number>();
+    let unclusteredIndex = 0;
+    const nodePositions = visibleNodes.map((node) => {
+      if (node.clusterId && clusterCenters.has(node.clusterId)) {
+        const center = clusterCenters.get(node.clusterId)!;
+        const index = clusterSeen.get(node.clusterId) ?? 0;
+        clusterSeen.set(node.clusterId, index + 1);
+        const total = Math.max(1, clusterCounts.get(node.clusterId) ?? 1);
+        const angle = -Math.PI / 2 + (Math.PI * 2 * index) / total;
+        const radius = node.isTouched
+          ? isOverlay
+            ? 8.5
+            : 7
+          : isOverlay
+            ? 5 + (index % 3) * 2.2
+            : 4 + (index % 3) * 1.6;
+        return {
+          ...node,
+          x: Math.max(4, Math.min(96, center.x + Math.cos(angle) * radius)),
+          y: Math.max(10, Math.min(92, center.y + Math.sin(angle) * radius)),
+        };
+      }
+      const angle = unclusteredIndex * 2.399963;
+      const radius = Math.min(isOverlay ? 42 : 36, 7 + Math.sqrt(unclusteredIndex) * 4.6);
+      unclusteredIndex += 1;
+      return {
+        ...node,
+        x: 50 + Math.cos(angle) * radius,
+        y: 54 + Math.sin(angle) * radius * 0.72,
+      };
+    });
+
+    return (
+      <div
+        className={`relative overflow-hidden rounded-lg border border-slate-100 bg-slate-50 ${
+          isOverlay ? "h-[min(68vh,760px)]" : "h-96"
+        }`}
+      >
+        <div className="absolute left-3 top-3 z-10 flex items-center gap-1 rounded-full bg-white/90 p-1 shadow-sm ring-1 ring-slate-100">
+          {(["before", "after"] as const).map((phase) => (
+            <button
+              key={phase}
+              type="button"
+              onClick={() => {
+                setMemoryGraphPhase(phase);
+                if (
+                  phase === "before" &&
+                  (memoryGraphFilter === "promoted" ||
+                    memoryGraphFilter === "archived")
+                ) {
+                  setMemoryGraphFilter("changed");
+                }
+              }}
+              className={`rounded-full px-2.5 py-1 text-[11px] font-semibold transition ${
+                memoryGraphPhase === phase
+                  ? "bg-slate-900 text-white"
+                  : "text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+              }`}
+            >
+              {phase === "before" ? "세션 이전" : "세션 이후"}
+            </button>
+          ))}
+        </div>
+        <div className="absolute left-3 top-14 z-10 flex flex-wrap items-center gap-1 rounded-2xl bg-white/90 p-1 shadow-sm ring-1 ring-slate-100">
+          {(
+            [
+              ["changed", "변화만"],
+              ["all", "전체"],
+              ["referenced", "참고"],
+              ["promoted", "기억됨"],
+              ["archived", "보관됨"],
+            ] as Array<[MemoryGraphFilter, string]>
+          ).map(([filter, label]) => (
+            <button
+              key={filter}
+              type="button"
+              onClick={() => {
+                setMemoryGraphFilter(filter);
+                if (filter === "promoted" || filter === "archived") {
+                  setMemoryGraphPhase("after");
+                }
+              }}
+              className={`rounded-full px-2.5 py-1 text-[11px] font-semibold transition ${
+                memoryGraphFilter === filter
+                  ? "bg-slate-900 text-white"
+                  : "text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+        <div className="absolute right-3 top-3 z-10 rounded-full bg-white/90 px-2.5 py-1 text-[10px] font-semibold text-slate-400 shadow-sm ring-1 ring-slate-100">
+          {sessionMemorySummary.graphClusters.length} clusters ·{" "}
+          {allNodes.length} nodes{hiddenCount > 0 ? ` · +${hiddenCount}` : ""}
+        </div>
+        {Array.from(clusterCenters.entries()).map(([clusterId, cluster]) => (
+          <div
+            key={`cluster-label-${clusterId}`}
+            className="absolute z-0 max-w-36 -translate-x-1/2 rounded-full bg-white/75 px-2 py-0.5 text-center text-[9px] font-semibold text-slate-400 ring-1 ring-slate-100"
+            style={{ left: `${cluster.x}%`, top: `${Math.max(4, cluster.y - 13)}%` }}
+            title={`${cluster.label} · ${cluster.count} nodes`}
+          >
+            <span className="line-clamp-1">{cluster.label}</span>
+          </div>
+        ))}
+        {nodePositions.map((node) => (
+          <div
+            key={node.id}
+            role="button"
+            tabIndex={0}
+            onClick={() => {
+              setSelectedGraphMemoryId(node.id);
+              if (node.referencedMemoryId) {
+                setSelectedReferencedMemoryId(node.referencedMemoryId);
+              }
+            }}
+            onKeyDown={(event) => {
+              if (event.key !== "Enter" && event.key !== " ") return;
+              event.preventDefault();
+              setSelectedGraphMemoryId(node.id);
+              if (node.referencedMemoryId) {
+                setSelectedReferencedMemoryId(node.referencedMemoryId);
+              }
+            }}
+            className="absolute flex -translate-x-1/2 -translate-y-1/2 cursor-pointer flex-col items-center gap-1 text-center"
+            style={{ left: `${node.x}%`, top: `${node.y}%` }}
+            title={`${node.label}\n${node.meta}`}
+          >
+            <div
+              className={`rounded-full ${node.color} shadow-sm ring-2 ${node.ring} ${
+                node.isTouched ? "opacity-100" : "opacity-45"
+              } ${selectedGraphMemoryId === node.id ? "outline outline-3 outline-slate-900" : ""}`}
+              style={{ height: node.size, width: node.size }}
+            />
+            {node.isTouched && (
+              <p className="w-16 truncate rounded-full bg-white/80 px-1.5 py-0.5 text-[8px] font-semibold text-slate-500 shadow-sm ring-1 ring-slate-100">
+                {node.meta}
+              </p>
+            )}
+          </div>
+        ))}
+      </div>
+    );
+  };
+
   const renderTimelineItems = (
-    items: Array<SessionMemoryItem | ReviewTurnMemory>,
+    items: Array<SessionMemoryItem | ReviewTurnMemory | ReferencedSessionMemoryItem>,
     kind: "retrieved" | "promoted" | "draft",
     emptyLabel: string,
   ) => {
@@ -4566,6 +4915,8 @@ export default function MainScreenPage() {
           const weight = "weight" in item ? item.weight : null;
           const similarity = "similarity" in item ? item.similarity : null;
           const weightDelta = "weightDelta" in item ? item.weightDelta : null;
+          const weightBefore = "weightBefore" in item ? item.weightBefore : null;
+          const weightAfter = "weightAfter" in item ? item.weightAfter : weight;
 
           return (
             <div key={`${kind}-${id}`} className="flex gap-3">
@@ -4592,6 +4943,29 @@ export default function MainScreenPage() {
                 <div className="mt-1 space-y-0.5">
                   {isViewingAsAdmin && kind === "retrieved" &&
                     renderMemoryScoreBar(similarity, "bg-blue-300")}
+                  {isViewingAsAdmin &&
+                    kind === "retrieved" &&
+                    weightBefore != null &&
+                    weightAfter != null && (
+                      <p className="text-[10px] font-semibold text-slate-400">
+                        weight {formatReviewScore(weightBefore)} →{" "}
+                        {formatReviewScore(weightAfter)}
+                      </p>
+                    )}
+                  {isViewingAsAdmin &&
+                    kind === "retrieved" &&
+                    weightDelta != null &&
+                    weightDelta !== 0 && (
+                      <p
+                        className={`text-[10px] font-semibold ${
+                          weightDelta > 0
+                            ? "text-blue-500"
+                            : "text-slate-400"
+                        }`}
+                      >
+                        {formatReviewDelta(weightDelta)}
+                      </p>
+                    )}
                   {isViewingAsAdmin && kind === "promoted" &&
                     !isArchived &&
                     renderMemoryScoreBar(weight, "bg-emerald-400")}
@@ -6598,7 +6972,7 @@ export default function MainScreenPage() {
                 >
                   메모리 변화
                   <span className="text-xs text-slate-300">
-                    {usedReviewMemories.length +
+                    {sessionMemorySummary.referenced.length +
                       sessionMemorySummary.promoted.length}
                   </span>
                 </button>
@@ -6607,6 +6981,69 @@ export default function MainScreenPage() {
             {/* Memory panel */}
             {showReviewAnnotations && rightPanelTab === "memory" && (
               <div className="flex-1 space-y-5 overflow-y-auto p-5">
+                {isViewingAsAdmin && (
+                  <section>
+                    <div className="mb-2.5 flex items-center justify-between gap-3">
+                      <div className="flex items-center gap-2">
+                        <div className="h-2 w-2 shrink-0 rounded-full bg-slate-500" />
+                        <p className="text-xs font-semibold text-slate-600">
+                          전체 메모리 노드
+                        </p>
+                      </div>
+                      <div className="flex shrink-0 gap-1.5 text-[10px] font-semibold text-slate-400">
+                        <span>전체 {sessionMemorySummary.graphMemories.length}</span>
+                        <span>참고 {sessionMemorySummary.referenced.length}</span>
+                        <span>기억 {sessionMemorySummary.promoted.length}</span>
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div className="rounded-lg bg-slate-50 px-3 py-2">
+                        <p className="text-[10px] font-semibold uppercase text-slate-400">
+                          전체
+                        </p>
+                        <p className="mt-1 text-lg font-semibold text-slate-900">
+                          {sessionMemorySummary.graphMemories.length}
+                        </p>
+                      </div>
+                      <div className="rounded-lg bg-blue-50 px-3 py-2">
+                        <p className="text-[10px] font-semibold uppercase text-blue-400">
+                          참고
+                        </p>
+                        <p className="mt-1 text-lg font-semibold text-blue-700">
+                          {sessionMemorySummary.referenced.length}
+                        </p>
+                      </div>
+                      <div className="rounded-lg bg-emerald-50 px-3 py-2">
+                        <p className="text-[10px] font-semibold uppercase text-emerald-500">
+                          기억됨
+                        </p>
+                        <p className="mt-1 text-lg font-semibold text-emerald-700">
+                          {sessionMemorySummary.promoted.length}
+                        </p>
+                      </div>
+                      <div className="rounded-lg bg-rose-50 px-3 py-2">
+                        <p className="text-[10px] font-semibold uppercase text-rose-400">
+                          보관됨
+                        </p>
+                        <p className="mt-1 text-lg font-semibold text-rose-700">
+                          {
+                            sessionMemorySummary.graphMemories.filter((item) =>
+                              Boolean(item.archivedAt),
+                            ).length
+                          }
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setIsMemoryDiffOpen(true)}
+                      className="mt-3 flex w-full items-center justify-center gap-2 rounded-lg bg-slate-900 px-3 py-2 text-xs font-semibold text-white transition hover:bg-slate-700"
+                    >
+                      <ArrowsOutIcon size={14} />
+                      전체 메모리 변화 보기
+                    </button>
+                  </section>
+                )}
                 {/* 직접 입력한 정보 */}
                 <section>
                   <div className="mb-2.5 flex items-center gap-2">
@@ -6645,11 +7082,11 @@ export default function MainScreenPage() {
                         세션 중 참고됨
                       </p>
                       <span className="text-[11px] text-slate-300">
-                        {usedReviewMemories.length}
+                        {sessionMemorySummary.referenced.length}
                       </span>
                     </div>
                     {renderTimelineItems(
-                      usedReviewMemories,
+                      sessionMemorySummary.referenced,
                       "retrieved",
                       "이 세션에서 참고한 기억이 없습니다.",
                     )}
@@ -6676,7 +7113,7 @@ export default function MainScreenPage() {
                     <div className="mb-2.5 flex items-center gap-2">
                       <div className="h-1.5 w-1.5 shrink-0 rounded-full border-2 border-slate-300" />
                       <p className="text-xs font-semibold text-slate-400">
-                        검토 중인 초안
+                        기억 후보
                       </p>
                       <span className="text-[11px] text-slate-300">
                         {sessionMemorySummary.drafts.length}
@@ -7104,6 +7541,218 @@ export default function MainScreenPage() {
             )}
           </aside>
         </main>
+      )}
+
+      {isMemoryDiffOpen && (
+        <div className="fixed inset-0 z-50 flex bg-slate-950/45 p-4 backdrop-blur-sm">
+          <div className="flex min-h-0 w-full overflow-hidden rounded-2xl bg-white shadow-2xl">
+            <div className="flex min-w-0 flex-1 flex-col">
+              <div className="flex shrink-0 items-center justify-between border-b border-slate-200 px-5 py-4">
+                <div>
+                  <p className="text-base font-semibold text-slate-900">
+                    메모리 변화 전체 보기
+                  </p>
+                  <p className="mt-0.5 text-xs text-slate-400">
+                    세션 이전과 이후의 전체 memory node 상태를 비교합니다.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsMemoryDiffOpen(false)}
+                  className="rounded-full p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
+                  aria-label="메모리 변화 전체 보기 닫기"
+                >
+                  <XIcon size={18} />
+                </button>
+              </div>
+              <div className="min-h-0 flex-1 p-5">
+                {renderSessionImpactGraph("overlay")}
+              </div>
+            </div>
+            <aside className="hidden min-h-0 w-80 shrink-0 flex-col border-l border-slate-200 bg-slate-50 p-5 lg:flex">
+              <div className="grid shrink-0 grid-cols-2 gap-2">
+                <div className="rounded-lg bg-white px-3 py-2 ring-1 ring-slate-100">
+                  <p className="text-[10px] font-semibold uppercase text-slate-400">
+                    Clusters
+                  </p>
+                  <p className="mt-1 text-xl font-semibold text-slate-900">
+                    {sessionMemorySummary.graphClusters.length}
+                  </p>
+                </div>
+                <div className="rounded-lg bg-blue-50 px-3 py-2 ring-1 ring-blue-100">
+                  <p className="text-[10px] font-semibold uppercase text-blue-400">
+                    참고
+                  </p>
+                  <p className="mt-1 text-xl font-semibold text-blue-700">
+                    {sessionMemorySummary.referenced.length}
+                  </p>
+                </div>
+                <div className="rounded-lg bg-emerald-50 px-3 py-2 ring-1 ring-emerald-100">
+                  <p className="text-[10px] font-semibold uppercase text-emerald-500">
+                    기억됨
+                  </p>
+                  <p className="mt-1 text-xl font-semibold text-emerald-700">
+                    {sessionMemorySummary.promoted.length}
+                  </p>
+                </div>
+                <div className="rounded-lg bg-rose-50 px-3 py-2 ring-1 ring-rose-100">
+                  <p className="text-[10px] font-semibold uppercase text-rose-400">
+                    보관됨
+                  </p>
+                  <p className="mt-1 text-xl font-semibold text-rose-700">
+                    {
+                      sessionMemorySummary.graphMemories.filter((item) =>
+                        Boolean(item.archivedAt),
+                      ).length
+                    }
+                  </p>
+                </div>
+              </div>
+              <div className="mt-5 shrink-0 rounded-xl bg-white p-3 ring-1 ring-slate-100">
+                <div className="flex items-center justify-between gap-3">
+                  <p className="text-xs font-semibold text-slate-600">
+                    선택한 노드
+                  </p>
+                  {selectedGraphMemory && (
+                    <button
+                      type="button"
+                      onClick={() => setSelectedGraphMemoryId(null)}
+                      className="text-[10px] font-semibold text-slate-300 hover:text-slate-500"
+                    >
+                      해제
+                    </button>
+                  )}
+                </div>
+                {!selectedGraphMemory ? (
+                  <p className="mt-2 text-xs leading-relaxed text-slate-400">
+                    그래프의 노드를 클릭하면 memory 상세와 세션 전후 변화를 볼 수
+                    있습니다.
+                  </p>
+                ) : (
+                  <div className="mt-2 space-y-2">
+                    <p className="line-clamp-4 text-xs leading-relaxed text-slate-700">
+                      {memorySummaryText(
+                        selectedGraphMemory.referenced ??
+                          selectedGraphMemory.promoted ??
+                          selectedGraphMemory.memory,
+                      )}
+                    </p>
+                    <div className="flex flex-wrap gap-1.5 text-[10px] font-semibold">
+                      {selectedGraphMemory.referenced && (
+                        <span className="rounded-full bg-blue-50 px-2 py-0.5 text-blue-600">
+                          referenced
+                        </span>
+                      )}
+                      {selectedGraphMemory.promoted && (
+                        <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-emerald-600">
+                          promoted
+                        </span>
+                      )}
+                      {selectedGraphMemory.memory.archivedAt && (
+                        <span className="rounded-full bg-rose-50 px-2 py-0.5 text-rose-600">
+                          archived
+                        </span>
+                      )}
+                      {selectedGraphMemory.cluster && (
+                        <span className="rounded-full bg-slate-100 px-2 py-0.5 text-slate-500">
+                          {selectedGraphMemory.cluster.label}
+                        </span>
+                      )}
+                    </div>
+                    <div className="grid grid-cols-3 gap-1.5 text-[10px]">
+                      <div className="rounded-lg bg-slate-50 px-2 py-1.5">
+                        <p className="font-semibold uppercase text-slate-400">
+                          Before
+                        </p>
+                        <p className="mt-0.5 font-semibold text-slate-700">
+                          {selectedGraphMemory.referenced?.weightBefore != null
+                            ? formatReviewScore(
+                                selectedGraphMemory.referenced.weightBefore,
+                              )
+                            : "-"}
+                        </p>
+                      </div>
+                      <div className="rounded-lg bg-slate-50 px-2 py-1.5">
+                        <p className="font-semibold uppercase text-slate-400">
+                          After
+                        </p>
+                        <p className="mt-0.5 font-semibold text-slate-700">
+                          {selectedGraphMemory.referenced?.weightAfter != null
+                            ? formatReviewScore(
+                                selectedGraphMemory.referenced.weightAfter,
+                              )
+                            : formatReviewScore(selectedGraphMemory.memory.weight)}
+                        </p>
+                      </div>
+                      <div className="rounded-lg bg-slate-50 px-2 py-1.5">
+                        <p className="font-semibold uppercase text-slate-400">
+                          Delta
+                        </p>
+                        <p
+                          className={`mt-0.5 font-semibold ${
+                            (selectedGraphMemory.referenced?.weightDelta ?? 0) > 0
+                              ? "text-blue-600"
+                              : "text-slate-500"
+                          }`}
+                        >
+                          {selectedGraphMemory.referenced?.weightDelta != null
+                            ? formatReviewDelta(
+                                selectedGraphMemory.referenced.weightDelta,
+                              )
+                            : "-"}
+                        </p>
+                      </div>
+                    </div>
+                    {selectedGraphMemory.memory.archiveReason && (
+                      <p className="rounded-lg bg-rose-50 px-2 py-1.5 text-[10px] font-semibold text-rose-600">
+                        {selectedGraphMemory.memory.archiveReason}
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
+              <div className="mt-5 flex min-h-0 flex-1 flex-col">
+                <p className="shrink-0 text-xs font-semibold text-slate-600">
+                  세션 중 참고됨
+                </p>
+                <div className="mt-2 min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
+                  {sessionMemorySummary.referenced.map((item) => (
+                    <div
+                      key={item.id}
+                      ref={(node) => {
+                        referencedMemoryRefs.current[item.memoryId] = node;
+                      }}
+                      onClick={() => {
+                        setSelectedGraphMemoryId(item.memoryId);
+                        setSelectedReferencedMemoryId(item.memoryId);
+                      }}
+                      className={`rounded-lg bg-white px-3 py-2 ring-1 transition ${
+                        selectedReferencedMemoryId === item.memoryId
+                          ? "ring-2 ring-blue-300"
+                          : "ring-slate-100 hover:ring-slate-200"
+                      } cursor-pointer`}
+                    >
+                      <p className="line-clamp-3 text-xs leading-relaxed text-slate-700">
+                        {memorySummaryText(item)}
+                      </p>
+                      {item.weightBefore != null && item.weightAfter != null && (
+                        <p className="mt-1 text-[10px] font-semibold text-blue-500">
+                          {formatReviewScore(item.weightBefore)} →{" "}
+                          {formatReviewScore(item.weightAfter)}
+                        </p>
+                      )}
+                    </div>
+                  ))}
+                  {sessionMemorySummary.referenced.length === 0 && (
+                    <p className="rounded-lg bg-white px-3 py-2 text-xs text-slate-400 ring-1 ring-slate-100">
+                      이 세션에서 참고한 memory가 없습니다.
+                    </p>
+                  )}
+                </div>
+              </div>
+            </aside>
+          </div>
+        </div>
       )}
 
       {/* Mockup expanded canvas: keep the chat panel visible */}
