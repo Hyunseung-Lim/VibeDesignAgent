@@ -1,3 +1,4 @@
+import { isAdminEmail } from "@/lib/admin";
 import {
   getFirebaseAccessToken,
   getFirestoreDocument,
@@ -44,9 +45,15 @@ export async function GET(request: Request) {
     return Response.json({ error: "missionId required" }, { status: 400 });
   }
 
+  const requestedTargetUid = url.searchParams.get("targetUid");
+  const targetUid = requestedTargetUid ?? user.localId;
+  if (targetUid !== user.localId && !isAdminEmail(user.email)) {
+    return Response.json({ error: "forbidden" }, { status: 403 });
+  }
+
   const token = await getFirebaseAccessToken();
   const doc = (await getFirestoreDocument(
-    `users/${user.localId}/profile_memories/${encodeURIComponent(missionId)}`,
+    `users/${targetUid}/profile_memories/${encodeURIComponent(missionId)}`,
     token,
   )) as Record<string, unknown> | null;
 

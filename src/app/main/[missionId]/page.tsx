@@ -1997,6 +1997,9 @@ export default function MainScreenPage() {
   const [sessionMemorySummary, setSessionMemorySummary] =
     useState<SessionMemorySummary>({ drafts: [], promoted: [] });
   const [rightPanelTab, setRightPanelTab] = useState<"chat" | "memory">("chat");
+  const [reviewProfileItems, setReviewProfileItems] = useState<
+    { id: string; input: string }[]
+  >([]);
 
   const isViewingAsAdmin = !!(viewAs && isAdmin);
   const isReadOnly = isReviewMode || isViewingAsAdmin;
@@ -2688,6 +2691,35 @@ export default function MainScreenPage() {
     return () => {
       cancelled = true;
     };
+  }, [showReviewAnnotations, targetSessionUserId, missionId]);
+
+  // Load profile memories for review panel (review mode)
+  useEffect(() => {
+    if (!showReviewAnnotations || !targetSessionUserId || !missionId) {
+      setReviewProfileItems([]);
+      return;
+    }
+    const currentUser = firebaseAuth.currentUser;
+    if (!currentUser) return;
+    let cancelled = false;
+    getIdToken(currentUser)
+      .then((token) => {
+        const params = new URLSearchParams({ missionId });
+        if (targetSessionUserId !== currentUser.uid)
+          params.set("targetUid", targetSessionUserId);
+        return fetch(`/api/memory/profile?${params}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+      })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (cancelled) return;
+        setReviewProfileItems(Array.isArray(data?.items) ? data.items : []);
+      })
+      .catch(() => {
+        if (!cancelled) setReviewProfileItems([]);
+      });
+    return () => { cancelled = true; };
   }, [showReviewAnnotations, targetSessionUserId, missionId]);
 
   // Load profile memories when mission context is ready (non-read-only only)
@@ -4222,7 +4254,6 @@ export default function MainScreenPage() {
 
     setMissionTitle(option.title);
     setMissionBrief(optionBrief(option));
-    setTimerStartedAt(now);
     if (!isReadOnly && userId) {
       const ref = sessionRefFor(userId);
       await setDoc(
@@ -4233,7 +4264,6 @@ export default function MainScreenPage() {
           missionTitle: option.title,
           missionBrief: optionBrief(option),
           selectedDevice: nextDevice,
-          timerStartedAt: now,
           updatedAt: now,
         },
         { merge: true },
@@ -4895,13 +4925,20 @@ export default function MainScreenPage() {
               ("archivedAt" in item ? item.archivedAt : null),
             );
 
+          const isProfileInput =
+            kind === "retrieved" &&
+            "type" in item &&
+            (item as Record<string, unknown>).type === "profile_input";
+
           const dotClass = isArchived
             ? "bg-rose-300"
-            : kind === "retrieved"
-              ? "bg-blue-400"
-              : kind === "promoted"
-                ? "bg-emerald-400"
-                : "border-2 border-slate-300 bg-white";
+            : isProfileInput
+              ? "bg-violet-400"
+              : kind === "retrieved"
+                ? "bg-blue-400"
+                : kind === "promoted"
+                  ? "bg-emerald-400"
+                  : "border-2 border-slate-300 bg-white";
 
           const weight = "weight" in item ? item.weight : null;
           const similarity = "similarity" in item ? item.similarity : null;
@@ -5752,6 +5789,7 @@ export default function MainScreenPage() {
                     // non-blocking
                   } finally {
                     setProfileSaving(false);
+                    setTimerStartedAt(Date.now());
                     setProfileModalConfirmed(true);
                   }
                 }}
@@ -6837,6 +6875,36 @@ export default function MainScreenPage() {
             {/* Memory panel */}
             {showReviewAnnotations && rightPanelTab === "memory" && (
               <div className="flex-1 space-y-5 overflow-y-auto p-5">
+                {/* 직접 입력한 정보 */}
+                <section>
+                  <div className="mb-2.5 flex items-center gap-2">
+                    <div className="h-2 w-2 shrink-0 rounded-full bg-violet-400" />
+                    <p className="text-xs font-semibold text-slate-600">
+                      직접 입력한 정보
+                    </p>
+                    <span className="text-[11px] text-slate-300">
+                      {reviewProfileItems.length}
+                    </span>
+                  </div>
+                  {reviewProfileItems.length === 0 ? (
+                    <p className="pl-5 text-xs text-slate-400">
+                      이 미션에 입력한 정보가 없습니다.
+                    </p>
+                  ) : (
+                    <div className="space-y-1.5">
+                      {reviewProfileItems.map((item) => (
+                        <div key={item.id} className="flex gap-3">
+                          <div className="flex flex-col items-center">
+                            <div className="mt-1 h-2 w-2 shrink-0 rounded-full bg-violet-400" />
+                          </div>
+                          <p className="text-xs leading-relaxed text-slate-700">
+                            {item.input}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </section>
                 <section>
                   <div className="mb-2.5 flex items-center gap-2">
                     <div className="h-2 w-2 shrink-0 rounded-full bg-blue-400" />

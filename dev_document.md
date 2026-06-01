@@ -222,7 +222,36 @@ type PresentationSlide = {
 
 ---
 
-## 7. 데이터 분석 스크립트 (`scripts/`)
+## 7. 프롬프트 관리 (`src/lib/prompts.ts`)
+
+모든 LLM 프롬프트는 `src/lib/prompts.ts` 한 곳에서 관리한다. 각 API route는 이 파일에서 import해서 사용하며, 프롬프트를 직접 route 파일에 인라인으로 작성하지 않는다.
+
+| export | 종류 | 사용처 |
+|--------|------|--------|
+| `CHAT_SYSTEM_PROMPT` | const | `chat/route.ts` — 메인 에이전트 역할 정의 |
+| `chatDevicePrompt(deviceLabel)` | function | `chat/route.ts` — 대상 디바이스 명시 |
+| `chatMissionPrompt(title, brief)` | function | `chat/route.ts` — 미션 컨텍스트 주입 |
+| `chatProfileMemoryPrompt(lines)` | function | `chat/route.ts` — 사용자 직접 입력 맥락 (standing background) |
+| `chatInteractionMemoryPrompt(json)` | function | `chat/route.ts` — 상호작용 메모리 주입 |
+| `chatDesignSpecPrompt(spec)` | function | `chat/route.ts` — 디자인 스타일 가이드 주입 |
+| `chatCitedTextsPrompt(texts)` | function | `chat/route.ts` — 인용 텍스트 주입 |
+| `chatActiveIdeaPrompt(title, desc)` | function | `chat/route.ts` — 현재 작업 시안 주입 |
+| `chatCurrentRequestPrompt(text)` | function | `chat/route.ts` — 최신 사용자 요청 강조 |
+| `chatMockupHtmlPrompt(html)` | function | `chat/route.ts` — 현재 목업 HTML 주입 |
+| `chatSelectedElementPrompt(sel, html)` | function | `chat/route.ts` — 선택된 UI 요소 주입 |
+| `chatCitedRefsWithUrlPrompt(titles, urls)` | function | `chat/route.ts` — URL 있는 레퍼런스 |
+| `chatCitedRefsNoUrlPrompt(titles)` | function | `chat/route.ts` — URL 없는 레퍼런스 |
+| `MEMORY_ENCODE_PROMPT` | const | `memory/drafts/route.ts` — interaction → memory 인코딩 |
+| `REFERENCE_MODE_CLASSIFY_PROMPT` | const | `references/route.ts` — style vs product 분류 |
+| `referenceQueryBuilderPrompt(mode, names)` | function | `references/route.ts` — 검색 쿼리 생성 |
+| `referenceCandidateRankingPrompt(mode, n)` | function | `references/route.ts` — 후보 랭킹 |
+| `referenceProductSearchPrompt(names)` | function | `references/route.ts` — 제품 레퍼런스 검색 |
+| `presentationSlideImagePrompt(params)` | function | `presentation/route.ts` — 슬라이드 이미지 생성 |
+| `referenceImageSourcePrompt(title, desc)` | function | `reference-image/route.ts` — 앱 UI 레퍼런스 페이지 검색 |
+
+---
+
+## 8. 데이터 분석 스크립트 (`scripts/`)
 
 | 스크립트 | 기능 |
 |----------|------|
@@ -234,7 +263,7 @@ type PresentationSlide = {
 
 ---
 
-## 8. 환경 변수 (`.env`)
+## 9. 환경 변수 (`.env`)
 
 ```
 SERPER_API_KEY
@@ -251,7 +280,7 @@ FIREBASE_MEASUREMENT_ID
 
 ---
 
-## 9. 최근 구현된 변경 사항
+## 10. 최근 구현된 변경 사항
 
 ### 9.1 메모리 클러스터링 개선
 - 기존 고정 `K=10` k-means에서 `K=1..12` 실험 기반으로 변경
@@ -319,7 +348,7 @@ FIREBASE_MEASUREMENT_ID
 
 ---
 
-## 10. 메모리 Retrieval / Forgetting 개발 계획
+## 11. 메모리 Retrieval / Forgetting 개발 계획
 
 > **상태**: v0.1.2 기준으로 재정리됨. v0.1.1의 semanticItems/retentionScore 설계는 fallback adapter로만 유지.
 
@@ -425,7 +454,7 @@ archiveReason = "low-weight" | "duplicate" | "manual"
 
 ---
 
-## 11. 미구현 / 향후 계획
+## 12. 미구현 / 향후 계획
 
 - `/agent` 페이지: 에이전트 메모리/상태 관리 UI
 - Firebase Blaze 플랜 결제 시 Storage 완전 활성화
@@ -436,7 +465,7 @@ archiveReason = "low-weight" | "duplicate" | "manual"
 
 ---
 
-## 12. 메모리 리뷰/온보딩 개선 로드맵
+## 13. 메모리 리뷰/온보딩 개선 로드맵
 
 이 섹션은 향후 작업을 하나씩 체크하며 진행하기 위한 실행 문서다. 원칙은 **데이터 계약 → 사용자 리뷰 경험 → 온보딩 입력 모델 → 어드민/UI 정리** 순서로 진행한다.
 
@@ -561,25 +590,21 @@ archiveReason = "low-weight" | "duplicate" | "manual"
 - [x] memory view와 session view를 분리
   - memory view: 현재 장기 메모리 중심
   - session view: 특정 세션에서 생성/사용/변경된 메모리 중심
-- [ ] 세션 시작 전 memory snapshot 기준 정의
+- [x] 세션 시작 전 memory snapshot 기준 정의 — 별도 snapshot 저장 불필요. 참고됨(retrieved) = 세션 전 기존 메모리, 기억됨(promoted) = 세션 중 신규 생성으로 암묵적으로 구분됨
 - [x] 세션 중 draft memory 표시
 - [x] 세션 종료 후 promoted memory 표시
 - [x] duplicate merge/archive 결과 표시
-- [ ] 직접 입력 memory와 interaction memory를 다른 배지/색으로 구분
+- [x] 직접 입력 memory와 interaction memory를 다른 배지/색으로 구분
 
 구현 메모:
 - `/api/memory/session-summary`에서 session `memoryDrafts`와 `source.missionId`가 현재 mission인 promoted memory를 조회한다.
 - 리뷰 모드에서 우측 패널 상단에 **채팅 / 메모리 변화** 탭 바를 추가한다. 탭 바는 `showReviewAnnotations`(리뷰 모드 또는 admin 뷰어)일 때만 표시된다.
-- **메모리 변화 탭** 에서 세로 타임라인으로 표시한다. 섹션 구성:
-  - `세션 중 참고됨` (파랑 점): `reviewTurns.retrieved` 기반, similarity를 가로 바로 시각화
-  - `세션에서 기억됨` (초록 점): promoted memory, weight를 가로 바로 시각화. archived된 항목은 취소선 + 로즈색 보관 사유로 인라인 표시
+- **메모리 변화 탭** 섹션 구성:
+  - `직접 입력한 정보` (보라색 점): `/api/memory/profile`에서 조회한 해당 미션의 profile items
+  - `세션 중 참고됨` (파랑 점): `reviewTurns.retrieved` 기반, profile_input 타입은 보라색으로 구분
+  - `세션에서 기억됨` (초록 점): promoted memory. archived 항목은 취소선 + 로즈색 표시
   - `검토 중인 초안` (회색 빈 원): drafts 있을 때만 표시
-- 별도 `보관됨` 섹션을 두지 않고, archived된 promoted memory를 `기억됨` 섹션 안에서 구분한다. (이전 구현의 생성됨/보관됨 중복 문제 해결)
-- 채팅 탭으로 돌아갈 때 스크롤 위치를 유지하기 위해 채팅 div를 언마운트하지 않고 `hidden` 클래스로 숨긴다.
-
-#### 추가로 결정 필요
-- snapshot을 실제로 저장할지, 기존 로그에서 계산할지
-- 직접 입력 memory와 interaction memory 배지/색 구분 (12.4 미완료 항목)
+- `/api/memory/profile` GET에 `targetUid` param 추가 — admin이 다른 사용자의 profile 조회 가능
 
 ### 12.5 4단계: 채팅 스트리밍/스크롤 UX 개선
 - [x] auto-scroll 제거 — 스크롤 위치를 사용자에게 완전히 위임
