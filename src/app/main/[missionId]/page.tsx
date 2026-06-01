@@ -5512,9 +5512,20 @@ export default function MainScreenPage() {
               </div>
               {/* Profile input */}
               <div className="rounded-2xl border border-slate-200 bg-white px-6 py-5">
-                <p className="font-semibold text-slate-900">
-                  에이전트가 알아야 할 것들
-                </p>
+                <div className="flex items-baseline justify-between">
+                  <p className="font-semibold text-slate-900">
+                    에이전트가 알아야 할 것들
+                  </p>
+                  <span
+                    className={`text-xs font-semibold tabular-nums ${
+                      profileItems.length >= 5
+                        ? "text-rose-400"
+                        : "text-slate-300"
+                    }`}
+                  >
+                    {profileItems.length} / 5
+                  </span>
+                </div>
                 <p className="mt-1 text-sm leading-relaxed text-slate-500">
                   대화를 통해 알아낼 수 없는 것들을 직접 알려주세요. 브랜드
                   컬러, 타겟 사용자, 프로젝트 제약 조건 등 처음부터 알아야
@@ -5547,14 +5558,33 @@ export default function MainScreenPage() {
                     </p>
                   )}
                 </div>
-                <div className="mt-3 flex gap-2">
-                  <input
-                    type="text"
-                    value={profileInput}
-                    onChange={(e) => setProfileInput(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" && profileInput.trim()) {
-                        e.preventDefault();
+                {profileItems.length < 5 && (
+                  <div className="mt-3 flex gap-2">
+                    <input
+                      type="text"
+                      value={profileInput}
+                      onChange={(e) => setProfileInput(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" && profileInput.trim() && profileItems.length < 5) {
+                          e.preventDefault();
+                          setProfileItems((prev) => [
+                            ...prev,
+                            {
+                              id: crypto.randomUUID(),
+                              input: profileInput.trim(),
+                              createdAt: Date.now(),
+                              updatedAt: Date.now(),
+                            },
+                          ]);
+                          setProfileInput("");
+                        }
+                      }}
+                      placeholder="예: 브랜드 컬러는 네이비이고 바꿀 수 없어요"
+                      className="flex-1 rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-700 outline-none focus:border-slate-400 placeholder:text-slate-300"
+                    />
+                    <button
+                      onClick={() => {
+                        if (!profileInput.trim() || profileItems.length >= 5) return;
                         setProfileItems((prev) => [
                           ...prev,
                           {
@@ -5565,31 +5595,14 @@ export default function MainScreenPage() {
                           },
                         ]);
                         setProfileInput("");
-                      }
-                    }}
-                    placeholder="예: 브랜드 컬러는 네이비이고 바꿀 수 없어요"
-                    className="flex-1 rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-700 outline-none focus:border-slate-400 placeholder:text-slate-300"
-                  />
-                  <button
-                    onClick={() => {
-                      if (!profileInput.trim()) return;
-                      setProfileItems((prev) => [
-                        ...prev,
-                        {
-                          id: crypto.randomUUID(),
-                          input: profileInput.trim(),
-                          createdAt: Date.now(),
-                          updatedAt: Date.now(),
-                        },
-                      ]);
-                      setProfileInput("");
-                    }}
-                    disabled={!profileInput.trim()}
-                    className="rounded-xl bg-slate-100 px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-200 disabled:opacity-40"
-                  >
-                    추가
-                  </button>
-                </div>
+                      }}
+                      disabled={!profileInput.trim()}
+                      className="rounded-xl bg-slate-100 px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-200 disabled:opacity-40"
+                    >
+                      추가
+                    </button>
+                  </div>
+                )}
               </div>
             </div>
           </div>

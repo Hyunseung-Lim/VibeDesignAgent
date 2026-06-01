@@ -583,6 +583,7 @@ archiveReason = "low-weight" | "duplicate" | "manual"
 
 ### 12.5 4단계: 채팅 스트리밍/스크롤 UX 개선
 - [x] auto-scroll 제거 — 스크롤 위치를 사용자에게 완전히 위임
+- [x] 맨 아래로 ↓ floating 버튼 추가 — 스크롤 100px 이상 올라가면 표시, aside 기준 absolute 포지션
 - [ ] 긴 markdown/table/code block 렌더링 중 레이아웃 점프 확인
 - [ ] 채팅 bubble 텍스트 출력 버벅임 원인 분리
   - SSE chunk 빈도
@@ -591,7 +592,7 @@ archiveReason = "low-weight" | "duplicate" | "manual"
 
 ### 12.6 5단계: 온보딩/직접 입력 메모리 설계
 - [x] 모든 세션 시작 시 "나에 대해 알았으면 하는 정보" 입력 UI 추가
-- [x] UI 방식 결정 → **세션 시작 modal** 채택
+- [x] UI 방식 결정 → **3단계 온보딩 페이지** 채택 (modal 방식에서 변경)
 - [x] 직접 입력 메모리 타입 정의
 - [x] interaction 학습 메모리와 직접 입력 메모리 구분 처리 (`type: "profile_input"`)
 - [x] 이전 세션 입력 내용을 불러와 수정하는 upsert 방식 구현
@@ -599,24 +600,36 @@ archiveReason = "low-weight" | "duplicate" | "manual"
 - [ ] revision log 또는 supersedes 정책 결정 (현재는 덮어쓰기)
 
 #### 결정 사항
-- **UI**: 세션 시작 modal. `isMissionContextReady` 직후 표시, "세션 시작하기" 버튼 전까지 채팅 블로킹.
+- **UI**: 3단계 온보딩 페이지 (옵션 선택 화면과 동일한 full-page 패턴)
+  - 1단계: 미션 선택 (기존 옵션 선택 화면, 버튼 "다음"으로 변경)
+  - 2단계: 정보 입력 — 이전 입력 pre-fill, 항목 추가(Enter/버튼)/삭제(X)
+  - 3단계: 검토 및 세션 시작 — 미션 내용 + 제한 시간 + 입력 정보 확인 후 "세션 시작하기(N분)"
+  - 각 단계에서 step indicator + 뒤로가기 버튼 제공
 - **컬렉션**: `users/{uid}/profile_memories/{missionId}` 별도 문서, `items[]` 배열로 관리.
-- **필수/선택**: 매 세션 필수(건너뛰기 없음). 항목이 0개여도 "세션 시작하기" 클릭으로 진행 가능.
+- **필수/선택**: 매 세션 필수(건너뛰기 없음). 항목이 0개여도 3단계에서 세션 시작 가능.
 - **미션별**: missionId를 문서 ID로 사용하므로 미션마다 독립적인 profile 데이터.
 - **weight**: 0.9 고정, retrieval 결과 최상단에 항상 주입 (similarity 계산 없이 포함).
 
 구현 메모:
 - `GET /api/memory/profile?missionId=...` — 해당 미션의 profile items 조회
-- `POST /api/memory/profile` — items 배열을 upsert (전체 교체)
+- `POST /api/memory/profile` — items 배열을 upsert (전체 교체), 3단계에서 저장
 - `POST /api/memory/retrieve` — profile items를 `type: "profile_input"`으로 retrieved 앞에 prepend
-- modal: 기존 items pre-fill, 항목 추가(Enter/버튼)/삭제(X), "세션 시작하기" 클릭 시 저장 후 `profileModalConfirmed = true`
+- `profileStep: 2 | 3` state로 2단계/3단계 페이지 전환 관리
 
 ### 12.7 6단계: 직접 입력 메모리 retrieval 정책
-- [ ] retrieval quota 정책 결정
-  - 예: top 5 중 profile input 최대 2개 + interaction memory 최대 3개
-- [ ] profile memory를 항상 주입할지, query similarity 기반으로만 주입할지 결정
-- [ ] profile memory의 수정/삭제가 retrieval log에 어떻게 남을지 정의
-- [ ] prompt에서 직접 입력 메모리를 별도 섹션으로 표시
+- [x] retrieval quota 정책 결정 — profile items 최대 5개 cap, interaction memory는 기존 limit(5) 유지
+- [x] profile memory를 항상 주입 — query similarity 계산 없이 항상 포함 (standing context 성격)
+- [x] retrieval log에 profile item ID 목록 추가 (`profileItemIds` 필드)
+- [x] prompt에서 직접 입력 메모리를 별도 system message로 분리
+  - profile items: "standing background" 레이블로 별도 system message
+  - interaction memory: 기존 retrieved memory system message 유지
+
+구현 메모:
+- `/api/memory/retrieve`: `loadProfileItems` 결과를 `.slice(0, 5)`로 cap
+- retrieval log: `profileItemIds` 배열 추가
+- `/api/chat`: `memoryContext.semantic`에서 `type === "profile_input"` 필터로 분리
+  - profile items → "standing background" system message (언급하지 않고 암묵적으로 적용)
+  - interaction items → 기존 retrieved memory system message
 
 ### 12.8 7단계: 어드민 정리
 - [ ] table view 대체 UI 기준 충족 여부 확인

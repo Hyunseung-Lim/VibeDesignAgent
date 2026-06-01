@@ -269,11 +269,44 @@ export async function POST(request: Request) {
   }
 
   if (memoryContext) {
-    const compactMemory = compactMemoryContext(memoryContext);
-    systemMessages.push({
-      role: "system",
-      content: `User memory loaded at session start or retrieved for this turn. Each memory may include action, keyword, episodic, semantic, input, output, link, and weight. Episodic memories describe prior interactions; semantic memories describe durable user preferences or working patterns. Use only what is helpful; do not mention memory unless it directly improves the answer.\n${JSON.stringify(compactMemory)}`,
-    });
+    const allItems: unknown[] = Array.isArray(memoryContext.semantic)
+      ? memoryContext.semantic
+      : [];
+    const profileItems = allItems.filter(
+      (item) =>
+        item && typeof item === "object" &&
+        (item as Record<string, unknown>).type === "profile_input",
+    );
+    const interactionItems = allItems.filter(
+      (item) =>
+        !item ||
+        typeof item !== "object" ||
+        (item as Record<string, unknown>).type !== "profile_input",
+    );
+
+    if (profileItems.length > 0) {
+      const lines = profileItems
+        .map((item) => {
+          const r = item as Record<string, unknown>;
+          return `- ${truncateText(r.input ?? r.episodic, 500)}`;
+        })
+        .join("\n");
+      systemMessages.push({
+        role: "system",
+        content: `The following context was explicitly provided by the user before this session. Treat it as standing background — always apply it silently without referencing it directly.\n${lines}`,
+      });
+    }
+
+    if (interactionItems.length > 0) {
+      const compactMemory = compactMemoryContext({
+        ...memoryContext,
+        semantic: interactionItems,
+      });
+      systemMessages.push({
+        role: "system",
+        content: `User memory retrieved for this turn. Each memory may include action, keyword, episodic, semantic, input, output, link, and weight. Episodic memories describe prior interactions; semantic memories describe durable user preferences or working patterns. Use only what is helpful; do not mention memory unless it directly improves the answer.\n${JSON.stringify(compactMemory)}`,
+      });
+    }
   }
 
   if (designSpec) {

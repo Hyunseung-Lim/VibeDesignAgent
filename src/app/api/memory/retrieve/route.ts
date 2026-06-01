@@ -330,6 +330,7 @@ async function loadProfileItems(
           typeof item.input === "string" &&
           item.input.trim(),
       )
+      .slice(0, 5) // cap at 5 profile items
       .map((item) => ({ id: String(item.id), input: item.input.trim() }));
   } catch {
     return [];
@@ -397,6 +398,7 @@ export async function POST(request: Request) {
           Number(candidate.similarity.toFixed(4)),
         ),
         profileItemCount: profileItems.length,
+        profileItemIds: profileItems.map((item) => item.id),
         scoreDeltas,
         createdAt: now,
       },
