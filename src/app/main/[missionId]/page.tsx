@@ -1994,6 +1994,23 @@ export default function MainScreenPage() {
       ) ?? null;
     return { memory, referenced, promoted, cluster };
   }, [selectedGraphMemoryId, sessionMemorySummary]);
+  const sessionArchivedMemories = useMemo(() => {
+    const referencedIds = new Set(
+      sessionMemorySummary.referenced.map((item) => item.memoryId),
+    );
+    const promotedIds = new Set(
+      sessionMemorySummary.promoted.map((item) => item.id),
+    );
+    return sessionMemorySummary.graphMemories.filter((item) => {
+      if (!item.archivedAt) return false;
+      if (referencedIds.has(item.id) || promotedIds.has(item.id)) return true;
+      const duplicateOf = item.duplicateOf ?? item.duplicate?.memoryId ?? null;
+      return Boolean(
+        duplicateOf &&
+          (referencedIds.has(duplicateOf) || promotedIds.has(duplicateOf)),
+      );
+    });
+  }, [sessionMemorySummary]);
   const activeOption =
     missionOptions.find((option) => option.id === selectedOptionId) ??
     (missionOptions.length === 1 ? missionOptions[0] : null);
@@ -4619,6 +4636,7 @@ export default function MainScreenPage() {
     const promotedIds = new Set(
       sessionMemorySummary.promoted.map((item) => item.id),
     );
+    const sessionArchivedIds = new Set(sessionArchivedMemories.map((item) => item.id));
     const allNodes = sessionMemorySummary.graphMemories
       .map((memory) => {
         const referenced = referencedByMemoryId.get(memory.id);
@@ -4629,7 +4647,7 @@ export default function MainScreenPage() {
           memoryGraphPhase === "before" && referenced?.weightBefore != null
             ? referenced.weightBefore
             : memory.weight;
-        const isArchivedAfter = Boolean(memory.archivedAt);
+        const isArchivedAfter = sessionArchivedIds.has(memory.id);
         const isSessionTouched = Boolean(referenced) || isPromoted;
         const isArchived =
           isArchivedAfter && (memoryGraphPhase === "after" || !isSessionTouched);
@@ -4823,6 +4841,11 @@ export default function MainScreenPage() {
           {sessionMemorySummary.graphClusters.length} clusters ·{" "}
           {allNodes.length} nodes{hiddenCount > 0 ? ` · +${hiddenCount}` : ""}
         </div>
+        {sessionMemorySummary.graphClusters.length === 0 && (
+          <div className="absolute right-3 top-10 z-10 max-w-64 rounded-lg border border-amber-100 bg-amber-50 px-3 py-2 text-[11px] leading-relaxed text-amber-700 shadow-sm">
+            클러스터 cache가 없습니다. Admin Memory의 cluster view에서 Regenerate를 실행하면 similarity 묶음으로 표시됩니다.
+          </div>
+        )}
         {Array.from(clusterCenters.entries()).map(([clusterId, cluster]) => (
           <div
             key={`cluster-label-${clusterId}`}
@@ -7026,11 +7049,7 @@ export default function MainScreenPage() {
                           보관됨
                         </p>
                         <p className="mt-1 text-lg font-semibold text-rose-700">
-                          {
-                            sessionMemorySummary.graphMemories.filter((item) =>
-                              Boolean(item.archivedAt),
-                            ).length
-                          }
+                          {sessionArchivedMemories.length}
                         </p>
                       </div>
                     </div>
@@ -7599,15 +7618,16 @@ export default function MainScreenPage() {
                   <p className="text-[10px] font-semibold uppercase text-rose-400">
                     보관됨
                   </p>
-                  <p className="mt-1 text-xl font-semibold text-rose-700">
-                    {
-                      sessionMemorySummary.graphMemories.filter((item) =>
-                        Boolean(item.archivedAt),
-                      ).length
-                    }
+                      <p className="mt-1 text-xl font-semibold text-rose-700">
+                    {sessionArchivedMemories.length}
                   </p>
                 </div>
               </div>
+              {sessionMemorySummary.graphClusters.length === 0 && (
+                <div className="mt-3 shrink-0 rounded-lg border border-amber-100 bg-amber-50 px-3 py-2 text-[11px] leading-relaxed text-amber-700">
+                  클러스터 cache가 없어 similarity 묶음 대신 fallback 배치로 표시 중입니다.
+                </div>
+              )}
               <div className="mt-5 shrink-0 rounded-xl bg-white p-3 ring-1 ring-slate-100">
                 <div className="flex items-center justify-between gap-3">
                   <p className="text-xs font-semibold text-slate-600">

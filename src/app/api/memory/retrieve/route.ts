@@ -21,6 +21,7 @@ const PROFILE_MEMORY_MAX_CHARS = 240;
 const NEAR_MISS_LIMIT = 20;
 const NEAR_MISS_MIN_SIMILARITY = 0.55;
 const NEAR_MISS_WEIGHT_LOSS = 0.005;
+const NEAR_MISS_MAX_WEIGHT_LOSS = 0.0075;
 const MIN_MEMORY_WEIGHT = 0.1;
 
 type MemoryDoc = Record<string, unknown> & {
@@ -270,9 +271,24 @@ function nextWeight(candidate: Candidate, wasRetrieved: boolean) {
   return Number(Math.min(1, candidate.weight + gain).toFixed(4));
 }
 
-function nextNearMissWeight(candidate: Candidate) {
+function memoryCountDecayMultiplier(memoryCount: number) {
+  if (memoryCount >= 200) return 1.5;
+  if (memoryCount >= 120) return 1.3;
+  if (memoryCount >= 60) return 1.15;
+  return 1;
+}
+
+function nearMissWeightLoss(memoryCount: number) {
+  return Math.min(
+    NEAR_MISS_MAX_WEIGHT_LOSS,
+    NEAR_MISS_WEIGHT_LOSS * memoryCountDecayMultiplier(memoryCount),
+  );
+}
+
+function nextNearMissWeight(candidate: Candidate, memoryCount: number) {
+  const loss = nearMissWeightLoss(memoryCount);
   return Number(
-    Math.max(MIN_MEMORY_WEIGHT, candidate.weight - NEAR_MISS_WEIGHT_LOSS).toFixed(4),
+    Math.max(MIN_MEMORY_WEIGHT, candidate.weight - loss).toFixed(4),
   );
 }
 
@@ -325,11 +341,12 @@ async function updateNearMissWeights(
   nearMisses: Candidate[],
   token: string,
   now: number,
+  memoryCount: number,
 ) {
   const deltas = await Promise.all(
     nearMisses.map(async (candidate) => {
       const previousWeight = candidate.weight;
-      const weight = nextNearMissWeight(candidate);
+      const weight = nextNearMissWeight(candidate, memoryCount);
       if (weight === previousWeight) {
         return {
           memoryId: candidate.memoryId,
@@ -338,6 +355,7 @@ async function updateNearMissWeights(
           previousWeight,
           weight,
           weightDelta: 0,
+          decayMultiplier: memoryCountDecayMultiplier(memoryCount),
         };
       }
 
@@ -372,6 +390,7 @@ async function updateNearMissWeights(
         previousWeight,
         weight,
         weightDelta: candidate.weightDelta,
+        decayMultiplier: memoryCountDecayMultiplier(memoryCount),
       };
     }),
   );
@@ -440,6 +459,7 @@ export async function POST(request: Request) {
       loadProfileItems(user.localId, missionId, token),
     ]);
     profileItems = loadedProfileItems;
+    const memoryCount = candidates.length;
 
     const ranked = candidates
       .map((candidate) => ({
@@ -457,7 +477,12 @@ export async function POST(request: Request) {
     const nearMisses = ranked
       .slice(limit, NEAR_MISS_LIMIT)
       .filter((candidate) => candidate.similarity >= NEAR_MISS_MIN_SIMILARITY);
-    const nearMissDeltas = await updateNearMissWeights(nearMisses, token, now);
+    const nearMissDeltas = await updateNearMissWeights(
+      nearMisses,
+      token,
+      now,
+      memoryCount,
+    );
 
     await patchFirestoreDocument(
       `users/${user.localId}/${RETRIEVAL_LOG_COLLECTION}/${retrievalLogId(now, query)}`,
@@ -474,6 +499,9 @@ export async function POST(request: Request) {
         ),
         profileItemCount: profileItems.length,
         profileItemIds: profileItems.map((item) => item.id),
+        memoryCount,
+        nearMissDecayMultiplier: memoryCountDecayMultiplier(memoryCount),
+        nearMissWeightLoss: nearMissWeightLoss(memoryCount),
         scoreDeltas,
         nearMissDeltas,
         createdAt: now,

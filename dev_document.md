@@ -747,13 +747,21 @@ archiveReason = "low-weight" | "duplicate" | "manual"
   - promoted/archived 변화: 기존 promoted memory와 archive metadata를 사용
   - 구현: `/api/memory/session-summary`가 전체 memory node와 기존 retrieval log 기반 `referenced` diff를 반환
   - UI: 오른쪽 메모리 변화 패널은 요약/진입점만 표시하고, `전체 메모리 변화 보기` 버튼으로 full-screen overlay를 열어 `세션 이전`/`세션 이후` 전체 노드 변화를 비교
+  - Overlay: `변화만/전체/참고/기억됨/보관됨` 필터와 선택 노드 상세를 제공. `보관됨`은 이번 세션에서 referenced/promoted된 memory와 관련된 archive만 표시
+  - Cluster: 기존 admin memory cluster cache가 있으면 similarity cluster별로 묶어 표시하고, cache가 없으면 Regenerate 안내와 fallback 배치를 표시
   - 재검토 조건: node view에서 정확한 세션 단위 before/after가 제품적으로 중요해질 때만 touched-memory diff event 저장을 검토
 
 ### 14.3 메모리 시스템
-- [ ] 메모리 전체 크기를 weight decay 계산에 반영
+- [x] 메모리 전체 크기를 weight decay 계산에 반영
   - 목표: memory 수가 많을수록 near-miss decay 폭을 아주 조금 증가시켜 전체 memory 크기가 무한히 커지지 않게 함
   - 현재 기준: near miss는 rank 6~20, similarity `>= 0.55`, `weight - 0.005`, floor `0.1`
-  - 설계 필요: memory count별 decay multiplier와 최대 decay 상한
+  - 구현: candidate memory count별 near-miss decay multiplier 적용
+    - `< 60`: `1.0x`
+    - `60~119`: `1.15x`
+    - `120~199`: `1.3x`
+    - `>= 200`: `1.5x`
+  - 최대 decay 상한: `0.0075`
+  - retrieval log에 `memoryCount`, `nearMissDecayMultiplier`, `nearMissWeightLoss`, nearMiss별 `decayMultiplier` 저장
 
 ### 14.4 프롬프트 최적화
 - [ ] 프롬프트 2중 구조 설계
