@@ -1,4 +1,5 @@
 import OpenAI from "openai";
+import { referenceImageSourcePrompt } from "@/lib/prompts";
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
@@ -9,9 +10,7 @@ export async function POST(request: Request) {
     const response = await openai.responses.create({
       model: "gpt-4o",
       tools: [{ type: "web_search_preview" }],
-      input: `Find the most relevant web page for "${title}" app UI design related to "${description}".
-Prefer specific pages from: mobbin.com (individual app or screen page), dribbble.com (specific shot), uxdesign.cc, bootcamp.uxdesign.cc, or medium.com design articles.
-Return ONLY a JSON object: {"sourceUrl": "<most relevant URL>", "sourceTitle": "<page title>"}`,
+      input: referenceImageSourcePrompt(title, description),
     });
 
     let text = "";

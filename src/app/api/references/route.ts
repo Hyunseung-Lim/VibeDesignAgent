@@ -1,4 +1,10 @@
 import OpenAI from "openai";
+import {
+  REFERENCE_MODE_CLASSIFY_PROMPT,
+  referenceQueryBuilderPrompt,
+  referenceCandidateRankingPrompt,
+  referenceProductSearchPrompt,
+} from "@/lib/prompts";
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const SERPER_API_KEY = process.env.SERPER_API_KEY;
@@ -257,12 +263,7 @@ async function inferReferenceMode(
       messages: [
         {
           role: "system",
-          content: `Classify the reference search intent.
-Return ONLY {"mode":"style"} or {"mode":"product"}.
-
-style: user wants visual mood, aesthetic inspiration, color, typography, beautiful images for design style.
-product: user wants real products, websites, apps, UX flows, feature/structure/layout examples, case studies, references for product decisions or writing a design memo.
-If the request asks for 구조 참고, layout reference, structure, section composition, information architecture, or wireframe, choose product even if it mentions hero sections.`,
+          content: REFERENCE_MODE_CLASSIFY_PROMPT,
         },
         {
           role: "user",
@@ -357,17 +358,7 @@ async function buildSearchQueries(
     messages: [
       {
         role: "system",
-        content: `Create 3 high-quality Google search queries for finding ${mode === "style" ? "visual style inspiration images" : "real product, website, app, UX, or case-study references"}.
-Return ONLY a JSON array of strings.
-Each query should be specific, concrete, and include the product domain, target platform, UI artifact, and desired visual or structural direction when available.
-${mode === "style" ? "Prefer image-rich style references, design galleries, portfolios, app screenshots, landing page screenshots, visual systems, and mood references." : "Prefer official websites, product pages, app pages, landing pages, design systems, concrete UX flows, specific case studies, and reputable design articles."}
-Every query must preserve the concrete domain nouns from the user request, such as "wine", "sommelier", "fashion", or "wellness".
-If the mission contains a fictional persona or selected option name, DO NOT search the exact name. Search by role, domain, mood, medium, and UI artifact instead.
-Do not include these fictional names in any query: ${omittedNames.join(", ") || "(none)"}.
-Avoid generic dashboard, B2B SaaS, or broad gallery-browse queries unless the user explicitly requested those.
-When the user provided a custom query, refine it instead of replacing it.
-Keep each query under 12 words when possible.
-Do not include duplicate queries.`,
+        content: referenceQueryBuilderPrompt(mode, omittedNames),
       },
       {
         role: "user",
@@ -646,15 +637,7 @@ async function rerankReferenceCandidates(
       input: [
         {
           role: "system",
-          content: `You rank UI/UX design references for a design tool.
-Return ONLY a JSON array with up to ${FINAL_REFERENCE_COUNT} objects:
-[{"url":"...","title":"...","description":"...","score":0.0}]
-
-${mode === "style" ? "Choose references with strong visual style, useful mood, layout, color, typography, and aesthetic inspiration. Image quality matters." : "Choose concrete, inspectable references useful for product decisions, UX structure, feature patterns, writing a design memo, or comparing real products."}
-${mode === "style" ? "Design galleries, portfolios, screenshots, and visual case studies are acceptable when they are relevant and image-rich." : "Prefer real product pages, official websites, design systems, specific case studies, specific app/screen pages, and reputable editorial design articles."}
-Avoid stock asset pages, generic search/tag/category pages, thin SEO listicles, irrelevant dashboards, and pages unrelated to the user's product domain.${mode === "style" ? "" : " Avoid Pinterest pins/boards."}
-Use web search when needed to verify what a candidate URL actually is.
-Descriptions must be short Korean phrases explaining why it is useful as a reference.`,
+          content: referenceCandidateRankingPrompt(mode, FINAL_REFERENCE_COUNT),
         },
         {
           role: "user",
@@ -698,15 +681,7 @@ async function searchProductReferences(
       input: [
         {
           role: "system",
-          content: `Find high-quality UI/UX product references for a design tool.
-Return ONLY a JSON array with up to 6 objects:
-[{"url":"...","title":"...","description":"...","imageUrl":null,"source":"..."}]
-
-Find actual pages that help a designer make product or UX decisions: official product pages, app pages, landing pages, design systems, concrete case studies, UX flow examples, or reputable design articles.
-If the project brief contains fictional people/personas, do not search or return pages for the exact fictional name. Use the persona's role, domain, mood, medium, and UI artifact instead.
-Never return pages for these fictional names: ${omittedNames.join(", ") || "(none)"}.
-Avoid stock image sites, Pinterest, Instagram/social posts, generic tag/search pages, template marketplaces, and thin SEO listicles.
-Descriptions must be short Korean phrases explaining the concrete design/UX value.`,
+          content: referenceProductSearchPrompt(omittedNames),
         },
         {
           role: "user",

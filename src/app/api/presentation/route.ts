@@ -2,6 +2,7 @@ import OpenAI from "openai";
 import { createSign, randomUUID } from "crypto";
 import { readFile } from "fs/promises";
 import path from "path";
+import { presentationSlideImagePrompt } from "@/lib/prompts";
 
 export const maxDuration = 120;
 export const runtime = "nodejs";
@@ -514,16 +515,14 @@ export async function POST(request: Request) {
         return { title: slide.title, content: slide.content, imageUrl: svgDataUrl };
       }
 
-      const prompt = [
-        `Presentation slide for "${title || "Presentation"}".`,
-        `Slide: "${slide.title}".`,
-        `The presentation must faithfully showcase the actual generated mockup as a central visual artifact, not a generic replacement.`,
-        `Use a ${deviceContext}. Reflect the mockup's real layout, visible copy, sections, color palette, typography feel, cards/buttons/navigation, and visual hierarchy.`,
-        `Match the generated presentation's background, typography, spacing, border radius, accent colors, and UI detailing to the mockup style. Do not use a generic presentation theme if it conflicts with the mockup.`,
-        mockupStyle.notes,
+      const prompt = presentationSlideImagePrompt({
+        title,
+        slideTitle: slide.title,
+        deviceContext,
+        mockupStyleNotes: mockupStyle.notes,
         mockupContext,
-        slide.imagePrompt,
-      ].filter(Boolean).join("\n\n");
+        imagePrompt: slide.imagePrompt,
+      });
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const response = await openai.images.generate({ model: "gpt-image-2", prompt, n: 1, size: "1536x1024", quality: "medium" } as any) as { data: Array<{ b64_json?: string; url?: string }> };
 

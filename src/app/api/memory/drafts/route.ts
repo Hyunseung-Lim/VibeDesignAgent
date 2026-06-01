@@ -6,6 +6,7 @@ import {
   patchFirestoreDocument,
   verifyFirebaseIdToken,
 } from "@/lib/server/firebaseAdminRest";
+import { MEMORY_ENCODE_PROMPT } from "@/lib/prompts";
 
 export const runtime = "nodejs";
 
@@ -18,88 +19,6 @@ type EncodedMemory = {
   episode: string;
   semantic: string | null;
 };
-
-const MEMORY_PROMPT = `# Task
-
-Generate a structured memory record for one interaction turn in a UI/UX design agent session.
-This is memory encoding, not a general summary. Analyze the full structured input — not just the user's message.
-
-# Input Fields
-
-earlier episodic memory:
-A one-sentence summary of the interaction two turns ago.
-Omitted if fewer than two prior turns exist.
-
-previous episodic memory:
-A one-sentence summary of the immediately preceding interaction.
-If this is the first turn, the value is "${FIRST_SESSION_TURN}".
-
-previous agent output:
-The full response the agent gave in the immediately preceding turn.
-If this is the first turn, the value is "${FIRST_SESSION_TURN}".
-
-previous semantic memory:
-Optional prior durable inference about the user.
-Use as weak context only. Do not reinforce or repeat unless the current interaction clearly supports it.
-
-user input:
-The query or instruction the user sent in this turn.
-May include cited references, quoted text, selected UI elements, or other contextual material.
-
-agent response:
-The response the agent generated in this turn.
-May include reference analysis, visual direction, functional behavior, structural patterns, design rationale, or generated artifacts.
-
-agent action category:
-The type of action the agent performed. Use as context only.
-Do not copy machine action labels into the episode unless the label itself is the user-facing subject.
-
-agent action details:
-Optional compact details of what was produced or changed.
-
-# Reference Handling
-
-Do not assume a cited reference is only about visual style. It may reflect layout structure, information architecture, feature behavior, interaction patterns, content tone, product framing, brand feeling, specific UI components, comparative critique, or other design rationale.
-
-If the agent response already analyzes a cited reference, preserve the most relevant interpretation in the episode when it materially explains the interaction.
-
-# Rules
-
-Always:
-- Write every output value in English; translate Korean or other languages into concise natural English.
-- Use previous context when it changes the meaning of the current turn.
-- Include the agent action, outcome, feedback, or decision in the episode.
-- Return valid JSON only, no text outside it.
-
-Never:
-- Summarize only the user input.
-- Invent, force, or infer user traits from simple facts; semantic items must be clearly supported inferences, not restatements of what happened.
-- Include timestamps, speaker names, or generic filler words in keywords.
-
-# Output Format
-
-Return exactly this JSON shape:
-
-{
-  "keywords": [
-    // English salient nouns, verbs, artifacts, actions, references, and design concepts.
-    // Ordered from most to least important.
-    // Exclude speaker names, timestamps, and generic filler words.
-    // Include at least three non-redundant keywords.
-  ],
-  "episode": "",
-  // One factual English sentence describing the interaction,
-  // including the user request, relevant prior context, agent action/output,
-  // and immediate outcome, feedback, or decision.
-
-  "semantic": null
-  // Optional one-sentence English durable insight about the user's intent, preferences, traits, tendencies, working style, or communication style.
-  // Return a single information-rich insight when the current interaction clearly supports one.
-  // Extract as much useful long-term insight as one semantic memory can reasonably hold, while keeping it grounded and readable.
-  // Do NOT include simple factual statements about what the user said or did.
-  // Do NOT force or fabricate inferences.
-  // Return null when there is no clearly supported durable inference.
-}`;
 
 function stringArray(value: unknown, fallback: string[] = []) {
   return Array.isArray(value)
@@ -290,7 +209,7 @@ export async function POST(request: Request) {
     model: "gpt-5.4-mini",
     response_format: { type: "json_object" },
     messages: [
-      { role: "system", content: MEMORY_PROMPT },
+      { role: "system", content: MEMORY_ENCODE_PROMPT },
       { role: "user", content },
     ],
   });
