@@ -1925,6 +1925,13 @@ export default function MainScreenPage() {
   const [missionTitle, setMissionTitle] = useState("");
   const [missionBrief, setMissionBrief] = useState("");
   const [isMissionContextReady, setIsMissionContextReady] = useState(false);
+  const [profileModalConfirmed, setProfileModalConfirmed] = useState(false);
+  const [profileStep, setProfileStep] = useState<2 | 3>(2);
+  const [profileItems, setProfileItems] = useState<
+    { id: string; input: string; createdAt: number; updatedAt: number }[]
+  >([]);
+  const [profileInput, setProfileInput] = useState("");
+  const [profileSaving, setProfileSaving] = useState(false);
   const [parentMissionTitle, setParentMissionTitle] = useState("");
   const [parentMissionBrief, setParentMissionBrief] = useState("");
   const [missionOptions, setMissionOptions] = useState<MissionOption[]>([]);
@@ -2682,6 +2689,30 @@ export default function MainScreenPage() {
       cancelled = true;
     };
   }, [showReviewAnnotations, targetSessionUserId, missionId]);
+
+  // Load profile memories when mission context is ready (non-read-only only)
+  useEffect(() => {
+    if (!isMissionContextReady || isReadOnly || !missionId) return;
+    const currentUser = firebaseAuth.currentUser;
+    if (!currentUser) return;
+    let cancelled = false;
+    getIdToken(currentUser)
+      .then((token) =>
+        fetch(
+          `/api/memory/profile?missionId=${encodeURIComponent(missionId)}`,
+          { headers: { Authorization: `Bearer ${token}` } },
+        ),
+      )
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (cancelled) return;
+        setProfileItems(Array.isArray(data?.items) ? data.items : []);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [isMissionContextReady, isReadOnly, missionId]);
 
   // Save session to Firestore (debounced to avoid write storms during streaming)
   useEffect(() => {
@@ -4880,7 +4911,7 @@ export default function MainScreenPage() {
             <div key={`${kind}-${id}`} className="flex gap-3">
               <div className="flex flex-col items-center">
                 <div
-                  className={`mt-1 h-2 w-2 flex-shrink-0 rounded-full ${dotClass}`}
+                  className={`mt-1 h-2 w-2 shrink-0 rounded-full ${dotClass}`}
                 />
                 {idx < visible.length - 1 && (
                   <div className="my-1 w-px flex-1 bg-slate-100" />
@@ -5016,7 +5047,7 @@ export default function MainScreenPage() {
                   <p className="mb-2 text-xs font-semibold uppercase text-slate-400">
                     Sanitized raw prompt
                   </p>
-                  <pre className="max-h-[46vh] overflow-y-auto whitespace-pre-wrap break-words rounded-xl bg-slate-950 p-4 text-xs leading-relaxed text-slate-100">
+                  <pre className="max-h-[46vh] overflow-y-auto whitespace-pre-wrap wrap-break-word rounded-xl bg-slate-950 p-4 text-xs leading-relaxed text-slate-100">
                     {stringifyReviewJson(rawPromptModal.rawPrompt)}
                   </pre>
                 </section>
@@ -5025,7 +5056,7 @@ export default function MainScreenPage() {
                     <p className="mb-2 text-xs font-semibold uppercase text-slate-400">
                       Sanitization
                     </p>
-                    <pre className="max-h-48 overflow-y-auto whitespace-pre-wrap break-words rounded-xl bg-slate-50 p-4 text-xs leading-relaxed text-slate-600">
+                    <pre className="max-h-48 overflow-y-auto whitespace-pre-wrap wrap-break-word rounded-xl bg-slate-50 p-4 text-xs leading-relaxed text-slate-600">
                       {stringifyReviewJson(
                         rawPromptModal.rawPromptSanitization,
                       )}
@@ -5037,7 +5068,7 @@ export default function MainScreenPage() {
                     <p className="mb-2 text-xs font-semibold uppercase text-slate-400">
                       Response meta
                     </p>
-                    <pre className="max-h-48 overflow-y-auto whitespace-pre-wrap break-words rounded-xl bg-slate-50 p-4 text-xs leading-relaxed text-slate-600">
+                    <pre className="max-h-48 overflow-y-auto whitespace-pre-wrap wrap-break-word rounded-xl bg-slate-50 p-4 text-xs leading-relaxed text-slate-600">
                       {stringifyReviewJson(rawPromptModal.rawResponseMeta)}
                     </pre>
                   </section>
@@ -5203,7 +5234,33 @@ export default function MainScreenPage() {
       )}
 
       {missionOptions.length > 0 && !selectedOptionId ? (
+        /* Option selection page */
         <main className="flex flex-1 flex-col overflow-hidden">
+          {/* Step indicator */}
+          <div className="border-b border-slate-100 bg-white px-8 py-4">
+            <div className="mx-auto flex max-w-3xl items-center gap-3">
+              <div className="flex items-center gap-2">
+                <div className="flex h-6 w-6 items-center justify-center rounded-full bg-slate-900 text-xs font-bold text-white">
+                  1
+                </div>
+                <span className="text-sm font-semibold text-slate-900">미션 선택</span>
+              </div>
+              <div className="h-px flex-1 bg-slate-200" />
+              <div className="flex items-center gap-2">
+                <div className="flex h-6 w-6 items-center justify-center rounded-full border-2 border-slate-200 text-xs font-bold text-slate-300">
+                  2
+                </div>
+                <span className="text-sm text-slate-300">정보 입력</span>
+              </div>
+              <div className="h-px flex-1 bg-slate-200" />
+              <div className="flex items-center gap-2">
+                <div className="flex h-6 w-6 items-center justify-center rounded-full border-2 border-slate-200 text-xs font-bold text-slate-300">
+                  3
+                </div>
+                <span className="text-sm text-slate-300">세션 시작</span>
+              </div>
+            </div>
+          </div>
           <div className="flex-1 overflow-y-auto">
             <div className="mx-auto max-w-3xl px-8 py-8 space-y-6">
               {/* Mission info */}
@@ -5382,8 +5439,316 @@ export default function MainScreenPage() {
                 }}
                 className="w-full rounded-2xl bg-slate-900 py-3.5 text-sm font-semibold text-white transition hover:bg-slate-700"
               >
-                {missionOptions.length > 1 ? "이 옵션으로 시작" : "미션 시작"}{" "}
-                {missionDurationMinutes ? `(${missionDurationMinutes}분)` : ""}
+                다음
+              </button>
+            </div>
+          </div>
+        </main>
+      ) : !isReadOnly && isMissionContextReady && !profileModalConfirmed && profileStep === 2 ? (
+        /* Step 2: Profile input */
+        <main className="flex flex-1 flex-col overflow-hidden">
+          {/* Step indicator */}
+          <div className="border-b border-slate-100 bg-white px-8 py-4">
+            <div className="mx-auto flex max-w-3xl items-center gap-3">
+              <button
+                onClick={() => setSelectedOptionId(null)}
+                className="mr-1 flex shrink-0 items-center gap-1 text-sm text-slate-400 hover:text-slate-700"
+              >
+                <ArrowLeftIcon size={13} />
+                이전
+              </button>
+              <div className="flex items-center gap-2">
+                <div className="flex h-6 w-6 items-center justify-center rounded-full bg-slate-300 text-xs font-bold text-white">
+                  1
+                </div>
+                <span className="text-sm text-slate-400">미션 선택</span>
+              </div>
+              <div className="h-px flex-1 bg-slate-900" />
+              <div className="flex items-center gap-2">
+                <div className="flex h-6 w-6 items-center justify-center rounded-full bg-slate-900 text-xs font-bold text-white">
+                  2
+                </div>
+                <span className="text-sm font-semibold text-slate-900">정보 입력</span>
+              </div>
+              <div className="h-px flex-1 bg-slate-200" />
+              <div className="flex items-center gap-2">
+                <div className="flex h-6 w-6 items-center justify-center rounded-full border-2 border-slate-200 text-xs font-bold text-slate-300">
+                  3
+                </div>
+                <span className="text-sm text-slate-300">세션 시작</span>
+              </div>
+            </div>
+          </div>
+          <div className="flex-1 overflow-y-auto">
+            <div className="mx-auto max-w-3xl space-y-6 px-8 py-8">
+              {/* Mission context */}
+              <div className="rounded-2xl border border-slate-200 bg-white px-6 py-5">
+                <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">
+                  미션
+                </p>
+                <h2 className="mt-2 text-lg font-semibold text-slate-900">
+                  {missionTitle}
+                </h2>
+                {missionBrief && (
+                  <p className="mt-1.5 whitespace-pre-wrap text-sm leading-relaxed text-slate-500">
+                    {missionBrief}
+                  </p>
+                )}
+                {activeOption && missionOptions.length > 1 && (
+                  <div className="mt-4 border-t border-slate-100 pt-4">
+                    <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">
+                      선택한 옵션
+                    </p>
+                    <p className="mt-1.5 font-medium text-slate-800">
+                      {activeOption.title}
+                    </p>
+                    {activeOption.description && (
+                      <p className="mt-1 text-sm leading-relaxed text-slate-500">
+                        {activeOption.description}
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
+              {/* Profile input */}
+              <div className="rounded-2xl border border-slate-200 bg-white px-6 py-5">
+                <p className="font-semibold text-slate-900">
+                  에이전트가 알아야 할 것들
+                </p>
+                <p className="mt-1 text-sm leading-relaxed text-slate-500">
+                  대화를 통해 알아낼 수 없는 것들을 직접 알려주세요. 브랜드
+                  컬러, 타겟 사용자, 프로젝트 제약 조건 등 처음부터 알아야
+                  하는 맥락이 좋습니다.
+                </p>
+                <div className="mt-4 space-y-2">
+                  {profileItems.map((item) => (
+                    <div
+                      key={item.id}
+                      className="flex items-start gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-700"
+                    >
+                      <span className="flex-1 leading-relaxed">
+                        {item.input}
+                      </span>
+                      <button
+                        onClick={() =>
+                          setProfileItems((prev) =>
+                            prev.filter((p) => p.id !== item.id),
+                          )
+                        }
+                        className="mt-0.5 shrink-0 text-slate-300 hover:text-rose-400"
+                      >
+                        <XIcon size={14} />
+                      </button>
+                    </div>
+                  ))}
+                  {profileItems.length === 0 && (
+                    <p className="rounded-xl bg-slate-50 px-3 py-2.5 text-sm text-slate-400">
+                      아직 입력된 정보가 없습니다.
+                    </p>
+                  )}
+                </div>
+                <div className="mt-3 flex gap-2">
+                  <input
+                    type="text"
+                    value={profileInput}
+                    onChange={(e) => setProfileInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && profileInput.trim()) {
+                        e.preventDefault();
+                        setProfileItems((prev) => [
+                          ...prev,
+                          {
+                            id: crypto.randomUUID(),
+                            input: profileInput.trim(),
+                            createdAt: Date.now(),
+                            updatedAt: Date.now(),
+                          },
+                        ]);
+                        setProfileInput("");
+                      }
+                    }}
+                    placeholder="예: 브랜드 컬러는 네이비이고 바꿀 수 없어요"
+                    className="flex-1 rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-700 outline-none focus:border-slate-400 placeholder:text-slate-300"
+                  />
+                  <button
+                    onClick={() => {
+                      if (!profileInput.trim()) return;
+                      setProfileItems((prev) => [
+                        ...prev,
+                        {
+                          id: crypto.randomUUID(),
+                          input: profileInput.trim(),
+                          createdAt: Date.now(),
+                          updatedAt: Date.now(),
+                        },
+                      ]);
+                      setProfileInput("");
+                    }}
+                    disabled={!profileInput.trim()}
+                    className="rounded-xl bg-slate-100 px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-200 disabled:opacity-40"
+                  >
+                    추가
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+          {/* Next button */}
+          <div className="border-t border-slate-200 bg-white px-8 py-4">
+            <div className="mx-auto max-w-3xl">
+              <button
+                onClick={() => {
+                  if (profileInput.trim()) {
+                    setProfileItems((prev) => [
+                      ...prev,
+                      {
+                        id: crypto.randomUUID(),
+                        input: profileInput.trim(),
+                        createdAt: Date.now(),
+                        updatedAt: Date.now(),
+                      },
+                    ]);
+                    setProfileInput("");
+                  }
+                  setProfileStep(3);
+                }}
+                className="w-full rounded-2xl bg-slate-900 py-3.5 text-sm font-semibold text-white transition hover:bg-slate-700"
+              >
+                다음
+              </button>
+            </div>
+          </div>
+        </main>
+      ) : !isReadOnly && isMissionContextReady && !profileModalConfirmed && profileStep === 3 ? (
+        /* Step 3: Review + start */
+        <main className="flex flex-1 flex-col overflow-hidden">
+          {/* Step indicator */}
+          <div className="border-b border-slate-100 bg-white px-8 py-4">
+            <div className="mx-auto flex max-w-3xl items-center gap-3">
+              <button
+                onClick={() => setProfileStep(2)}
+                className="mr-1 flex shrink-0 items-center gap-1 text-sm text-slate-400 hover:text-slate-700"
+              >
+                <ArrowLeftIcon size={13} />
+                이전
+              </button>
+              <div className="flex items-center gap-2">
+                <div className="flex h-6 w-6 items-center justify-center rounded-full bg-slate-300 text-xs font-bold text-white">
+                  1
+                </div>
+                <span className="text-sm text-slate-400">미션 선택</span>
+              </div>
+              <div className="h-px flex-1 bg-slate-900" />
+              <div className="flex items-center gap-2">
+                <div className="flex h-6 w-6 items-center justify-center rounded-full bg-slate-300 text-xs font-bold text-white">
+                  2
+                </div>
+                <span className="text-sm text-slate-400">정보 입력</span>
+              </div>
+              <div className="h-px flex-1 bg-slate-900" />
+              <div className="flex items-center gap-2">
+                <div className="flex h-6 w-6 items-center justify-center rounded-full bg-slate-900 text-xs font-bold text-white">
+                  3
+                </div>
+                <span className="text-sm font-semibold text-slate-900">세션 시작</span>
+              </div>
+            </div>
+          </div>
+          <div className="flex-1 overflow-y-auto">
+            <div className="mx-auto max-w-3xl space-y-6 px-8 py-8">
+              {/* Mission context */}
+              <div className="rounded-2xl border border-slate-200 bg-white px-6 py-5">
+                <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">
+                  미션
+                </p>
+                <h2 className="mt-2 text-lg font-semibold text-slate-900">
+                  {missionTitle}
+                </h2>
+                {missionBrief && (
+                  <p className="mt-1.5 whitespace-pre-wrap text-sm leading-relaxed text-slate-500">
+                    {missionBrief}
+                  </p>
+                )}
+                {activeOption && missionOptions.length > 1 && (
+                  <div className="mt-4 border-t border-slate-100 pt-4">
+                    <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">
+                      선택한 옵션
+                    </p>
+                    <p className="mt-1.5 font-medium text-slate-800">
+                      {activeOption.title}
+                    </p>
+                    {activeOption.description && (
+                      <p className="mt-1 text-sm leading-relaxed text-slate-500">
+                        {activeOption.description}
+                      </p>
+                    )}
+                  </div>
+                )}
+                {missionDurationMinutes && (
+                  <div className="mt-4 border-t border-slate-100 pt-4">
+                    <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">
+                      제한 시간
+                    </p>
+                    <p className="mt-1.5 text-2xl font-bold text-slate-900">
+                      {missionDurationMinutes}분
+                    </p>
+                  </div>
+                )}
+              </div>
+              {/* Profile items review */}
+              <div className="rounded-2xl border border-slate-200 bg-white px-6 py-5">
+                <p className="font-semibold text-slate-900">입력한 정보</p>
+                <div className="mt-3 space-y-2">
+                  {profileItems.length === 0 ? (
+                    <p className="text-sm text-slate-400">입력한 정보가 없습니다.</p>
+                  ) : (
+                    profileItems.map((item) => (
+                      <div
+                        key={item.id}
+                        className="flex items-start gap-2 rounded-xl bg-slate-50 px-3 py-2.5 text-sm text-slate-700"
+                      >
+                        <span className="mt-0.5 shrink-0 text-slate-300">·</span>
+                        <span className="leading-relaxed">{item.input}</span>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+          {/* Session start button */}
+          <div className="border-t border-slate-200 bg-white px-8 py-4">
+            <div className="mx-auto max-w-3xl">
+              <button
+                disabled={profileSaving}
+                onClick={async () => {
+                  const currentUser = firebaseAuth.currentUser;
+                  if (!currentUser || !missionId) return;
+                  setProfileSaving(true);
+                  try {
+                    const token = await getIdToken(currentUser);
+                    await fetch("/api/memory/profile", {
+                      method: "POST",
+                      headers: {
+                        Authorization: `Bearer ${token}`,
+                        "Content-Type": "application/json",
+                      },
+                      body: JSON.stringify({ missionId, items: profileItems }),
+                    });
+                  } catch {
+                    // non-blocking
+                  } finally {
+                    setProfileSaving(false);
+                    setProfileModalConfirmed(true);
+                  }
+                }}
+                className="w-full rounded-2xl bg-slate-900 py-3.5 text-sm font-semibold text-white transition hover:bg-slate-700 disabled:opacity-60"
+              >
+                {profileSaving
+                  ? "저장 중…"
+                  : missionDurationMinutes
+                    ? `세션 시작하기 (${missionDurationMinutes}분)`
+                    : "세션 시작하기"}
               </button>
             </div>
           </div>
@@ -6426,7 +6791,7 @@ export default function MainScreenPage() {
           <aside className="relative flex h-full w-full max-w-md flex-col overflow-hidden border-l border-slate-200 bg-white">
             {/* Tab bar - review mode only */}
             {showReviewAnnotations && (
-              <div className="flex flex-shrink-0 border-b border-slate-200">
+              <div className="flex shrink-0 border-b border-slate-200">
                 <button
                   onClick={() => setRightPanelTab("chat")}
                   className={`flex flex-1 items-center justify-center gap-1.5 py-3 text-sm font-medium transition ${
@@ -6461,7 +6826,7 @@ export default function MainScreenPage() {
               <div className="flex-1 space-y-5 overflow-y-auto p-5">
                 <section>
                   <div className="mb-2.5 flex items-center gap-2">
-                    <div className="h-2 w-2 flex-shrink-0 rounded-full bg-blue-400" />
+                    <div className="h-2 w-2 shrink-0 rounded-full bg-blue-400" />
                     <p className="text-xs font-semibold text-slate-600">
                       세션 중 참고됨
                     </p>
@@ -6477,7 +6842,7 @@ export default function MainScreenPage() {
                 </section>
                 <section>
                   <div className="mb-2.5 flex items-center gap-2">
-                    <div className="h-2 w-2 flex-shrink-0 rounded-full bg-emerald-400" />
+                    <div className="h-2 w-2 shrink-0 rounded-full bg-emerald-400" />
                     <p className="text-xs font-semibold text-slate-600">
                       세션에서 기억됨
                     </p>
@@ -6494,7 +6859,7 @@ export default function MainScreenPage() {
                 {sessionMemorySummary.drafts.length > 0 && (
                   <section>
                     <div className="mb-2.5 flex items-center gap-2">
-                      <div className="h-1.5 w-1.5 flex-shrink-0 rounded-full border-2 border-slate-300" />
+                      <div className="h-1.5 w-1.5 shrink-0 rounded-full border-2 border-slate-300" />
                       <p className="text-xs font-semibold text-slate-400">
                         검토 중인 초안
                       </p>
@@ -6774,7 +7139,7 @@ export default function MainScreenPage() {
                                             </p>
                                             {archiveStatus.duplicate
                                               .memoryId && (
-                                              <p className="break-words text-rose-500">
+                                              <p className="wrap-break-word text-rose-500">
                                                 similarTo{" "}
                                                 {
                                                   archiveStatus.duplicate
@@ -6795,7 +7160,7 @@ export default function MainScreenPage() {
                                         )}
                                         {!archiveStatus?.duplicate &&
                                           archiveStatus?.duplicateOf && (
-                                            <p className="mt-1.5 break-words border-t border-rose-100 pt-1.5 text-rose-500">
+                                            <p className="mt-1.5 wrap-break-word border-t border-rose-100 pt-1.5 text-rose-500">
                                               duplicateOf{" "}
                                               {archiveStatus.duplicateOf}
                                             </p>

@@ -590,33 +590,26 @@ archiveReason = "low-weight" | "duplicate" | "manual"
   - markdown re-render 비용
 
 ### 12.6 5단계: 온보딩/직접 입력 메모리 설계
-- [ ] 모든 세션 시작 시 "나에 대해 알았으면 하는 정보" 입력 UI 추가
-- [ ] UI 방식 결정
-  - 세션 시작 modal
-  - lobby profile panel
-  - mission 시작 전 collapsible panel
-  - chat 첫 메시지 전 inline prompt
-- [ ] 직접 입력 메모리 타입 정의
-```typescript
-{
-  type: "profile_input",
-  source: { kind: "user_profile" },
-  editable: true,
-  input: string,
-  semantic: string | null,
-  weight: number,
-  updatedAt: number
-}
-```
-- [ ] interaction 학습 메모리와 직접 입력 메모리 구분 처리
-- [ ] 이전 세션 입력 내용을 불러와 수정하는 upsert 방식 구현
-- [ ] revision log 또는 supersedes 정책 결정
-- [ ] 직접 입력값 retrieval 활용 방식 설계
+- [x] 모든 세션 시작 시 "나에 대해 알았으면 하는 정보" 입력 UI 추가
+- [x] UI 방식 결정 → **세션 시작 modal** 채택
+- [x] 직접 입력 메모리 타입 정의
+- [x] interaction 학습 메모리와 직접 입력 메모리 구분 처리 (`type: "profile_input"`)
+- [x] 이전 세션 입력 내용을 불러와 수정하는 upsert 방식 구현
+- [x] 직접 입력값 retrieval 활용 방식 설계
+- [ ] revision log 또는 supersedes 정책 결정 (현재는 덮어쓰기)
 
-#### 추가로 결정 필요
-- 입력을 매 세션 필수로 받을지, 선택으로 둘지
-- 직접 입력 메모리를 일반 memory와 같은 collection에 둘지, 별도 profile memory collection에 둘지
-- profile memory의 weight 기본값과 retrieval 우선순위
+#### 결정 사항
+- **UI**: 세션 시작 modal. `isMissionContextReady` 직후 표시, "세션 시작하기" 버튼 전까지 채팅 블로킹.
+- **컬렉션**: `users/{uid}/profile_memories/{missionId}` 별도 문서, `items[]` 배열로 관리.
+- **필수/선택**: 매 세션 필수(건너뛰기 없음). 항목이 0개여도 "세션 시작하기" 클릭으로 진행 가능.
+- **미션별**: missionId를 문서 ID로 사용하므로 미션마다 독립적인 profile 데이터.
+- **weight**: 0.9 고정, retrieval 결과 최상단에 항상 주입 (similarity 계산 없이 포함).
+
+구현 메모:
+- `GET /api/memory/profile?missionId=...` — 해당 미션의 profile items 조회
+- `POST /api/memory/profile` — items 배열을 upsert (전체 교체)
+- `POST /api/memory/retrieve` — profile items를 `type: "profile_input"`으로 retrieved 앞에 prepend
+- modal: 기존 items pre-fill, 항목 추가(Enter/버튼)/삭제(X), "세션 시작하기" 클릭 시 저장 후 `profileModalConfirmed = true`
 
 ### 12.7 6단계: 직접 입력 메모리 retrieval 정책
 - [ ] retrieval quota 정책 결정

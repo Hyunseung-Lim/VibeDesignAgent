@@ -310,6 +310,32 @@ async function updateRetrievedWeights(retrieved: Candidate[], token: string, now
   return deltas;
 }
 
+async function loadProfileItems(
+  uid: string,
+  missionId: string,
+  token: string,
+): Promise<Array<{ id: string; input: string }>> {
+  if (!missionId) return [];
+  try {
+    const doc = (await getFirestoreDocument(
+      `users/${uid}/profile_memories/${encodeURIComponent(missionId)}`,
+      token,
+    )) as Record<string, unknown> | null;
+    if (!doc || !Array.isArray(doc.items)) return [];
+    return doc.items
+      .filter(
+        (item): item is { id: string; input: string } =>
+          item &&
+          typeof item === "object" &&
+          typeof item.input === "string" &&
+          item.input.trim(),
+      )
+      .map((item) => ({ id: String(item.id), input: item.input.trim() }));
+  } catch {
+    return [];
+  }
+}
+
 export async function POST(request: Request) {
   const user = await verifyFirebaseIdToken(request);
   if (!user) return Response.json({ error: "unauthorized" }, { status: 401 });
@@ -331,11 +357,19 @@ export async function POST(request: Request) {
   }
 
   let retrieved: Candidate[] = [];
+  let profileItems: Array<{ id: string; input: string }> = [];
   try {
     const token = await getFirebaseAccessToken();
     const now = Date.now();
     const [queryEmbedding] = await embedTexts([query]);
-    const candidates = (await loadCandidates(user.localId, token))
+
+    const [candidates, loadedProfileItems] = await Promise.all([
+      loadCandidates(user.localId, token),
+      loadProfileItems(user.localId, missionId, token),
+    ]);
+    profileItems = loadedProfileItems;
+
+    const ranked = candidates
       .map((candidate) => ({
         ...candidate,
         similarity:
@@ -346,7 +380,7 @@ export async function POST(request: Request) {
       .filter((candidate) => Number.isFinite(candidate.similarity))
       .sort((a, b) => b.similarity - a.similarity);
 
-    retrieved = candidates.slice(0, limit);
+    retrieved = ranked.slice(0, limit);
     const scoreDeltas = await updateRetrievedWeights(retrieved, token, now);
 
     await patchFirestoreDocument(
@@ -362,6 +396,7 @@ export async function POST(request: Request) {
         similarities: retrieved.map((candidate) =>
           Number(candidate.similarity.toFixed(4)),
         ),
+        profileItemCount: profileItems.length,
         scoreDeltas,
         createdAt: now,
       },
@@ -372,29 +407,55 @@ export async function POST(request: Request) {
     return Response.json({ query, retrieved: [], unavailable: true });
   }
 
+  const profileResults = profileItems.map((item) => ({
+    id: `profile:${item.id}`,
+    memoryId: `profile:${item.id}`,
+    semanticItemId: null,
+    type: "profile_input",
+    action: "user_profile",
+    keyword: [],
+    episodic: item.input,
+    episode: item.input,
+    semantic: null,
+    input: item.input,
+    output: "",
+    link: null,
+    embeddingSource: "input",
+    source: { kind: "user_profile", missionId },
+    timestamp: null,
+    schemaVersion: "profile",
+    similarity: 1,
+    weight: 0.9,
+    weightDelta: 0,
+    retrievedCount: 0,
+  }));
+
   return Response.json({
     query,
-    retrieved: retrieved.map((candidate) => ({
-      id: candidate.id,
-      memoryId: candidate.memoryId,
-      semanticItemId: candidate.semanticItemId,
-      type: "memory",
-      action: candidate.action,
-      keyword: candidate.keyword,
-      episodic: candidate.episodic,
-      episode: candidate.episodic,
-      semantic: candidate.semantic,
-      input: candidate.input,
-      output: candidate.output,
-      link: candidate.link,
-      embeddingSource: candidate.embeddingSource,
-      source: candidate.source,
-      timestamp: candidate.timestamp,
-      schemaVersion: candidate.schemaVersion,
-      similarity: Number(candidate.similarity.toFixed(4)),
-      weight: candidate.weight,
-      weightDelta: candidate.weightDelta ?? 0,
-      retrievedCount: candidate.retrievedCount,
-    })),
+    retrieved: [
+      ...profileResults,
+      ...retrieved.map((candidate) => ({
+        id: candidate.id,
+        memoryId: candidate.memoryId,
+        semanticItemId: candidate.semanticItemId,
+        type: "memory",
+        action: candidate.action,
+        keyword: candidate.keyword,
+        episodic: candidate.episodic,
+        episode: candidate.episodic,
+        semantic: candidate.semantic,
+        input: candidate.input,
+        output: candidate.output,
+        link: candidate.link,
+        embeddingSource: candidate.embeddingSource,
+        source: candidate.source,
+        timestamp: candidate.timestamp,
+        schemaVersion: candidate.schemaVersion,
+        similarity: Number(candidate.similarity.toFixed(4)),
+        weight: candidate.weight,
+        weightDelta: candidate.weightDelta ?? 0,
+        retrievedCount: candidate.retrievedCount,
+      })),
+    ],
   });
 }
