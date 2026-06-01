@@ -25,6 +25,7 @@ import {
   ArrowSquareOutIcon,
   ArrowsOutIcon,
   ArrowsInIcon,
+  BrainIcon,
   CaretUpIcon,
   CaretDownIcon,
   DeviceMobileIcon,
@@ -1893,10 +1894,11 @@ export default function MainScreenPage() {
     rawResponseMeta?: unknown;
   } | null>(null);
   const [reviewDetailModal, setReviewDetailModal] = useState<{
-    mode: "memory" | "prompt";
+    mode: "memory" | "turn-memory";
     turnId: string;
     reviewTurn: ReviewTurn;
     memories: ReviewTurnMemory[];
+    turnDraft?: SessionMemoryItem | null;
   } | null>(null);
   const [reviewMemoryArchiveById, setReviewMemoryArchiveById] = useState<
     Record<string, ReviewMemoryArchiveStatus>
@@ -4588,12 +4590,12 @@ export default function MainScreenPage() {
                   {memorySummaryText(item)}
                 </p>
                 <div className="mt-1 space-y-0.5">
-                  {kind === "retrieved" &&
+                  {isViewingAsAdmin && kind === "retrieved" &&
                     renderMemoryScoreBar(similarity, "bg-blue-300")}
-                  {kind === "promoted" &&
+                  {isViewingAsAdmin && kind === "promoted" &&
                     !isArchived &&
                     renderMemoryScoreBar(weight, "bg-emerald-400")}
-                  {kind === "promoted" &&
+                  {isViewingAsAdmin && kind === "promoted" &&
                     !isArchived &&
                     weightDelta != null &&
                     weightDelta !== 0 && (
@@ -4610,7 +4612,7 @@ export default function MainScreenPage() {
                   {isArchived && (
                     <p className="text-[10px] text-rose-400">
                       {archiveStatus?.archiveReason ?? "보관됨"}
-                      {archiveStatus?.duplicate?.similarity != null &&
+                      {isViewingAsAdmin && archiveStatus?.duplicate?.similarity != null &&
                         ` · 유사도 ${formatReviewScore(archiveStatus.duplicate.similarity)}`}
                     </p>
                   )}
@@ -4732,255 +4734,6 @@ export default function MainScreenPage() {
                   </section>
                 )}
               </div>
-            </div>
-          </div>
-        </div>
-      )}
-      {reviewDetailModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 px-4 backdrop-blur-sm">
-          <div className="flex max-h-[86vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl shadow-slate-900/25">
-            <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4">
-              <div>
-                <p className="text-sm font-semibold text-slate-900">
-                  {reviewDetailModal.mode === "memory"
-                    ? "참고한 메모리"
-                    : "프롬프트 컨텍스트"}
-                </p>
-                <p className="mt-0.5 text-xs text-slate-400">
-                  turn {reviewDetailModal.turnId}
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setReviewDetailModal(null)}
-                className="rounded-full p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
-                aria-label="리뷰 상세 닫기"
-              >
-                <XIcon size={16} />
-              </button>
-            </div>
-            <div className="min-h-0 flex-1 overflow-y-auto p-5">
-              {reviewDetailModal.mode === "memory" ? (
-                <div className="space-y-2">
-                  {reviewDetailModal.memories.length === 0 ? (
-                    <p className="rounded-xl bg-slate-50 px-3 py-2 text-sm text-slate-400">
-                      참고한 메모리가 없습니다.
-                    </p>
-                  ) : (
-                    reviewDetailModal.memories.map((memory) => {
-                      const archiveStatus =
-                        reviewMemoryArchiveById[memory.memoryId];
-                      const isArchived = Boolean(archiveStatus?.archivedAt);
-                      const memoryFields = [
-                        { label: "Semantic", value: memory.semantic },
-                        { label: "Episodic", value: memory.episodic },
-                        { label: "Input", value: memory.input },
-                        { label: "Output", value: memory.output },
-                        { label: "Action", value: memory.action },
-                        {
-                          label: "Keyword",
-                          value:
-                            Array.isArray(memory.keyword) &&
-                            memory.keyword.length > 0
-                              ? memory.keyword.join(", ")
-                              : "",
-                        },
-                        { label: "Link", value: memory.link },
-                      ].filter(
-                        (field) =>
-                          typeof field.value === "string" &&
-                          field.value.trim(),
-                      ) as Array<{ label: string; value: string }>;
-                      return (
-                        <div
-                          key={memory.memoryId}
-                          className="rounded-xl border border-slate-200 bg-white px-4 py-3"
-                        >
-                          <div className="flex items-start justify-between gap-3">
-                            <div className="min-w-0 flex-1 space-y-2">
-                              {memoryFields.length === 0 ? (
-                                <p className="text-sm text-slate-400">
-                                  내용 없는 메모리
-                                </p>
-                              ) : (
-                                memoryFields.map((field) => (
-                                  <div
-                                    key={field.label}
-                                    className="rounded-lg bg-slate-50 px-3 py-2"
-                                  >
-                                    <p className="text-[10px] font-bold uppercase text-slate-400">
-                                      {field.label}
-                                    </p>
-                                    <p className="mt-1 whitespace-pre-wrap wrap-break-word text-sm leading-relaxed text-slate-700">
-                                      {field.value}
-                                    </p>
-                                  </div>
-                                ))
-                              )}
-                            </div>
-                            {isArchived && (
-                              <span className="shrink-0 rounded-full bg-rose-50 px-2 py-0.5 text-[10px] font-semibold text-rose-500">
-                                archived
-                              </span>
-                            )}
-                          </div>
-                          <div className="mt-2 flex flex-wrap gap-2 text-xs font-semibold text-slate-400">
-                            <span>weight {formatReviewScore(memory.weight)}</span>
-                            {memory.weightDelta != null && (
-                              <span className="text-emerald-500">
-                                delta {formatReviewDelta(memory.weightDelta)}
-                              </span>
-                            )}
-                            <span>
-                              similarity {formatReviewScore(memory.similarity)}
-                            </span>
-                            {memory.source?.missionId && (
-                              <span>source {memory.source.missionId}</span>
-                            )}
-                            {memory.embeddingSource && (
-                              <span>embedding {memory.embeddingSource}</span>
-                            )}
-                            {memory.schemaVersion && (
-                              <span>schema {memory.schemaVersion}</span>
-                            )}
-                          </div>
-                          {isArchived && (
-                            <div className="mt-3 rounded-lg border border-rose-100 bg-rose-50 px-3 py-2 text-xs leading-relaxed text-rose-700">
-                              <div className="flex flex-wrap gap-x-2 gap-y-1 font-semibold">
-                                <span>
-                                  reason{" "}
-                                  {archiveStatus?.archiveReason ?? "archived"}
-                                </span>
-                                <span>
-                                  archivedAt{" "}
-                                  {formatReviewDate(
-                                    archiveStatus?.archivedAt,
-                                  )}
-                                </span>
-                              </div>
-                              {archiveStatus?.duplicate && (
-                                <div className="mt-2 space-y-1 border-t border-rose-100 pt-2">
-                                  <p className="font-semibold">
-                                    duplicate 근거:{" "}
-                                    {formatReviewScore(
-                                      archiveStatus.duplicate.similarity,
-                                    )}{" "}
-                                    similarity
-                                  </p>
-                                  {archiveStatus.duplicate.memoryId && (
-                                    <p className="wrap-break-word text-rose-500">
-                                      similarTo{" "}
-                                      {archiveStatus.duplicate.memoryId}
-                                    </p>
-                                  )}
-                                  {archiveStatus.duplicate.semantic && (
-                                    <p className="whitespace-pre-wrap">
-                                      {archiveStatus.duplicate.semantic}
-                                    </p>
-                                  )}
-                                </div>
-                              )}
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })
-                  )}
-                </div>
-              ) : (
-                <div className="space-y-4 text-sm text-slate-700">
-                  {reviewDetailModal.reviewTurn.query && (
-                    <section>
-                      <p className="mb-1 text-xs font-semibold uppercase text-slate-400">
-                        검색 질의
-                      </p>
-                      <p className="whitespace-pre-wrap rounded-xl bg-slate-50 px-3 py-2 leading-relaxed">
-                        {reviewDetailModal.reviewTurn.query}
-                      </p>
-                    </section>
-                  )}
-                  {reviewDetailModal.reviewTurn.promptCompact?.missionBrief && (
-                    <section>
-                      <p className="mb-1 text-xs font-semibold uppercase text-slate-400">
-                        미션 설명
-                      </p>
-                      <p className="whitespace-pre-wrap rounded-xl bg-slate-50 px-3 py-2 leading-relaxed">
-                        {
-                          reviewDetailModal.reviewTurn.promptCompact
-                            .missionBrief
-                        }
-                      </p>
-                    </section>
-                  )}
-                  {reviewDetailModal.reviewTurn.promptCompact?.activeIdea && (
-                    <section>
-                      <p className="mb-1 text-xs font-semibold uppercase text-slate-400">
-                        활성 아이디어
-                      </p>
-                      <div className="rounded-xl bg-slate-50 px-3 py-2">
-                        {reviewDetailModal.reviewTurn.promptCompact.activeIdea
-                          .title && (
-                          <p className="font-semibold text-slate-900">
-                            {
-                              reviewDetailModal.reviewTurn.promptCompact
-                                .activeIdea.title
-                            }
-                          </p>
-                        )}
-                        {reviewDetailModal.reviewTurn.promptCompact.activeIdea
-                          .description && (
-                          <p className="mt-1 whitespace-pre-wrap leading-relaxed">
-                            {
-                              reviewDetailModal.reviewTurn.promptCompact
-                                .activeIdea.description
-                            }
-                          </p>
-                        )}
-                      </div>
-                    </section>
-                  )}
-                  {(reviewDetailModal.reviewTurn.promptCompact?.citedTexts
-                    ?.length ?? 0) > 0 && (
-                    <section>
-                      <p className="mb-1 text-xs font-semibold uppercase text-slate-400">
-                        인용 텍스트
-                      </p>
-                      <div className="space-y-1">
-                        {reviewDetailModal.reviewTurn.promptCompact?.citedTexts?.map(
-                          (text, index) => (
-                            <p
-                              key={`modal-cited-text-${index}`}
-                              className="whitespace-pre-wrap rounded-xl bg-slate-50 px-3 py-2 leading-relaxed"
-                            >
-                              {text}
-                            </p>
-                          ),
-                        )}
-                      </div>
-                    </section>
-                  )}
-                  {(reviewDetailModal.reviewTurn.promptCompact?.citedReferences
-                    ?.length ?? 0) > 0 && (
-                    <section>
-                      <p className="mb-1 text-xs font-semibold uppercase text-slate-400">
-                        인용 레퍼런스
-                      </p>
-                      <div className="flex flex-wrap gap-1">
-                        {reviewDetailModal.reviewTurn.promptCompact?.citedReferences?.map(
-                          (reference, index) => (
-                            <span
-                              key={`modal-cited-reference-${index}`}
-                              className="max-w-full truncate rounded-full bg-slate-50 px-2 py-0.5 text-xs font-semibold text-slate-500"
-                            >
-                              {reviewReferenceLabel(reference)}
-                            </span>
-                          ),
-                        )}
-                      </div>
-                    </section>
-                  )}
-                </div>
-              )}
             </div>
           </div>
         </div>
@@ -6631,7 +6384,7 @@ export default function MainScreenPage() {
                                     로딩 중...
                                   </div>
                                 )}
-                                <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/40 to-transparent px-2 py-1.5">
+                                <div className="absolute bottom-0 left-0 right-0 bg-linear-to-t from-black/40 to-transparent px-2 py-1.5">
                                   <p className="truncate text-left text-xs text-white">
                                     {board.label}
                                   </p>
@@ -6654,6 +6407,168 @@ export default function MainScreenPage() {
               )}
             </div>
           </section>
+
+          {/* Memory detail side panel */}
+          {reviewDetailModal?.mode === "memory" && (
+            <div className="flex w-72 shrink-0 flex-col overflow-hidden border-l border-slate-200 bg-white">
+              <div className="flex shrink-0 items-center justify-between border-b border-slate-200 px-4 py-3">
+                <div>
+                  <p className="text-sm font-semibold text-slate-900">
+                    참고한 메모리
+                  </p>
+                  <p className="text-xs text-slate-400">
+                    turn {reviewDetailModal.turnId}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setReviewDetailModal(null)}
+                  className="rounded-full p-1.5 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
+                  aria-label="메모리 상세 닫기"
+                >
+                  <XIcon size={14} />
+                </button>
+              </div>
+              <div className="flex-1 space-y-2 overflow-y-auto p-4">
+                {reviewDetailModal.memories.length === 0 ? (
+                  <p className="rounded-xl bg-slate-50 px-3 py-2 text-sm text-slate-400">
+                    참고한 메모리가 없습니다.
+                  </p>
+                ) : (
+                  reviewDetailModal.memories.map((memory) => {
+                    const archiveStatus =
+                      reviewMemoryArchiveById[memory.memoryId];
+                    const isArchived = Boolean(archiveStatus?.archivedAt);
+                    const memoryFields = [
+                      { label: "Semantic", value: memory.semantic },
+                      { label: "Episodic", value: memory.episodic },
+                      { label: "Input", value: memory.input },
+                      { label: "Output", value: memory.output },
+                      { label: "Action", value: memory.action },
+                      {
+                        label: "Keyword",
+                        value:
+                          Array.isArray(memory.keyword) &&
+                          memory.keyword.length > 0
+                            ? memory.keyword.join(", ")
+                            : "",
+                      },
+                      { label: "Link", value: memory.link },
+                    ].filter(
+                      (field) =>
+                        typeof field.value === "string" && field.value.trim(),
+                    ) as Array<{ label: string; value: string }>;
+                    return (
+                      <div
+                        key={memory.memoryId}
+                        className="rounded-xl border border-slate-200 bg-white px-3 py-2.5"
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="min-w-0 flex-1 space-y-1.5">
+                            {memoryFields.length === 0 ? (
+                              <p className="text-xs text-slate-400">
+                                내용 없는 메모리
+                              </p>
+                            ) : (
+                              memoryFields.map((field) => (
+                                <div
+                                  key={field.label}
+                                  className="rounded-lg bg-slate-50 px-2.5 py-1.5"
+                                >
+                                  <p className="text-[10px] font-bold uppercase text-slate-400">
+                                    {field.label}
+                                  </p>
+                                  <p className="mt-0.5 whitespace-pre-wrap wrap-break-word text-xs leading-relaxed text-slate-700">
+                                    {field.value}
+                                  </p>
+                                </div>
+                              ))
+                            )}
+                          </div>
+                          {isArchived && (
+                            <span className="shrink-0 rounded-full bg-rose-50 px-1.5 py-0.5 text-[10px] font-semibold text-rose-500">
+                              archived
+                            </span>
+                          )}
+                        </div>
+                        <div className="mt-1.5 flex flex-wrap gap-1.5 text-[10px] font-semibold text-slate-400">
+                          <span>weight {formatReviewScore(memory.weight)}</span>
+                          {memory.weightDelta != null && (
+                            <span className="text-emerald-500">
+                              delta {formatReviewDelta(memory.weightDelta)}
+                            </span>
+                          )}
+                          <span>
+                            sim {formatReviewScore(memory.similarity)}
+                          </span>
+                        </div>
+                        {isArchived && archiveStatus && (
+                          <div className="mt-2 rounded-lg border border-rose-100 bg-rose-50 px-2.5 py-1.5 text-[10px] leading-relaxed text-rose-700">
+                            <span className="font-semibold">
+                              {archiveStatus.archiveReason ?? "archived"}
+                            </span>
+                            {archiveStatus.duplicate && (
+                              <p className="mt-1 wrap-break-word text-rose-500">
+                                similarTo {archiveStatus.duplicate.memoryId}
+                              </p>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Turn memory side panel */}
+          {reviewDetailModal?.mode === "turn-memory" && reviewDetailModal.turnDraft && (
+            <div className="flex w-72 shrink-0 flex-col overflow-hidden border-l border-slate-200 bg-white">
+              <div className="flex shrink-0 items-center justify-between border-b border-slate-200 px-4 py-3">
+                <div className="flex items-center gap-2">
+                  <BrainIcon size={14} className="shrink-0 text-violet-500" />
+                  <div>
+                    <p className="text-sm font-semibold text-slate-900">
+                      생성된 기억
+                    </p>
+                    <p className="text-xs text-slate-400">
+                      turn {reviewDetailModal.turnId.slice(0, 8)}
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setReviewDetailModal(null)}
+                  className="rounded-full p-1.5 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
+                >
+                  <XIcon size={14} />
+                </button>
+              </div>
+              <div className="flex-1 space-y-3 overflow-y-auto p-4">
+                {reviewDetailModal.turnDraft.episodic && (
+                  <div className="rounded-xl bg-slate-50 px-3 py-2.5">
+                    <p className="mb-1 text-[10px] font-bold uppercase text-slate-400">
+                      Episodic
+                    </p>
+                    <p className="text-xs leading-relaxed text-slate-700 whitespace-pre-wrap">
+                      {reviewDetailModal.turnDraft.episodic}
+                    </p>
+                  </div>
+                )}
+                {reviewDetailModal.turnDraft.semantic && (
+                  <div className="rounded-xl bg-violet-50 px-3 py-2.5">
+                    <p className="mb-1 text-[10px] font-bold uppercase text-violet-400">
+                      Semantic
+                    </p>
+                    <p className="text-xs leading-relaxed text-slate-700 whitespace-pre-wrap">
+                      {reviewDetailModal.turnDraft.semantic}
+                    </p>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
 
           {/* Right panel: agent chat */}
           <aside className="relative flex h-full w-full max-w-md flex-col overflow-hidden border-l border-slate-200 bg-white">
@@ -6722,22 +6637,24 @@ export default function MainScreenPage() {
                     </div>
                   )}
                 </section>
-                <section>
-                  <div className="mb-2.5 flex items-center gap-2">
-                    <div className="h-2 w-2 shrink-0 rounded-full bg-blue-400" />
-                    <p className="text-xs font-semibold text-slate-600">
-                      세션 중 참고됨
-                    </p>
-                    <span className="text-[11px] text-slate-300">
-                      {usedReviewMemories.length}
-                    </span>
-                  </div>
-                  {renderTimelineItems(
-                    usedReviewMemories,
-                    "retrieved",
-                    "이 세션에서 참고한 기억이 없습니다.",
-                  )}
-                </section>
+                {isViewingAsAdmin && (
+                  <section>
+                    <div className="mb-2.5 flex items-center gap-2">
+                      <div className="h-2 w-2 shrink-0 rounded-full bg-blue-400" />
+                      <p className="text-xs font-semibold text-slate-600">
+                        세션 중 참고됨
+                      </p>
+                      <span className="text-[11px] text-slate-300">
+                        {usedReviewMemories.length}
+                      </span>
+                    </div>
+                    {renderTimelineItems(
+                      usedReviewMemories,
+                      "retrieved",
+                      "이 세션에서 참고한 기억이 없습니다.",
+                    )}
+                  </section>
+                )}
                 <section>
                   <div className="mb-2.5 flex items-center gap-2">
                     <div className="h-2 w-2 shrink-0 rounded-full bg-emerald-400" />
@@ -6814,15 +6731,12 @@ export default function MainScreenPage() {
                     ? reviewTurnsById[msg.reviewTurnId ?? msg.id]
                     : null;
                 const retrievedReviewMemories = reviewTurn?.retrieved ?? [];
-                const promptCompact = reviewTurn?.promptCompact;
-                const hasPromptContext = Boolean(
-                  reviewTurn?.query ||
-                  promptCompact?.missionBrief ||
-                  promptCompact?.activeIdea ||
-                  (promptCompact?.citedTexts?.length ?? 0) > 0 ||
-                  (promptCompact?.citedReferences?.length ?? 0) > 0,
-                );
                 const reviewTurnId = msg.reviewTurnId ?? msg.id;
+                const turnMemoryDraft = showReviewAnnotations && msg.role === "assistant"
+                  ? sessionMemorySummary.drafts.find((d) => d.id === reviewTurnId) ??
+                    sessionMemorySummary.promoted.find((d) => d.id === reviewTurnId)
+                  : null;
+                const isTurnSelected = reviewDetailModal?.mode === "turn-memory" && reviewDetailModal.turnId === reviewTurnId;
                 return (
                   <div
                     key={msg.id}
@@ -6832,7 +6746,9 @@ export default function MainScreenPage() {
                       className={`min-w-0 max-w-[85%] overflow-hidden rounded-2xl px-4 py-3 text-sm leading-relaxed ${
                         msg.role === "user"
                           ? "bg-slate-900 text-white"
-                          : "border border-slate-100 bg-slate-50 text-slate-700"
+                          : isTurnSelected
+                            ? "border border-violet-200 bg-violet-50 text-slate-700"
+                            : "border border-slate-100 bg-slate-50 text-slate-700"
                       }`}
                     >
                       {msg.role === "user" ? (
@@ -6953,43 +6869,54 @@ export default function MainScreenPage() {
                         </span>
                       )}
                       {msg.role === "assistant" &&
-                        (retrievedReviewMemories.length > 0 ||
-                          hasPromptContext) && (
+                        isViewingAsAdmin &&
+                        retrievedReviewMemories.length > 0 &&
+                        reviewTurn && (
                           <div className="mt-3 flex flex-wrap gap-2 border-t border-slate-200 pt-3">
-                            {retrievedReviewMemories.length > 0 &&
-                              reviewTurn && (
-                                <button
-                                  type="button"
-                                  onClick={() =>
-                                    setReviewDetailModal({
-                                      mode: "memory",
-                                      turnId: reviewTurnId,
-                                      reviewTurn,
-                                      memories: retrievedReviewMemories,
-                                    })
-                                  }
-                                  className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-500 transition hover:border-slate-300 hover:text-slate-800"
-                                >
-                                  참고 메모리 {retrievedReviewMemories.length}개
-                                </button>
-                              )}
-                            {hasPromptContext && reviewTurn && (
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  setReviewDetailModal({
-                                    mode: "prompt",
-                                    turnId: reviewTurnId,
-                                    reviewTurn,
-                                    memories: retrievedReviewMemories,
-                                  })
-                                }
-                                className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-500 transition hover:border-slate-300 hover:text-slate-800"
-                              >
-                                프롬프트 컨텍스트
-                              </button>
-                            )}
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setReviewDetailModal({
+                                  mode: "memory",
+                                  turnId: reviewTurnId,
+                                  reviewTurn,
+                                  memories: retrievedReviewMemories,
+                                })
+                              }
+                              className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-500 transition hover:border-slate-300 hover:text-slate-800"
+                            >
+                              참고 메모리 {retrievedReviewMemories.length}개
+                            </button>
                           </div>
+                        )}
+                      {msg.role === "assistant" &&
+                        turnMemoryDraft &&
+                        (turnMemoryDraft.episodic || turnMemoryDraft.semantic) && (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setReviewDetailModal(
+                                isTurnSelected
+                                  ? null
+                                  : {
+                                      mode: "turn-memory",
+                                      turnId: reviewTurnId,
+                                      reviewTurn: reviewTurn ?? ({} as ReviewTurn),
+                                      memories: [],
+                                      turnDraft: turnMemoryDraft,
+                                    },
+                              )
+                            }
+                            className={`mt-2 flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium transition ${
+                              isTurnSelected
+                                ? "border-violet-300 bg-violet-100 text-violet-600"
+                                : "border-slate-200 text-slate-400 hover:border-slate-300 hover:bg-slate-100 hover:text-slate-600"
+                            }`}
+                            title="이 인터랙션에서 생성된 기억"
+                          >
+                            <BrainIcon size={12} />
+                            기억 보기
+                          </button>
                         )}
                       {msg.role === "assistant" &&
                         isViewingAsAdmin &&
