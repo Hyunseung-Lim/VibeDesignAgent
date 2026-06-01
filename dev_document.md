@@ -698,3 +698,86 @@ archiveReason = "low-weight" | "duplicate" | "manual"
 6. 직접 입력 메모리 retrieval 정책
 7. admin table view 제거
 8. 메모리 컴포넌트 모듈화와 전체 UI 개선
+
+---
+
+## 14. 0604 14:00 실행 계획
+
+이 섹션은 0604 논의 기준의 최신 작업 큐다. 우선순위는 **사용자에게 바로 깨져 보이는 디버깅 → 메모리 뷰 정보 구조 정리 → 메모리 시스템 정책 → 프롬프트/에이전트 구조 → 어드민/컴포넌트 정리 → 데이터 생성/배포** 순서로 둔다.
+
+### 14.1 디버깅
+- [x] 레퍼런스 추천 시 assistant chat bubble에 선택 이유와 간략 설명 포함
+  - 현재 문제: 레퍼런스 섹션에는 카드만 추가되고, assistant 답변 안에는 각 레퍼런스를 왜 가져왔는지/어떤 레퍼런스인지 설명이 없음
+  - 목표: `[FETCH_REFERENCES: ...]` 이후 검색된 레퍼런스 카드와 함께, chat bubble에도 "왜 이 레퍼런스가 도움이 되는지"를 짧게 설명
+  - 확인 대상: references API가 반환하는 title/url/snippet/description/rationale 필드, client가 references fetch 완료 후 assistant message를 보강하는 흐름
+  - 구현: references fetch가 새로 추가된 reference 목록을 반환하고, assistant message 말미에 `레퍼런스 선택 이유` 섹션을 자동 추가
+  - 구현: chat bubble chip은 실제 검색 완료가 아니라 query/action 생성 완료를 뜻하므로 `레퍼런스 검색 요청됨`으로 표시
+- [x] 첫 목업 생성 로딩 화면을 2번째 생성과 동일하게 통일
+  - 목표: 첫 생성도 캔버스를 먼저 보여주고, 생성 위치/상태를 같은 방식으로 표시
+  - 구현: 생성 시작 시 mockup 탭으로 전환하고, artboard가 아직 없어도 pending skeleton이 있으면 캔버스를 렌더링
+- [x] 프레젠테이션 이미지 Storage 저장 폴백 제거
+  - 목표: Storage 저장 실패 시 폴백 이미지를 자동 선택하지 않고, 마지막으로 선택한 디자인만 사용자가 표시하게 변경
+  - 구현: presentation API는 Storage URL이 만들어진 경우에만 imageUrl을 반환하고, client의 base64/data URL 임시 표시 및 재업로드 폴백 제거
+
+### 14.2 메모리 뷰 개선
+- [ ] 사용자 뷰를 "뭐가 저장됐는지" 중심으로 재구성
+  - 중심 정보: episodic/semantic 저장 내용, 직접 입력 profile memory, 세션에서 새로 기억된 항목
+  - retrieval/debug 정보는 사용자 기본 뷰에서 낮은 우선순위로 이동
+- [ ] retrieval 상세는 어드민 뷰에서만 표시
+  - 대상: similarity, query, prompt/raw prompt, retrieval log 중심 정보
+- [ ] 메모리 상세를 modal/blur가 아닌 오른쪽 패널 왼쪽에 붙는 패널 방식으로 변경
+  - 목표: 채팅/메모리 흐름을 가리지 않고 옆에서 비교 가능하게 만들기
+- [ ] 세션 전후 메모리 변화를 node view로 보여줄지 범위 결정
+  - 표현 목표: "이전엔 이랬는데 이 세션 이후엔 이렇게 됐다"
+  - 백엔드 고려: 이 세션 이전 weight snapshot을 저장할지, reviewTurn의 `weightDelta`와 promoted/archived 기록만으로 표시할지 결정
+  - 1차 제안: 전체 snapshot 저장은 보류하고, 세션에서 실제로 referenced/promoted/archived된 memory만 diff 대상으로 제한
+
+### 14.3 메모리 시스템
+- [ ] 메모리 전체 크기를 weight decay 계산에 반영
+  - 목표: memory 수가 많을수록 near-miss decay 폭을 아주 조금 증가시켜 전체 memory 크기가 무한히 커지지 않게 함
+  - 현재 기준: near miss는 rank 6~20, similarity `>= 0.55`, `weight - 0.005`, floor `0.1`
+  - 설계 필요: memory count별 decay multiplier와 최대 decay 상한
+
+### 14.4 프롬프트 최적화
+- [ ] 프롬프트 2중 구조 설계
+  - 1단계: user input 위주 instruction으로 다음 행동/필요 context 판단
+  - 2단계: 결정된 행동에 필요한 context만 주입해 실제 응답 생성
+  - 방향: plan agent 방식. 불필요한 mission/mockup/memory context를 매번 전부 넣지 않도록 줄임
+- [ ] 에이전트가 필요한 참조 대상을 스스로 select하도록 설계
+  - 후보: memory, cited references, selected element, active idea, mockup HTML, design spec
+  - 우선은 설계 문서화 후 route 분리 여부 결정
+
+### 14.5 어드민 정리
+- [ ] table view 대체 UI 기준 충족 여부 확인 후 제거
+- [ ] cluster/retrieval/forgetting/archive 중심으로 admin memory view 재구성
+  - 사용자 기본 리뷰 화면과 admin debug 화면의 정보 계층을 분리
+
+### 14.6 컴포넌트 모듈화 + UI
+- [ ] 공통 `MemoryCard`
+- [ ] 공통 `MemorySelector`
+- [ ] 공통 `RetrievedMemoryBadge`
+- [ ] 공통 `PromptViewer`
+- [ ] 공통 `SessionMemoryDiff`
+- [ ] 전체 UI 개선
+
+### 14.7 온보딩
+- [ ] 온보딩 입력값 retrieval 활용 방식 변경
+  - 현재: profile input을 매 turn 항상 주입하고 `weight: 0.9`로 표시
+  - 목표: 온보딩 입력값도 query와 가장 가까운 항목을 따로 retrieve
+  - 결정: profile input에는 weight 개념을 제거하고, interaction memory weight와 분리
+
+### 14.8 데이터 생성/배포
+- [ ] Claude API 스위칭 연결
+  - 연결만 구현하고 실제 사용은 명시적 허락 후 활성화
+- [ ] 실제 데이터 최대한 많이 만들기
+- [ ] Deploy
+
+### 14.9 다음 작업 순서
+1. 레퍼런스 추천 후 assistant chat bubble에 선택 이유와 간략 설명을 포함
+2. 첫 목업 생성 로딩 UX를 2번째 생성과 통일
+3. 프레젠테이션 이미지 Storage 폴백 제거
+4. 사용자 메모리 뷰를 저장 내용 중심으로 재구성
+5. retrieval/debug 정보는 admin-only로 분리
+6. profile input retrieval 정책 재설계: 항상 주입/weight 제거 여부 반영
+7. memory count 기반 near-miss decay multiplier 설계 및 적용
+8. 공통 memory UI 컴포넌트 추출

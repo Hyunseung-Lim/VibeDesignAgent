@@ -509,10 +509,9 @@ export async function POST(request: Request) {
           Number(mockupScreenshotHeight),
           normalizedMockupSections,
         );
-        // Return SVG data URL directly. Screenshot is pre-scaled to 880px on the client,
-        // so this stays well under 1 MB and transmits reliably.
-        // The client converts SVG → PNG via canvas and uploads the PNG to Firebase.
-        return { title: slide.title, content: slide.content, imageUrl: svgDataUrl };
+        const objectName = `presentations/${uid}/${missionId}/slide-${Date.now()}-${randomUUID()}.svg`;
+        const uploadedUrl = await uploadPresentationImage(svgDataUrl, objectName);
+        return { title: slide.title, content: slide.content, imageUrl: uploadedUrl };
       }
 
       const prompt = presentationSlideImagePrompt({
@@ -538,11 +537,11 @@ export async function POST(request: Request) {
       try {
         const objectName = `presentations/${uid}/${missionId}/slide-${Date.now()}-${randomUUID()}.png`;
         const uploadedUrl = await uploadPresentationImage(imageUrl, objectName);
-        return { title: slide.title, content: slide.content, imageUrl: uploadedUrl ?? imageUrl };
+        return { title: slide.title, content: slide.content, imageUrl: uploadedUrl };
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         console.warn("[presentation] server storage upload failed:", message);
-        return { title: slide.title, content: slide.content, imageUrl };
+        throw err;
       }
     })
   );
@@ -552,6 +551,12 @@ export async function POST(request: Request) {
       ? r.value
       : { title: slides[i].title, content: slides[i].content, imageUrl: "" }
   );
+  if (generatedSlides.every((slide) => !slide.imageUrl)) {
+    return Response.json(
+      { error: "presentation image storage upload failed" },
+      { status: 500 },
+    );
+  }
 
   return Response.json({ slides: generatedSlides });
 }

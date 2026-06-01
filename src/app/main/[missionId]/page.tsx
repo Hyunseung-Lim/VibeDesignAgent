@@ -11,7 +11,7 @@ import React, {
 } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { firebaseAuth, db, storage } from "@/lib/firebase";
+import { firebaseAuth, db } from "@/lib/firebase";
 import { getIdToken, onAuthStateChanged } from "firebase/auth";
 import {
   collection,
@@ -21,13 +21,7 @@ import {
   onSnapshot,
 } from "firebase/firestore";
 import {
-  ref as storageRef,
-  uploadString,
-  getDownloadURL,
-} from "firebase/storage";
-import {
   ArrowLeftIcon,
-  ArrowRightIcon,
   ArrowSquareOutIcon,
   ArrowsOutIcon,
   ArrowsInIcon,
@@ -141,7 +135,7 @@ type SessionMemorySummary = {
 type ActivityLogEvent = {
   id: string;
   createdAt: number;
-  section: "reference" | "note" | "mockup" | "presentation";
+  section: "reference" | "note" | "mockup";
   action: "add" | "delete" | "create" | "update" | "stitch_prompt";
   input?: string;
   output?: string;
@@ -276,9 +270,6 @@ type Idea = {
   designStyle?: DesignStyle;
   createdAt?: number;
   updatedAt?: number;
-  presentations?: Presentation[];
-  presentationSlides?: PresentationSlide[];
-  presentationHtml?: string;
 };
 
 type Device = "desktop" | "mobile";
@@ -304,19 +295,6 @@ type Artboard = {
   ideaId: string;
 };
 
-type PresentationSlide = {
-  title: string;
-  content: string;
-  imageUrl: string;
-};
-
-type Presentation = {
-  id: string;
-  title: string;
-  createdAt: number;
-  slides: PresentationSlide[];
-  html?: string;
-};
 
 const DEVICE_SIZE: Record<Device, { width: number; height: number }> = {
   desktop: { width: 1280, height: 900 },
@@ -329,10 +307,6 @@ type SelectedElement = {
   outerHTML: string;
 };
 
-type PresentationData = {
-  title: string;
-  slides: { title: string; content: string; imagePrompt: string }[];
-};
 
 type MockupCaptureSection = {
   label: string;
@@ -358,71 +332,6 @@ type UpdateNoteData = {
   description?: string;
 };
 
-function parsePresentationBlock(
-  text: string,
-):
-  | { isJson: true; data: PresentationData }
-  | { isJson: false; html: string }
-  | null {
-  const match = text.match(/```presentation\n([\s\S]*?)\n```/);
-  if (!match) return null;
-  const content = match[1].trim();
-  if (content.startsWith("{")) {
-    try {
-      return { isJson: true, data: JSON.parse(content) as PresentationData };
-    } catch {
-      // fall through to HTML
-    }
-  }
-  return { isJson: false, html: content };
-}
-
-function normalizePresentationStatusText(text: string): string {
-  if (!/```presentation\s*\n/.test(text)) return text;
-  return text
-    .replace(
-      /프레젠테이션을 생성했습니다\./g,
-      "프레젠테이션 이미지를 생성하고 있습니다.",
-    )
-    .replace(
-      /프레젠테이션이 생성되었습니다\./g,
-      "프레젠테이션 이미지를 생성하고 있습니다.",
-    )
-    .replace(
-      /피치덱을 생성했습니다\./g,
-      "프레젠테이션 이미지를 생성하고 있습니다.",
-    )
-    .replace(
-      /피치덱이 생성되었습니다\./g,
-      "프레젠테이션 이미지를 생성하고 있습니다.",
-    );
-}
-
-function normalizePresentations(idea: Idea): Presentation[] {
-  if (idea.presentations?.length) return idea.presentations;
-  if (idea.presentationSlides?.length) {
-    return [
-      {
-        id: `legacy-slides-${idea.id}`,
-        title: idea.presentationSlides[0]?.title || "Presentation",
-        createdAt: 0,
-        slides: idea.presentationSlides,
-      },
-    ];
-  }
-  if (idea.presentationHtml) {
-    return [
-      {
-        id: `legacy-html-${idea.id}`,
-        title: "Presentation",
-        createdAt: 0,
-        slides: [],
-        html: idea.presentationHtml,
-      },
-    ];
-  }
-  return [];
-}
 
 function canonicalReferenceUrl(value?: string) {
   if (!value) return "";
@@ -1036,32 +945,6 @@ async function scaleScreenshot(
   };
 }
 
-async function svgDataUrlToPng(
-  svgDataUrl: string,
-  timeoutMs = 8000,
-): Promise<string> {
-  const img = new Image();
-  await Promise.race([
-    new Promise<void>((resolve, reject) => {
-      img.onload = () => resolve();
-      img.onerror = () => reject(new Error("SVG image load failed"));
-      img.src = svgDataUrl;
-    }),
-    new Promise<never>((_, reject) =>
-      setTimeout(() => reject(new Error("SVG load timeout")), timeoutMs),
-    ),
-  ]);
-  const canvas = document.createElement("canvas");
-  canvas.width = img.naturalWidth || 1536;
-  canvas.height = img.naturalHeight || 1400;
-  const ctx = canvas.getContext("2d");
-  if (!ctx) throw new Error("no 2d context");
-  ctx.fillStyle = "#ffffff";
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
-  ctx.drawImage(img, 0, 0);
-  return canvas.toDataURL("image/png");
-}
-
 async function captureMockupScreenshot(
   html: string,
   device: Device,
@@ -1270,15 +1153,9 @@ const BLOCK_RULES = [
     pendingLabel: "수정 내용 작성 중...",
   },
   {
-    complete: /```presentation\s*\n[\s\S]*?\n?\s*```/,
-    partial: /```presentation[\s\S]*$/,
-    doneLabel: "프레젠테이션 프롬프트 준비됨",
-    pendingLabel: "프레젠테이션 프롬프트 작성 중...",
-  },
-  {
     complete: /\[FETCH_REFERENCES(?::[^\]]+)?\]/,
     partial: /\[FETCH_REFERENCES[\s\S]*$/,
-    doneLabel: "레퍼런스 검색됨",
+    doneLabel: "레퍼런스 검색 요청됨",
     pendingLabel: "레퍼런스 검색 중...",
   },
   {
@@ -1832,6 +1709,19 @@ function buildReferenceSearchQuery(
     .slice(0, 500);
 }
 
+function buildReferenceReasonSummary(references: Reference[]) {
+  if (references.length === 0) return "";
+  const lines = references.slice(0, 5).map((reference) => {
+    const description = reference.description?.trim()
+      ? reference.description.trim()
+      : "현재 미션과 관련된 UI/UX 패턴을 확인하기 위해 선택했습니다.";
+    const title = reference.title?.trim() || reference.url || "레퍼런스";
+    const link = reference.url ? ` ([link](${reference.url}))` : "";
+    return `- **${title}**${link}: ${description}`;
+  });
+  return ["", "### 레퍼런스 선택 이유", ...lines].join("\n");
+}
+
 function buildEditMockupPrompt(changePrompt: string) {
   return [
     "Edit the existing mockup in place. Preserve the current layout structure, visual style, typography, spacing, colors, content hierarchy, and all unrelated sections.",
@@ -1912,9 +1802,6 @@ export default function MainScreenPage() {
   const [isLoading, setIsLoading] = useState(false);
   const [artboards, setArtboards] = useState<Artboard[]>([]);
   const [activeArtboardId, setActiveArtboardId] = useState<string | null>(null);
-  const [currentSlideIndex, setCurrentSlideIndex] = useState(0);
-  const [isGeneratingPresentation, setIsGeneratingPresentation] =
-    useState(false);
   const [references, setReferences] = useState<Reference[]>([]);
   const [activityLog, setActivityLog] = useState<ActivityLogEvent[]>([]);
   const [ideas, setIdeas] = useState<Idea[]>([]);
@@ -1934,11 +1821,13 @@ export default function MainScreenPage() {
   const [sessionCompletionStep, setSessionCompletionStep] = useState(0);
   const [sessionCompleted, setSessionCompleted] = useState(false);
   const [showLobbyWarning, setShowLobbyWarning] = useState(false);
+  const [showFinalDesignWarning, setShowFinalDesignWarning] = useState(false);
   const [editMode, setEditMode] = useState(false);
   const [device, setDevice] = useState<Device>("desktop");
   const [missionTitle, setMissionTitle] = useState("");
   const [missionBrief, setMissionBrief] = useState("");
   const [isMissionContextReady, setIsMissionContextReady] = useState(false);
+  const [sessionLoaded, setSessionLoaded] = useState(false);
   const [profileModalConfirmed, setProfileModalConfirmed] = useState(false);
   const [profileStep, setProfileStep] = useState<2 | 3>(2);
   const [profileItems, setProfileItems] = useState<
@@ -1963,15 +1852,13 @@ export default function MainScreenPage() {
   const [activeIdeaId, setActiveIdeaId] = useState<string | null>(null);
   const [isIdeaExpanded, setIsIdeaExpanded] = useState(false);
   const [isOptionExpanded, setIsOptionExpanded] = useState(true);
-  const [activePresentationId, setActivePresentationId] = useState<
-    string | null
-  >(null);
   const [userId, setUserId] = useState<string | null>(null);
   const [isFetchingRefs, setIsFetchingRefs] = useState(false);
   const [referenceSearchError, setReferenceSearchError] = useState("");
   const [isAdmin, setIsAdmin] = useState(false);
   const [viewAsName, setViewAsName] = useState<string | null>(null);
   const [stitchProjectId, setStitchProjectId] = useState<string>("");
+  const [finalArtboardId, setFinalArtboardId] = useState<string | null>(null);
   const [isGeneratingMockup, setIsGeneratingMockup] = useState(false);
   const [mockupOperation, setMockupOperation] = useState<
     "generate" | "edit" | null
@@ -2150,7 +2037,7 @@ export default function MainScreenPage() {
   const ideaSectionRef = useRef<HTMLElement>(null);
   const styleSectionRef = useRef<HTMLElement>(null);
   const mockupSectionRef = useRef<HTMLElement>(null);
-  const presentationSectionRef = useRef<HTMLElement>(null);
+  const finalDesignSectionRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLDivElement>(null);
   const canvasWorldRef = useRef<HTMLDivElement>(null);
   const canvasViewCommitTimerRef = useRef<number | null>(null);
@@ -2357,6 +2244,7 @@ export default function MainScreenPage() {
     const sessionRef = sessionRefFor(targetUserId);
     const missionRef = doc(db, "missions", missionId);
     setIsMissionContextReady(false);
+    setSessionLoaded(false);
 
     // Register current user as participant (skip if viewing as someone else)
     if (!viewAs && !isOnboardingMission) {
@@ -2433,9 +2321,15 @@ export default function MainScreenPage() {
     getDoc(sessionRef).then((sessionSnap) => {
       const session = sessionSnap.exists() ? sessionSnap.data() : null;
       sessionData = session ?? null;
+      setSessionLoaded(true);
       const completed = session?.status === "completed";
       setSessionCompleted(completed);
-      if (completed) setProfileModalConfirmed(true);
+      const sessionAlreadyStarted =
+        completed ||
+        (session?.messages?.length ?? 0) > 0 ||
+        (session?.ideas?.length ?? 0) > 0 ||
+        (session?.artboards?.length ?? 0) > 0;
+      if (sessionAlreadyStarted) setProfileModalConfirmed(true);
       setTimerEndedAt(
         session?.endedAt && completed
           ? Number(session.endedAt)
@@ -2517,45 +2411,14 @@ export default function MainScreenPage() {
         setActiveIdeaTab("mockup");
       }
 
-      // Backward compat: global presentation → assign to first idea
-      const ideasWithPresentation: Idea[] = loadedIdeas.map(
-        (idea: Idea, idx: number) => {
-          const ideaWithLegacy =
-            idx === 0
-              ? {
-                  ...idea,
-                  presentationSlides:
-                    idea.presentationSlides ??
-                    (session?.presentationSlides?.length
-                      ? session.presentationSlides
-                      : undefined),
-                  presentationHtml:
-                    idea.presentationHtml ??
-                    session?.presentationHtml ??
-                    undefined,
-                }
-              : idea;
-          const presentations = normalizePresentations(ideaWithLegacy);
-          if (idx === 0) {
-            return {
-              ...ideaWithLegacy,
-              presentations,
-            };
-          }
-          return {
-            ...ideaWithLegacy,
-            presentations,
-          };
-        },
-      );
-
-      if (ideasWithPresentation.length > 0) {
-        setIdeas(ideasWithPresentation);
-        setActiveIdeaId(ideasWithPresentation[0].id);
+      if (loadedIdeas.length > 0) {
+        setIdeas(loadedIdeas);
+        setActiveIdeaId(loadedIdeas[0].id);
       }
       if (session?.references) setReferences(session.references);
       if (session?.activityLog) setActivityLog(session.activityLog);
       if (session?.stitchProjectId) setStitchProjectId(session.stitchProjectId);
+      if (session?.finalArtboardId) setFinalArtboardId(session.finalArtboardId);
 
       if (session?.timerStartedAt)
         setTimerStartedAt(Number(session.timerStartedAt));
@@ -2778,21 +2641,7 @@ export default function MainScreenPage() {
       const artboardsToSave = artboards.map((a) =>
         a.stitchScreenId ? { ...a, html: "" } : a,
       );
-      // Per-idea presentation: only save Storage URLs (not base64)
-      const ideasToSave = ideas.map((idea) => ({
-        ...idea,
-        presentations: normalizePresentations(idea).map((p) => ({
-          ...p,
-          slides: (p.slides ?? []).filter((s) =>
-            s.imageUrl.startsWith("https://"),
-          ),
-          html: p.html ?? null,
-        })),
-        presentationSlides: (idea.presentationSlides ?? []).filter((s) =>
-          s.imageUrl.startsWith("https://"),
-        ),
-        presentationHtml: idea.presentationHtml ?? null,
-      }));
+      const ideasToSave = ideas;
       // Strip undefined values — Firestore rejects them
       const clean = <T,>(v: T): T =>
         JSON.parse(
@@ -2812,6 +2661,7 @@ export default function MainScreenPage() {
           selectedOptionId,
           selectedDevice: device,
           stitchProjectId: stitchProjectId || null,
+          finalArtboardId: finalArtboardId ?? null,
           startedAt: timerStartedAt ?? null,
           updatedAt: Date.now(),
         }),
@@ -2836,6 +2686,7 @@ export default function MainScreenPage() {
     selectedOptionId,
     device,
     stitchProjectId,
+    finalArtboardId,
     timerStartedAt,
   ]);
 
@@ -3124,8 +2975,6 @@ export default function MainScreenPage() {
 
   const switchIdea = (ideaId: string) => {
     setActiveIdeaId(ideaId);
-    setCurrentSlideIndex(0);
-    setActivePresentationId(null);
     setIsIdeaExpanded(false);
     setActiveIdeaTab("idea");
     const ideaBoards = artboardsRef.current.filter((a) => a.ideaId === ideaId);
@@ -3425,7 +3274,6 @@ export default function MainScreenPage() {
         );
       }
 
-      fullText = normalizePresentationStatusText(fullText);
       fullText = normalizeActionBlockAliases(fullText);
 
       // Convert web search citation domains (domain.com) to clickable markdown links
@@ -3472,8 +3320,6 @@ export default function MainScreenPage() {
         setIdeas((prev) => [...prev, createdNote as Idea]);
         setActiveIdeaId(createdNote.id);
         setActiveArtboardId(null);
-        setCurrentSlideIndex(0);
-        setActivePresentationId(null);
         setIsIdeaExpanded(false);
         setActiveIdeaTab("idea");
       }
@@ -3534,6 +3380,21 @@ export default function MainScreenPage() {
       const fetchRefMatch = fullText.match(
         /\[FETCH_REFERENCES(?::\s*(.*?))?\]/,
       );
+      const appendReferenceSummary = (newReferences: Reference[]) => {
+        const summary = buildReferenceReasonSummary(newReferences);
+        if (!summary) return;
+        setMessages((prev) =>
+          prev.map((message) =>
+            message.id === assistantId &&
+            !message.content.includes("### 레퍼런스 선택 이유")
+              ? {
+                  ...message,
+                  content: `${message.content.trimEnd()}\n${summary}`.trim(),
+                }
+              : message,
+          ),
+        );
+      };
       if (fetchRefMatch) {
         const customQuery = buildReferenceSearchQuery(
           fetchRefMatch[1]?.trim() || text,
@@ -3541,11 +3402,11 @@ export default function MainScreenPage() {
           activeOption,
           device,
         );
-        fetchReferences(
+        void fetchReferences(
           effectiveMissionTitle ?? "",
           effectiveMissionBrief ?? "",
           customQuery,
-        );
+        ).then(appendReferenceSummary);
       } else if (isReferenceSearchRequest(text)) {
         const fallbackReferenceQuery = buildReferenceSearchQuery(
           text,
@@ -3553,11 +3414,11 @@ export default function MainScreenPage() {
           activeOption,
           device,
         );
-        fetchReferences(
+        void fetchReferences(
           effectiveMissionTitle ?? "",
           effectiveMissionBrief ?? "",
           fallbackReferenceQuery || text,
-        );
+        ).then(appendReferenceSummary);
       }
 
       const generateMatch = fullText.match(
@@ -3620,6 +3481,7 @@ export default function MainScreenPage() {
         setIsGeneratingMockup(true);
         setMockupOperation("generate");
         setGeneratingMockupIdeaId(mockupIdeaId);
+        setActiveIdeaTab("mockup");
         setMockupProgress({
           percent: 8,
           label: "새 아트보드 자리 잡는 중",
@@ -3857,238 +3719,6 @@ export default function MainScreenPage() {
         }
       }
 
-      const presentationBlock = parsePresentationBlock(fullText);
-      console.log(
-        "[presentation] block:",
-        presentationBlock
-          ? presentationBlock.isJson
-            ? "json"
-            : "html"
-          : "none",
-      );
-      if (presentationBlock) {
-        if (currentIdeaBoards.length === 0) {
-          setMessages((prev) =>
-            prev.map((m) =>
-              m.id === assistantId
-                ? {
-                    ...m,
-                    content:
-                      m.content +
-                      "\n\n⚠️ 목업이 먼저 만들어져야 프레젠테이션을 생성할 수 있습니다.",
-                  }
-                : m,
-            ),
-          );
-        } else if (presentationBlock.isJson) {
-          console.log(
-            "[presentation] slides:",
-            presentationBlock.data.slides?.length,
-          );
-          setIsGeneratingPresentation(true);
-          try {
-            const uid = firebaseAuth.currentUser?.uid ?? "anonymous";
-            const presentationMockupHtml =
-              activeBoard?.html || currentIdeaBoards.at(-1)?.html || "";
-            const presentationMockupDevice =
-              activeBoard?.device || currentIdeaBoards.at(-1)?.device || device;
-            const rawScreenshot = presentationMockupHtml
-              ? await captureMockupScreenshot(
-                  presentationMockupHtml,
-                  presentationMockupDevice,
-                )
-              : null;
-            // Scale screenshot down to 880px wide (the compose SVG's mockup render width)
-            // to keep request/response bodies small while preserving full visual quality.
-            const mockupScreenshot = rawScreenshot
-              ? await scaleScreenshot(rawScreenshot, 880)
-              : null;
-            const presRes = await fetch("/api/presentation", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                title: presentationBlock.data.title,
-                slides: presentationBlock.data.slides,
-                uid,
-                missionId: missionId,
-                device: presentationMockupDevice,
-                mockupHtml: presentationMockupHtml || undefined,
-                mockupScreenshot: mockupScreenshot?.dataUrl || undefined,
-                mockupScreenshotWidth: mockupScreenshot?.width,
-                mockupScreenshotHeight: mockupScreenshot?.height,
-                mockupSections: mockupScreenshot?.sections,
-              }),
-            });
-            const presData = await presRes.json();
-            console.log(
-              "[presentation] api response:",
-              presData.error ?? `${presData.slides?.length} slides`,
-            );
-            if (presData.error) throw new Error(presData.error);
-            if (presData.slides) {
-              const uploadedSlides: PresentationSlide[] = await Promise.all(
-                (presData.slides as PresentationSlide[]).map(
-                  async (slide, i) => {
-                    if (!slide.imageUrl.startsWith("data:")) return slide;
-                    try {
-                      let uploadDataUrl = slide.imageUrl;
-                      if (slide.imageUrl.startsWith("data:image/svg+xml")) {
-                        console.log(
-                          `[presentation] slide ${i} converting SVG to PNG`,
-                        );
-                        uploadDataUrl = await svgDataUrlToPng(slide.imageUrl);
-                      }
-                      const imgRef = storageRef(
-                        storage,
-                        `presentations/${uid}/${missionId}/slide-${i}.png`,
-                      );
-                      await Promise.race([
-                        uploadString(imgRef, uploadDataUrl, "data_url"),
-                        new Promise<never>((_, reject) =>
-                          setTimeout(
-                            () => reject(new Error("upload timeout")),
-                            15000,
-                          ),
-                        ),
-                      ]);
-                      const url = await getDownloadURL(imgRef);
-                      console.log(`[presentation] slide ${i} uploaded`);
-                      return { ...slide, imageUrl: url };
-                    } catch {
-                      console.info(
-                        `[presentation] slide ${i} storage upload skipped; showing generated base64 image for this session.`,
-                      );
-                      return slide;
-                    }
-                  },
-                ),
-              );
-              if (activeIdeaId) {
-                const newPresentation: Presentation = {
-                  id: crypto.randomUUID(),
-                  title:
-                    presentationBlock.data.title ||
-                    uploadedSlides[0]?.title ||
-                    "Presentation",
-                  createdAt: Date.now(),
-                  slides: uploadedSlides,
-                };
-                const nextIdeas = ideas.map((idea) =>
-                  idea.id === activeIdeaId
-                    ? {
-                        ...idea,
-                        presentations: [
-                          ...normalizePresentations(idea),
-                          newPresentation,
-                        ],
-                        presentationSlides: uploadedSlides,
-                      }
-                    : idea,
-                );
-                setIdeas(nextIdeas);
-
-                const persistentSlides = uploadedSlides.filter((s) =>
-                  s.imageUrl.startsWith("https://"),
-                );
-                if (persistentSlides.length !== uploadedSlides.length) {
-                  setMessages((prev) =>
-                    prev.map((m) =>
-                      m.id === assistantId
-                        ? {
-                            ...m,
-                            content:
-                              m.content +
-                              "\n\n⚠️ 프레젠테이션 이미지를 임시로 표시했지만 Firebase Storage 저장에 실패했습니다. 새로고침하면 사라질 수 있습니다.",
-                          }
-                        : m,
-                    ),
-                  );
-                } else if (!isReadOnly && userId) {
-                  const ref = sessionRefFor(userId);
-                  const artboardsToSave = artboards.map((a) =>
-                    a.stitchScreenId ? { ...a, html: "" } : a,
-                  );
-                  const ideasToSave = nextIdeas.map((idea) => ({
-                    ...idea,
-                    presentations: normalizePresentations(idea).map((p) => ({
-                      ...p,
-                      slides: (p.slides ?? []).filter((s) =>
-                        s.imageUrl.startsWith("https://"),
-                      ),
-                      html: p.html ?? null,
-                    })),
-                    presentationSlides: (idea.presentationSlides ?? []).filter(
-                      (s) => s.imageUrl.startsWith("https://"),
-                    ),
-                    presentationHtml: idea.presentationHtml ?? null,
-                  }));
-                  const clean = <T,>(v: T): T =>
-                    JSON.parse(
-                      JSON.stringify(v, (_, val) =>
-                        val === undefined ? null : val,
-                      ),
-                    );
-                  await setDoc(
-                    ref,
-                    clean({
-                      messages,
-                      missionId,
-                      artboards: artboardsToSave,
-                      references,
-                      ideas: ideasToSave,
-                      missionTitle,
-                      missionBrief,
-                      stitchProjectId: stitchProjectId || null,
-                      updatedAt: Date.now(),
-                    }),
-                    { merge: true },
-                  );
-                }
-                setActivePresentationId(newPresentation.id);
-              }
-              setCurrentSlideIndex(0);
-              setActiveIdeaTab("presentation");
-            }
-          } catch (presErr) {
-            const msg =
-              presErr instanceof Error ? presErr.message : String(presErr);
-            console.error("[presentation] error:", msg);
-            setMessages((prev) =>
-              prev.map((m) =>
-                m.id === assistantId
-                  ? {
-                      ...m,
-                      content:
-                        m.content +
-                        `\n\n⚠️ 프레젠테이션 이미지 생성 실패: ${msg}`,
-                    }
-                  : m,
-              ),
-            );
-          } finally {
-            setIsGeneratingPresentation(false);
-          }
-        } else {
-          if (activeIdeaId) {
-            const newPresentation: Presentation = {
-              id: crypto.randomUUID(),
-              title: "Presentation",
-              createdAt: Date.now(),
-              slides: [],
-              html: presentationBlock.html,
-            };
-            const activeIdea = ideas.find((idea) => idea.id === activeIdeaId);
-            updateIdea(activeIdeaId, {
-              presentations: activeIdea
-                ? [...normalizePresentations(activeIdea), newPresentation]
-                : [newPresentation],
-              presentationHtml: presentationBlock.html,
-            });
-            setActivePresentationId(newPresentation.id);
-          }
-          setActiveIdeaTab("presentation");
-        }
-      }
     } catch (err) {
       const isTimeout =
         (err as Error)?.message === "timeout" ||
@@ -4151,7 +3781,7 @@ export default function MainScreenPage() {
 
   const fetchReferences = useCallback(
     async (title: string, brief: string, customQuery?: string | null) => {
-      if (isFetchingRefs || isReadOnly) return;
+      if (isFetchingRefs || isReadOnly) return [];
       setIsFetchingRefs(true);
       setReferenceSearchError("");
       try {
@@ -4202,6 +3832,7 @@ export default function MainScreenPage() {
             );
           } else {
             setReferences((prev) => [...prev, ...newRefs]);
+            return newRefs;
           }
         } else {
           setReferenceSearchError(
@@ -4214,11 +3845,16 @@ export default function MainScreenPage() {
       } finally {
         setIsFetchingRefs(false);
       }
+      return [];
     },
     [activityLog, isFetchingRefs, isReadOnly, references, appendActivityLog],
   );
 
   const ideaArtboards = artboards.filter((a) => a.ideaId === activeIdeaId);
+  const hasPendingCurrentIdeaSkeleton =
+    pendingArtboardSkeleton?.ideaId === activeIdeaId;
+  const shouldRenderMockupCanvas =
+    ideaArtboards.length > 0 || hasPendingCurrentIdeaSkeleton;
   const activeArtboard =
     ideaArtboards.find((a) => a.id === activeArtboardId) ??
     ideaArtboards[ideaArtboards.length - 1] ??
@@ -4431,32 +4067,6 @@ export default function MainScreenPage() {
         stitchScreenId: artboard.stitchScreenId ?? "",
         stitchPrompt: "",
       })),
-      ...ideas.flatMap((idea) =>
-        normalizePresentations(idea).map((presentation) => ({
-          eventType: "presentation",
-          section: "presentation",
-          action: "snapshot",
-          role: "",
-          input: "",
-          output:
-            presentation.html ||
-            presentation.slides
-              .map((slide) => `${slide.title}\n${slide.content}`)
-              .join("\n\n"),
-          outputType: "presentation",
-          outputTitle: presentation.title,
-          link: presentation.slides[0]?.imageUrl ?? "",
-          referenceLinks: "",
-          content: presentation.title,
-          html: presentation.html ?? "",
-          imageUrl: presentation.slides[0]?.imageUrl ?? "",
-          createdAt: presentation.createdAt
-            ? new Date(presentation.createdAt).toISOString()
-            : "",
-          stitchScreenId: "",
-          stitchPrompt: "",
-        })),
-      ),
     ];
     const eventRows = [
       ...activityLog.map((event) => ({
@@ -4751,7 +4361,7 @@ export default function MainScreenPage() {
             </div>
           );
         })}
-        {pendingArtboardSkeleton?.ideaId === activeIdeaId && (
+        {hasPendingCurrentIdeaSkeleton && (
           <div>
             <div
               style={{
@@ -5450,18 +5060,52 @@ export default function MainScreenPage() {
             </span>
           )}
           {!isReadOnly && selectedOptionId && (
-            <button
-              type="button"
-              onClick={completeSession}
-              disabled={isCompletingSession || sessionCompleted}
-              className="rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-700 disabled:bg-slate-200 disabled:text-slate-500"
-            >
-              {sessionCompleted
-                ? "세션 종료됨"
-                : isCompletingSession
-                  ? "메모리 확정 중..."
-                  : "세션 종료"}
-            </button>
+            <div className="flex items-center gap-2">
+              {showFinalDesignWarning && (
+                <>
+                  <span className="text-xs text-amber-600">
+                    최종 디자인을 선택하지 않았습니다. 그래도 종료할까요?
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowFinalDesignWarning(false);
+                      void completeSession();
+                    }}
+                    className="rounded-full bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-slate-700"
+                  >
+                    종료
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowFinalDesignWarning(false)}
+                    className="rounded-full border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-600 transition hover:bg-slate-50"
+                  >
+                    취소
+                  </button>
+                </>
+              )}
+              {!showFinalDesignWarning && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!finalArtboardId && artboards.length > 0) {
+                      setShowFinalDesignWarning(true);
+                    } else {
+                      void completeSession();
+                    }
+                  }}
+                  disabled={isCompletingSession || sessionCompleted}
+                  className="rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-700 disabled:bg-slate-200 disabled:text-slate-500"
+                >
+                  {sessionCompleted
+                    ? "세션 종료됨"
+                    : isCompletingSession
+                      ? "메모리 확정 중..."
+                      : "세션 종료"}
+                </button>
+              )}
+            </div>
           )}
           {!isReadOnly && sessionCompleted && (
             <button
@@ -5530,7 +5174,7 @@ export default function MainScreenPage() {
         </div>
       )}
 
-      {missionOptions.length > 0 && !selectedOptionId ? (
+      {missionOptions.length > 0 && !selectedOptionId && sessionLoaded ? (
         /* Option selection page */
         <main className="flex flex-1 flex-col overflow-hidden">
           {/* Step indicator */}
@@ -5741,7 +5385,7 @@ export default function MainScreenPage() {
             </div>
           </div>
         </main>
-      ) : !isReadOnly && isMissionContextReady && !sessionCompleted && !profileModalConfirmed && profileStep === 2 ? (
+      ) : !isReadOnly && isMissionContextReady && sessionLoaded && !sessionCompleted && !profileModalConfirmed && profileStep === 2 ? (
         /* Step 2: Profile input */
         <main className="flex flex-1 flex-col overflow-hidden">
           {/* Step indicator */}
@@ -5905,7 +5549,7 @@ export default function MainScreenPage() {
             </div>
           </div>
         </main>
-      ) : !isReadOnly && isMissionContextReady && !sessionCompleted && !profileModalConfirmed && profileStep === 3 ? (
+      ) : !isReadOnly && isMissionContextReady && sessionLoaded && !sessionCompleted && !profileModalConfirmed && profileStep === 3 ? (
         /* Step 3: Review + start */
         <main className="flex flex-1 flex-col overflow-hidden">
           {/* Step indicator */}
@@ -6376,7 +6020,7 @@ export default function MainScreenPage() {
               )}
             </div>
 
-            {/* Note / Mockup / Presentation */}
+            {/* Note / Mockup */}
             <div className="rounded-3xl border border-slate-200 bg-white p-6">
               {ideas.length === 0 ? (
                 <div className="flex flex-col items-center gap-4 rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-8 text-center text-sm text-slate-400">
@@ -6444,11 +6088,6 @@ export default function MainScreenPage() {
                           id: "mockup",
                           label: "Mockup",
                           ref: mockupSectionRef,
-                        },
-                        {
-                          id: "presentation",
-                          label: "Presentation",
-                          ref: presentationSectionRef,
                         },
                       ].map((tab) => (
                         <button
@@ -6861,7 +6500,7 @@ export default function MainScreenPage() {
                             </div>
                           )}
                         </div>
-                        {ideaArtboards.length > 0 ? (
+                        {shouldRenderMockupCanvas ? (
                           isMockupExpanded ? (
                             <div className="flex h-64 items-center justify-center rounded-2xl bg-[#1a1a1a] text-xs text-white/40">
                               확대 보기 중...
@@ -6899,177 +6538,119 @@ export default function MainScreenPage() {
                         )}
                       </section>
 
-                      {/* Presentation — per-idea */}
-                      {(() => {
-                        const activeIdea = ideas.find(
-                          (i) => i.id === activeIdeaId,
-                        );
-                        const presentations = activeIdea
-                          ? normalizePresentations(activeIdea)
-                          : [];
-                        const selectedPresentation =
-                          presentations.find(
-                            (p) => p.id === activePresentationId,
-                          ) ??
-                          presentations.at(-1) ??
-                          null;
-                        const deletePresentation = (presentationId: string) => {
-                          if (!activeIdea) return;
-                          const nextPresentations = normalizePresentations(
-                            activeIdea,
-                          ).filter((p) => p.id !== presentationId);
-                          updateIdea(activeIdea.id, {
-                            presentations: nextPresentations,
-                            presentationSlides:
-                              nextPresentations.at(-1)?.slides ?? [],
-                            presentationHtml: nextPresentations.at(-1)?.html,
-                          });
-                          if (activePresentationId === presentationId) {
-                            setActivePresentationId(
-                              nextPresentations.at(-1)?.id ?? null,
-                            );
-                          }
-                        };
-                        return (
-                          <section
-                            ref={presentationSectionRef}
-                            className="space-y-3 scroll-mt-4"
-                          >
-                            <div className="flex items-center justify-between">
-                              <p className="text-base font-semibold text-slate-900">
-                                Presentation
-                              </p>
-                              {presentations.length > 0 && (
-                                <span className="text-xs text-slate-400">
-                                  {presentations.length}개
-                                </span>
-                              )}
-                            </div>
-                            {isGeneratingPresentation ? (
-                              <div className="flex h-64 flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-slate-300 bg-white/70 text-sm text-slate-400">
-                                <div className="h-7 w-7 animate-spin rounded-full border-2 border-slate-300 border-t-slate-600" />
-                                <p className="text-slate-500">
-                                  프레젠테이션 이미지 생성 중...
-                                </p>
-                              </div>
-                            ) : presentations.length > 0 ? (
-                              <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
-                                <div className="flex items-center justify-between gap-3 border-b border-slate-100 px-3 py-2">
-                                  <div className="flex min-w-0 flex-1 gap-1 overflow-x-auto">
-                                    {presentations.map(
-                                      (presentation, index) => {
-                                        const isActive =
-                                          presentation.id ===
-                                          selectedPresentation?.id;
-                                        return (
-                                          <button
-                                            key={presentation.id}
-                                            onClick={() => {
-                                              if (!isActive) {
-                                                void encodeMemoryDraft(
-                                                  `select-presentation-${presentation.id}`,
-                                                  `프레젠테이션 선택: ${presentation.title || `P${index + 1}`}`,
-                                                  `생성일: ${presentation.createdAt ? new Date(presentation.createdAt).toLocaleString("ko-KR") : "미상"}`,
-                                                  Date.now(),
-                                                );
-                                              }
-                                              setActivePresentationId(
-                                                presentation.id,
-                                              );
-                                            }}
-                                            className={`max-w-44 shrink-0 truncate rounded-lg px-3 py-1.5 text-xs font-medium transition ${
-                                              isActive
-                                                ? "bg-slate-900 text-white"
-                                                : "text-slate-500 hover:bg-slate-100 hover:text-slate-900"
-                                            }`}
-                                            title={presentation.title}
-                                          >
-                                            {presentation.title ||
-                                              `P${index + 1}`}
-                                          </button>
-                                        );
-                                      },
-                                    )}
-                                  </div>
-                                </div>
-                                {selectedPresentation && (
-                                  <div className="flex items-center justify-between gap-3 border-b border-slate-100 px-4 py-3">
-                                    <div className="min-w-0">
-                                      <p className="truncate text-sm font-semibold text-slate-800">
-                                        {selectedPresentation.title}
-                                      </p>
-                                      <p className="text-xs text-slate-400">
-                                        {selectedPresentation.createdAt
-                                          ? new Date(
-                                              selectedPresentation.createdAt,
-                                            ).toLocaleString("ko-KR")
-                                          : "이전 프레젠테이션"}
-                                      </p>
-                                    </div>
-                                    <button
-                                      onClick={() => {
-                                        if (
-                                          confirm(
-                                            "이 프레젠테이션을 삭제할까요?",
-                                          )
-                                        ) {
-                                          void encodeMemoryDraft(
-                                            `delete-presentation-${selectedPresentation.id}`,
-                                            `프레젠테이션 삭제: ${selectedPresentation.title}`,
-                                            `생성일: ${selectedPresentation.createdAt ? new Date(selectedPresentation.createdAt).toLocaleString("ko-KR") : "미상"}`,
-                                            Date.now(),
-                                          );
-                                          deletePresentation(
-                                            selectedPresentation.id,
-                                          );
-                                        }
-                                      }}
-                                      className="shrink-0 rounded-full p-1.5 text-slate-400 transition hover:bg-red-50 hover:text-red-500"
-                                      title="프레젠테이션 삭제"
-                                    >
-                                      <XIcon size={14} />
-                                    </button>
-                                  </div>
-                                )}
-                                {selectedPresentation?.slides?.[0]?.imageUrl ? (
-                                  <div className="bg-black">
-                                    <img
-                                      src={
-                                        selectedPresentation.slides[0].imageUrl
-                                      }
-                                      alt={selectedPresentation.slides[0].title}
-                                      className="w-full object-contain"
-                                    />
-                                  </div>
-                                ) : selectedPresentation?.html ? (
-                                  <iframe
-                                    srcDoc={selectedPresentation.html}
-                                    sandbox="allow-scripts allow-same-origin"
-                                    className="h-125 w-full bg-white"
-                                    title={
-                                      selectedPresentation.title ||
-                                      "Presentation preview"
-                                    }
-                                  />
-                                ) : (
-                                  <div className="flex h-64 items-center justify-center text-sm text-slate-500">
-                                    이미지 생성 실패
-                                  </div>
-                                )}
-                              </div>
-                            ) : (
-                              <div className="flex h-64 items-center justify-center rounded-2xl border border-dashed border-slate-300 bg-white/70 text-sm text-slate-400">
-                                {ideaArtboards.length === 0
-                                  ? "목업을 먼저 생성하면 프레젠테이션을 만들 수 있습니다."
-                                  : '에이전트에게 "프레젠테이션 만들어줘"라고 말하면 여기에 표시됩니다.'}
-                              </div>
-                            )}
-                          </section>
-                        );
-                      })()}
                     </div>
                   </div>
                 </>
+              )}
+            </div>
+
+            {/* Final Design — mission-level */}
+            <div
+              ref={finalDesignSectionRef}
+              className="rounded-3xl border border-slate-200 bg-white p-6 space-y-4"
+            >
+              <div className="flex items-center justify-between">
+                <p className="text-base font-semibold text-slate-900">
+                  Final Design
+                </p>
+                {finalArtboardId && (
+                  <span className="text-xs font-medium text-emerald-600">
+                    선택됨
+                  </span>
+                )}
+              </div>
+              {artboards.length === 0 ? (
+                <div className="flex h-40 items-center justify-center rounded-2xl border border-dashed border-slate-300 bg-slate-50 text-sm text-slate-400">
+                  목업을 생성하면 여기서 최종 디자인을 선택할 수 있습니다.
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {ideas.map((idea) => {
+                    const boards = artboards.filter(
+                      (a) => a.ideaId === idea.id,
+                    );
+                    if (boards.length === 0) return null;
+                    return (
+                      <div key={idea.id} className="space-y-2">
+                        {ideas.length > 1 && (
+                          <p className="text-xs font-medium text-slate-500">
+                            {idea.title}
+                          </p>
+                        )}
+                        <div className="flex flex-wrap gap-3">
+                          {boards.map((board) => {
+                            const isFinal = board.id === finalArtboardId;
+                            const { width, height } =
+                              DEVICE_SIZE[board.device ?? "desktop"];
+                            const thumbH =
+                              board.device === "mobile" ? 200 : 160;
+                            const scale = thumbH / height;
+                            const thumbW = Math.round(width * scale);
+                            return (
+                              <button
+                                key={board.id}
+                                onClick={() => {
+                                  if (!isReadOnly) {
+                                    const next = isFinal ? null : board.id;
+                                    setFinalArtboardId(next);
+                                    if (next) {
+                                      void encodeMemoryDraft(
+                                        `final-design-${board.id}`,
+                                        `최종 디자인 선택: ${board.label}`,
+                                        `시안: ${idea.title} / 생성일: ${board.createdAt ? new Date(board.createdAt).toLocaleString("ko-KR") : "미상"}`,
+                                        Date.now(),
+                                      );
+                                    }
+                                  }
+                                }}
+                                disabled={isReadOnly}
+                                className={`relative overflow-hidden rounded-xl border-2 transition ${
+                                  isFinal
+                                    ? "border-emerald-500 ring-2 ring-emerald-200"
+                                    : "border-slate-200 hover:border-slate-400"
+                                } ${isReadOnly ? "cursor-default" : "cursor-pointer"}`}
+                                style={{ width: thumbW, height: thumbH }}
+                                title={board.label}
+                              >
+                                {board.html ? (
+                                  <iframe
+                                    srcDoc={board.html}
+                                    sandbox="allow-scripts allow-same-origin"
+                                    scrolling="no"
+                                    className="pointer-events-none origin-top-left"
+                                    style={{
+                                      width,
+                                      height,
+                                      transform: `scale(${scale})`,
+                                      transformOrigin: "top left",
+                                    }}
+                                    title={board.label}
+                                  />
+                                ) : (
+                                  <div className="flex h-full w-full items-center justify-center bg-slate-50 text-xs text-slate-400">
+                                    로딩 중...
+                                  </div>
+                                )}
+                                <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/40 to-transparent px-2 py-1.5">
+                                  <p className="truncate text-left text-xs text-white">
+                                    {board.label}
+                                  </p>
+                                </div>
+                                {isFinal && (
+                                  <div className="absolute left-0 right-0 top-2 flex justify-center">
+                                    <span className="rounded-full bg-emerald-500 px-2 py-0.5 text-xs font-medium text-white shadow">
+                                      최종 선택
+                                    </span>
+                                  </div>
+                                )}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
               )}
             </div>
           </section>
