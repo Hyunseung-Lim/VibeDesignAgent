@@ -3,7 +3,9 @@ import { Stitch, StitchToolClient } from "@google/stitch-sdk";
 export const maxDuration = 180;
 
 function createStitchClient() {
-  const client = new StitchToolClient({ apiKey: process.env.STITCH_API_KEY! });
+  const apiKey = process.env.STITCH_API_KEY;
+  if (!apiKey) throw new Error("STITCH_API_KEY is not configured.");
+  const client = new StitchToolClient({ apiKey });
   return { client, sdk: new Stitch(client) };
 }
 
@@ -25,6 +27,30 @@ const INCOMPLETE_RESPONSE_ERROR = "Incomplete API response";
 
 function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error);
+}
+
+function isStitchAuthError(message: string) {
+  return /missing required authentication credential|oauth 2 access token|valid authentication credential|api key/i.test(
+    message,
+  );
+}
+
+function stitchErrorResponse(error: unknown, prefix?: string) {
+  const message = errorMessage(error);
+  if (isStitchAuthError(message)) {
+    return Response.json(
+      {
+        error:
+          "Stitch 인증 정보가 유효하지 않습니다. 관리자에게 STITCH_API_KEY 갱신을 요청해주세요.",
+        code: "stitch-auth",
+      },
+      { status: 401 },
+    );
+  }
+  return Response.json(
+    { error: prefix ? `${prefix}: ${message}` : message },
+    { status: 500 },
+  );
 }
 
 function isIncompleteResponseError(error: unknown) {
@@ -304,8 +330,8 @@ export async function POST(request: Request) {
   }
   const deviceType: DeviceType = device === "mobile" ? "MOBILE" : "DESKTOP";
 
-  const { client, sdk } = createStitchClient();
   try {
+    const { client, sdk } = createStitchClient();
     let project;
     let actualProjectId: string = projectId;
 
@@ -329,7 +355,7 @@ export async function POST(request: Request) {
       } catch (editErr) {
         const message = errorMessage(editErr);
         console.warn("[stitch] edit failed:", message);
-        return Response.json({ error: `Existing mockup edit failed: ${message}` }, { status: 500 });
+        return stitchErrorResponse(editErr, "Existing mockup edit failed");
       }
     } else {
       console.log("[stitch] generating screen for prompt:", prompt.slice(0, 80));
@@ -394,6 +420,6 @@ export async function POST(request: Request) {
   } catch (err) {
     const message = errorMessage(err);
     console.error("[stitch] error:", message);
-    return Response.json({ error: message }, { status: 500 });
+    return stitchErrorResponse(err);
   }
 }

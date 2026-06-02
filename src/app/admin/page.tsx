@@ -788,6 +788,7 @@ export default function AdminPage() {
           `삭제된 세션: ${data.deletedSessionMissions ?? 0}개`,
           `삭제된 참여 기록: ${data.deletedParticipantRecords ?? 0}개`,
           `삭제된 memoryDrafts: ${data.deletedMemoryDrafts ?? 0}개`,
+          `삭제된 reviewTurns: ${data.deletedReviewTurns ?? 0}개`,
           `삭제된 Storage 파일: ${data.deletedStorageFiles ?? 0}개`,
         ].join("\n"),
       );

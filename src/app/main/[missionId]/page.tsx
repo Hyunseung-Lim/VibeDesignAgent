@@ -75,12 +75,25 @@ type ReviewTurnMemory = {
   } | null;
 };
 
+type ReviewTurnPromptPlan = {
+  intent?: string;
+  confidence?: number;
+  needs?: Record<string, unknown>;
+  reason?: string;
+};
+
 type ReviewTurn = {
   userMessageId?: string;
   createdAt?: number;
   query?: string;
   retrieved?: ReviewTurnMemory[];
+  promptPlan?: ReviewTurnPromptPlan;
+  promptPlanFallback?: boolean;
+  selectedContextKeys?: string[];
   promptCompact?: {
+    promptPlan?: ReviewTurnPromptPlan;
+    promptPlanFallback?: boolean;
+    selectedContextKeys?: string[];
     missionBrief?: string;
     activeIdea?: {
       title?: string;
@@ -126,6 +139,7 @@ type SessionMemoryItem = {
     semantic?: string | null;
     similarity?: number;
   } | null;
+  source?: { missionId?: string; draftId?: string } | null;
 };
 
 type ReferencedSessionMemoryItem = SessionMemoryItem & {
@@ -1259,6 +1273,30 @@ function processMessageContent(content: string): ContentPart[] {
   return parts;
 }
 
+function extractChatPhases(content: string) {
+  const phases: string[] = [];
+  const visibleText = content
+    .replace(
+      /\[PROMPT_STATUS:\s*([^\]]+)\]\n?/g,
+      (_match, label: string) => {
+        phases.push(label.trim());
+        return "";
+      },
+    )
+    .replace(
+      /\[CHAT_PHASE:\s*([^\]]+)\]\n?/g,
+      (_match, label: string) => {
+        phases.push(label.trim());
+        return "";
+      },
+    )
+    .replace(/\[(?:PROMPT_STATUS|CHAT_PHASE):[\s\S]*$/, "");
+  return {
+    visibleText,
+    phases: Array.from(new Set(phases.filter(Boolean))),
+  };
+}
+
 function splitPendingMockupCompletionText(content: string) {
   const match = content.match(/\[(?:GENERATE|EDIT)_MOCKUP:\s*[\s\S]*?\]/);
   if (!match || match.index === undefined) {
@@ -1823,6 +1861,16 @@ function truncateProfileInput(value: string) {
   return value.trim().slice(0, PROFILE_MEMORY_MAX_CHARS);
 }
 
+async function stitchResponseError(response: Response) {
+  const data = await response.clone().json().catch(() => null);
+  if (data?.code === "stitch-auth") {
+    return "Stitch 인증 정보가 만료되었거나 유효하지 않습니다. 관리자에게 STITCH_API_KEY 갱신을 요청해주세요.";
+  }
+  if (typeof data?.error === "string") return data.error;
+  const text = await response.text().catch(() => "");
+  return text || `HTTP ${response.status}`;
+}
+
 export default function MainScreenPage() {
   const { missionId } = useParams<{ missionId: string }>();
   const router = useRouter();
@@ -1852,6 +1900,7 @@ export default function MainScreenPage() {
     [missionId],
   );
   const [isCompletingSession, setIsCompletingSession] = useState(false);
+  const [sessionCompletionReady, setSessionCompletionReady] = useState(false);
   const [sessionCompletionStep, setSessionCompletionStep] = useState(0);
   const [sessionCompleted, setSessionCompleted] = useState(false);
   const [showLobbyWarning, setShowLobbyWarning] = useState(false);
@@ -1919,6 +1968,9 @@ export default function MainScreenPage() {
   } | null>(null);
   const [reviewTurnsById, setReviewTurnsById] = useState<
     Record<string, ReviewTurn>
+  >({});
+  const [chatPhasesByMessageId, setChatPhasesByMessageId] = useState<
+    Record<string, string[]>
   >({});
   const [rawPromptModal, setRawPromptModal] = useState<{
     turnId: string;
@@ -2522,7 +2574,7 @@ export default function MainScreenPage() {
   }, [userId, missionId, viewAs, isAdmin, isOnboardingMission]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
-    if (!showReviewAnnotations || !targetSessionUserId || !missionId) {
+    if (!targetSessionUserId || !missionId) {
       setReviewTurnsById({});
       return;
     }
@@ -2548,7 +2600,7 @@ export default function MainScreenPage() {
       },
       () => setReviewTurnsById({}),
     );
-  }, [showReviewAnnotations, targetSessionUserId, missionId]);
+  }, [targetSessionUserId, missionId]);
 
   useEffect(() => {
     if (
@@ -3240,6 +3292,11 @@ export default function MainScreenPage() {
         manualReferenceReply,
         userMsg.createdAt ?? Date.now(),
       );
+      setChatPhasesByMessageId((prev) => {
+        const next = { ...prev };
+        delete next[assistantId];
+        return next;
+      });
       return;
     }
 
@@ -3354,7 +3411,16 @@ export default function MainScreenPage() {
         if (done) break;
         const chunk = decoder.decode(value, { stream: true });
         fullText += chunk;
-        const normalizedText = normalizeActionBlockAliases(fullText);
+        const chatPhases = extractChatPhases(fullText);
+        if (chatPhases.phases.length > 0) {
+          setChatPhasesByMessageId((prev) => ({
+            ...prev,
+            [assistantId]: chatPhases.phases,
+          }));
+        }
+        const normalizedText = normalizeActionBlockAliases(
+          chatPhases.visibleText,
+        );
         const displayText = splitPendingMockupCompletionText(normalizedText);
         deferredMockupCompletionText = displayText.completionText;
         setMessages((prev) =>
@@ -3366,7 +3432,14 @@ export default function MainScreenPage() {
         );
       }
 
-      fullText = normalizeActionBlockAliases(fullText);
+      fullText = normalizeActionBlockAliases(
+        extractChatPhases(fullText).visibleText,
+      );
+      setChatPhasesByMessageId((prev) => {
+        const next = { ...prev };
+        delete next[assistantId];
+        return next;
+      });
 
       // Convert web search citation domains (domain.com) to clickable markdown links
       fullText = fullText.replace(
@@ -3642,7 +3715,7 @@ export default function MainScreenPage() {
             clearTimeout(stitchTimeout);
           }
           if (!res.ok) {
-            const errText = await res.text().catch(() => `HTTP ${res.status}`);
+            const errText = await stitchResponseError(res);
             throw new Error(errText);
           }
           setMockupProgress({ percent: 92, label: "응답 처리 중" });
@@ -3830,6 +3903,11 @@ export default function MainScreenPage() {
     } finally {
       clearTimeout(timeoutId);
       abortControllerRef.current = null;
+      setChatPhasesByMessageId((prev) => {
+        const next = { ...prev };
+        delete next[assistantId];
+        return next;
+      });
       setIsLoading(false);
     }
   }, [
@@ -4032,7 +4110,9 @@ export default function MainScreenPage() {
     const currentUser = firebaseAuth.currentUser;
     if (!currentUser) return;
     startSessionCompletionProgress();
+    setSessionCompletionReady(false);
     setIsCompletingSession(true);
+    let completedSuccessfully = false;
     try {
       const token = await getIdToken(currentUser, true);
       const res = await fetch("/api/memory/complete-session", {
@@ -4064,9 +4144,10 @@ export default function MainScreenPage() {
         }
       }
       setTimerEndedAt(completedAt);
-      setSessionCompletionStep(3);
+      setSessionCompletionStep(SESSION_COMPLETION_STEPS.length);
       setSessionCompleted(true);
-      await new Promise((resolve) => window.setTimeout(resolve, 450));
+      setSessionCompletionReady(true);
+      completedSuccessfully = true;
     } catch (error) {
       console.warn("Unable to complete session", error);
       alert(
@@ -4074,7 +4155,10 @@ export default function MainScreenPage() {
       );
     } finally {
       clearSessionCompletionTimers();
-      setIsCompletingSession(false);
+      if (!completedSuccessfully) {
+        setIsCompletingSession(false);
+        setSessionCompletionReady(false);
+      }
     }
   };
   const exportMessageLogCsv = () => {
@@ -5027,6 +5111,9 @@ export default function MainScreenPage() {
     );
   };
 
+  const isInitialSessionContextPending =
+    !sessionLoaded || !isMissionContextReady;
+
   return (
     <div className="flex h-screen flex-col bg-[#f5f5f5] text-slate-900">
       <div
@@ -5277,13 +5364,25 @@ export default function MainScreenPage() {
             className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-2xl shadow-slate-900/20"
           >
             <div className="flex items-center gap-3">
-              <div className="h-9 w-9 shrink-0 animate-spin rounded-full border-2 border-slate-200 border-t-slate-900" />
+              <div
+                className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full ${
+                  sessionCompletionReady
+                    ? "bg-slate-900 text-white"
+                    : "animate-spin border-2 border-slate-200 border-t-slate-900"
+                }`}
+              >
+                {sessionCompletionReady ? "✓" : null}
+              </div>
               <div>
                 <p className="text-sm font-semibold text-slate-900">
-                  세션을 마무리하는 중
+                  {sessionCompletionReady
+                    ? "세션이 저장되었어요"
+                    : "세션을 마무리하는 중"}
                 </p>
                 <p className="mt-1 text-xs text-slate-500">
-                  잠시만 기다려주세요. 작업 내용이 저장되고 있어요.
+                  {sessionCompletionReady
+                    ? "리뷰 화면에서 이번 세션의 기억과 작업 흐름을 확인할 수 있어요."
+                    : "잠시만 기다려주세요. 작업 내용이 저장되고 있어요."}
                 </p>
               </div>
             </div>
@@ -5320,11 +5419,36 @@ export default function MainScreenPage() {
                 );
               })}
             </div>
+            {sessionCompletionReady && (
+              <div className="mt-6 flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => router.push(`/main/${missionId}?review=1`)}
+                  className="flex-1 rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-slate-700"
+                >
+                  리뷰 보기
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIsCompletingSession(false)}
+                  className="rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-semibold text-slate-500 transition hover:bg-slate-50 hover:text-slate-700"
+                >
+                  닫기
+                </button>
+              </div>
+            )}
           </div>
         </div>
       )}
 
-      {missionOptions.length > 0 && !selectedOptionId && sessionLoaded ? (
+      {isInitialSessionContextPending ? (
+        <main className="flex flex-1 items-center justify-center overflow-hidden">
+          <div className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-white px-5 py-4 text-sm text-slate-500 shadow-sm">
+            <span className="h-4 w-4 animate-spin rounded-full border-2 border-slate-200 border-t-slate-700" />
+            미션 정보를 불러오는 중...
+          </div>
+        </main>
+      ) : missionOptions.length > 0 && !selectedOptionId ? (
         /* Option selection page */
         <main className="flex flex-1 flex-col overflow-hidden">
           {/* Step indicator */}
@@ -7183,16 +7307,24 @@ export default function MainScreenPage() {
 
               {messages.map((msg, msgIdx) => {
                 const reviewTurn =
-                  showReviewAnnotations && msg.role === "assistant"
+                  msg.role === "assistant"
                     ? reviewTurnsById[msg.reviewTurnId ?? msg.id]
                     : null;
                 const retrievedReviewMemories = reviewTurn?.retrieved ?? [];
                 const reviewTurnId = msg.reviewTurnId ?? msg.id;
                 const turnMemoryDraft = showReviewAnnotations && msg.role === "assistant"
                   ? sessionMemorySummary.drafts.find((d) => d.id === reviewTurnId) ??
-                    sessionMemorySummary.promoted.find((d) => d.id === reviewTurnId)
+                    sessionMemorySummary.promoted.find(
+                      (d) => d.id === reviewTurnId || d.source?.draftId === reviewTurnId,
+                    )
                   : null;
                 const isTurnSelected = reviewDetailModal?.mode === "turn-memory" && reviewDetailModal.turnId === reviewTurnId;
+                const streamingChatPhases =
+                  msg.role === "assistant" &&
+                  isLoading &&
+                  msgIdx === messages.length - 1
+                    ? chatPhasesByMessageId[msg.id] ?? []
+                    : [];
                 return (
                   <div
                     key={msg.id}
@@ -7253,13 +7385,50 @@ export default function MainScreenPage() {
                           )}
                           <div>{msg.content}</div>
                         </div>
-                      ) : msg.content ? (
+                      ) : msg.content || streamingChatPhases.length > 0 ? (
                         (() => {
                           const parts = processMessageContent(msg.content);
                           const isStreamingThis =
                             isLoading && msgIdx === messages.length - 1;
                           return (
                             <div className="space-y-2">
+                              {streamingChatPhases.length > 0 && (
+                                  <div className="space-y-1 border-b border-slate-200 pb-2 text-xs">
+                                    {streamingChatPhases.map(
+                                      (phase, phaseIndex, phases) => {
+                                        const isActive =
+                                          phaseIndex === phases.length - 1;
+                                        return (
+                                          <div
+                                            key={`${msg.id}-${phase}`}
+                                            className={`flex items-center gap-1.5 ${
+                                              isActive
+                                                ? "font-medium text-slate-500"
+                                                : "text-slate-400"
+                                            }`}
+                                          >
+                                            <span
+                                              className={`flex h-3 w-3 shrink-0 items-center justify-center rounded-full ${
+                                                isActive
+                                                  ? "bg-slate-300"
+                                                  : "bg-slate-200"
+                                              }`}
+                                            >
+                                              {isActive ? (
+                                                <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-slate-600" />
+                                              ) : (
+                                                <span className="text-[8px] leading-none text-slate-500">
+                                                  ✓
+                                                </span>
+                                              )}
+                                            </span>
+                                            {phase}
+                                          </div>
+                                        );
+                                      },
+                                    )}
+                                  </div>
+                                )}
                               {parts.map((part, i) =>
                                 part.type === "text" ? (
                                   <ReactMarkdown

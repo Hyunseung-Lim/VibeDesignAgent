@@ -228,7 +228,8 @@ type PresentationSlide = {
 
 | export | 종류 | 사용처 |
 |--------|------|--------|
-| `CHAT_SYSTEM_PROMPT` | const | `chat/route.ts` — 메인 에이전트 역할 정의 |
+| `CHAT_AGENT_BASE_PROMPT` | const | `chat/route.ts` — 공통 에이전트 역할/명령 태그 정의 |
+| `chatActionInstructionPrompt(intent, includeRouter)` | function | `chat/route.ts` — planner intent에 맞는 행동 규칙만 주입 |
 | `chatDevicePrompt(deviceLabel)` | function | `chat/route.ts` — 대상 디바이스 명시 |
 | `chatMissionPrompt(title, brief)` | function | `chat/route.ts` — 미션 컨텍스트 주입 |
 | `chatProfileMemoryPrompt(lines)` | function | `chat/route.ts` — 사용자 직접 입력 맥락 (standing background) |
@@ -764,13 +765,82 @@ archiveReason = "low-weight" | "duplicate" | "manual"
   - retrieval log에 `memoryCount`, `nearMissDecayMultiplier`, `nearMissWeightLoss`, nearMiss별 `decayMultiplier` 저장
 
 ### 14.4 프롬프트 최적화
-- [ ] 프롬프트 2중 구조 설계
+- [x] 프롬프트 2중 구조 설계
   - 1단계: user input 위주 instruction으로 다음 행동/필요 context 판단
   - 2단계: 결정된 행동에 필요한 context만 주입해 실제 응답 생성
   - 방향: plan agent 방식. 불필요한 mission/mockup/memory context를 매번 전부 넣지 않도록 줄임
+  - 현재 문제: `/api/chat`는 조건만 맞으면 mission, profile/interaction memory, designSpec, cited text, active idea, mockup HTML, selected element, cited references를 모두 system message로 주입한다. 특히 `mockupHtml` 최대 12000자, activeIdea 3000자, designSpec 2500자가 매 turn 누적되기 쉬움
+  - 1차 목표: 응답 품질을 유지하면서 큰 context(`mockupHtml`, `activeIdea`, `designSpec`, `citedReferences`)를 요청 의도에 맞게 선별 주입
+  - 비목표: 첫 구현에서 multi-agent orchestration이나 tool execution 순서를 크게 바꾸지 않는다. 기존 action tag(`[GENERATE_MOCKUP]`, `[EDIT_MOCKUP]`, `[FETCH_REFERENCES]` 등)는 유지
+  - Planner 입력:
+    - latest user input
+    - 최근 message 3~5개 compact
+    - 현재 UI 상태 boolean/count: hasActiveIdea, hasMockupHtml, hasSelectedElement, hasDesignSpec, citedReferenceCount, citedTextCount, profileMemoryCount, interactionMemoryCount
+    - mission title + 짧은 mission summary
+  - Planner 출력 schema 초안:
+```typescript
+type ChatPlan = {
+  intent:
+    | "answer"
+    | "create_note"
+    | "update_note"
+    | "generate_mockup"
+    | "edit_mockup"
+    | "fetch_references"
+    | "create_design_spec"
+    | "presentation"
+    | "clarify";
+  confidence: number; // 0~1
+  needs: {
+    mission: boolean;
+    profileMemory: boolean;
+    interactionMemory: boolean;
+    activeIdea: boolean;
+    designSpec: boolean;
+    mockupHtml: boolean;
+    selectedElement: boolean;
+    citedTexts: boolean;
+    citedReferences: boolean;
+    conversationHistory: "minimal" | "recent" | "full";
+  };
+  reason: string; // admin/debug용 짧은 설명
+};
+```
+  - Context selection rule 초안:
+    - 항상 포함: `CHAT_AGENT_BASE_PROMPT`, planner intent별 `chatActionInstructionPrompt(...)`, target device, current request
+    - mission: 기본 포함하되 brief는 planner가 `mission=true`일 때만 긴 버전 사용. 아니면 title + 1~2줄 summary만 사용
+    - profileMemory: planner가 `profileMemory=true`일 때만 주입. 이미 `/api/memory/retrieve`에서 query-relevant profile top-k만 반환
+    - interactionMemory: planner가 `interactionMemory=true`일 때만 주입
+    - activeIdea: note 생성/수정/mockup/presentation 관련 intent에서만 주입
+    - designSpec: mockup generate/edit/design spec 관련 intent에서만 주입
+    - mockupHtml: edit/presentation/현재 화면 분석 intent에서만 주입. generate intent에서는 사용자가 기존 mockup 기반 변형을 요구한 경우에만 주입
+    - selectedElement: selectedElement가 있고 edit intent일 때 우선 주입
+    - citedTexts/citedReferences: 사용자가 현재 turn에서 인용했거나 planner가 reference/design inspiration intent로 판단한 경우만 주입
+  - MVP 구현 순서:
+    1. [x] planner prompt/function을 `src/lib/prompts.ts`에 추가
+    2. [x] `/api/chat`에서 plan 생성 후 `reviewTurns/{turnId}.promptPlan`에 저장
+    3. [x] 실제 context pruning은 `mockupHtml`, `activeIdea`, `designSpec`부터 적용
+    4. 안정화 후 memory selection 적용
+  - 실패/불확실성 처리:
+    - planner 실패 시 기존 단일 프롬프트 방식으로 fallback
+    - `confidence < 0.55`면 큰 context는 유지하되 `mockupHtml`만 selectedElement/edit 요청이 아닐 때 제외
+    - admin raw prompt에는 plan, selected context keys, fallback 여부를 함께 저장
+  - 구현 메모(0602):
+    - `/api/chat`에서 compact planner input을 만들고 `gpt-5.4`로 `ChatPlan`을 생성한다.
+    - 기존 단일 system prompt는 제거하고, `CHAT_AGENT_BASE_PROMPT` + intent별 `chatActionInstructionPrompt(...)` 조합으로 분리했다.
+    - `promptPlan`, `promptPlanFallback`, `selectedContextKeys`를 reviewTurn top-level과 `promptCompact`에 함께 저장한다.
+    - 1차 pruning은 `activeIdea`, `designSpec`, `mockupHtml`, `citedTexts`, `citedReferences`에 적용했다. memory는 아직 기존처럼 포함한다.
+    - planner 실패 시 기존 방식으로 fallback한다. `confidence < 0.55`면 대부분 context는 유지하되 `mockupHtml`은 selected/edit/current-screen 계열 요청일 때만 포함한다.
+    - client assistant bubble의 `참조한 맥락` 요약은 제거했다. 대신 `/api/chat`이 stream 초반에 `[CHAT_PHASE: ...]` 이벤트를 여러 개 보내고, client는 이를 본문에 저장하지 않는 Codex식 단계 로그로 표시한다.
 - [ ] 에이전트가 필요한 참조 대상을 스스로 select하도록 설계
   - 후보: memory, cited references, selected element, active idea, mockup HTML, design spec
   - 우선은 설계 문서화 후 route 분리 여부 결정
+  - 참조 대상 선택은 planner의 `needs`를 1차 source of truth로 사용
+  - route 분리 초안:
+    - `buildChatPlan(input): ChatPlan`
+    - `buildChatContext(plan, rawContext): systemMessages`
+    - `storeReviewTurn(meta)`는 `promptPlan`, `selectedContextKeys`, `rawPrompt`를 함께 저장
+  - 1차 implementation은 `/api/chat` 내부 함수로 시작하고, 안정화 후 `src/lib/server/chatPlanning.ts`로 분리
 
 ### 14.5 어드민 정리
 - [ ] table view 대체 UI 기준 충족 여부 확인 후 제거

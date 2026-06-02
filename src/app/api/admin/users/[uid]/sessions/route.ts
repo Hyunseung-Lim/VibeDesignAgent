@@ -15,6 +15,7 @@ export const runtime = "nodejs";
 
 const STORAGE_BUCKET =
   process.env.FIREBASE_STORAGE_BUCKET || "vibedesignagent.firebasestorage.app";
+const SESSION_SUBCOLLECTIONS = ["memoryDrafts", "reviewTurns"] as const;
 
 function safeName(value: string, fallback: string) {
   const cleaned = (value.trim() || fallback).replace(/[<>:"/\\|?*\x00-\x1f]/g, "_");
@@ -39,6 +40,19 @@ async function loadCollection(path: string, token: string) {
   );
 }
 
+async function loadSessionSubcollections(sessionPath: string, token: string) {
+  const entries = await Promise.all(
+    SESSION_SUBCOLLECTIONS.map(async (name) => [
+      name,
+      await loadCollection(`${sessionPath}/${name}`, token),
+    ]),
+  );
+  return Object.fromEntries(entries) as Record<
+    (typeof SESSION_SUBCOLLECTIONS)[number],
+    Array<Record<string, unknown>>
+  >;
+}
+
 async function loadSessions(uid: string, token: string) {
   const missionIds = await listFirestoreDocumentIds(`sessions/${uid}/missions`, token);
   const legacyEntries = await Promise.all(
@@ -54,7 +68,7 @@ async function loadSessions(uid: string, token: string) {
         {
           id: missionId,
           ...data,
-          memoryDrafts: await loadCollection(`${missionPath}/memoryDrafts`, token),
+          ...(await loadSessionSubcollections(missionPath, token)),
         },
       ] as const;
     }),
@@ -73,7 +87,7 @@ async function loadSessions(uid: string, token: string) {
         {
           id: runId,
           ...data,
-          memoryDrafts: await loadCollection(`${runPath}/memoryDrafts`, token),
+          ...(await loadSessionSubcollections(runPath, token)),
         },
       ] as const;
     }),
@@ -184,18 +198,34 @@ async function backupStorage(uid: string, backupDir: string, token: string) {
 async function deleteSessions(uid: string, token: string) {
   const missionIds = await listFirestoreDocumentIds(`sessions/${uid}/missions`, token);
   const runIds = await listFirestoreDocumentIds(`sessions/${uid}/missionRuns`, token);
-  let deletedDrafts = 0;
+  const deletedSubcollections: Record<
+    (typeof SESSION_SUBCOLLECTIONS)[number],
+    number
+  > = {
+    memoryDrafts: 0,
+    reviewTurns: 0,
+  };
   await Promise.all(
     [
       ...missionIds.map((missionId) => `sessions/${uid}/missions/${missionId}`),
       ...runIds.map((runId) => `sessions/${uid}/missionRuns/${runId}`),
     ].map(async (sessionPath) => {
-      const draftIds = await listFirestoreDocumentIds(`${sessionPath}/memoryDrafts`, token);
-      deletedDrafts += draftIds.length;
       await Promise.all(
-        draftIds.map((draftId) =>
-          deleteFirestoreDocument(`${sessionPath}/memoryDrafts/${draftId}`, token),
-        ),
+        SESSION_SUBCOLLECTIONS.map(async (subcollection) => {
+          const ids = await listFirestoreDocumentIds(
+            `${sessionPath}/${subcollection}`,
+            token,
+          );
+          deletedSubcollections[subcollection] += ids.length;
+          await Promise.all(
+            ids.map((id) =>
+              deleteFirestoreDocument(
+                `${sessionPath}/${subcollection}/${id}`,
+                token,
+              ),
+            ),
+          );
+        }),
       );
       await deleteFirestoreDocument(sessionPath, token);
     }),
@@ -204,7 +234,8 @@ async function deleteSessions(uid: string, token: string) {
   return {
     deletedSessionMissions: missionIds.length,
     deletedSessionRuns: runIds.length,
-    deletedMemoryDrafts: deletedDrafts,
+    deletedMemoryDrafts: deletedSubcollections.memoryDrafts,
+    deletedReviewTurns: deletedSubcollections.reviewTurns,
   };
 }
 

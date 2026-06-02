@@ -2,8 +2,18 @@ import { Stitch, StitchToolClient } from "@google/stitch-sdk";
 
 export const maxDuration = 60;
 
-const client = new StitchToolClient({ apiKey: process.env.STITCH_API_KEY! });
-const stitchSdk = new Stitch(client);
+function createStitchSdk() {
+  const apiKey = process.env.STITCH_API_KEY;
+  if (!apiKey) throw new Error("STITCH_API_KEY is not configured.");
+  const client = new StitchToolClient({ apiKey });
+  return new Stitch(client);
+}
+
+function isStitchAuthError(message: string) {
+  return /missing required authentication credential|oauth 2 access token|valid authentication credential|api key/i.test(
+    message,
+  );
+}
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -19,6 +29,7 @@ export async function GET(request: Request) {
   }
 
   try {
+    const stitchSdk = createStitchSdk();
     const project = stitchSdk.project(projectId);
     let htmlUrlOrContent = "";
     for (let attempt = 0; attempt < 10; attempt += 1) {
@@ -45,6 +56,16 @@ export async function GET(request: Request) {
     return Response.json({ html });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
+    if (isStitchAuthError(message)) {
+      return Response.json(
+        {
+          error:
+            "Stitch 인증 정보가 유효하지 않습니다. 관리자에게 STITCH_API_KEY 갱신을 요청해주세요.",
+          code: "stitch-auth",
+        },
+        { status: 401 },
+      );
+    }
     return Response.json({ error: message }, { status: 500 });
   }
 }

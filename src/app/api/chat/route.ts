@@ -5,7 +5,8 @@ import {
   verifyFirebaseIdToken,
 } from "@/lib/server/firebaseAdminRest";
 import {
-  CHAT_SYSTEM_PROMPT,
+  CHAT_AGENT_BASE_PROMPT,
+  chatActionInstructionPrompt,
   chatDevicePrompt,
   chatMissionPrompt,
   chatProfileMemoryPrompt,
@@ -18,6 +19,7 @@ import {
   chatSelectedElementPrompt,
   chatCitedRefsWithUrlPrompt,
   chatCitedRefsNoUrlPrompt,
+  chatPlannerPrompt,
 } from "@/lib/prompts";
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
@@ -181,6 +183,246 @@ function compactReferences(references: unknown) {
     : undefined;
 }
 
+const CHAT_PLAN_INTENTS = new Set([
+  "answer",
+  "create_note",
+  "update_note",
+  "generate_mockup",
+  "edit_mockup",
+  "fetch_references",
+  "create_design_spec",
+  "presentation",
+  "clarify",
+]);
+
+type ChatPlanIntent =
+  | "answer"
+  | "create_note"
+  | "update_note"
+  | "generate_mockup"
+  | "edit_mockup"
+  | "fetch_references"
+  | "create_design_spec"
+  | "presentation"
+  | "clarify";
+
+type ChatPlanNeeds = {
+  mission: boolean;
+  profileMemory: boolean;
+  interactionMemory: boolean;
+  activeIdea: boolean;
+  designSpec: boolean;
+  mockupHtml: boolean;
+  selectedElement: boolean;
+  citedTexts: boolean;
+  citedReferences: boolean;
+  conversationHistory: "minimal" | "recent" | "full";
+};
+
+type ChatPlan = {
+  intent: ChatPlanIntent;
+  confidence: number;
+  needs: ChatPlanNeeds;
+  reason: string;
+};
+
+type BuiltChatMessage = {
+  role: "system" | "user" | "assistant";
+  content: string;
+};
+
+function defaultChatPlan(overrides?: Partial<ChatPlan>): ChatPlan {
+  return {
+    intent: "answer",
+    confidence: 0,
+    needs: {
+      mission: true,
+      profileMemory: true,
+      interactionMemory: true,
+      activeIdea: true,
+      designSpec: true,
+      mockupHtml: true,
+      selectedElement: true,
+      citedTexts: true,
+      citedReferences: true,
+      conversationHistory: "recent",
+    },
+    reason: "fallback",
+    ...overrides,
+  };
+}
+
+function responseText(response: unknown) {
+  let text = "";
+  const output = (
+    response as {
+      output?: Array<{
+        type?: string;
+        content?: Array<{ type?: string; text?: string }>;
+      }>;
+    }
+  ).output;
+  for (const item of output ?? []) {
+    if (item.type !== "message") continue;
+    for (const content of item.content ?? []) {
+      if (content.type === "output_text" || content.type === "text") {
+        text += content.text ?? "";
+      }
+    }
+  }
+  return text;
+}
+
+function parseChatPlan(text: string): ChatPlan | null {
+  const jsonText = text.match(/\{[\s\S]*\}/)?.[0];
+  if (!jsonText) return null;
+  try {
+    const parsed = JSON.parse(jsonText) as Record<string, unknown>;
+    const needs = parsed.needs as Record<string, unknown> | undefined;
+    const intent = String(parsed.intent ?? "answer");
+    const conversationHistory = String(
+      needs?.conversationHistory ?? "recent",
+    );
+    return {
+      intent: CHAT_PLAN_INTENTS.has(intent)
+        ? (intent as ChatPlanIntent)
+        : "answer",
+      confidence:
+        typeof parsed.confidence === "number" &&
+        Number.isFinite(parsed.confidence)
+          ? Math.max(0, Math.min(1, parsed.confidence))
+          : 0,
+      needs: {
+        mission: Boolean(needs?.mission),
+        profileMemory: Boolean(needs?.profileMemory),
+        interactionMemory: Boolean(needs?.interactionMemory),
+        activeIdea: Boolean(needs?.activeIdea),
+        designSpec: Boolean(needs?.designSpec),
+        mockupHtml: Boolean(needs?.mockupHtml),
+        selectedElement: Boolean(needs?.selectedElement),
+        citedTexts: Boolean(needs?.citedTexts),
+        citedReferences: Boolean(needs?.citedReferences),
+        conversationHistory:
+          conversationHistory === "minimal" ||
+          conversationHistory === "full" ||
+          conversationHistory === "recent"
+            ? conversationHistory
+            : "recent",
+      },
+      reason:
+        typeof parsed.reason === "string"
+          ? truncateText(parsed.reason, 300)
+          : "",
+    };
+  } catch {
+    return null;
+  }
+}
+
+function promptStatusLabel(plan: ChatPlan, fallback: boolean) {
+  if (fallback && plan.intent === "answer") return "";
+  if (plan.intent === "create_note" || plan.intent === "update_note") {
+    return "Reading note rules...";
+  }
+  if (plan.intent === "generate_mockup") return "Reading mockup generation rules...";
+  if (plan.intent === "edit_mockup") return "Reading mockup edit rules...";
+  if (plan.intent === "fetch_references") return "Reading reference search rules...";
+  if (plan.intent === "create_design_spec") return "Reading design style rules...";
+  if (plan.intent === "presentation") return "Reading presentation rules...";
+  return "";
+}
+
+function promptPhaseLabels(
+  plan: ChatPlan,
+  fallback: boolean,
+  selectedContextKeys: string[],
+) {
+  const phases: string[] = [];
+  const ruleLabel = promptStatusLabel(plan, fallback);
+  if (ruleLabel) phases.push(ruleLabel);
+  const contextLabels: Array<[string, string]> = [
+    ["mission", "Reading mission context..."],
+    ["missionPreview", "Reading mission summary..."],
+    ["activeIdea", "Reading current note..."],
+    ["designSpec", "Reading design style..."],
+    ["mockupHtml", "Reading current mockup..."],
+    ["selectedElement", "Reading selected element..."],
+    ["citedReferences", "Reading cited references..."],
+    ["citedTexts", "Reading cited text..."],
+    ["profileMemory", "Reading profile memory..."],
+    ["interactionMemory", "Reading interaction memory..."],
+  ];
+  for (const [key, label] of contextLabels) {
+    if (selectedContextKeys.includes(key)) phases.push(label);
+  }
+  phases.push("Writing response...");
+  return Array.from(new Set(phases));
+}
+
+function forceIntentFromUserText(
+  plan: ChatPlan,
+  latestUserText: string,
+  hasDesignSpec: boolean,
+) {
+  const text = latestUserText.toLowerCase();
+  const explicitDesignSpec =
+    /(디자인\s*스타일|디자인스타일|스타일\s*가이드|디자인\s*시스템|design\s*spec|design\s*style|style\s*guide)/i.test(
+      text,
+    );
+  const styleCreation =
+    /스타일/i.test(text) &&
+    /(만들|작성|정의|정리|설계|생성|제안|추천|잡아|세팅|정해|create|define|make|generate)/i.test(
+      text,
+    ) &&
+    !/(목업|mockup|화면|시각화|stitch|스티치)/i.test(text);
+
+  if (!explicitDesignSpec && !styleCreation) return plan;
+
+  return {
+    ...plan,
+    intent: "create_design_spec" as const,
+    confidence: Math.max(plan.confidence, 0.9),
+    needs: {
+      ...plan.needs,
+      mission: true,
+      activeIdea: true,
+      designSpec: hasDesignSpec,
+      mockupHtml: false,
+      selectedElement: false,
+      conversationHistory: plan.needs.conversationHistory ?? "recent",
+    },
+    reason: `${plan.reason ? `${plan.reason} ` : ""}Forced create_design_spec because the user explicitly requested design style rules.`,
+  };
+}
+
+async function createChatPlan(input: Record<string, unknown>) {
+  try {
+    const response = await openai.responses.create({
+      model: "gpt-5.4",
+      input: [
+        {
+          role: "system",
+          content: chatPlannerPrompt(JSON.stringify(input)),
+        },
+      ],
+    });
+    const plan = parseChatPlan(responseText(response));
+    if (!plan) {
+      return {
+        plan: defaultChatPlan({ reason: "planner parse failure" }),
+        fallback: true,
+      };
+    }
+    return { plan, fallback: false };
+  } catch (error) {
+    console.warn("[api/chat] prompt planner failed", error);
+    return {
+      plan: defaultChatPlan({ reason: "planner request failure" }),
+      fallback: true,
+    };
+  }
+}
+
 
 export async function POST(request: Request) {
   const user = await verifyFirebaseIdToken(request).catch(() => null);
@@ -214,10 +456,87 @@ export async function POST(request: Request) {
   const canStoreReviewTurn = Boolean(user && reviewMissionId && reviewTurnId);
   const deviceLabel =
     device === "mobile" ? "모바일 (390×844px)" : "PC (1280×900px)";
+  const messageList = Array.isArray(messages) ? messages : [];
+  const latestUserMessage = [...messageList]
+    .reverse()
+    .find((message: { role?: string }) => message.role === "user");
+  const latestUserText =
+    typeof latestUserMessage?.content === "string"
+      ? latestUserMessage.content.trim()
+      : "";
+  const semanticMemoryItems = Array.isArray(memoryContext?.semantic)
+    ? memoryContext.semantic
+    : [];
+  const profileMemoryCount = semanticMemoryItems.filter(
+    (item: unknown) =>
+      item &&
+      typeof item === "object" &&
+      (item as Record<string, unknown>).type === "profile_input",
+  ).length;
+  const interactionMemoryCount = semanticMemoryItems.length - profileMemoryCount;
+  const plannerInput = {
+    latestUserText: truncateText(latestUserText, 1200),
+    recentMessages: messageList.slice(-6).map(
+      (message: { role?: string; content?: string }) => ({
+        role: message.role,
+        content: truncateText(message.content, 700),
+      }),
+    ),
+    uiState: {
+      hasMockupHtml: Boolean(mockupHtml),
+      hasSelectedElement: Boolean(selectedElement),
+      citedReferenceCount: Array.isArray(citedReferences)
+        ? citedReferences.length
+        : 0,
+      citedTextCount: Array.isArray(citedTexts) ? citedTexts.length : 0,
+      hasActiveIdea: Boolean(activeIdea),
+      hasDesignSpec: Boolean(designSpec),
+      profileMemoryCount,
+      interactionMemoryCount,
+      device: device === "mobile" ? "mobile" : "desktop",
+    },
+    mission: {
+      title: truncateText(missionTitle, 200),
+      briefPreview: truncateText(missionBrief, 500),
+    },
+  };
+  const { plan: rawPromptPlan, fallback: promptPlanFallback } =
+    await createChatPlan(plannerInput);
+  const promptPlan = forceIntentFromUserText(
+    rawPromptPlan,
+    latestUserText,
+    Boolean(designSpec),
+  );
+  const promptPlanReliable =
+    !promptPlanFallback && promptPlan.confidence >= 0.55;
+  const lowerLatestUserText = latestUserText.toLowerCase();
+  const lowConfidenceNeedsMockup =
+    Boolean(selectedElement) ||
+    /(edit|modify|change|revise|presentation|mockup|html|수정|변경|바꿔|고쳐|편집|발표|목업|화면|현재)/i.test(
+      lowerLatestUserText,
+    );
+  const shouldIncludePlannedContext = (key: keyof ChatPlanNeeds) => {
+    if (promptPlanFallback) return true;
+    if (promptPlanReliable) return Boolean(promptPlan.needs[key]);
+    if (key === "mockupHtml") return lowConfidenceNeedsMockup;
+    return true;
+  };
+  const selectedContextKeys = ["system", "device"];
+  const markContext = (key: string) => {
+    selectedContextKeys.push(key);
+  };
 
   const systemMessages: OpenAI.Chat.ChatCompletionMessageParam[] = [
-    { role: "system", content: CHAT_SYSTEM_PROMPT },
+    { role: "system", content: CHAT_AGENT_BASE_PROMPT },
   ];
+  markContext("actionInstruction");
+  systemMessages.push({
+    role: "system",
+    content: chatActionInstructionPrompt(
+      promptPlan.intent,
+      promptPlanFallback || !promptPlanReliable,
+    ),
+  });
 
   systemMessages.push({
     role: "system",
@@ -225,11 +544,17 @@ export async function POST(request: Request) {
   });
 
   if (missionTitle || missionBrief) {
+    markContext(
+      shouldIncludePlannedContext("mission") ? "mission" : "missionPreview",
+    );
     systemMessages.push({
       role: "system",
       content: chatMissionPrompt(
         truncateText(missionTitle || "(없음)", 300),
-        truncateText(missionBrief || "(없음)", 1800),
+        truncateText(
+          missionBrief || "(없음)",
+          shouldIncludePlannedContext("mission") ? 1800 : 350,
+        ),
       ),
     });
   }
@@ -251,6 +576,7 @@ export async function POST(request: Request) {
     );
 
     if (profileItems.length > 0) {
+      markContext("profileMemory");
       const lines = profileItems
         .map((item) => {
           const r = item as Record<string, unknown>;
@@ -264,6 +590,7 @@ export async function POST(request: Request) {
     }
 
     if (interactionItems.length > 0) {
+      markContext("interactionMemory");
       const compactMemory = compactMemoryContext({
         ...memoryContext,
         semantic: interactionItems,
@@ -275,14 +602,20 @@ export async function POST(request: Request) {
     }
   }
 
-  if (designSpec) {
+  if (designSpec && shouldIncludePlannedContext("designSpec")) {
+    markContext("designSpec");
     systemMessages.push({
       role: "system",
       content: chatDesignSpecPrompt(truncateText(designSpec, 2500)),
     });
   }
 
-  if (Array.isArray(citedTexts) && citedTexts.length > 0) {
+  if (
+    Array.isArray(citedTexts) &&
+    citedTexts.length > 0 &&
+    shouldIncludePlannedContext("citedTexts")
+  ) {
+    markContext("citedTexts");
     systemMessages.push({
       role: "system",
       content: chatCitedTextsPrompt(
@@ -291,7 +624,8 @@ export async function POST(request: Request) {
     });
   }
 
-  if (activeIdea) {
+  if (activeIdea && shouldIncludePlannedContext("activeIdea")) {
+    markContext("activeIdea");
     systemMessages.push({
       role: "system",
       content: chatActiveIdeaPrompt(
@@ -301,28 +635,24 @@ export async function POST(request: Request) {
     });
   }
 
-  const latestUserMessage = [...messages]
-    .reverse()
-    .find((message: { role?: string }) => message.role === "user");
-  const latestUserText =
-    typeof latestUserMessage?.content === "string"
-      ? latestUserMessage.content.trim()
-      : "";
   if (latestUserText) {
+    markContext("currentRequest");
     systemMessages.push({
       role: "system",
       content: chatCurrentRequestPrompt(latestUserText),
     });
   }
 
-  if (mockupHtml) {
+  if (mockupHtml && shouldIncludePlannedContext("mockupHtml")) {
+    markContext("mockupHtml");
     systemMessages.push({
       role: "system",
       content: chatMockupHtmlPrompt(truncateText(mockupHtml, 12000)),
     });
   }
 
-  if (selectedElement) {
+  if (selectedElement && shouldIncludePlannedContext("selectedElement")) {
+    markContext("selectedElement");
     systemMessages.push({
       role: "system",
       content: chatSelectedElementPrompt(
@@ -333,21 +663,47 @@ export async function POST(request: Request) {
   }
 
   // Build messages, injecting cited reference images into the last user message
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const builtMessages: any[] = Array.isArray(messages)
-    ? messages.slice(-12).map((message: { role?: string; content?: string }) => ({
-        role: message.role,
-        content: truncateText(message.content, 6000),
-      }))
-    : [];
+  const conversationHistoryMode = promptPlanFallback
+    ? "recent"
+    : promptPlan.needs.conversationHistory;
+  const conversationHistoryLimit =
+    conversationHistoryMode === "minimal"
+      ? 4
+      : conversationHistoryMode === "full"
+        ? 20
+        : 12;
+  markContext(`conversationHistory:${conversationHistoryMode}`);
+  const builtMessages: BuiltChatMessage[] = messageList
+    .slice(-conversationHistoryLimit)
+    .flatMap((message: { role?: string; content?: string }) => {
+      if (
+        message.role !== "system" &&
+        message.role !== "user" &&
+        message.role !== "assistant"
+      ) {
+        return [];
+      }
+      return [
+        {
+          role: message.role,
+          content: truncateText(message.content, 6000),
+        },
+      ];
+    });
 
-  if (citedReferences?.length > 0) {
+  let includedRefUrls: string[] = [];
+  if (
+    citedReferences?.length > 0 &&
+    shouldIncludePlannedContext("citedReferences")
+  ) {
+    markContext("citedReferences");
     const titles: string[] = citedReferences.map(
       (r: { title: string }) => r.title,
     );
     const refUrls: string[] = citedReferences
       .map((r: { title: string; url?: string }) => r.url)
       .filter(Boolean) as string[];
+    includedRefUrls = refUrls;
 
     if (refUrls.length > 0) {
       systemMessages.push({
@@ -373,13 +729,16 @@ export async function POST(request: Request) {
     }
   }
 
-  const hasRefUrls = citedReferences?.some((r: { url?: string }) => r.url);
+  const hasRefUrls = includedRefUrls.length > 0;
   const rawPromptInput = [...systemMessages, ...builtMessages] as Parameters<
     typeof openai.responses.create
   >[0]["input"];
   const { rawPrompt, rawPromptSanitization } =
     sanitizeRawPrompt(rawPromptInput);
   const promptCompact = {
+    promptPlan,
+    promptPlanFallback,
+    selectedContextKeys,
     missionBrief: typeof missionBrief === "string" ? missionBrief : undefined,
     activeIdea: activeIdea
       ? {
@@ -452,6 +811,9 @@ export async function POST(request: Request) {
           query: truncateText(reviewConfig?.query, 1200),
           retrieved,
           promptCompact,
+          promptPlan,
+          promptPlanFallback,
+          selectedContextKeys,
           rawPrompt,
           rawPromptSanitization,
           rawResponseMeta: meta,
@@ -495,6 +857,16 @@ export async function POST(request: Request) {
         webSearched: false,
       };
       try {
+        const phaseLabels = promptPhaseLabels(
+          promptPlan,
+          promptPlanFallback,
+          selectedContextKeys,
+        );
+        for (const phaseLabel of phaseLabels) {
+          controller.enqueue(
+            encoder.encode(`[CHAT_PHASE: ${phaseLabel}]\n`),
+          );
+        }
         for await (const event of stream) {
           const typedEvent = event as {
             type: string;
