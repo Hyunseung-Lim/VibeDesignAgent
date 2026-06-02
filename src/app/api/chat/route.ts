@@ -49,6 +49,7 @@ function compactMemoryContext(memoryContext: unknown) {
   if (!context) return null;
   const compactItem = (item: unknown) => {
     const record = item as Record<string, unknown>;
+    const isProfileInput = record.type === "profile_input";
     return {
       action: truncateText(record.action, 80),
       keyword: Array.isArray(record.keyword)
@@ -65,9 +66,13 @@ function compactMemoryContext(memoryContext: unknown) {
       output: truncateText(record.output, 700),
       link: typeof record.link === "string" ? record.link : null,
       weight:
-        typeof record.weight === "number" ? record.weight : undefined,
+        !isProfileInput && typeof record.weight === "number"
+          ? record.weight
+          : undefined,
       weightDelta:
-        typeof record.weightDelta === "number" ? record.weightDelta : undefined,
+        !isProfileInput && typeof record.weightDelta === "number"
+          ? record.weightDelta
+          : undefined,
       similarity:
         typeof record.similarity === "number" ? record.similarity : undefined,
     };
@@ -395,6 +400,7 @@ export async function POST(request: Request) {
       const retrieved = Array.isArray(memoryContext?.semantic)
         ? memoryContext.semantic.map((item: unknown) => {
             const record = item as Record<string, unknown>;
+            const isProfileInput = record.type === "profile_input";
             return {
               memoryId: String(record.memoryId ?? record.id ?? ""),
               type: typeof record.type === "string" ? record.type : "memory",
@@ -422,9 +428,11 @@ export async function POST(request: Request) {
                   ? record.schemaVersion
                   : null,
               weight:
-                typeof record.weight === "number" ? record.weight : null,
+                !isProfileInput && typeof record.weight === "number"
+                  ? record.weight
+                  : null,
               weightDelta:
-                typeof record.weightDelta === "number"
+                !isProfileInput && typeof record.weightDelta === "number"
                   ? record.weightDelta
                   : null,
               similarity:

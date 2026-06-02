@@ -786,10 +786,15 @@ archiveReason = "low-weight" | "duplicate" | "manual"
 - [ ] 전체 UI 개선
 
 ### 14.7 온보딩
-- [ ] 온보딩 입력값 retrieval 활용 방식 변경
-  - 현재: profile input을 매 turn 항상 주입하고 `weight: 0.9`로 표시
+- [x] 온보딩 입력값 retrieval 활용 방식 변경
+  - 현재: profile input은 query embedding과 input embedding similarity로 별도 선별
   - 목표: 온보딩 입력값도 query와 가장 가까운 항목을 따로 retrieve
-  - 결정: profile input에는 weight 개념을 제거하고, interaction memory weight와 분리
+  - 구현: `/api/memory/retrieve`에서 profile item 후보 최대 5개를 embedding ranking 후 top 3만 주입
+  - 기준: similarity `>= 0.25`, 없으면 가장 가까운 1개만 fallback
+  - retrieval log에 `profileCandidateCount`, `profileItemCount`, `profileItemIds`, `profileSimilarities` 저장
+  - [x] profile input에는 weight 개념을 제거하고, interaction memory weight와 분리
+    - `/api/memory/retrieve`의 profile result에서 `weight`, `weightDelta` 제거
+    - `/api/chat` review/prompt compact 저장 시 `profile_input`은 weight 관련 필드를 null/undefined로 정규화
 
 ### 14.8 데이터 생성/배포
 - [ ] Claude API 스위칭 연결
