@@ -1,4 +1,5 @@
 import OpenAI from "openai";
+import { isAdminEmail } from "@/lib/admin";
 import {
   getFirebaseAccessToken,
   patchFirestoreDocument,
@@ -23,6 +24,24 @@ import {
 } from "@/lib/prompts";
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+type ChatResponseProvider = "openai" | "anthropic";
+
+function normalizeChatResponseProvider(value: unknown): ChatResponseProvider {
+  return String(value ?? "")
+    .trim()
+    .toLowerCase() === "anthropic"
+    ? "anthropic"
+    : "openai";
+}
+
+const DEFAULT_CHAT_RESPONSE_PROVIDER = normalizeChatResponseProvider(
+  process.env.CHAT_RESPONSE_PROVIDER ?? process.env.LLM_PROVIDER ?? "openai",
+);
+const OPENAI_CHAT_MODEL = process.env.OPENAI_CHAT_MODEL ?? "gpt-5.4";
+const ANTHROPIC_CHAT_MODEL =
+  process.env.ANTHROPIC_CHAT_MODEL ?? "claude-sonnet-4-6";
+const ANTHROPIC_API_VERSION =
+  process.env.ANTHROPIC_API_VERSION ?? "2023-06-01";
 
 type PromptSanitization = {
   removedApiKeys: number;
@@ -266,6 +285,11 @@ type BuiltChatMessage = {
   content: string;
 };
 
+type ChatProviderStreamEvent =
+  | { type: "delta"; text: string }
+  | { type: "web_search" }
+  | { type: "completed"; meta: Record<string, unknown> };
+
 function defaultChatPlan(overrides?: Partial<ChatPlan>): ChatPlan {
   return {
     intent: "answer",
@@ -305,6 +329,180 @@ function responseText(response: unknown) {
     }
   }
   return text;
+}
+
+function anthropicMessages(input: BuiltChatMessage[]) {
+  const system = input
+    .filter((message) => message.role === "system")
+    .map((message) => message.content)
+    .join("\n\n");
+  const messages: Array<{ role: "user" | "assistant"; content: string }> = [];
+
+  for (const message of input) {
+    if (message.role === "system") continue;
+    const role = message.role === "assistant" ? "assistant" : "user";
+    const previous = messages[messages.length - 1];
+    if (previous?.role === role) {
+      previous.content = `${previous.content}\n\n${message.content}`;
+    } else {
+      messages.push({ role, content: message.content });
+    }
+  }
+
+  if (messages[0]?.role === "assistant") {
+    messages.unshift({
+      role: "user",
+      content: "Continue the conversation using the system instructions.",
+    });
+  }
+  if (messages.length === 0) {
+    messages.push({
+      role: "user",
+      content: "Respond using the system instructions.",
+    });
+  }
+
+  return { system, messages };
+}
+
+async function* createOpenAIChatStream(
+  input: BuiltChatMessage[],
+  hasRefUrls: boolean,
+): AsyncGenerator<ChatProviderStreamEvent> {
+  const stream = await openai.responses.create({
+    model: OPENAI_CHAT_MODEL,
+    tools: [{ type: "web_search_preview" }],
+    tool_choice: hasRefUrls ? "required" : "auto",
+    input,
+    stream: true,
+  });
+
+  for await (const event of stream) {
+    const typedEvent = event as {
+      type: string;
+      delta?: string;
+      response?: {
+        id?: string;
+        model?: string;
+        usage?: unknown;
+      };
+    };
+    if (typedEvent.type === "response.web_search_call.searching") {
+      yield { type: "web_search" };
+    }
+    if (typedEvent.type === "response.output_text.delta") {
+      yield { type: "delta", text: typedEvent.delta ?? "" };
+    }
+    if (typedEvent.type === "response.completed" && typedEvent.response) {
+      yield {
+        type: "completed",
+        meta: {
+          requestId: typedEvent.response.id,
+          model: typedEvent.response.model ?? OPENAI_CHAT_MODEL,
+          usage: typedEvent.response.usage,
+        },
+      };
+    }
+  }
+}
+
+async function* createAnthropicChatStream(
+  input: BuiltChatMessage[],
+): AsyncGenerator<ChatProviderStreamEvent> {
+  if (!process.env.ANTHROPIC_API_KEY) {
+    throw new Error("ANTHROPIC_API_KEY is required when CHAT_RESPONSE_PROVIDER=anthropic");
+  }
+
+  const { system, messages } = anthropicMessages(input);
+  const response = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-api-key": process.env.ANTHROPIC_API_KEY,
+      "anthropic-version": ANTHROPIC_API_VERSION,
+    },
+    body: JSON.stringify({
+      model: ANTHROPIC_CHAT_MODEL,
+      max_tokens: 4096,
+      stream: true,
+      system,
+      messages,
+    }),
+  });
+
+  if (!response.ok || !response.body) {
+    const errorText = await response.text().catch(() => "");
+    throw new Error(
+      `Anthropic chat request failed (${response.status}): ${errorText || response.statusText}`,
+    );
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let requestId: string | undefined;
+  let usage: unknown;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const events = buffer.split("\n\n");
+    buffer = events.pop() ?? "";
+
+    for (const rawEvent of events) {
+      const dataLine = rawEvent
+        .split("\n")
+        .find((line) => line.startsWith("data:"));
+      if (!dataLine) continue;
+      const data = dataLine.slice("data:".length).trim();
+      if (!data || data === "[DONE]") continue;
+
+      const parsed = JSON.parse(data) as {
+        type?: string;
+        message?: { id?: string; usage?: unknown };
+        delta?: { type?: string; text?: string };
+        usage?: unknown;
+        error?: { message?: string };
+      };
+      if (parsed.type === "error") {
+        throw new Error(parsed.error?.message ?? "Anthropic stream error");
+      }
+      if (parsed.type === "message_start") {
+        requestId = parsed.message?.id;
+        usage = parsed.message?.usage;
+      }
+      if (
+        parsed.type === "content_block_delta" &&
+        parsed.delta?.type === "text_delta"
+      ) {
+        yield { type: "delta", text: parsed.delta.text ?? "" };
+      }
+      if (parsed.type === "message_delta" && parsed.usage) {
+        usage = parsed.usage;
+      }
+      if (parsed.type === "message_stop") {
+        yield {
+          type: "completed",
+          meta: {
+            requestId,
+            model: ANTHROPIC_CHAT_MODEL,
+            usage,
+          },
+        };
+      }
+    }
+  }
+}
+
+function createChatResponseStream(
+  input: BuiltChatMessage[],
+  hasRefUrls: boolean,
+  provider: ChatResponseProvider,
+) {
+  return provider === "anthropic"
+    ? createAnthropicChatStream(input)
+    : createOpenAIChatStream(input, hasRefUrls);
 }
 
 function parseChatPlan(text: string): ChatPlan | null {
@@ -472,6 +670,7 @@ export async function POST(request: Request) {
     designSpec,
     citedTexts,
     review,
+    responseProvider,
   } = await request.json();
   const reviewConfig = (review && typeof review === "object"
     ? review
@@ -487,6 +686,10 @@ export async function POST(request: Request) {
     reviewConfig?.turnId ?? reviewConfig?.assistantMessageId ?? "",
   ).trim();
   const canStoreReviewTurn = Boolean(user && reviewMissionId && reviewTurnId);
+  const selectedResponseProvider =
+    user && isAdminEmail(user.email)
+      ? normalizeChatResponseProvider(responseProvider ?? DEFAULT_CHAT_RESPONSE_PROVIDER)
+      : DEFAULT_CHAT_RESPONSE_PROVIDER;
   const deviceLabel =
     device === "mobile" ? "모바일 (390×844px)" : "PC (1280×900px)";
   const messageList = Array.isArray(messages) ? messages : [];
@@ -557,7 +760,7 @@ export async function POST(request: Request) {
     selectedContextKeys.push(key);
   };
 
-  const systemMessages: OpenAI.Chat.ChatCompletionMessageParam[] = [
+  const systemMessages: BuiltChatMessage[] = [
     { role: "system", content: CHAT_AGENT_BASE_PROMPT },
   ];
   markContext("actionInstruction");
@@ -758,9 +961,7 @@ export async function POST(request: Request) {
   }
 
   const hasRefUrls = includedRefUrls.length > 0;
-  const rawPromptInput = [...systemMessages, ...builtMessages] as Parameters<
-    typeof openai.responses.create
-  >[0]["input"];
+  const rawPromptInput = [...systemMessages, ...builtMessages];
   const { rawPrompt, rawPromptSanitization } =
     sanitizeRawPrompt(rawPromptInput);
   const promptCompact = {
@@ -851,35 +1052,22 @@ export async function POST(request: Request) {
     }
   };
 
-  let stream: Awaited<ReturnType<typeof openai.responses.create>>;
-  try {
-    stream = await openai.responses.create({
-      model: "gpt-5.4",
-      tools: [{ type: "web_search_preview" }],
-      tool_choice: hasRefUrls ? "required" : "auto",
-      input: rawPromptInput,
-      stream: true,
-    });
-  } catch (error) {
-    const code =
-      typeof error === "object" && error && "code" in error
-        ? String((error as { code?: unknown }).code)
-        : "";
-    if (code === "context_length_exceeded") {
-      return new Response(
-        "입력 내용이 너무 길어서 처리하지 못했습니다. 현재 시안/목업/대화 맥락을 줄인 뒤 다시 시도해주세요.",
-        { status: 413, headers: { "Content-Type": "text/plain; charset=utf-8" } },
-      );
-    }
-    throw error;
-  }
+  const stream = createChatResponseStream(
+    rawPromptInput,
+    hasRefUrls,
+    selectedResponseProvider,
+  );
 
   const encoder = new TextEncoder();
   const readable = new ReadableStream({
     async start(controller) {
       let webSearched = false;
       let responseMeta: Record<string, unknown> = {
-        model: "gpt-5.4",
+        provider: selectedResponseProvider,
+        model:
+          selectedResponseProvider === "anthropic"
+            ? ANTHROPIC_CHAT_MODEL
+            : OPENAI_CHAT_MODEL,
         webSearched: false,
       };
       try {
@@ -894,31 +1082,18 @@ export async function POST(request: Request) {
           );
         }
         for await (const event of stream) {
-          const typedEvent = event as {
-            type: string;
-            response?: {
-              id?: string;
-              model?: string;
-              usage?: unknown;
-            };
-          };
-          if (
-            event.type === "response.web_search_call.searching" &&
-            !webSearched
-          ) {
+          if (event.type === "web_search" && !webSearched) {
             webSearched = true;
             responseMeta.webSearched = true;
             controller.enqueue(encoder.encode("[WEB_SEARCHED]\n"));
           }
-          if (event.type === "response.output_text.delta") {
-            controller.enqueue(encoder.encode(event.delta));
+          if (event.type === "delta") {
+            controller.enqueue(encoder.encode(event.text));
           }
-          if (typedEvent.type === "response.completed" && typedEvent.response) {
+          if (event.type === "completed") {
             responseMeta = {
               ...responseMeta,
-              requestId: typedEvent.response.id,
-              model: typedEvent.response.model ?? responseMeta.model,
-              usage: typedEvent.response.usage,
+              ...event.meta,
             };
           }
         }

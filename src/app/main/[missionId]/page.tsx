@@ -54,6 +54,8 @@ type Message = {
   reviewTurnId?: string | null;
 };
 
+type ChatResponseProvider = "openai" | "anthropic";
+
 type ReviewTurnMemory = {
   memoryId: string;
   type?: string;
@@ -1939,6 +1941,8 @@ export default function MainScreenPage() {
   const [isFetchingRefs, setIsFetchingRefs] = useState(false);
   const [referenceSearchError, setReferenceSearchError] = useState("");
   const [isAdmin, setIsAdmin] = useState(false);
+  const [chatResponseProvider, setChatResponseProvider] =
+    useState<ChatResponseProvider>("openai");
   const [viewAsName, setViewAsName] = useState<string | null>(null);
   const [stitchProjectId, setStitchProjectId] = useState<string>("");
   const [finalArtboardId, setFinalArtboardId] = useState<string | null>(null);
@@ -2011,6 +2015,7 @@ export default function MainScreenPage() {
   const isViewingAsAdmin = !!(viewAs && isAdmin);
   const isReadOnly = isReviewMode || isViewingAsAdmin;
   const showReviewAnnotations = isReviewMode || isViewingAsAdmin;
+  const hasSessionStarted = Boolean(timerStartedAt);
   const targetSessionUserId = isViewingAsAdmin ? viewAs : userId;
   const reviewMemoryIds = useMemo(
     () =>
@@ -2320,6 +2325,20 @@ export default function MainScreenPage() {
     },
     [],
   );
+
+  useEffect(() => {
+    const stored = window.localStorage.getItem("vda:chat-response-provider");
+    if (stored === "anthropic" || stored === "openai") {
+      setChatResponseProvider(stored);
+    }
+  }, []);
+
+  useEffect(() => {
+    window.localStorage.setItem(
+      "vda:chat-response-provider",
+      chatResponseProvider,
+    );
+  }, [chatResponseProvider]);
 
   // Auth state
   useEffect(() => {
@@ -3376,6 +3395,7 @@ export default function MainScreenPage() {
           missionTitle: effectiveMissionTitle,
           missionBrief: effectiveMissionBrief,
           device,
+          responseProvider: isAdmin ? chatResponseProvider : undefined,
           activeIdea: ideas.find((i) => i.id === activeIdeaId) ?? undefined,
           memoryContext:
             turnMemoryContext.episodic.length > 0 ||
@@ -5294,6 +5314,25 @@ export default function MainScreenPage() {
           </h1>
         </div>
         <div className="flex items-center gap-4 text-sm text-slate-500">
+          {isAdmin && !isReadOnly && (
+            <label className="flex items-center gap-2 text-xs font-semibold text-slate-500">
+              <span>LLM</span>
+              <select
+                value={chatResponseProvider}
+                onChange={(event) =>
+                  setChatResponseProvider(
+                    event.target.value === "anthropic" ? "anthropic" : "openai",
+                  )
+                }
+                disabled={isLoading}
+                className="h-8 rounded-full border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-700 shadow-sm transition hover:border-slate-400 disabled:cursor-not-allowed disabled:opacity-50"
+                title="Chat response provider"
+              >
+                <option value="openai">OpenAI</option>
+                <option value="anthropic">Claude</option>
+              </select>
+            </label>
+          )}
           {timerDisplay && (
             <span
               className={`font-mono text-lg font-semibold tabular-nums ${timerDisplay === "시간 종료" ? "text-red-500" : missionDurationMinutes && timerStartedAt && missionDurationMinutes * 60 * 1000 - (Date.now() - timerStartedAt) < 60000 ? "text-red-500" : "text-slate-900"}`}
@@ -5333,18 +5372,23 @@ export default function MainScreenPage() {
                 <button
                   type="button"
                   onClick={() => {
+                    if (!hasSessionStarted) return;
                     if (!finalArtboardId && artboards.length > 0) {
                       setShowFinalDesignWarning(true);
                     } else {
                       void completeSession();
                     }
                   }}
-                  disabled={isCompletingSession || sessionCompleted}
+                  disabled={
+                    !hasSessionStarted || isCompletingSession || sessionCompleted
+                  }
                   className="rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-700 disabled:bg-slate-200 disabled:text-slate-500"
                 >
                   {sessionCompleted
                     ? "세션 종료됨"
-                    : isCompletingSession
+                    : !hasSessionStarted
+                      ? "세션 시작 전"
+                      : isCompletingSession
                       ? "메모리 확정 중..."
                       : "세션 종료"}
                 </button>

@@ -2,7 +2,7 @@
 
 ## 1. 서비스 개요
 - **목표**: UI/UX 디자이너가 AI 에이전트와의 대화만으로 디자인 과업을 진행할 수 있게 해주는 협업 연구 도구.
-- **핵심 경험**: 사용자는 과업 브리핑 및 피드백을 텍스트 대화로 전달하면 에이전트가 레퍼런스 탐색 → 아이디어 기록 → 목업 생성 → 프레젠테이션 제작까지 수행.
+- **핵심 경험**: 사용자는 과업 브리핑 및 피드백을 텍스트 대화로 전달하면 에이전트가 레퍼런스 탐색 → 아이디어 기록 → 목업 생성 → 최종 디자인 선택까지 수행.
 - **연구 목적**: HCI 연구 맥락에서 AI-인간 협업 시 공유 멘탈 모델(shared mental model) 형성 과정 연구.
 
 ---
@@ -15,10 +15,8 @@
 | 스타일링 | Tailwind CSS v4, @phosphor-icons/react |
 | 인증 | Firebase Authentication (Google OAuth) |
 | 데이터베이스 | Firebase Firestore |
-| 파일 저장소 | Firebase Storage (프레젠테이션 이미지) |
 | AI 채팅 | OpenAI Responses API (gpt-4o) + web_search_preview 툴 |
 | 목업 생성 | Google Stitch SDK |
-| 프레젠테이션 이미지 | OpenAI gpt-image-2 (조직 인증 필요) / gpt-image-1 |
 | 이미지 검색 | Serper API (Google 이미지 검색) |
 | 마크다운 렌더링 | react-markdown |
 
@@ -44,7 +42,7 @@
 - 메모리 cluster view: Elbow K와 LLM K 진단값을 함께 표시
 
 ### `/main/[missionId]` — 메인 디자인 세션
-- 좌측 패널 (스크롤 가능): Mission → Reference → 아이디어 탭 (Idea/Mockup/Presentation)
+- 좌측 패널 (스크롤 가능): Mission → Reference → 아이디어 탭 (Idea/Mockup)
 - 우측 패널 (고정): AI 에이전트 채팅
 
 ### `/agent` — Agent Manage
@@ -57,8 +55,9 @@
 ### 4.1 미션 (Mission)
 - 관리자가 설정한 제목/브리핑/기간/디바이스가 읽기 전용으로 표시
 - 수정은 어드민 페이지에서만 가능
-- 옵션이 1개뿐인 미션은 세션 로드 시 해당 옵션을 자동 선택하고 `selectedOptionId`, `missionTitle`, `missionBrief`, `selectedDevice`, `timerStartedAt`을 세션 문서에 저장
-- 세션 종료 완료 후에는 `status: completed` 기준으로 세션 종료 버튼 비활성화
+- 옵션이 1개뿐인 미션은 세션 로드 시 해당 옵션을 자동 선택하고 `selectedOptionId`, `missionTitle`, `missionBrief`, `selectedDevice`를 세션 문서에 저장
+- 실제 세션 시작은 사용자가 `세션 시작하기` 버튼을 누를 때 발생하며, 이때 `timerStartedAt`을 세팅
+- 세션 종료 버튼은 `timerStartedAt`이 생기기 전에는 비활성화되고, 세션 종료 완료 후에는 `status: completed` 기준으로 비활성화
 
 ### 4.2 레퍼런스 (Reference)
 - 채팅에서 "레퍼런스 찾아줘" → `[FETCH_REFERENCES: {query}]` 블록 → Serper API로 이미지/웹 검색
@@ -76,7 +75,7 @@
 
 ### 4.3 아이디어 (Idea)
 - 사용자가 직접 마크다운으로 작성하거나 AI가 `[CREATE_NOTE: ...]` / `[UPDATE_NOTE: ...]` 태그로 생성·수정
-- 아이디어 탭별 독립적인 Mockup + Presentation 보유
+- 아이디어 탭별 독립적인 Mockup 보유
 - 탭 추가/편집/삭제 가능
 - 편집 모드: 제목 input + 마크다운 textarea
 - 뷰 모드: ReactMarkdown으로 렌더링
@@ -92,16 +91,15 @@
 - HTML Export 지원
 - Stitch 프로젝트 ID Firestore 저장 (재연결/수정 지원)
 
-### 4.5 프레젠테이션 (Presentation)
-- **생성 조건**: 해당 아이디어의 목업이 1개 이상 있을 때만 생성 가능
-- **생성 흐름**: GPT-4o가 ` ```presentation\n{JSON}\n``` ` 출력 → `/api/presentation` 호출 → gpt-image-2로 1장 이미지 생성 → Firebase Storage 업로드 → URL을 Firestore에 저장
-- 1장 이미지로 모든 핵심 내용(문제/해결/디자인/다음 단계) 담음
-- Storage 업로드 실패 시 base64 data URI로 세션 내 표시 (폴백)
-- 아이디어별 독립 저장
+### 4.5 최종 디자인 (Final Design)
+- 세션 종료 전 생성된 목업 중 하나를 최종 디자인으로 선택
+- 최종 디자인은 mission session의 `finalArtboardId`로 저장
+- 최종 디자인 미선택 상태로 세션 종료 시 확인 경고를 표시
 
 ### 4.6 AI 채팅
-- **모델**: OpenAI gpt-5.4 (Responses API)
-- **웹 검색**: `web_search_preview` 툴 상시 활성화, 레퍼런스 URL 인용 시 `tool_choice: "required"`로 강제
+- **응답 생성 provider**: 기본 OpenAI `gpt-5.4` (Responses API). `CHAT_RESPONSE_PROVIDER=anthropic` 또는 `LLM_PROVIDER=anthropic`이면 최종 chat 응답 생성만 Claude Messages API로 전환
+- **Provider 범위**: planner, embedding, memory retrieval/encoding, clustering label은 기존 OpenAI 경로 유지. `/api/chat`의 최종 assistant response streaming만 provider switch 대상. Admin UI에서는 메인 채팅 헤더의 LLM selector로 turn별 provider override 가능
+- **웹 검색**: OpenAI provider일 때 `web_search_preview` 툴 활성화, 레퍼런스 URL 인용 시 `tool_choice: "required"`로 강제. Anthropic provider일 때는 prompt에 포함된 reference title/url context를 사용하고 web search tool은 호출하지 않음
 - **스트리밍**: SSE 방식으로 실시간 토큰 출력
 - **웹 검색 표시**: 검색 발생 시 `[WEB_SEARCHED]` 마커 → "웹 검색 완료" 배지 표시
 - **인용 링크**: 웹 검색 출처 `(domain.com)` 자동으로 클릭 가능한 마크다운 링크로 변환
@@ -112,7 +110,6 @@
   - `[GENERATE_MOCKUP: ...]` → Stitch 목업 생성
   - `[EDIT_MOCKUP: ...]` → 목업 수정
   - `[FETCH_REFERENCES: ...]` → Serper 이미지/큐레이션 검색
-  - ` ```presentation ... ``` ` → gpt-image-2 프레젠테이션 생성
   - `[WEB_SEARCHED]` → 웹 검색 배지
 
 ### 4.7 메모리 (Memory)
@@ -157,7 +154,7 @@ displayName, email, photoURL, updatedAt
 ```
 messages: Message[]
 artboards: Artboard[]          // ideaId 포함, Stitch 아트보드는 html 제거 후 저장
-ideas: Idea[]                  // presentationSlides(Storage URL), presentationHtml 포함
+ideas: Idea[]
 references: Reference[]
 missionTitle, missionBrief
 selectedOptionId, selectedDevice
@@ -191,12 +188,7 @@ type Artboard = {
   id, html, label, x, y, device, stitchScreenId?, ideaId
 }
 type Idea = {
-  id, title, description,        // description은 마크다운 텍스트
-  presentationSlides?,           // Storage URL 배열 (base64 제외)
-  presentationHtml?
-}
-type PresentationSlide = {
-  title, content, imageUrl       // Firebase Storage URL
+  id, title, description         // description은 마크다운 텍스트
 }
 ```
 
@@ -210,7 +202,6 @@ type PresentationSlide = {
 | `POST /api/stitch` | Google Stitch 목업 생성/편집 |
 | `GET /api/stitch/html` | Stitch 스크린 HTML 재조회 |
 | `POST /api/references` | Serper 이미지 검색 + 큐레이션 사이트 웹 검색 (3개 반환) |
-| `POST /api/presentation` | gpt-image-2/gpt-image-1로 프레젠테이션 이미지 생성 |
 | `POST /api/memory/drafts` | interaction turn 단위 memory draft 생성 |
 | `POST /api/memory/complete-session` | 세션 종료 시 draft를 장기 메모리로 확정 |
 | `GET /api/memory/bootstrap` | Legacy: 세션 시작 시 user memory preload. 현재 main client에서는 미사용 |
@@ -248,7 +239,6 @@ type PresentationSlide = {
 | `referenceQueryBuilderPrompt(mode, names)` | function | `references/route.ts` — 검색 쿼리 생성 |
 | `referenceCandidateRankingPrompt(mode, n)` | function | `references/route.ts` — 후보 랭킹 |
 | `referenceProductSearchPrompt(names)` | function | `references/route.ts` — 제품 레퍼런스 검색 |
-| `presentationSlideImagePrompt(params)` | function | `presentation/route.ts` — 슬라이드 이미지 생성 |
 | `referenceImageSourcePrompt(title, desc)` | function | `reference-image/route.ts` — 앱 UI 레퍼런스 페이지 검색 |
 
 ---
@@ -257,11 +247,11 @@ type PresentationSlide = {
 
 | 스크립트 | 기능 |
 |----------|------|
-| `export_sessions.py` | 전체 참가자 세션 데이터 + 프레젠테이션 이미지 내보내기 |
+| `export_sessions.py` | 전체 참가자 세션 데이터 내보내기 |
 | `delete_user_sessions.py` | 특정 사용자 세션 전체 삭제 |
 
 - Firebase Admin SDK 사용 (`vibedesignagent-key.json` 서비스 계정 키 필요)
-- 출력: `exports/sessions.json`, `exports/presentations/{email}/{missionTitle}/`
+- 출력: `exports/sessions.json`
 
 ---
 
@@ -271,6 +261,11 @@ type PresentationSlide = {
 SERPER_API_KEY
 STITCH_API_KEY
 OPENAI_API_KEY
+CHAT_RESPONSE_PROVIDER # optional: openai | anthropic
+OPENAI_CHAT_MODEL # optional, default gpt-5.4
+ANTHROPIC_API_KEY # required when CHAT_RESPONSE_PROVIDER=anthropic
+ANTHROPIC_CHAT_MODEL # optional, default claude-sonnet-4-6
+ANTHROPIC_API_VERSION # optional, default 2023-06-01
 FIREBASE_API_KEY
 FIREBASE_AUTH_DOMAIN
 FIREBASE_PROJECT_ID
@@ -284,7 +279,7 @@ FIREBASE_MEASUREMENT_ID
 
 ## 10. 최근 구현된 변경 사항
 
-### 9.1 메모리 클러스터링 개선
+### 10.1 메모리 클러스터링 개선
 - 기존 고정 `K=10` k-means에서 `K=1..12` 실험 기반으로 변경
 - Elbow method로 inertia 감소 곡선의 elbow 지점을 계산
 - ClusterLLM 논문 아이디어를 반영해 LLM pairwise category 판단으로 최종 K 선택
@@ -292,12 +287,13 @@ FIREBASE_MEASUREMENT_ID
 - Admin UI에서 cluster list, selected cluster detail, Elbow/LLM 진단값 표시
 - cluster view 좌/우 패널은 modal 내부에서 독립 스크롤되도록 조정
 
-### 9.2 단일 옵션 미션 세션 종료 버튼
+### 10.2 단일 옵션 미션 세션 종료 버튼
 - 옵션이 하나뿐인 새 미션에서 `selectedOptionId`가 없어 세션 종료 버튼이 표시되지 않는 문제 수정
-- 단일 옵션 미션은 로드 시 자동 선택하고 세션 문서에 선택 상태와 timer 시작 시간을 저장
+- 단일 옵션 미션은 로드 시 자동 선택하고 세션 문서에 선택 상태를 저장
+- 세션 시작 버튼을 누르기 전에는 `timerStartedAt`이 없으므로 세션 종료 버튼을 `세션 시작 전` 상태로 비활성화
 - 이미 `status: completed`인 세션은 기존처럼 버튼이 비활성화되고 `세션 종료됨`으로 표시
 
-### 9.3 Memory retrieval MVP
+### 10.3 Memory retrieval MVP
 - `/api/memory/complete-session`에서 semantic item별 embedding과 score metadata를 저장
 - 기존 v0.1.1 memory 중 metadata가 없는 문서는 `/api/memory/retrieve` 호출 시 lazy backfill
 - `/api/memory/retrieve`는 LLM 없이 query embedding과 semantic item embedding의 cosine similarity로 top 5를 선택
@@ -307,7 +303,7 @@ FIREBASE_MEASUREMENT_ID
 - 메인 채팅 요청 전 현재 user input + mission/idea context를 query로 사용해 retrieve하고, 결과를 해당 turn의 memory context에 주입
 - Admin memory modal의 Retrievals 탭에서 query, retrieved memory, similarity, weight delta를 확인 가능
 
-### 9.4 References API 개선
+### 10.4 References API 개선
 - **성능**: `Promise.all` 대신 `withConcurrency(tasks, 4)`로 병렬 fetch 수 제한
 - **안정성**: `extractFirstJsonArray()` — regex 대신 bracket depth counting 파서로 URL 내 `[]` 포함 케이스 처리
 - **보안**: `sanitizeInput(value, maxLength)` 함수로 LLM 입력 길이 제한 및 prompt injection 방지
@@ -315,21 +311,21 @@ FIREBASE_MEASUREMENT_ID
 - **이미지 확보**: 큐레이션 결과는 imageUrl 없이 수집 후 `hydrateReferenceMetadata()`로 og:image fetch
 - ID 생성을 `Date.now()`에서 `crypto.randomUUID()`로 교체
 
-### 9.5 로비 이탈 경고 모달
+### 10.5 로비 이탈 경고 모달
 - 세션 미종료 상태(`!sessionCompleted`)에서 로비로 돌아가기 클릭 시 경고 모달 표시
 - "메모리 저장이 되지 않을 수 있습니다. 세션 종료 버튼을 먼저 눌러주세요." 안내
 - 그래도 나가기 / 취소 두 가지 선택지 제공
 
-### 9.6 목업 생성 시 missionBrief 보완 주입
+### 10.6 목업 생성 시 missionBrief 보완 주입
 - `buildMockupPrompt(basePrompt, idea, style, missionBrief)` 함수에 `missionBrief` 파라미터 추가
 - 신규 목업 생성(`[GENERATE_MOCKUP]`) 시에만 적용: 아이디어 내용이 300자 미만이면 missionBrief를 프롬프트 말미에 추가
 - 목업 편집(`[EDIT_MOCKUP]`)에는 주입 안 함 — 기존 화면 구조를 유지해야 하므로
 
-### 9.7 Memory retrieval 쿼리 개선
+### 10.7 Memory retrieval 쿼리 개선
 - retrieval 쿼리에서 `effectiveMissionTitle`(`parentTitle - optionName` 형태) 대신 `parentMissionTitle`만 사용
 - 페르소나 이름("🎬 Daniel Park" 등) 같은 옵션 타이틀이 임베딩 벡터에 노이즈를 추가하는 문제 제거
 
-### 9.8 Memory forgetting/archive MVP
+### 10.8 Memory forgetting/archive MVP
 - `GET /api/admin/users/[uid]/memory/forgetting`에서 archive candidate를 산출하고 자동 soft archive
 - 후보 기준:
   - v0.1.2 memory `weight < 0.28`
@@ -339,7 +335,7 @@ FIREBASE_MEASUREMENT_ID
 - Admin memory modal의 Archived 탭에서 archivedAt, archiveReason, weight metadata 확인 가능
 - archive된 memory는 retrieval 대상에서 제외됨
 
-### 9.9 Memory schema v0.1.2
+### 10.9 Memory schema v0.1.2
 - 새 collection: `users/{uid}/memories_0_1_2`
 - interaction turn 1개당 episodic memory는 반드시 1개 생성
 - semantic memory는 durable insight가 있을 때만 0~1개 생성
@@ -354,13 +350,13 @@ FIREBASE_MEASUREMENT_ID
 
 > **상태**: v0.1.2 기준으로 재정리됨. v0.1.1의 semanticItems/retentionScore 설계는 fallback adapter로만 유지.
 
-### 10.1 목표
+### 11.1 목표
 - interaction 중 필요한 memory를 vector similarity 기반으로 retrieve
 - retrieve 결과를 관측 가능하게 기록해 연구자가 어떤 memory가 사용됐는지 확인
 - 사용된 memory는 `weight`를 천천히 강화하고, low-weight 또는 중복 memory는 archive 후보로 낮춤
 - 초기에는 hard delete 대신 `archivedAt` 기반 soft archive로 운영
 
-### 10.2 개발 순서
+### 11.2 개발 순서
 
 #### 1단계: Memory schema v0.1.2
 - interaction memory document마다 아래 필드 저장
@@ -454,7 +450,7 @@ archiveReason = "low-weight" | "duplicate" | "manual"
   - 여러 session에서 반복된 패턴
 - 자동 archive는 researcher 검토 후 feature flag로 켜기
 
-### 10.3 운영 원칙
+### 11.3 운영 원칙
 - hard delete하지 않는다.
 - 연구자가 retrieval, score 변화, archive 결과를 확인할 수 있게 만든다.
 - formative 실험 기간이 3일이므로 시간 기반 stale 기준은 자동 archive에 사용하지 않는다.
@@ -465,7 +461,6 @@ archiveReason = "low-weight" | "duplicate" | "manual"
 ## 12. 미구현 / 향후 계획
 
 - `/agent` 페이지: 에이전트 메모리/상태 관리 UI
-- Firebase Blaze 플랜 결제 시 Storage 완전 활성화
 - 반응형/접근성 개선
 - E2E 테스트
 - Memory forgetting / archive pipeline 자동화
@@ -473,17 +468,17 @@ archiveReason = "low-weight" | "duplicate" | "manual"
 
 ---
 
-## 13. 메모리 리뷰/온보딩 개선 로드맵
+### 12.1 메모리 리뷰/온보딩 개선 로드맵
 
 이 섹션은 향후 작업을 하나씩 체크하며 진행하기 위한 실행 문서다. 원칙은 **데이터 계약 → 사용자 리뷰 경험 → 온보딩 입력 모델 → 어드민/UI 정리** 순서로 진행한다.
 
-### 12.1 진행 원칙
+#### 12.1.1 진행 원칙
 - 화면부터 만들기보다 memory/retrieval/review에 필요한 데이터 계약을 먼저 고정한다.
 - 사용자에게는 "어떤 기억이 참고되었는지"를 설명 가능하게 보여주고, 연구자에게는 prompt/raw context를 더 자세히 확인할 수 있게 한다.
 - 직접 입력 메모리와 interaction에서 학습된 메모리는 source/type을 분리한다.
 - table view 제거는 대체 관측 UI가 충분히 생긴 뒤 진행한다.
 
-### 12.2 1단계: 리뷰 기능 데이터 계약 정의
+#### 12.1.2 1단계: 리뷰 기능 데이터 계약 정의
 - [x] 완료 미션의 리뷰 진입점 정의
   - `/lobby` 완료 미션 카드에 상시 노출되는 `리뷰` 버튼
   - 세션 종료 버튼을 누른 뒤 완료 상태에서 이어서 볼 수 있는 `리뷰` 진입
@@ -573,10 +568,10 @@ archiveReason = "low-weight" | "duplicate" | "manual"
   - 저장 대상: retrieved memory, `promptCompact`, sanitized `rawPrompt`, `rawPromptSanitization`, `rawResponseMeta`
   - assistant message에는 `reviewTurnId`를 연결 필드로 둔다.
 - rawPrompt admin-only debug view는 1차 사용자 리뷰 구현에서 데이터 저장/API 계약까지만 포함하고, 상세 UI는 별도 admin 개선 단계에서 만든다.
-  - 이유: 12.3의 핵심은 사용자가 세션과 memory 활용을 이해하는 리뷰 화면이며, rawPrompt debug UI까지 같이 만들면 범위가 커진다.
-  - 단, 12.3 구현 중 admin이 최소 확인할 수 있도록 JSON/debug placeholder 또는 임시 raw fetch 경로를 남길 수 있다.
+  - 이유: 12.1.3의 핵심은 사용자가 세션과 memory 활용을 이해하는 리뷰 화면이며, rawPrompt debug UI까지 같이 만들면 범위가 커진다.
+  - 단, 12.1.3 구현 중 admin이 최소 확인할 수 있도록 JSON/debug placeholder 또는 임시 raw fetch 경로를 남길 수 있다.
 
-### 12.3 2단계: 사용자 리뷰 화면 구현
+#### 12.1.3 2단계: 사용자 리뷰 화면 구현
 - [x] 완료 미션 카드에 `리뷰` 버튼 추가
 - [x] 리뷰 화면/모달 기본 레이아웃 구현
 - [x] 채팅 로그를 read-only로 표시
@@ -594,7 +589,7 @@ archiveReason = "low-weight" | "duplicate" | "manual"
 - admin이 리뷰 화면을 열면 assistant bubble의 `Raw prompt 보기` 버튼으로 sanitized `rawPrompt`, sanitize 내역, response meta를 모달에서 확인할 수 있다.
 - 리뷰 화면은 `/api/memory/archive-status`로 retrieved memory의 최신 archive 상태를 조회하고, archived memory에는 `archiveReason`, `archivedAt`, duplicate similarity/similarTo 근거를 표시한다.
 
-### 12.4 3단계: 세션 전후 메모리 변화 시각화
+#### 12.1.4 3단계: 세션 전후 메모리 변화 시각화
 - [x] memory view와 session view를 분리
   - memory view: 현재 장기 메모리 중심
   - session view: 특정 세션에서 생성/사용/변경된 메모리 중심
@@ -615,7 +610,7 @@ archiveReason = "low-weight" | "duplicate" | "manual"
 - `/api/memory/profile` GET에 `targetUid` param 추가 — admin이 다른 사용자의 profile 조회 가능
 - 중복 memory는 병합하지 않고 forgetting/archive 방식으로 처리한다. 세션 종료 시 중복 후보는 `archiveReason: auto-duplicate`, `duplicateOf`, `duplicate.similarity`를 남기고 soft archive된다.
 
-### 12.5 4단계: 채팅 스트리밍/스크롤 UX 개선
+#### 12.1.5 4단계: 채팅 스트리밍/스크롤 UX 개선
 - [x] auto-scroll 제거 — 스크롤 위치를 사용자에게 완전히 위임
 - [x] 맨 아래로 ↓ floating 버튼 추가 — 스크롤 100px 이상 올라가면 표시, aside 기준 absolute 포지션
 - [x] 긴 markdown/table/code block 렌더링 중 레이아웃 점프 확인
@@ -627,9 +622,9 @@ archiveReason = "low-weight" | "duplicate" | "manual"
 구현/점검 메모:
 - markdown table은 bubble 내부에서 독립 scroll container로 렌더링하고, table wrapper가 채팅 스크롤 위치를 되돌리지 않도록 처리했다.
 - 생성 중 강제 auto-scroll을 제거해 사용자가 위로 올린 위치를 유지한다. 버벅임의 주요 원인은 markdown 재렌더와 auto-scroll 호출이 겹치던 흐름으로 정리했다.
-- 남은 개선 후보는 SSE chunk batching/markdown memoization이지만, 12.5 범위의 사용자 체감 문제는 auto-scroll 제거와 table scroll 고정으로 닫는다.
+- 남은 개선 후보는 SSE chunk batching/markdown memoization이지만, 12.1.5 범위의 사용자 체감 문제는 auto-scroll 제거와 table scroll 고정으로 닫는다.
 
-### 12.6 5단계: 온보딩/직접 입력 메모리 설계
+#### 12.1.6 5단계: 온보딩/직접 입력 메모리 설계
 - [x] 모든 세션 시작 시 "나에 대해 알았으면 하는 정보" 입력 UI 추가
 - [x] UI 방식 결정 → **3단계 온보딩 페이지** 채택 (modal 방식에서 변경)
 - [x] 직접 입력 메모리 타입 정의
@@ -660,7 +655,7 @@ archiveReason = "low-weight" | "duplicate" | "manual"
 - `profileStep: 2 | 3` state로 2단계/3단계 페이지 전환 관리
 - profile input은 사용자가 명시적으로 제공한 standing background이므로 매 turn 항상 주입한다. interaction memory만 cosine similarity top-k retrieval을 탄다.
 
-### 12.7 6단계: 직접 입력 메모리 retrieval 정책
+#### 12.1.7 6단계: 직접 입력 메모리 retrieval 정책
 - [x] retrieval quota 정책 결정 — profile items 최대 5개 cap, interaction memory는 기존 limit(5) 유지
 - [x] profile memory를 항상 주입 — query similarity 계산 없이 항상 포함 (standing context 성격)
 - [x] retrieval log에 profile item ID 목록 추가 (`profileItemIds` 필드)
@@ -676,13 +671,13 @@ archiveReason = "low-weight" | "duplicate" | "manual"
   - profile items → "standing background" system message (언급하지 않고 암묵적으로 적용)
   - interaction items → retrieved memory system message. prompt compact JSON은 `episodic[]`과 `semantic[]`을 분리해 같은 memory라도 episodic/semantic 텍스트가 섞이지 않게 전달
 
-### 12.8 7단계: 어드민 정리
+#### 12.1.8 7단계: 어드민 정리
 - [ ] table view 대체 UI 기준 충족 여부 확인
 - [ ] admin table view 제거
 - [ ] cluster/retrieval/forgetting/archive 중심으로 admin memory view 재구성
 - [ ] raw JSON/export는 필요한 경우 별도 debug drawer로 이동
 
-### 12.9 8단계: 메모리 셀렉터 모듈화와 전체 UI 개선
+#### 12.1.9 8단계: 메모리 셀렉터 모듈화와 전체 UI 개선
 - [ ] 공통 `MemoryCard` 컴포넌트
 - [ ] 공통 `MemorySelector` 컴포넌트
 - [ ] 공통 `RetrievedMemoryBadge` 컴포넌트
@@ -691,7 +686,7 @@ archiveReason = "low-weight" | "duplicate" | "manual"
 - [ ] 사용자 뷰와 admin 뷰의 용어/색상/상태 표시 통일
 - [ ] 전체 UI polish
 
-### 12.10 우선순위 제안
+#### 12.1.10 우선순위 제안
 1. 리뷰 기능 데이터 계약 정의
 2. 완료 미션 카드 리뷰 버튼 + 기본 리뷰 화면
 3. 채팅 auto-scroll/버벅임 해결
@@ -703,11 +698,11 @@ archiveReason = "low-weight" | "duplicate" | "manual"
 
 ---
 
-## 14. 0604 14:00 실행 계획
+## 13. 0604 14:00 실행 계획
 
 이 섹션은 0604 논의 기준의 최신 작업 큐다. 우선순위는 **사용자에게 바로 깨져 보이는 디버깅 → 메모리 뷰 정보 구조 정리 → 메모리 시스템 정책 → 프롬프트/에이전트 구조 → 어드민/컴포넌트 정리 → 데이터 생성/배포** 순서로 둔다.
 
-### 14.0 세션 플로우 개편 (추가 작업)
+### 13.0 세션 플로우 개편 (추가 작업)
 - [x] 프레젠테이션 섹션 제거 → 미션 레벨 Final Design 선택으로 대체
   - 구현: 아트보드 썸네일 그리드(scaled iframe), 시안별 그룹핑, Firestore 저장
   - 구현: 최종 디자인 미선택 상태로 세션 종료 시 확인 경고
@@ -716,7 +711,7 @@ archiveReason = "low-weight" | "duplicate" | "manual"
 - [x] 세션 데이터 로드 전 옵션·프로필 화면 flash 버그 수정
   - 구현: sessionLoaded 플래그로 모든 사전 단계 화면 게이팅
 
-### 14.1 디버깅
+### 13.1 디버깅
 - [x] 레퍼런스 추천 시 assistant chat bubble에 선택 이유와 간략 설명 포함
   - 현재 문제: 레퍼런스 섹션에는 카드만 추가되고, assistant 답변 안에는 각 레퍼런스를 왜 가져왔는지/어떤 레퍼런스인지 설명이 없음
   - 목표: `[FETCH_REFERENCES: ...]` 이후 검색된 레퍼런스 카드와 함께, chat bubble에도 "왜 이 레퍼런스가 도움이 되는지"를 짧게 설명
@@ -726,11 +721,7 @@ archiveReason = "low-weight" | "duplicate" | "manual"
 - [x] 첫 목업 생성 로딩 화면을 2번째 생성과 동일하게 통일
   - 목표: 첫 생성도 캔버스를 먼저 보여주고, 생성 위치/상태를 같은 방식으로 표시
   - 구현: 생성 시작 시 mockup 탭으로 전환하고, artboard가 아직 없어도 pending skeleton이 있으면 캔버스를 렌더링
-- [x] 프레젠테이션 이미지 Storage 저장 폴백 제거
-  - 목표: Storage 저장 실패 시 폴백 이미지를 자동 선택하지 않고, 마지막으로 선택한 디자인만 사용자가 표시하게 변경
-  - 구현: presentation API는 Storage URL이 만들어진 경우에만 imageUrl을 반환하고, client의 base64/data URL 임시 표시 및 재업로드 폴백 제거
-
-### 14.2 메모리 뷰 개선
+### 13.2 메모리 뷰 개선
 - [x] 사용자 뷰를 "뭐가 저장됐는지" 중심으로 재구성
   - 중심 정보: episodic/semantic 저장 내용, 직접 입력 profile memory, 세션에서 새로 기억된 항목
   - 구현: 각 assistant 버블에 "기억 보기" 버튼 추가 → 해당 turn의 episodic/semantic을 사이드 패널로 표시
@@ -753,7 +744,7 @@ archiveReason = "low-weight" | "duplicate" | "manual"
   - Cluster: 기존 admin memory cluster cache가 있으면 similarity cluster별로 묶어 표시하고, cache가 없으면 Regenerate 안내와 fallback 배치를 표시
   - 재검토 조건: node view에서 정확한 세션 단위 before/after가 제품적으로 중요해질 때만 touched-memory diff event 저장을 검토
 
-### 14.3 메모리 시스템
+### 13.3 메모리 시스템
 - [x] 메모리 전체 크기를 weight decay 계산에 반영
   - 목표: memory 수가 많을수록 near-miss decay 폭을 아주 조금 증가시켜 전체 memory 크기가 무한히 커지지 않게 함
   - 현재 기준: near miss는 rank 6~20, similarity `>= 0.55`, `weight - 0.005`, floor `0.1`
@@ -765,7 +756,7 @@ archiveReason = "low-weight" | "duplicate" | "manual"
   - 최대 decay 상한: `0.0075`
   - retrieval log에 `memoryCount`, `nearMissDecayMultiplier`, `nearMissWeightLoss`, nearMiss별 `decayMultiplier` 저장
 
-### 14.4 프롬프트 최적화
+### 13.4 프롬프트 최적화
 - [x] 프롬프트 2중 구조 설계
   - 1단계: user input 위주 instruction으로 다음 행동/필요 context 판단
   - 2단계: 결정된 행동에 필요한 context만 주입해 실제 응답 생성
@@ -789,7 +780,6 @@ type ChatPlan = {
     | "edit_mockup"
     | "fetch_references"
     | "create_design_spec"
-    | "presentation"
     | "clarify";
   confidence: number; // 0~1
   needs: {
@@ -811,9 +801,9 @@ type ChatPlan = {
     - mission: 기본 포함하되 brief는 planner가 `mission=true`일 때만 긴 버전 사용. 아니면 title + 1~2줄 summary만 사용
     - profile input: `/api/memory/retrieve`가 반환한 `type: "profile_input"` 항목은 별도 standing background system message로 분리
     - interactionMemory: planner가 `interactionMemory=true`일 때만 주입. prompt compact JSON은 `episodic[]`과 `semantic[]`을 별도 그룹으로 구성
-    - activeIdea: note 생성/수정/mockup/presentation 관련 intent에서만 주입
+    - activeIdea: note 생성/수정/mockup 관련 intent에서만 주입
     - designSpec: mockup generate/edit/design spec 관련 intent에서만 주입
-    - mockupHtml: edit/presentation/현재 화면 분석 intent에서만 주입. generate intent에서는 사용자가 기존 mockup 기반 변형을 요구한 경우에만 주입
+    - mockupHtml: edit/현재 화면 분석 intent에서만 주입. generate intent에서는 사용자가 기존 mockup 기반 변형을 요구한 경우에만 주입
     - selectedElement: selectedElement가 있고 edit intent일 때 우선 주입
     - citedTexts/citedReferences: 사용자가 현재 turn에서 인용했거나 planner가 reference/design inspiration intent로 판단한 경우만 주입
   - MVP 구현 순서:
@@ -843,12 +833,12 @@ type ChatPlan = {
     - `storeReviewTurn(meta)`는 `promptPlan`, `selectedContextKeys`, `rawPrompt`를 함께 저장
   - 1차 implementation은 `/api/chat` 내부 함수로 시작하고, 안정화 후 `src/lib/server/chatPlanning.ts`로 분리
 
-### 14.5 어드민 정리
+### 13.5 어드민 정리
 - [ ] table view 대체 UI 기준 충족 여부 확인 후 제거
 - [ ] cluster/retrieval/forgetting/archive 중심으로 admin memory view 재구성
   - 사용자 기본 리뷰 화면과 admin debug 화면의 정보 계층을 분리
 
-### 14.6 컴포넌트 모듈화 + UI
+### 13.6 컴포넌트 모듈화 + UI
 - [ ] 공통 `MemoryCard`
 - [ ] 공통 `MemorySelector`
 - [ ] 공통 `RetrievedMemoryBadge`
@@ -856,7 +846,7 @@ type ChatPlan = {
 - [ ] 공통 `SessionMemoryDiff`
 - [ ] 전체 UI 개선
 
-### 14.7 온보딩
+### 13.7 온보딩
 - [x] 온보딩 입력값 retrieval 활용 방식 변경
   - 현재: profile input은 query embedding과 input embedding similarity로 별도 선별
   - 목표: 온보딩 입력값도 query와 가장 가까운 항목을 따로 retrieve
@@ -867,18 +857,20 @@ type ChatPlan = {
     - `/api/memory/retrieve`의 profile result에서 `weight`, `weightDelta` 제거
     - `/api/chat` review/prompt compact 저장 시 `profile_input`은 weight 관련 필드를 null/undefined로 정규화
 
-### 14.8 데이터 생성/배포
-- [ ] Claude API 스위칭 연결
-  - 연결만 구현하고 실제 사용은 명시적 허락 후 활성화
+### 13.8 데이터 생성/배포
+- [x] Claude API 스위칭 연결
+  - `/api/chat` 최종 assistant response streaming만 OpenAI/Anthropic provider switch 대상
+  - Admin UI의 메인 채팅 헤더 `LLM` selector에서 turn별 OpenAI/Claude override 가능
+  - planner, embedding, memory retrieval/encoding, clustering label은 기존 OpenAI 경로 유지
+  - 기본 Claude model은 `claude-sonnet-4-6`, API version은 `2023-06-01`
 - [ ] 실제 데이터 최대한 많이 만들기
 - [ ] Deploy
 
-### 14.9 다음 작업 순서
+### 13.9 다음 작업 순서
 1. ~~레퍼런스 추천 후 assistant chat bubble에 선택 이유와 간략 설명을 포함~~ ✅
 2. ~~첫 목업 생성 로딩 UX를 2번째 생성과 통일~~ ✅
-3. ~~프레젠테이션 이미지 Storage 폴백 제거~~ ✅
-4. ~~사용자 메모리 뷰를 저장 내용 중심으로 재구성~~ ✅
-5. ~~retrieval/debug 정보는 admin-only로 분리~~ ✅
-6. profile input retrieval 정책 재설계: 항상 주입/weight 제거 여부 반영
-7. memory count 기반 near-miss decay multiplier 설계 및 적용
-8. 공통 memory UI 컴포넌트 추출
+3. ~~사용자 메모리 뷰를 저장 내용 중심으로 재구성~~ ✅
+4. ~~retrieval/debug 정보는 admin-only로 분리~~ ✅
+5. profile input retrieval 정책 재설계: 항상 주입/weight 제거 여부 반영
+6. memory count 기반 near-miss decay multiplier 설계 및 적용
+7. 공통 memory UI 컴포넌트 추출
