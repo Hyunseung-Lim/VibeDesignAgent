@@ -208,7 +208,6 @@ type ChatPlanIntent =
 
 type ChatPlanNeeds = {
   mission: boolean;
-  profileMemory: boolean;
   interactionMemory: boolean;
   activeIdea: boolean;
   designSpec: boolean;
@@ -237,7 +236,6 @@ function defaultChatPlan(overrides?: Partial<ChatPlan>): ChatPlan {
     confidence: 0,
     needs: {
       mission: true,
-      profileMemory: true,
       interactionMemory: true,
       activeIdea: true,
       designSpec: true,
@@ -294,7 +292,6 @@ function parseChatPlan(text: string): ChatPlan | null {
           : 0,
       needs: {
         mission: Boolean(needs?.mission),
-        profileMemory: Boolean(needs?.profileMemory),
         interactionMemory: Boolean(needs?.interactionMemory),
         activeIdea: Boolean(needs?.activeIdea),
         designSpec: Boolean(needs?.designSpec),
@@ -589,7 +586,7 @@ export async function POST(request: Request) {
       });
     }
 
-    if (interactionItems.length > 0) {
+    if (interactionItems.length > 0 && shouldIncludePlannedContext("interactionMemory")) {
       markContext("interactionMemory");
       const compactMemory = compactMemoryContext({
         ...memoryContext,

@@ -160,7 +160,6 @@ Output shape:
   "confidence": 0.0,
   "needs": {
     "mission": true,
-    "profileMemory": false,
     "interactionMemory": false,
     "activeIdea": false,
     "designSpec": false,
@@ -181,6 +180,7 @@ Rules:
 - Need activeIdea for note updates, mockup generation from the current note, presentations, or design spec work tied to the note.
 - Need designSpec for mockup generation/editing or design spec revision.
 - Need citedTexts or citedReferences only when the current request refers to selected/cited material, examples, references, or inspiration.
+- Need interactionMemory when the task involves continuing or referencing past design decisions, revising previous work, or generating/editing a mockup. Skip for standalone queries: reference searches, simple factual questions, or first-turn clarifications with no prior context.
 - Use "clarify" when the user request cannot be answered without asking a question.
 
 Compact input:

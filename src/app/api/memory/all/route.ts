@@ -1,0 +1,65 @@
+import {
+  getFirebaseAccessToken,
+  getFirestoreDocument,
+  listFirestoreDocumentIds,
+  verifyFirebaseIdToken,
+} from "@/lib/server/firebaseAdminRest";
+
+export const runtime = "nodejs";
+
+const MEMORY_COLLECTION = "memories_0_1_2";
+
+function str(v: unknown): string | null {
+  return typeof v === "string" && v.trim() ? v.trim() : null;
+}
+
+function num(v: unknown): number | null {
+  return typeof v === "number" && Number.isFinite(v) ? v : null;
+}
+
+export async function GET(request: Request) {
+  const user = await verifyFirebaseIdToken(request);
+  if (!user) return Response.json({ error: "unauthorized" }, { status: 401 });
+
+  try {
+    const token = await getFirebaseAccessToken();
+    const ids = await listFirestoreDocumentIds(
+      `users/${user.localId}/${MEMORY_COLLECTION}`,
+      token,
+    );
+
+    const docs = await Promise.all(
+      ids.map(async (id) => {
+        const data =
+          ((await getFirestoreDocument(
+            `users/${user.localId}/${MEMORY_COLLECTION}/${encodeURIComponent(id)}`,
+            token,
+          )) ?? {}) as Record<string, unknown>;
+        return {
+          id,
+          episodic: str(data.episodic ?? data.episode),
+          semantic: str(data.semantic),
+          action: str(data.action),
+          keywords: Array.isArray(data.keywords)
+            ? data.keywords.map(String)
+            : Array.isArray(data.keyword)
+              ? (data.keyword as unknown[]).map(String)
+              : [],
+          weight: num(data.weight),
+          timestamp: num(data.timestamp ?? data.createdAt),
+          archivedAt: num(data.archivedAt),
+          archiveReason: str(data.archiveReason),
+        };
+      }),
+    );
+
+    const memories = docs
+      .filter((d) => d.episodic)
+      .sort((a, b) => (b.timestamp ?? 0) - (a.timestamp ?? 0));
+
+    return Response.json({ memories });
+  } catch (err) {
+    console.error("[api/memory/all]", err);
+    return Response.json({ error: "failed to load memories" }, { status: 500 });
+  }
+}

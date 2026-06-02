@@ -832,7 +832,7 @@ type ChatPlan = {
     - 1차 pruning은 `activeIdea`, `designSpec`, `mockupHtml`, `citedTexts`, `citedReferences`에 적용했다. memory는 아직 기존처럼 포함한다.
     - planner 실패 시 기존 방식으로 fallback한다. `confidence < 0.55`면 대부분 context는 유지하되 `mockupHtml`은 selected/edit/current-screen 계열 요청일 때만 포함한다.
     - client assistant bubble의 `참조한 맥락` 요약은 제거했다. 대신 `/api/chat`이 stream 초반에 `[CHAT_PHASE: ...]` 이벤트를 여러 개 보내고, client는 이를 본문에 저장하지 않는 Codex식 단계 로그로 표시한다.
-- [ ] 에이전트가 필요한 참조 대상을 스스로 select하도록 설계
+- [x] 에이전트가 필요한 참조 대상을 스스로 select하도록 설계
   - 후보: memory, cited references, selected element, active idea, mockup HTML, design spec
   - 우선은 설계 문서화 후 route 분리 여부 결정
   - 참조 대상 선택은 planner의 `needs`를 1차 source of truth로 사용
