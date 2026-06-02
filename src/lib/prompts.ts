@@ -111,7 +111,7 @@ export function chatProfileMemoryPrompt(lines: string) {
 }
 
 export function chatInteractionMemoryPrompt(compactMemoryJson: string) {
-  return `User memory retrieved for this turn. Each memory may include action, keyword, episodic, semantic, input, output, link, and weight. Episodic memories describe prior interactions; semantic memories describe durable user preferences or working patterns. Use only what is helpful; do not mention memory unless it directly improves the answer.\n${compactMemoryJson}`;
+  return `User memory retrieved for this turn. The JSON groups episodic and semantic memory separately. Episodic memories describe prior interactions; semantic memories describe durable user preferences or working patterns. Each item may include action, keyword, input, output, link, weight, and similarity. Use only what is helpful; do not mention memory unless it directly improves the answer.\n${compactMemoryJson}`;
 }
 
 export function chatDesignSpecPrompt(designSpec: string) {

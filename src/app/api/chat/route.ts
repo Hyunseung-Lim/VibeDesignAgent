@@ -43,12 +43,40 @@ function truncateText(value: unknown, maxLength: number) {
   return `${text.slice(0, maxLength)}\n...[truncated]`;
 }
 
+function memoryContextItems(memoryContext: unknown) {
+  const context = memoryContext as
+    | { episodic?: unknown[]; semantic?: unknown[] }
+    | null
+    | undefined;
+  if (!context) return [];
+  const seen = new Set<string>();
+  return [
+    ...(Array.isArray(context.episodic) ? context.episodic : []),
+    ...(Array.isArray(context.semantic) ? context.semantic : []),
+  ].filter((item, index) => {
+    const record = item as Record<string, unknown>;
+    const keyParts = [
+      record.type,
+      record.memoryId,
+      record.semanticItemId,
+      record.id,
+    ]
+      .filter((value) => value != null && value !== "")
+      .map(String);
+    const key = keyParts.length > 0 ? keyParts.join(":") : `item:${index}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 function compactMemoryContext(memoryContext: unknown) {
   const context = memoryContext as
     | { episodic?: unknown[]; semantic?: unknown[] }
     | null
     | undefined;
   if (!context) return null;
+  const items = memoryContextItems(context);
   const compactItem = (item: unknown) => {
     const record = item as Record<string, unknown>;
     const isProfileInput = record.type === "profile_input";
@@ -79,12 +107,20 @@ function compactMemoryContext(memoryContext: unknown) {
         typeof record.similarity === "number" ? record.similarity : undefined,
     };
   };
-  const episodic = Array.isArray(context.episodic)
-    ? context.episodic.slice(0, 8).map(compactItem)
-    : [];
-  const semantic = Array.isArray(context.semantic)
-    ? context.semantic.slice(0, 8).map(compactItem)
-    : [];
+  const episodic = items
+    .filter((item) => {
+      const record = item as Record<string, unknown>;
+      return Boolean(truncateText(record.episodic ?? record.episode, 500));
+    })
+    .slice(0, 8)
+    .map((item) => ({ ...compactItem(item), semantic: null }));
+  const semantic = items
+    .filter((item) => {
+      const record = item as Record<string, unknown>;
+      return typeof record.semantic === "string" && record.semantic.trim();
+    })
+    .slice(0, 8)
+    .map((item) => ({ ...compactItem(item), episodic: "" }));
   return { episodic, semantic };
 }
 
@@ -461,16 +497,14 @@ export async function POST(request: Request) {
     typeof latestUserMessage?.content === "string"
       ? latestUserMessage.content.trim()
       : "";
-  const semanticMemoryItems = Array.isArray(memoryContext?.semantic)
-    ? memoryContext.semantic
-    : [];
-  const profileMemoryCount = semanticMemoryItems.filter(
+  const memoryItems = memoryContextItems(memoryContext);
+  const profileMemoryCount = memoryItems.filter(
     (item: unknown) =>
       item &&
       typeof item === "object" &&
       (item as Record<string, unknown>).type === "profile_input",
   ).length;
-  const interactionMemoryCount = semanticMemoryItems.length - profileMemoryCount;
+  const interactionMemoryCount = memoryItems.length - profileMemoryCount;
   const plannerInput = {
     latestUserText: truncateText(latestUserText, 1200),
     recentMessages: messageList.slice(-6).map(
@@ -557,15 +591,12 @@ export async function POST(request: Request) {
   }
 
   if (memoryContext) {
-    const allItems: unknown[] = Array.isArray(memoryContext.semantic)
-      ? memoryContext.semantic
-      : [];
-    const profileItems = allItems.filter(
+    const profileItems = memoryItems.filter(
       (item) =>
         item && typeof item === "object" &&
         (item as Record<string, unknown>).type === "profile_input",
     );
-    const interactionItems = allItems.filter(
+    const interactionItems = memoryItems.filter(
       (item) =>
         !item ||
         typeof item !== "object" ||
@@ -589,7 +620,7 @@ export async function POST(request: Request) {
     if (interactionItems.length > 0 && shouldIncludePlannedContext("interactionMemory")) {
       markContext("interactionMemory");
       const compactMemory = compactMemoryContext({
-        ...memoryContext,
+        episodic: [],
         semantic: interactionItems,
       });
       systemMessages.push({
@@ -753,8 +784,7 @@ export async function POST(request: Request) {
     if (!canStoreReviewTurn || !user) return;
     try {
       const token = await getFirebaseAccessToken();
-      const retrieved = Array.isArray(memoryContext?.semantic)
-        ? memoryContext.semantic.map((item: unknown) => {
+      const retrieved = memoryContextItems(memoryContext).map((item: unknown) => {
             const record = item as Record<string, unknown>;
             const isProfileInput = record.type === "profile_input";
             return {
@@ -798,8 +828,7 @@ export async function POST(request: Request) {
                   ? record.source
                   : null,
             };
-          })
-        : [];
+          });
       await patchFirestoreDocument(
         `sessions/${user.localId}/missions/${encodeURIComponent(reviewMissionId)}/reviewTurns/${encodeURIComponent(reviewTurnId)}`,
         {

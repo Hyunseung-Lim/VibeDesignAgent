@@ -120,6 +120,7 @@
 - **확정 시점**: 사용자가 `세션 종료` 버튼을 누르면 `/api/memory/complete-session`에서 draft를 통합해 장기 메모리로 저장
 - **버전 관리**: admin memory modal에서 v0.1.0 / v0.1.1 / v0.1.2를 분리 조회
 - **현재 활용**: 각 채팅 turn 직전에 `/api/memory/retrieve`로 현재 query와 가까운 memory top 5를 검색해 채팅 context에 주입
+- **Prompt 주입 방식**: profile input은 별도 standing background system message로 분리하고, interaction memory는 prompt compact JSON에서 `episodic`/`semantic` 배열로 묶어 주입
 - **Legacy**: `GET /api/memory/bootstrap`은 세션 시작 시 memory를 preload하던 구 방식이며, 현재 main client에서는 호출하지 않음
 - **Retrieval 쿼리 구성**: `[user text] + Mission: [parentMissionTitle] + Active idea: [description]` — 선택된 옵션 이름(페르소나 등)은 제외해 임베딩 노이즈 방지
 - **Admin 관측**: researcher가 user별 memory rows, semantic item, cluster 결과, retrieval log/score delta, forgetting/archive 후보를 확인 가능
@@ -671,9 +672,9 @@ archiveReason = "low-weight" | "duplicate" | "manual"
 - `/api/memory/retrieve`: `loadProfileItems` 결과를 `.slice(0, 5)`로 cap
 - profile item은 항목당 240자로 잘라 standing background system message 크기를 제한
 - retrieval log: `profileItemIds` 배열 추가
-- `/api/chat`: `memoryContext.semantic`에서 `type === "profile_input"` 필터로 분리
+- `/api/chat`: `memoryContextItems(...)`가 `memoryContext.episodic`과 `memoryContext.semantic`을 함께 읽고 중복 제거
   - profile items → "standing background" system message (언급하지 않고 암묵적으로 적용)
-  - interaction items → 기존 retrieved memory system message
+  - interaction items → retrieved memory system message. prompt compact JSON은 `episodic[]`과 `semantic[]`을 분리해 같은 memory라도 episodic/semantic 텍스트가 섞이지 않게 전달
 
 ### 12.8 7단계: 어드민 정리
 - [ ] table view 대체 UI 기준 충족 여부 확인
@@ -793,7 +794,6 @@ type ChatPlan = {
   confidence: number; // 0~1
   needs: {
     mission: boolean;
-    profileMemory: boolean;
     interactionMemory: boolean;
     activeIdea: boolean;
     designSpec: boolean;
@@ -809,8 +809,8 @@ type ChatPlan = {
   - Context selection rule 초안:
     - 항상 포함: `CHAT_AGENT_BASE_PROMPT`, planner intent별 `chatActionInstructionPrompt(...)`, target device, current request
     - mission: 기본 포함하되 brief는 planner가 `mission=true`일 때만 긴 버전 사용. 아니면 title + 1~2줄 summary만 사용
-    - profileMemory: planner가 `profileMemory=true`일 때만 주입. 이미 `/api/memory/retrieve`에서 query-relevant profile top-k만 반환
-    - interactionMemory: planner가 `interactionMemory=true`일 때만 주입
+    - profile input: `/api/memory/retrieve`가 반환한 `type: "profile_input"` 항목은 별도 standing background system message로 분리
+    - interactionMemory: planner가 `interactionMemory=true`일 때만 주입. prompt compact JSON은 `episodic[]`과 `semantic[]`을 별도 그룹으로 구성
     - activeIdea: note 생성/수정/mockup/presentation 관련 intent에서만 주입
     - designSpec: mockup generate/edit/design spec 관련 intent에서만 주입
     - mockupHtml: edit/presentation/현재 화면 분석 intent에서만 주입. generate intent에서는 사용자가 기존 mockup 기반 변형을 요구한 경우에만 주입
@@ -820,7 +820,7 @@ type ChatPlan = {
     1. [x] planner prompt/function을 `src/lib/prompts.ts`에 추가
     2. [x] `/api/chat`에서 plan 생성 후 `reviewTurns/{turnId}.promptPlan`에 저장
     3. [x] 실제 context pruning은 `mockupHtml`, `activeIdea`, `designSpec`부터 적용
-    4. 안정화 후 memory selection 적용
+    4. [x] interaction memory selection 적용 — planner가 `interactionMemory=true`일 때만 주입
   - 실패/불확실성 처리:
     - planner 실패 시 기존 단일 프롬프트 방식으로 fallback
     - `confidence < 0.55`면 큰 context는 유지하되 `mockupHtml`만 selectedElement/edit 요청이 아닐 때 제외
@@ -829,7 +829,8 @@ type ChatPlan = {
     - `/api/chat`에서 compact planner input을 만들고 `gpt-5.4`로 `ChatPlan`을 생성한다.
     - 기존 단일 system prompt는 제거하고, `CHAT_AGENT_BASE_PROMPT` + intent별 `chatActionInstructionPrompt(...)` 조합으로 분리했다.
     - `promptPlan`, `promptPlanFallback`, `selectedContextKeys`를 reviewTurn top-level과 `promptCompact`에 함께 저장한다.
-    - 1차 pruning은 `activeIdea`, `designSpec`, `mockupHtml`, `citedTexts`, `citedReferences`에 적용했다. memory는 아직 기존처럼 포함한다.
+    - pruning은 `activeIdea`, `designSpec`, `mockupHtml`, `citedTexts`, `citedReferences`, `interactionMemory`에 적용했다.
+    - retrieved interaction memory는 prompt에 넣기 직전 `episodic[]`과 `semantic[]`으로 재그룹화한다. 검색은 combined embedding 기준으로 유지하되, 모델에게 전달되는 표현은 "이전 상호작용"과 "지속적 선호/패턴"이 섞이지 않게 분리한다.
     - planner 실패 시 기존 방식으로 fallback한다. `confidence < 0.55`면 대부분 context는 유지하되 `mockupHtml`은 selected/edit/current-screen 계열 요청일 때만 포함한다.
     - client assistant bubble의 `참조한 맥락` 요약은 제거했다. 대신 `/api/chat`이 stream 초반에 `[CHAT_PHASE: ...]` 이벤트를 여러 개 보내고, client는 이를 본문에 저장하지 않는 Codex식 단계 로그로 표시한다.
 - [x] 에이전트가 필요한 참조 대상을 스스로 select하도록 설계

@@ -4966,8 +4966,15 @@ export default function MainScreenPage() {
             <div
               className={`rounded-full ${node.color} shadow-sm ring-2 ${node.ring} ${
                 node.isTouched ? "opacity-100" : "opacity-45"
-              } ${selectedGraphMemoryId === node.id ? "outline outline-3 outline-slate-900" : ""}`}
-              style={{ height: node.size, width: node.size }}
+              }`}
+              style={{
+                height: node.size,
+                outline:
+                  selectedGraphMemoryId === node.id
+                    ? "3px solid rgb(15 23 42)"
+                    : undefined,
+                width: node.size,
+              }}
             />
             {node.isTouched && (
               <p className="w-16 truncate rounded-full bg-white/80 px-1.5 py-0.5 text-[8px] font-semibold text-slate-500 shadow-sm ring-1 ring-slate-100">
