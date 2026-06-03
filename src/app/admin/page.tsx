@@ -372,7 +372,8 @@ export default function AdminPage() {
     useState<SemanticFilter>("all");
   const [memoryStartDate, setMemoryStartDate] = useState("");
   const [memoryEndDate, setMemoryEndDate] = useState("");
-  const [memoryViewTab, setMemoryViewTab] = useState<MemoryViewTab>("table");
+  const [memoryViewTab, setMemoryViewTab] =
+    useState<MemoryViewTab>("clusters");
   const [memoryClusterViewTab, setMemoryClusterViewTab] =
     useState<MemoryClusterViewTab>("graph");
   const [memoryGraphClusters, setMemoryGraphClusters] = useState<
@@ -533,7 +534,7 @@ export default function AdminPage() {
       participant.displayName ?? participant.email ?? participant.id;
     if (
       !confirm(
-        `${label} 사용자의 ${missionTitle(targetMissionId)} 기록만 삭제할까요? 유저 정보와 다른 미션 기록은 유지됩니다.`,
+        `${label} 사용자의 ${missionTitle(targetMissionId)} 기록만 삭제할까요?\n\n해당 미션 세션과 하위 memoryDrafts/reviewTurns를 삭제합니다. 유저 정보, 장기 메모리, 다른 미션 기록은 유지됩니다.`,
       )
     )
       return;
@@ -557,6 +558,16 @@ export default function AdminPage() {
         alert(data?.error ?? "유저 데이터 삭제에 실패했습니다.");
         return;
       }
+      const data = await res.json().catch(() => null);
+      alert(
+        [
+          "미션 기록 삭제가 완료됐습니다.",
+          `삭제된 세션: ${data?.deletedSessionMissions ?? 0}개`,
+          `삭제된 참여 기록: ${data?.deletedParticipantRecords ?? 0}개`,
+          `삭제된 memoryDrafts: ${data?.deletedMemoryDrafts ?? 0}개`,
+          `삭제된 reviewTurns: ${data?.deletedReviewTurns ?? 0}개`,
+        ].join("\n"),
+      );
     } catch (error) {
       console.error("[admin] user delete failed", error);
       alert("유저 데이터 삭제 중 오류가 발생했습니다.");
@@ -735,7 +746,7 @@ export default function AdminPage() {
             : "0.1.0",
       );
       resetMemoryFilters();
-      setMemoryViewTab("table");
+      setMemoryViewTab("clusters");
       setMemoryClusterViewTab("graph");
       setMemoryGraphClusters([]);
       setSelectedMemoryClusterId(null);
@@ -762,7 +773,7 @@ export default function AdminPage() {
     const label = user.displayName ?? user.email ?? user.id;
     if (
       !confirm(
-        `${label}의 세션 데이터와 프레젠테이션 파일을 백업한 뒤 삭제할까요?\n\n메모리 컬렉션은 삭제하지 않습니다.`,
+        `${label}의 세션 데이터와 Storage 파일을 백업한 뒤 삭제할까요?\n\n메모리 컬렉션은 삭제하지 않습니다.`,
       )
     ) {
       return;
@@ -1091,7 +1102,8 @@ export default function AdminPage() {
     memoryArchivedItems[0] ??
     null;
   const clusterInputSignature = useMemo(() => {
-    const rawSignature = clusterableMemoryItems
+    const rawSignature = [...clusterableMemoryItems]
+      .sort((a, b) => a.id.localeCompare(b.id))
       .map((item) =>
         [
           item.id,
@@ -1413,36 +1425,9 @@ export default function AdminPage() {
             <div className="shrink-0 border-b border-slate-100 px-6 py-3">
               <div className="flex flex-wrap items-end gap-3">
                 <div className="inline-flex rounded-lg border border-slate-200 bg-slate-50 p-1">
-                  {(
-                    [
-                      "table",
-                      "clusters",
-                      "retrievals",
-                      "forgetting",
-                      "archived",
-                    ] as const
-                  ).map((tab) => (
-                    <button
-                      key={tab}
-                      type="button"
-                      onClick={() => setMemoryViewTab(tab)}
-                      className={`rounded-md px-3 py-1.5 text-xs font-semibold transition ${
-                        memoryViewTab === tab
-                          ? "bg-white text-slate-900 shadow-sm"
-                          : "text-slate-500 hover:text-slate-900"
-                      }`}
-                    >
-                      {tab === "table"
-                        ? "Table"
-                        : tab === "clusters"
-                          ? "Clusters"
-                          : tab === "retrievals"
-                            ? "Retrievals"
-                            : tab === "forgetting"
-                              ? "Forgetting"
-                              : "Archived"}
-                    </button>
-                  ))}
+                  <span className="rounded-md bg-white px-3 py-1.5 text-xs font-semibold text-slate-900 shadow-sm">
+                    Clusters
+                  </span>
                 </div>
                 {(memoryViewTab === "table" ||
                   memoryViewTab === "clusters") && (
@@ -1527,34 +1512,6 @@ export default function AdminPage() {
                         <option value="without">No semantic</option>
                       </select>
                     </label>
-                    <label className="flex flex-col gap-1 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
-                      Sort
-                      <select
-                        value={memorySortKey}
-                        onChange={(e) =>
-                          setMemorySortKey(e.target.value as MemorySortKey)
-                        }
-                        className="rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-normal normal-case tracking-normal text-slate-700 outline-none focus:border-slate-400"
-                      >
-                        <option value="timestamp">Timestamp</option>
-                        <option value="action">Action</option>
-                        <option value="semantic">Semantic count</option>
-                        <option value="retentionMax">Weight max</option>
-                        <option value="retentionMin">Weight min</option>
-                        <option value="retentionAvg">Weight avg</option>
-                      </select>
-                    </label>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setMemorySortDirection((prev) =>
-                          prev === "desc" ? "asc" : "desc",
-                        )
-                      }
-                      className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 transition hover:border-slate-300 hover:bg-slate-50"
-                    >
-                      {memorySortDirection === "desc" ? "Desc" : "Asc"}
-                    </button>
                     <button
                       type="button"
                       onClick={resetMemoryFilters}
@@ -1564,7 +1521,7 @@ export default function AdminPage() {
                     </button>
                     <span className="ml-auto text-xs text-slate-400">
                       {visibleMemoryRows.length} / {versionMemoryRows.length}{" "}
-                      rows
+                      semantic nodes
                     </span>
                   </>
                 )}
@@ -2591,67 +2548,13 @@ export default function AdminPage() {
                 </div>
               )}
             </div>
-            <div className="flex shrink-0 items-center justify-between border-t border-slate-100 px-6 py-4">
+            <div className="flex shrink-0 items-center justify-end border-t border-slate-100 px-6 py-4">
               <button
                 type="button"
-                onClick={() => {
-                  if (visibleMemoryRows.length === 0) return;
-                  const headers = [
-                    "Timestamp",
-                    "Mission",
-                    "Action",
-                    "Input",
-                    "Episode",
-                    "Semantic",
-                    "Keywords",
-                  ];
-                  const escape = (v: string) => `"${v.replace(/"/g, '""')}"`;
-                  const rows = visibleMemoryRows.map((row) => {
-                    const semantics = semanticItems(row).join(" | ");
-                    return [
-                      row.timestamp
-                        ? new Date(row.timestamp as number).toLocaleString(
-                            "ko-KR",
-                          )
-                        : "",
-                      row.source?.missionId ?? "",
-                      row.agentActionCategory ?? "",
-                      row.input ?? "",
-                      row.episode ?? "",
-                      semantics,
-                      (row.keywords ?? []).join(", "),
-                    ]
-                      .map(escape)
-                      .join(",");
-                  });
-                  const csv = [headers.map(escape).join(","), ...rows].join(
-                    "\n",
-                  );
-                  const blob = new Blob(["﻿" + csv], {
-                    type: "text/csv;charset=utf-8;",
-                  });
-                  const url = URL.createObjectURL(blob);
-                  const a = document.createElement("a");
-                  a.href = url;
-                  a.download = `memory_${memoryModal.userName}_v${memoryVersionTab}_${new Date().toISOString().slice(0, 10)}.csv`;
-                  a.click();
-                  URL.revokeObjectURL(url);
-                }}
+                onClick={() => setMemoryModal(null)}
                 className="rounded-2xl bg-slate-100 px-4 py-2 text-xs font-semibold text-slate-600 transition hover:bg-slate-200"
               >
-                CSV 내보내기
-              </button>
-              <button
-                type="button"
-                onClick={() =>
-                  deleteAllMemory(memoryModal.userId, memoryVersionTab)
-                }
-                disabled={isDeletingMemory}
-                className="rounded-2xl bg-red-50 px-4 py-2 text-xs font-semibold text-red-600 transition hover:bg-red-100 disabled:opacity-50"
-              >
-                {isDeletingMemory
-                  ? "삭제 중..."
-                  : `v${memoryVersionTab} 메모리 삭제`}
+                닫기
               </button>
             </div>
           </div>
@@ -3201,7 +3104,7 @@ export default function AdminPage() {
                           onClick={() => deleteUserData(p)}
                           className="rounded-full p-1.5 text-slate-300 transition hover:bg-red-50 hover:text-red-500"
                           title={
-                            p.isAdmin ? "관리자 기록 삭제" : "유저 데이터 삭제"
+                            p.isAdmin ? "관리자 미션 기록 삭제" : "미션 기록 삭제"
                           }
                         >
                           <XIcon size={14} />

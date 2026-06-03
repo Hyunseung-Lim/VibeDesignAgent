@@ -1,11 +1,20 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 import { getIdToken, onAuthStateChanged } from "firebase/auth";
 import { firebaseAuth } from "@/lib/firebase";
 import { ArrowLeftIcon, BrainIcon } from "@phosphor-icons/react";
-import MemoryClusterGraph from "@/app/admin/MemoryClusterGraph";
+
+const MemoryClusterGraph = dynamic(() => import("@/app/admin/MemoryClusterGraph"), {
+  ssr: false,
+  loading: () => (
+    <div className="flex h-full min-h-96 items-center justify-center bg-white text-sm text-slate-400">
+      Graph view loading...
+    </div>
+  ),
+});
 
 type MemoryItem = {
   id: string;

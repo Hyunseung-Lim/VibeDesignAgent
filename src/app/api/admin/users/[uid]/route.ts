@@ -168,6 +168,33 @@ async function deleteDocument(documentPath: string, token: string) {
   }
 }
 
+const SESSION_SUBCOLLECTIONS = ["memoryDrafts", "reviewTurns"] as const;
+
+async function deleteSessionDocument(sessionPath: string, token: string) {
+  const deletedSubcollections: Record<
+    (typeof SESSION_SUBCOLLECTIONS)[number],
+    number
+  > = {
+    memoryDrafts: 0,
+    reviewTurns: 0,
+  };
+
+  await Promise.all(
+    SESSION_SUBCOLLECTIONS.map(async (subcollection) => {
+      const ids = await listDocumentIds(`${sessionPath}/${subcollection}`, token);
+      deletedSubcollections[subcollection] = ids.length;
+      await Promise.all(
+        ids.map((id) =>
+          deleteDocument(`${sessionPath}/${subcollection}/${id}`, token),
+        ),
+      );
+    }),
+  );
+  await deleteDocument(sessionPath, token);
+
+  return deletedSubcollections;
+}
+
 async function resetOnboardingRecord(uid: string, token: string) {
   const url = new URL(`${firestoreBase()}/users/${uid}`);
   [
@@ -227,8 +254,11 @@ export async function DELETE(
       return Response.json({ error: "missionId required" }, { status: 400 });
     }
 
-    await Promise.all([
-      deleteDocument(`sessions/${uid}/missions/${targetMissionId}`, token),
+    const [deletedSubcollections] = await Promise.all([
+      deleteSessionDocument(
+        `sessions/${uid}/missions/${targetMissionId}`,
+        token,
+      ),
       targetMissionId === "onboarding"
         ? resetOnboardingRecord(uid, token)
         : deleteDocument(
@@ -242,6 +272,8 @@ export async function DELETE(
       recordsOnly: true,
       deletedSessionMissions: 1,
       deletedParticipantRecords: targetMissionId === "onboarding" ? 0 : 1,
+      deletedMemoryDrafts: deletedSubcollections.memoryDrafts,
+      deletedReviewTurns: deletedSubcollections.reviewTurns,
     });
   }
 
@@ -257,10 +289,21 @@ export async function DELETE(
     listDocumentIds(`sessions/${uid}/missions`, token),
   ]);
 
-  await Promise.all([
-    ...sessionMissionIds.map((missionId) =>
-      deleteDocument(`sessions/${uid}/missions/${missionId}`, token),
+  const sessionDeleteResults = await Promise.all(
+    sessionMissionIds.map((missionId) =>
+      deleteSessionDocument(`sessions/${uid}/missions/${missionId}`, token),
     ),
+  );
+  const deletedMemoryDrafts = sessionDeleteResults.reduce(
+    (sum, result) => sum + result.memoryDrafts,
+    0,
+  );
+  const deletedReviewTurns = sessionDeleteResults.reduce(
+    (sum, result) => sum + result.reviewTurns,
+    0,
+  );
+
+  await Promise.all([
     ...missionIds.map((missionId) =>
       deleteDocument(`missions/${missionId}/participants/${uid}`, token),
     ),
@@ -273,5 +316,7 @@ export async function DELETE(
     recordsOnly: false,
     deletedSessionMissions: sessionMissionIds.length,
     deletedParticipantRecords: missionIds.length,
+    deletedMemoryDrafts,
+    deletedReviewTurns,
   });
 }

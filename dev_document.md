@@ -38,8 +38,10 @@
 - 미션 CRUD (생성/수정/삭제)
 - 미션 ID: `mission-YYYYMMDD-HHmmss` 형식 (사람이 읽기 쉬운 구조)
 - 참여자 목록 조회 및 세션 열람 (읽기 전용 뷰)
-- 유저 메모리 조회: 버전별 table view, cluster view, CSV/JSON export
-- 메모리 cluster view: Elbow K와 LLM K 진단값을 함께 표시
+- 참여자 카드의 X는 해당 미션 세션과 하위 `memoryDrafts`/`reviewTurns`만 삭제하며, 유저 정보/장기 메모리/다른 미션 기록은 유지
+- 사용자 카드의 `세션 백업 후 삭제`는 모든 세션/참여 기록을 백업 후 삭제하되, 장기 메모리 컬렉션은 유지
+- 유저 메모리 조회: 버전별 cluster view 중심으로 표시
+- 메모리 cluster view: similarity graph, cluster list/detail, graph 진단값을 표시
 
 ### `/main/[missionId]` — 메인 디자인 세션
 - 좌측 패널 (스크롤 가능): Mission → Reference → 아이디어 탭 (Idea/Mockup)
@@ -120,7 +122,7 @@
 - **Prompt 주입 방식**: profile input은 별도 standing background system message로 분리하고, interaction memory는 prompt compact JSON에서 `episodic`/`semantic` 배열로 묶어 주입
 - **Legacy**: `GET /api/memory/bootstrap`은 세션 시작 시 memory를 preload하던 구 방식이며, 현재 main client에서는 호출하지 않음
 - **Retrieval 쿼리 구성**: `[user text] + Mission: [parentMissionTitle] + Active idea: [description]` — 선택된 옵션 이름(페르소나 등)은 제외해 임베딩 노이즈 방지
-- **Admin 관측**: researcher가 user별 memory rows, semantic item, cluster 결과, retrieval log/score delta, forgetting/archive 후보를 확인 가능
+- **Admin 관측**: researcher가 user별 memory cluster 결과와 graph/detail 진단값을 확인 가능
 - **Retrieval MVP**: v0.1.2 memory document에 embedding과 `weight` metadata를 저장하고, retrieve된 memory의 weight를 천천히 올림
 - **Forgetting MVP**: low-weight/duplicate 후보를 `archivedAt` 기반으로 soft archive
 
@@ -672,9 +674,9 @@ archiveReason = "low-weight" | "duplicate" | "manual"
   - interaction items → retrieved memory system message. prompt compact JSON은 `episodic[]`과 `semantic[]`을 분리해 같은 memory라도 episodic/semantic 텍스트가 섞이지 않게 전달
 
 #### 12.1.8 7단계: 어드민 정리
-- [ ] table view 대체 UI 기준 충족 여부 확인
-- [ ] admin table view 제거
-- [ ] cluster/retrieval/forgetting/archive 중심으로 admin memory view 재구성
+- [x] admin memory modal에서 table view 제거
+- [x] memory modal을 cluster view 중심으로 재구성
+- [ ] raw retrieval/forgetting/archive 관측 UI를 별도 debug drawer로 분리할지 결정
 - [ ] raw JSON/export는 필요한 경우 별도 debug drawer로 이동
 
 #### 12.1.9 8단계: 메모리 셀렉터 모듈화와 전체 UI 개선
@@ -693,7 +695,7 @@ archiveReason = "low-weight" | "duplicate" | "manual"
 4. 세션별 메모리 변화 시각화
 5. 직접 입력 메모리 타입/저장 방식 설계
 6. 직접 입력 메모리 retrieval 정책
-7. admin table view 제거
+7. admin memory debug drawer 분리 여부 결정
 8. 메모리 컴포넌트 모듈화와 전체 UI 개선
 
 ---
@@ -834,8 +836,11 @@ type ChatPlan = {
   - 1차 implementation은 `/api/chat` 내부 함수로 시작하고, 안정화 후 `src/lib/server/chatPlanning.ts`로 분리
 
 ### 13.5 어드민 정리
-- [ ] table view 대체 UI 기준 충족 여부 확인 후 제거
-- [ ] cluster/retrieval/forgetting/archive 중심으로 admin memory view 재구성
+- [x] memory modal의 table/retrieval/forgetting/archive 탭 노출 제거
+- [x] cluster view를 memory modal의 기본/중심 화면으로 고정
+- [x] cluster view에서는 version/date/action/semantic filter만 노출하고, table 정렬 컨트롤은 제거
+- [x] 참여자 카드 X 삭제 범위를 특정 미션 세션 + `memoryDrafts`/`reviewTurns` 하위 컬렉션까지로 정리
+- [ ] raw retrieval/forgetting/archive 관측 UI를 별도 debug drawer로 분리할지 결정
   - 사용자 기본 리뷰 화면과 admin debug 화면의 정보 계층을 분리
 
 ### 13.6 컴포넌트 모듈화 + UI
@@ -848,8 +853,6 @@ type ChatPlan = {
 
 ### 13.7 온보딩
 - [x] 온보딩 입력값 retrieval 활용 방식 변경
-  - 현재: profile input은 query embedding과 input embedding similarity로 별도 선별
-  - 목표: 온보딩 입력값도 query와 가장 가까운 항목을 따로 retrieve
   - 구현: `/api/memory/retrieve`에서 profile item 후보 최대 5개를 embedding ranking 후 top 3만 주입
   - 기준: similarity `>= 0.25`, 없으면 가장 가까운 1개만 fallback
   - retrieval log에 `profileCandidateCount`, `profileItemCount`, `profileItemIds`, `profileSimilarities` 저장
@@ -871,6 +874,7 @@ type ChatPlan = {
 2. ~~첫 목업 생성 로딩 UX를 2번째 생성과 통일~~ ✅
 3. ~~사용자 메모리 뷰를 저장 내용 중심으로 재구성~~ ✅
 4. ~~retrieval/debug 정보는 admin-only로 분리~~ ✅
-5. profile input retrieval 정책 재설계: 항상 주입/weight 제거 여부 반영
-6. memory count 기반 near-miss decay multiplier 설계 및 적용
+5. ~~profile input retrieval 정책 재설계: embedding top-k 선별/weight 제거~~ ✅
+6. ~~memory count 기반 near-miss decay multiplier 설계 및 적용~~ ✅
 7. 공통 memory UI 컴포넌트 추출
+8. 실제 데이터 생성 및 배포
