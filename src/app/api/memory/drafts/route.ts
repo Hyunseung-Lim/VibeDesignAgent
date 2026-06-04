@@ -186,12 +186,12 @@ export async function POST(request: Request) {
     ...jsonArray(olderDraft?.semanticJson),
     ...jsonArray(previousDraft?.semanticJson),
   ].filter((item, idx, arr) => arr.indexOf(item) === idx);
+  const previousEpisodes = [
+    String(previousDraft?.episode ?? "").trim(),
+    String(olderDraft?.episode ?? "").trim(),
+  ].filter(Boolean);
   const content = [
-    olderDraft
-      ? `earlier episodic memory: ${String(olderDraft.episode ?? "").trim()}`
-      : "",
-    `previous episodic memory: ${String(previousDraft?.episode ?? "").trim() || FIRST_SESSION_TURN}`,
-    `previous agent output: ${String(previousDraft?.output ?? "").trim() || FIRST_SESSION_TURN}`,
+    `previous episodic memory: ${previousEpisodes.join(" / ") || FIRST_SESSION_TURN}`,
     previousSemantic.length > 0
       ? `previous semantic memory: ${previousSemantic.join(" / ")}`
       : "",
@@ -230,7 +230,6 @@ export async function POST(request: Request) {
       ),
       semantic: encoded.semantic?.slice(0, 2000) ?? "",
       previousEpisode: String(previousDraft?.episode ?? "").slice(0, 2000),
-      previousOutput: String(previousDraft?.output ?? "").slice(0, 12000),
       agentActionCategory,
       agentActionsJson: JSON.stringify(agentActions),
       status: "draft",

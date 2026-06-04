@@ -89,6 +89,8 @@ export async function POST(request: Request) {
             {
               schemaVersion: String(draft.schemaVersion ?? MEMORY_SCHEMA_VERSION),
               type: "interaction",
+              sourceType: "interaction",
+              memorySource: "interaction",
               action: String(draft.agentActionCategory ?? "agent_response"),
               keyword: keywords,
               keywords,
@@ -110,7 +112,6 @@ export async function POST(request: Request) {
               archiveReason: null,
               timestamp,
               previousEpisode: draft.previousEpisode ?? "",
-              previousOutput: draft.previousOutput ?? "",
               agentActionCategory: draft.agentActionCategory ?? "agent_response",
               source: {
                 missionId,

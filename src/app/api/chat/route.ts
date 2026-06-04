@@ -64,12 +64,13 @@ function truncateText(value: unknown, maxLength: number) {
 
 function memoryContextItems(memoryContext: unknown) {
   const context = memoryContext as
-    | { episodic?: unknown[]; semantic?: unknown[] }
+    | { episodic?: unknown[]; previous?: unknown[]; semantic?: unknown[] }
     | null
     | undefined;
   if (!context) return [];
   const seen = new Set<string>();
   return [
+    ...(Array.isArray(context.previous) ? context.previous : []),
     ...(Array.isArray(context.episodic) ? context.episodic : []),
     ...(Array.isArray(context.semantic) ? context.semantic : []),
   ].filter((item, index) => {
@@ -91,40 +92,18 @@ function memoryContextItems(memoryContext: unknown) {
 
 function compactMemoryContext(memoryContext: unknown) {
   const context = memoryContext as
-    | { episodic?: unknown[]; semantic?: unknown[] }
+    | { episodic?: unknown[]; previous?: unknown[]; semantic?: unknown[] }
     | null
     | undefined;
   if (!context) return null;
   const items = memoryContextItems(context);
-  const compactItem = (item: unknown) => {
+  const compactEpisodic = (item: unknown) => {
     const record = item as Record<string, unknown>;
-    const isProfileInput = record.type === "profile_input";
-    return {
-      action: truncateText(record.action, 80),
-      keyword: Array.isArray(record.keyword)
-        ? record.keyword.map(String).slice(0, 8)
-        : Array.isArray(record.keywords)
-          ? record.keywords.map(String).slice(0, 8)
-          : undefined,
-      episodic: truncateText(record.episodic ?? record.episode, 500),
-      semantic:
-        typeof record.semantic === "string"
-          ? truncateText(record.semantic, 500)
-          : null,
-      input: truncateText(record.input, 500),
-      output: truncateText(record.output, 700),
-      link: typeof record.link === "string" ? record.link : null,
-      weight:
-        !isProfileInput && typeof record.weight === "number"
-          ? record.weight
-          : undefined,
-      weightDelta:
-        !isProfileInput && typeof record.weightDelta === "number"
-          ? record.weightDelta
-          : undefined,
-      similarity:
-        typeof record.similarity === "number" ? record.similarity : undefined,
-    };
+    return { episodic: truncateText(record.episodic ?? record.episode, 500) };
+  };
+  const compactSemantic = (item: unknown) => {
+    const record = item as Record<string, unknown>;
+    return { semantic: truncateText(record.semantic, 500) };
   };
   const episodic = items
     .filter((item) => {
@@ -132,14 +111,14 @@ function compactMemoryContext(memoryContext: unknown) {
       return Boolean(truncateText(record.episodic ?? record.episode, 500));
     })
     .slice(0, 8)
-    .map((item) => ({ ...compactItem(item), semantic: null }));
+    .map(compactEpisodic);
   const semantic = items
     .filter((item) => {
       const record = item as Record<string, unknown>;
       return typeof record.semantic === "string" && record.semantic.trim();
     })
     .slice(0, 8)
-    .map((item) => ({ ...compactItem(item), episodic: "" }));
+    .map(compactSemantic);
   return { episodic, semantic };
 }
 

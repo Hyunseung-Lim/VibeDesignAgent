@@ -113,6 +113,7 @@ function compactMemory(id: string, doc: Record<string, unknown>) {
       doc.duplicate && typeof doc.duplicate === "object"
         ? doc.duplicate
         : null,
+    sourceType: stringOrNull(doc.sourceType ?? doc.memorySource),
     source: doc.source ?? null,
     timestamp: numberOrNull(doc.timestamp ?? doc.createdAt),
   };
@@ -130,6 +131,7 @@ function compactGraphMemory(item: ReturnType<typeof compactMemory>) {
     archiveReason: item.archiveReason,
     duplicateOf: item.duplicateOf,
     duplicate: item.duplicate,
+    sourceType: item.sourceType,
     source: item.source,
     timestamp: item.timestamp,
   };

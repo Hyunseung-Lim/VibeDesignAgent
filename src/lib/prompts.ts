@@ -31,7 +31,8 @@ const CHAT_ACTION_ROUTER_PROMPT = `Action routing:
 const CHAT_NOTE_ACTION_PROMPT = `Note action rules:
 - Create a note only when the user explicitly asks for a new 시안, draft, or idea.
 - Update a note when the user asks to revise, improve, expand, shorten, rewrite, or directly edit the selected note.
-- Notes are full markdown briefs about WHAT to build: product goal, target user, screens/sections, content, interaction flows, and requirements.
+- Notes are compact markdown briefs about WHAT to build. Keep only the product idea, target user, key screen/section direction, and must-have requirements that matter for the current mission.
+- Choose the length by mission complexity: simple drafts can be 2-4 focused sentences; complex flows may use short bullets, but avoid long background, decorative rationale, or exhaustive lists.
 - Do not put color tokens, typography, or visual style rules in notes. Those belong in 디자인 스타일.
 - The app preserves 시안 N titles, so keep title empty or omit it unless the user explicitly asks for a title.`;
 
@@ -52,7 +53,8 @@ const CHAT_MOCKUP_EDIT_ACTION_PROMPT = `Mockup edit rules:
 const CHAT_DESIGN_SPEC_ACTION_PROMPT = `Design spec rules:
 - Use [CREATE_DESIGN_SPEC: {"content":"markdown content"}] when the user asks to define or revise 디자인 스타일, design system, style rules, colors, typography, spacing, components, or brand tone.
 - The app stores exactly one 디자인 스타일 for the active 시안, so this replaces the previous style.
-- Keep the content concise and token-based. Include colors, typography, spacing, component patterns, do/don't constraints, and brand tone.`;
+- Keep the content concise and immediately useful for this mission's mockup. Do not always enumerate main color, brand tone, typography, spacing, and components; include only the style constraints that materially guide the current design.
+- Prefer 2-5 focused lines for simple style direction. Use short bullets only when the mission needs multiple concrete constraints.`;
 
 const CHAT_REFERENCE_ACTION_PROMPT = `Reference search rules:
 - Use [FETCH_REFERENCES: query] when the user asks for references, inspiration, examples, real apps, websites, product pages, UI patterns, or visual direction.
@@ -111,7 +113,7 @@ export function chatProfileMemoryPrompt(lines: string) {
 }
 
 export function chatInteractionMemoryPrompt(compactMemoryJson: string) {
-  return `User memory retrieved for this turn. The JSON groups episodic and semantic memory separately. Episodic memories describe prior interactions; semantic memories describe durable user preferences or working patterns. Each item may include action, keyword, input, output, link, weight, and similarity. Use only what is helpful; do not mention memory unless it directly improves the answer.\n${compactMemoryJson}`;
+  return `User memory retrieved for this turn. The JSON groups episodic and semantic memory separately. Episodic items contain only summaries of prior interactions. Semantic items contain only durable user preferences or working patterns. Use only what is helpful; do not mention memory unless it directly improves the answer.\n${compactMemoryJson}`;
 }
 
 export function chatDesignSpecPrompt(designSpec: string) {
@@ -201,16 +203,8 @@ This is memory encoding, not a general summary. Analyze the full structured inpu
 
 # Input Fields
 
-earlier episodic memory:
-A one-sentence summary of the interaction two turns ago.
-Omitted if fewer than two prior turns exist.
-
 previous episodic memory:
-A one-sentence summary of the immediately preceding interaction.
-If this is the first turn, the value is "${MEMORY_FIRST_TURN}".
-
-previous agent output:
-The full response the agent gave in the immediately preceding turn.
+One or two concise summaries of prior interactions, most recent first.
 If this is the first turn, the value is "${MEMORY_FIRST_TURN}".
 
 previous semantic memory:

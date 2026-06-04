@@ -66,7 +66,7 @@
 - 수정은 어드민 페이지에서만 가능
 - 옵션이 1개뿐인 미션은 세션 로드 시 해당 옵션을 자동 선택하고 `selectedOptionId`, `missionTitle`, `missionBrief`, `selectedDevice`를 세션 문서에 저장
 - 실제 세션 시작은 사용자가 `세션 시작하기` 버튼을 누를 때 발생하며, 이때 `timerStartedAt`을 세팅
-- 세션 종료 버튼은 `timerStartedAt`이 생기기 전에는 비활성화되고, 세션 종료 완료 후에는 `status: completed` 기준으로 비활성화
+- 세션 종료 버튼은 `timerStartedAt` 또는 복구 가능한 세션 데이터(messages/ideas/artboards/references/activityLog)가 생기기 전에는 비활성화되고, 세션 종료 완료 후에는 `status: completed` 기준으로 비활성화
 
 ### 4.2 레퍼런스 (Reference)
 
@@ -132,7 +132,7 @@
 - **확정 시점**: 사용자가 `세션 종료` 버튼을 누르면 `/api/memory/complete-session`에서 draft를 통합해 장기 메모리로 저장
 - **버전 관리**: admin memory modal에서 v0.1.0 / v0.1.1 / v0.1.2를 분리 조회
 - **현재 활용**: 각 채팅 turn 직전에 `/api/memory/retrieve`로 현재 query와 가까운 memory top 5를 검색해 채팅 context에 주입
-- **Prompt 주입 방식**: profile input은 별도 standing background system message로 분리하고, interaction memory는 prompt compact JSON에서 `episodic`/`semantic` 배열로 묶어 주입
+- **Prompt 주입 방식**: profile input은 별도 standing background system message로 분리하고, interaction memory는 prompt compact JSON에서 `episodic`/`semantic` 배열로 묶어 주입. 같은 memory document에 episodic/semantic이 모두 있어도 prompt에서는 각각 `episodic[].episodic`, `semantic[].semantic`으로 분리해 넣고 memory id/weight/similarity/source metadata는 제외
 - **Legacy**: `GET /api/memory/bootstrap`은 세션 시작 시 memory를 preload하던 구 방식이며, 현재 main client에서는 호출하지 않음
 - **Retrieval 쿼리 구성**: `[user text] + Mission: [parentMissionTitle] + Active idea: [description]` — 선택된 옵션 이름(페르소나 등)은 제외해 임베딩 노이즈 방지
 - **Admin 관측**: researcher가 user별 memory cluster 결과와 graph/detail 진단값을 확인 가능
@@ -322,7 +322,7 @@ FIREBASE_MEASUREMENT_ID
 
 - 옵션이 하나뿐인 새 미션에서 `selectedOptionId`가 없어 세션 종료 버튼이 표시되지 않는 문제 수정
 - 단일 옵션 미션은 로드 시 자동 선택하고 세션 문서에 선택 상태를 저장
-- 세션 시작 버튼을 누르기 전에는 `timerStartedAt`이 없으므로 세션 종료 버튼을 `세션 시작 전` 상태로 비활성화
+- 세션 시작 버튼을 누르기 전에는 `timerStartedAt`과 복구 가능한 세션 데이터가 없으므로 세션 종료 버튼을 `세션 시작 전` 상태로 비활성화
 - 이미 `status: completed`인 세션은 기존처럼 버튼이 비활성화되고 `세션 종료됨`으로 표시
 
 ### 10.3 Memory retrieval MVP
@@ -743,7 +743,8 @@ archiveReason = "low-weight" | "duplicate" | "manual";
 - retrieval log: `profileItemIds` 배열 추가
 - `/api/chat`: `memoryContextItems(...)`가 `memoryContext.episodic`과 `memoryContext.semantic`을 함께 읽고 중복 제거
   - profile items → "standing background" system message (언급하지 않고 암묵적으로 적용)
-  - interaction items → retrieved memory system message. prompt compact JSON은 `episodic[]`과 `semantic[]`을 분리해 같은 memory라도 episodic/semantic 텍스트가 섞이지 않게 전달
+  - interaction items → retrieved memory system message. prompt compact JSON은 `episodic[].episodic`과 `semantic[].semantic` 텍스트만 전달하고, weight/similarity/source 등 metadata는 review/debug 저장에만 유지
+  - 같은 memory document에 episodic/semantic이 모두 있으면 prompt에서는 두 배열에 각각 별도 item으로 들어간다. 모델에게는 같은 memory id에서 왔다는 정보는 전달하지 않는다.
 
 #### 12.1.8 7단계: 어드민 정리
 
@@ -897,7 +898,7 @@ type ChatPlan = {
   - 항상 포함: `CHAT_AGENT_BASE_PROMPT`, planner intent별 `chatActionInstructionPrompt(...)`, target device, current request
   - mission: 기본 포함하되 brief는 planner가 `mission=true`일 때만 긴 버전 사용. 아니면 title + 1~2줄 summary만 사용
   - profile input: `/api/memory/retrieve`가 반환한 `type: "profile_input"` 항목은 별도 standing background system message로 분리
-  - interactionMemory: planner가 `interactionMemory=true`일 때만 주입. prompt compact JSON은 `episodic[]`과 `semantic[]`을 별도 그룹으로 구성
+  - interactionMemory: planner가 `interactionMemory=true`일 때만 주입. prompt compact JSON은 `episodic[].episodic`과 `semantic[].semantic`만 포함
   - activeIdea: note 생성/수정/mockup 관련 intent에서만 주입
   - designSpec: mockup generate/edit/design spec 관련 intent에서만 주입
   - mockupHtml: edit/현재 화면 분석 intent에서만 주입. generate intent에서는 사용자가 기존 mockup 기반 변형을 요구한 경우에만 주입
@@ -917,7 +918,8 @@ type ChatPlan = {
   - 기존 단일 system prompt는 제거하고, `CHAT_AGENT_BASE_PROMPT` + intent별 `chatActionInstructionPrompt(...)` 조합으로 분리했다.
   - `promptPlan`, `promptPlanFallback`, `selectedContextKeys`를 reviewTurn top-level과 `promptCompact`에 함께 저장한다.
   - pruning은 `activeIdea`, `designSpec`, `mockupHtml`, `citedTexts`, `citedReferences`, `interactionMemory`에 적용했다.
-  - retrieved interaction memory는 prompt에 넣기 직전 `episodic[]`과 `semantic[]`으로 재그룹화한다. 검색은 combined embedding 기준으로 유지하되, 모델에게 전달되는 표현은 "이전 상호작용"과 "지속적 선호/패턴"이 섞이지 않게 분리한다.
+  - retrieved interaction memory는 prompt에 넣기 직전 `episodic[].episodic`과 `semantic[].semantic`으로 재그룹화한다. 검색은 combined embedding 기준으로 유지하되, 모델에게 전달되는 표현은 "이전 상호작용"과 "지속적 선호/패턴" 텍스트만 남긴다.
+  - 같은 retrieved memory에 episodic/semantic이 모두 있으면 두 그룹에 각각 포함하고, prompt에는 memory id/source 연결 정보를 넣지 않는다.
   - planner 실패 시 기존 방식으로 fallback한다. `confidence < 0.55`면 대부분 context는 유지하되 `mockupHtml`은 selected/edit/current-screen 계열 요청일 때만 포함한다.
   - client assistant bubble의 `참조한 맥락` 요약은 제거했다. 대신 `/api/chat`이 stream 초반에 `[CHAT_PHASE: ...]` 이벤트를 여러 개 보내고, client는 이를 본문에 저장하지 않는 Codex식 단계 로그로 표시한다.
 - [x] 레퍼런스 추천 선호 scope 정리
@@ -1010,3 +1012,75 @@ type ChatPlan = {
 8. 미팅 이후 실제 데이터 최대한 많이 생성
 9. 공통 memory UI 컴포넌트 추출
 10. 전체 UI 개선
+
+## 14. 0604 TODO / 설계 확인
+
+### 14.1 세션 종료 버튼 상태 버그
+
+- [x] 저장하지 않았거나 session timeout이 발생한 뒤, 세션 종료 버튼이 "세션 시작 전" 상태로 표시되는 이슈 수정
+  - 기대 동작: 실제 세션/미션 데이터가 이미 생성되어 있으면 저장 여부와 무관하게 세션 종료/리뷰 플로우가 현재 상태를 정확히 반영
+  - 범위: 버튼 label/state만 고치지 않고, 세션 자동 복구/자동 저장 플로우까지 함께 점검
+  - 방향: local/client state가 날아가도 서버에 남은 session/mission/reviewTurns/drafts 기준으로 현재 세션 상태를 복구할 수 있게 함
+  - 구현: session load에서 legacy `startedAt`과 신규 `timerStartedAt`을 모두 읽고, 세션 저장 시 두 필드를 함께 저장
+  - 구현: 세션 시작 시 debounce를 기다리지 않고 즉시 snapshot 저장, visibility hidden/세션 종료 직전에도 pending snapshot flush
+  - 구현: 종료 버튼 활성 상태는 timer뿐 아니라 messages/ideas/artboards/references/activityLog 같은 복구 가능한 세션 데이터도 함께 기준으로 판단
+
+### 14.2 Retrieved memory 표현 정리
+
+- [x] "Earlier episodic"과 "previous" 표현 병합
+  - 문제: 둘 다 사실상 이전 상호작용/이전 에피소드를 뜻하는데 UI/prompt에서 다른 개념처럼 보임
+  - 방향: 사용자에게 보이는 label과 prompt context label을 `previous`로 통일
+  - 결정: `previous episodic memory`가 이전 turn 요약 역할을 하므로 `previous agent output`은 memory encoding prompt와 신규 저장 metadata에서 제거
+  - 추가 결정: chat prompt에 들어가는 retrieved memory는 `previous`가 아니라 `episodic`/`semantic` 두 배열로 전달
+  - 추가 결정: 같은 memory document의 episodic/semantic도 prompt에서는 별도 item으로 분리하고, memory id/weight/similarity/source는 제외
+  - 기대 효과: episodic/semantic 분류와 시간 표현이 섞여 보이지 않게 함
+
+### 14.3 스타일/노트 생성 출력 길이 줄이기
+
+- [x] 디자인 스타일 생성 prompt를 더 짧고 알짜 중심으로 조정
+  - 스타일은 메인 컬러, 브랜드 톤, 타이포그래피를 항상 항목별로 길게 쓰지 않음
+  - 현재 미션과 실제 시안 작성에 필요한 방향만 남김
+  - 목표: mockup 생성/수정에 바로 쓸 수 있는 짧은 design direction
+  - 길이 기준: 고정 문장 수보다 미션 복잡도에 맞춰 조절. 단순한 시안은 2~4문장, 복잡한 제품/플로우는 핵심 section/interaction 중심으로만 확장
+- [x] 노트 생성 prompt도 짧게 조정
+  - 긴 기획서가 아니라 현재 미션에 맞는 핵심 아이디어/화면 방향만 남김
+  - 길이 기준: 현재 미션을 진행하는 데 필요한 핵심만 남기고, 불필요한 배경 설명/목록형 장식은 제거
+
+### 14.4 Profile memory와 semantic/episodic 통합 설계
+
+- [ ] profile input과 interaction memory를 같은 memory pipeline으로 합칠지 설계
+  - 현재: profile은 `profile_memories`에 별도 저장되고, interaction memory는 `memory` 문서에 episodic/semantic/keyword/action/input/output/link/weight를 저장
+  - 목표: profile도 유저 입력을 바탕으로 `keyword`, `episodic`, `semantic` 단위로 쪼개고 embedding/retrieval/clustering에서 함께 다룸
+  - 구분 필드 추가: vectorized memory가 profile 기반인지 interaction 기반인지 구분할 수 있는 `sourceType` 또는 `memorySource` 필요
+  - profile memory의 clustering input:
+    - 포함: `keyword`, `episodic`, `semantic`, 원본 사용자 입력, 생성/수정 시간
+    - 비움: `agent response`, `action category`
+  - 결정: 안전한 방식으로 진행. 기존 `profile_memories/{missionId}`는 source of truth로 유지하고, 여기서 쪼갠 derived memory만 공통 memory pipeline에 넣음
+  - 기존 profile 데이터는 삭제 후 새 구조로 시작해도 무방하나, 구현은 destructive migration 없이 새 구조를 지원하는 방향 우선
+  - 1차 구현 단계:
+    1. `/api/memory/profile` POST에서 markdown/freeform 원문을 revision/source로 보관
+    2. profile item별 derived memory를 `keyword`, `episodic`, `semantic` 구조로 생성
+    3. derived memory에는 `sourceType: "profile"` 또는 `memorySource: "profile"`을 저장하고, interaction memory에는 `sourceType: "interaction"`을 보강
+    4. clustering/retrieval input은 profile derived memory도 같은 embedding text builder를 사용하되 `agent response`, `action category`는 빈 값으로 둠
+    5. runtime prompt에서는 profile derived memory를 retrieved evidence로 쓰되, 사용자 원문 markdown은 source/revision으로만 유지
+
+### 14.5 프로필 메모리 자유 입력 → 단위 분해
+
+- [ ] 사용자가 profile memory를 markdown으로 자유롭게 입력하면 시스템이 중요한 정보 단위로 쪼개 저장
+  - LLM이 markdown 원문에서 중요한 정보 단위를 추출
+  - 각 단위는 `keyword`, `episodic`, `semantic` 구조로 변환
+  - 결정: 원문 markdown은 revision/source of truth로 계속 보관
+  - runtime/retrieval/clustering에는 LLM이 쪼갠 structured item을 사용
+
+### 14.6 레퍼런스 선호 scope 재검토
+
+- [ ] 레퍼런스는 "미션에 속하는지 아닌지"를 시스템이 과하게 판단하지 않고 모두 기록하는 방향 검토
+  - 현재 구현: 같은 미션 안의 cited/kept/deleted reference만 `same_mission_only` context로 `/api/references` query generation/product search/reranking에 사용
+  - 제안 방향: 레퍼런스 상호작용은 모두 memory로 기록하고, retrieval 결과가 자연스럽게 다른 미션에도 영향을 주게 함
+  - 주의: 도메인/UX 패턴/시각 스타일이 다른 미션에 과도하게 전이될 수 있으므로, reference memory에는 scope/category/strength 필드가 필요
+  - 후보 분류:
+    - `reference_consumption_behavior`: 실제 제품 사례 선호, 공식 사이트/케이스스터디 선호 등. 다른 미션 전이 가능
+    - `mission_reference_signal`: 특정 도메인/패턴/스타일 선호. 기본은 retrieval similarity에 맡기되 prompt에서 강한 전역 선호로 단정하지 않음
+    - `negative_reference_signal`: 삭제/거절한 레퍼런스. 유사도와 현재 미션 relevance가 높을 때만 약하게 회피
+  - 결정: consumption behavior만 전역화하고, 삭제/거절 negative는 기본적으로 같은 미션 negative로 둠
+  - 구현 방향: 레퍼런스 상호작용은 memory로 기록하되, prompt에서는 "사용자의 전역 취향"으로 단정하지 않고 retrieved evidence로만 약하게 사용

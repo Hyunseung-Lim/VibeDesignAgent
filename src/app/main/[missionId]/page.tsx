@@ -1956,6 +1956,12 @@ function stringifyReviewJson(value: unknown) {
   return JSON.stringify(value, null, 2) ?? "null";
 }
 
+function cleanForFirestore<T>(value: T): T {
+  return JSON.parse(
+    JSON.stringify(value, (_, val) => (val === undefined ? null : val)),
+  );
+}
+
 function memorySummaryText(item: SessionMemoryItem | ReviewTurnMemory) {
   return (
     item.semantic ||
@@ -2124,7 +2130,14 @@ export default function MainScreenPage() {
   const isViewingAsAdmin = !!(viewAs && isAdmin);
   const isReadOnly = isReviewMode || isViewingAsAdmin;
   const showReviewAnnotations = isReviewMode || isViewingAsAdmin;
-  const hasSessionStarted = Boolean(timerStartedAt);
+  const hasSessionStarted = Boolean(
+    timerStartedAt ||
+      messages.length > 0 ||
+      ideas.length > 0 ||
+      artboards.length > 0 ||
+      references.length > 0 ||
+      activityLog.length > 0,
+  );
   const targetSessionUserId = isViewingAsAdmin ? viewAs : userId;
   const reviewMemoryIds = useMemo(
     () =>
@@ -2675,8 +2688,10 @@ export default function MainScreenPage() {
       if (session?.stitchProjectId) setStitchProjectId(session.stitchProjectId);
       if (session?.finalArtboardId) setFinalArtboardId(session.finalArtboardId);
 
-      if (session?.timerStartedAt)
-        setTimerStartedAt(Number(session.timerStartedAt));
+      const loadedTimerStartedAt = Number(
+        session?.timerStartedAt ?? session?.startedAt ?? 0,
+      );
+      if (loadedTimerStartedAt) setTimerStartedAt(loadedTimerStartedAt);
       // Set selectedOptionId from session — only once at load
       if (session?.selectedOptionId) {
         setSelectedOptionId(session.selectedOptionId as string);
@@ -2892,6 +2907,69 @@ export default function MainScreenPage() {
     };
   }, [isMissionContextReady, isReadOnly, missionId]);
 
+  const persistSessionSnapshot = useCallback(
+    async (startedAtOverride?: number | null) => {
+      if (isReadOnly || !userId || !missionId) return;
+      const effectiveTimerStartedAt =
+        startedAtOverride === undefined ? timerStartedAt : startedAtOverride;
+      const hasSnapshotContent =
+        messages.length > 0 ||
+        artboards.length > 0 ||
+        references.length > 0 ||
+        ideas.length > 0 ||
+        activityLog.length > 0 ||
+        Boolean(missionTitle) ||
+        Boolean(missionBrief) ||
+        Boolean(selectedOptionId) ||
+        Boolean(effectiveTimerStartedAt);
+      if (!hasSnapshotContent) return;
+      const artboardsToSave = artboards.map((a) =>
+        a.stitchScreenId ? { ...a, html: "" } : a,
+      );
+      await setDoc(
+        sessionRefFor(userId),
+        cleanForFirestore({
+          messages,
+          missionId,
+          artboards: artboardsToSave,
+          references,
+          activityLog: activityLog.slice(-500),
+          ideas,
+          missionTitle,
+          missionBrief,
+          selectedOptionId,
+          selectedDevice: device,
+          stitchProjectId: stitchProjectId || null,
+          finalArtboardId: finalArtboardId ?? null,
+          startedAt: effectiveTimerStartedAt ?? null,
+          timerStartedAt: effectiveTimerStartedAt ?? null,
+          status: sessionCompleted ? "completed" : "active",
+          updatedAt: Date.now(),
+        }),
+        { merge: true },
+      );
+    },
+    [
+      isReadOnly,
+      userId,
+      missionId,
+      timerStartedAt,
+      messages,
+      artboards,
+      references,
+      ideas,
+      activityLog,
+      missionTitle,
+      missionBrief,
+      selectedOptionId,
+      device,
+      stitchProjectId,
+      finalArtboardId,
+      sessionCompleted,
+      sessionRefFor,
+    ],
+  );
+
   // Save session to Firestore (debounced to avoid write storms during streaming)
   useEffect(() => {
     if (isReadOnly) return;
@@ -2904,63 +2982,31 @@ export default function MainScreenPage() {
         ideas.length === 0 &&
         activityLog.length === 0 &&
         !missionTitle &&
-        !missionBrief)
+        !missionBrief &&
+        !selectedOptionId &&
+        !timerStartedAt)
     )
       return;
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     saveTimerRef.current = setTimeout(() => {
-      const ref = sessionRefFor(userId);
-      const artboardsToSave = artboards.map((a) =>
-        a.stitchScreenId ? { ...a, html: "" } : a,
-      );
-      const ideasToSave = ideas;
-      // Strip undefined values — Firestore rejects them
-      const clean = <T,>(v: T): T =>
-        JSON.parse(
-          JSON.stringify(v, (_, val) => (val === undefined ? null : val)),
-        );
-      setDoc(
-        ref,
-        clean({
-          messages,
-          missionId,
-          artboards: artboardsToSave,
-          references,
-          activityLog: activityLog.slice(-500),
-          ideas: ideasToSave,
-          missionTitle,
-          missionBrief,
-          selectedOptionId,
-          selectedDevice: device,
-          stitchProjectId: stitchProjectId || null,
-          finalArtboardId: finalArtboardId ?? null,
-          startedAt: timerStartedAt ?? null,
-          updatedAt: Date.now(),
-        }),
-        { merge: true },
-      );
+      void persistSessionSnapshot();
     }, 1500);
     return () => {
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     };
-  }, [
-    userId,
-    missionId,
-    sessionRefFor,
-    isReadOnly,
-    messages,
-    artboards,
-    references,
-    activityLog,
-    ideas,
-    missionTitle,
-    missionBrief,
-    selectedOptionId,
-    device,
-    stitchProjectId,
-    finalArtboardId,
-    timerStartedAt,
-  ]);
+  }, [isReadOnly, userId, missionId, persistSessionSnapshot]);
+
+  useEffect(() => {
+    if (isReadOnly) return;
+    const flushSessionIfHidden = () => {
+      if (document.visibilityState === "hidden") {
+        void persistSessionSnapshot();
+      }
+    };
+    document.addEventListener("visibilitychange", flushSessionIfHidden);
+    return () =>
+      document.removeEventListener("visibilitychange", flushSessionIfHidden);
+  }, [isReadOnly, persistSessionSnapshot]);
 
   // Countdown / count-up timer
   useEffect(() => {
@@ -4330,6 +4376,11 @@ export default function MainScreenPage() {
     setIsCompletingSession(true);
     let completedSuccessfully = false;
     try {
+      if (saveTimerRef.current) {
+        clearTimeout(saveTimerRef.current);
+        saveTimerRef.current = null;
+      }
+      await persistSessionSnapshot();
       const token = await getIdToken(currentUser, true);
       const res = await fetch("/api/memory/complete-session", {
         method: "POST",
@@ -6100,9 +6151,11 @@ export default function MainScreenPage() {
                   } catch {
                     // non-blocking
                   } finally {
+                    const startedAt = Date.now();
                     setProfileSaving(false);
-                    setTimerStartedAt(Date.now());
+                    setTimerStartedAt(startedAt);
                     setProfileModalConfirmed(true);
+                    void persistSessionSnapshot(startedAt);
                   }
                 }}
                 className="w-full rounded-2xl bg-slate-900 py-3.5 text-sm font-semibold text-white transition hover:bg-slate-700 disabled:opacity-60"

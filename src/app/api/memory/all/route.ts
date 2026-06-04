@@ -42,6 +42,7 @@ export async function GET(request: Request) {
           input: str(data.input),
           output: str(data.output),
           action: str(data.action),
+          sourceType: str(data.sourceType ?? data.memorySource),
           keywords: Array.isArray(data.keywords)
             ? data.keywords.map(String)
             : Array.isArray(data.keyword)
