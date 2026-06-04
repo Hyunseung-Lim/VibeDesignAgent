@@ -1122,7 +1122,7 @@ type ChatPlan = {
 - [x] `[CREATE_NOTE:]` 블록이 JSON이 아닌 plain text 형식으로 왔을 때 파싱 실패 버그 수정
   - 배경: LLM이 `[CREATE_NOTE: Title: ...\n...\n]` 형식(JSON 없이)으로 응답하면 `extractJsonActionPayload`가 `{`를 찾지 못해 null 반환 → `turnIdeaOverride`가 null → `[GENERATE_MOCKUP]` 실행 시 아이디어 없음 오류 발생
   - 구현: `extractPlainNoteContent` 함수 추가. JSON payload가 없으면 bracket 전체 내용을 description으로 사용
-  - 구현: `BLOCK_RULES`의 CREATE_NOTE `complete` 정규식을 JSON 포맷 외 plain text(`\n]`로 끝나는 형식)도 인식하도록 확장
+  - 구현: `BLOCK_RULES`의 CREATE_NOTE, UPDATE_NOTE `complete` 정규식을 JSON 포맷 외 plain text(`\n]`로 끝나는 형식)도 인식하도록 확장
 - [x] 노트 작성 실패 시 chat 칩 UI 피드백 추가
   - 구현: `ContentChip`에 `failed?: boolean` 추가
   - 구현: `processMessageContent`에서 `⚠️ 노트를 먼저 저장해야` 메시지가 content에 포함되면 CREATE_NOTE 칩을 실패 상태로 마킹
