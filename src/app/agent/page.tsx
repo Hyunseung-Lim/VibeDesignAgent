@@ -20,12 +20,15 @@ type MemoryItem = {
   id: string;
   episodic: string | null;
   semantic: string | null;
+  input: string | null;
+  output: string | null;
   action: string | null;
   keywords: string[];
   weight: number | null;
   timestamp: number | null;
   archivedAt: number | null;
   archiveReason: string | null;
+  source: { missionId?: string; draftId?: string } | null;
 };
 
 type MemoryCluster = {
@@ -37,24 +40,6 @@ type MemoryCluster = {
   itemIds: string[];
   representativeItems: string[];
 };
-
-const ACTION_LABELS: Record<string, string> = {
-  agent_response: "대화",
-  note_create: "시안 생성",
-  note_update: "시안 수정",
-  mockup_generate: "목업 생성",
-  mockup_edit: "목업 편집",
-  reference_fetch: "레퍼런스 탐색",
-  design_spec_create: "디자인 스타일",
-  note_delete: "시안 삭제",
-  mockup_delete: "목업 삭제",
-  reference_cite: "레퍼런스 인용",
-  reference_delete: "레퍼런스 삭제",
-};
-
-function actionLabel(action: string | null) {
-  return ACTION_LABELS[action ?? ""] ?? action ?? "기타";
-}
 
 function formatDate(ts: number | null) {
   if (!ts) return "";
@@ -138,11 +123,15 @@ export default function AgentMemoryPage() {
     memoryId: m.id,
     semantic: m.semantic ?? "",
     episodic: m.episodic ?? "",
-    input: "",
+    input: m.input ?? "",
+    output: m.output ?? "",
     action: m.action ?? "",
     timestamp: m.timestamp ?? 0,
     keyword: m.keywords,
     keywords: m.keywords,
+    row: {
+      source: m.source ?? undefined,
+    },
   }));
 
   const clusterItemIdSet = new Set(clusterItems.map((i) => i.id));
@@ -216,7 +205,7 @@ export default function AgentMemoryPage() {
               </div>
               {totalClusterItemIds.length > 0 && matchedCount === 0 && (
                 <p className="rounded-lg bg-amber-50 px-2 py-1.5 text-[10px] leading-relaxed text-amber-700">
-                  클러스터 캐시가 현재 기억과 일치하지 않습니다. 관리자 페이지에서 Regenerate를 실행해주세요.
+                  클러스터 캐시가 현재 기억과 일치하지 않습니다. 재생성을 실행해주세요.
                 </p>
               )}
               {clusters.map((cluster) => (
@@ -295,7 +284,7 @@ export default function AgentMemoryPage() {
                               key={action}
                               className="rounded-full bg-amber-50 px-2.5 py-1 text-xs font-medium text-amber-700"
                             >
-                              {actionLabel(action)}
+                              {action}
                             </span>
                           ))}
                         </div>
@@ -353,7 +342,7 @@ export default function AgentMemoryPage() {
                                 ) : null}
                                 {item.action ? (
                                   <span className="rounded-full bg-amber-50 px-2 py-0.5 font-medium text-amber-700">
-                                    {actionLabel(item.action)}
+                                    {item.action}
                                   </span>
                                 ) : null}
                                 {item.keyword.slice(0, 3).map((kw) => (
@@ -373,6 +362,16 @@ export default function AgentMemoryPage() {
                               {item.episodic && item.semantic && (
                                 <p className="mt-3 wrap-anywhere text-slate-500">
                                   {item.episodic}
+                                </p>
+                              )}
+                              {item.input && (
+                                <p className="mt-3 wrap-anywhere text-slate-500">
+                                  {item.input}
+                                </p>
+                              )}
+                              {mem?.source?.missionId && (
+                                <p className="mt-2 text-[11px] text-slate-400">
+                                  {mem.source.missionId}
                                 </p>
                               )}
                             </div>

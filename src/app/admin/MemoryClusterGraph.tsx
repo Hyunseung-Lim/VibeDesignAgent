@@ -68,6 +68,7 @@ type Props = {
   items: ClusterableMemoryItem[];
   selectedClusterId: string | null;
   onSelectCluster: (clusterId: string) => void;
+  onSelectMemory?: (memoryId: string) => void;
   fill?: boolean;
 };
 
@@ -106,6 +107,7 @@ export default function MemoryClusterGraph({
   items,
   selectedClusterId,
   onSelectCluster,
+  onSelectMemory,
   fill = false,
 }: Props) {
   const wrapperRef = useRef<HTMLDivElement | null>(null);
@@ -245,6 +247,7 @@ export default function MemoryClusterGraph({
               onSelectCluster(node.cluster.id);
             } else {
               onSelectCluster(node.clusterId);
+              onSelectMemory?.(node.item.id);
             }
           }}
           onBackgroundClick={() => setSelectedNode(null)}

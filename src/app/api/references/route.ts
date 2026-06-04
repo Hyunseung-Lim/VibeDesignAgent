@@ -159,6 +159,45 @@ function sanitizeInput(value: unknown, maxLength = 3000): string {
   return value.trim().slice(0, maxLength);
 }
 
+function compactReferencePreferenceContext(value: unknown) {
+  if (!value || typeof value !== "object") return null;
+  const record = value as Record<string, unknown>;
+  if (record.scope !== "mission") return null;
+  const compactItems = (items: unknown, signal: string) =>
+    Array.isArray(items)
+      ? items
+          .slice(-8)
+          .map((item) => {
+            const reference = item as Record<string, unknown>;
+            return {
+              signal,
+              title: sanitizeInput(reference.title, 120),
+              description: sanitizeInput(reference.description, 220),
+              tag: sanitizeInput(reference.tag, 80),
+              url: sanitizeInput(reference.url, 180),
+              referenceMode: sanitizeInput(reference.referenceMode, 20),
+              searchProvider: sanitizeInput(reference.searchProvider, 30),
+            };
+          })
+          .filter((item) => item.title || item.url || item.description)
+      : [];
+  const context = {
+    scope: "same_mission_only",
+    missionId: sanitizeInput(record.missionId, 120),
+    cited: compactItems(record.cited, "strong_positive_cited"),
+    kept: compactItems(record.kept, "weak_positive_kept"),
+    deleted: compactItems(record.deleted, "negative_deleted"),
+  };
+  if (
+    context.cited.length === 0 &&
+    context.kept.length === 0 &&
+    context.deleted.length === 0
+  ) {
+    return null;
+  }
+  return context;
+}
+
 // Run async tasks with bounded concurrency to avoid overwhelming external services
 async function withConcurrency<T>(
   tasks: Array<() => Promise<T>>,
@@ -347,6 +386,7 @@ async function buildSearchQueries(
   customQuery: string | null,
   mode: ReferenceMode,
   omittedNames: string[],
+  referencePreferenceContext: unknown,
 ): Promise<string[]> {
   const fallbackQuery =
     stripFictionalPersonaNames(
@@ -362,7 +402,7 @@ async function buildSearchQueries(
       },
       {
         role: "user",
-        content: `Mission title: ${missionTitle ?? ""}\nMission brief: ${missionBrief ?? ""}\nUser requested reference search: ${customQuery ?? ""}`,
+        content: `Mission title: ${missionTitle ?? ""}\nMission brief: ${missionBrief ?? ""}\nUser requested reference search: ${customQuery ?? ""}\nSame-mission reference preference context: ${JSON.stringify(referencePreferenceContext ?? null)}`,
       },
     ],
   });
@@ -620,6 +660,7 @@ async function rerankReferenceCandidates(
   keywords: string[],
   searchContext: string,
   mode: ReferenceMode,
+  referencePreferenceContext: unknown,
 ): Promise<RankedReferenceCandidate[]> {
   if (candidates.length === 0) return [];
   try {
@@ -644,6 +685,7 @@ async function rerankReferenceCandidates(
           content: JSON.stringify({
             searchContext,
             searchQueries: keywords,
+            sameMissionReferencePreferenceContext: referencePreferenceContext,
             candidates: candidatePayload,
           }),
         },
@@ -673,6 +715,7 @@ async function searchProductReferences(
   searchContext: string,
   blockedUrls: Set<string>,
   omittedNames: string[],
+  referencePreferenceContext: unknown,
 ) {
   try {
     const response = await openai.responses.create({
@@ -689,6 +732,7 @@ async function searchProductReferences(
             searchContext,
             searchQueries: keywords,
             omittedFictionalNames: omittedNames,
+            sameMissionReferencePreferenceContext: referencePreferenceContext,
           }),
         },
       ],
@@ -727,6 +771,7 @@ export async function POST(request: Request) {
     missionBrief?: unknown;
     customQuery?: unknown;
     existingReferences?: unknown;
+    referencePreferenceContext?: unknown;
   };
   try {
     body = await request.json();
@@ -739,6 +784,9 @@ export async function POST(request: Request) {
   const missionBrief = sanitizeInput(body.missionBrief);
   const customQuery = sanitizeInput(body.customQuery) || null;
   const { existingReferences } = body;
+  const referencePreferenceContext = compactReferencePreferenceContext(
+    body.referencePreferenceContext,
+  );
 
   if (!missionTitle && !missionBrief && !customQuery) {
     return Response.json(
@@ -778,6 +826,7 @@ export async function POST(request: Request) {
       customQuery,
       referenceMode,
       omittedNames,
+      referencePreferenceContext,
     );
 
     const productReferences =
@@ -787,6 +836,7 @@ export async function POST(request: Request) {
             searchContext,
             blockedUrls,
             omittedNames,
+            referencePreferenceContext,
           )
         : [];
     if (productReferences.length >= FINAL_REFERENCE_COUNT) {
@@ -874,6 +924,7 @@ export async function POST(request: Request) {
       keywords,
       searchContext,
       referenceMode,
+      referencePreferenceContext,
     );
     const selectedCandidates =
       rankedCandidates.length > 0

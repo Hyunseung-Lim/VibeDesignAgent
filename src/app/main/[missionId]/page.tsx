@@ -1,5 +1,6 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import React, {
@@ -38,6 +39,14 @@ import { isAdminEmail } from "@/lib/admin";
 const ONBOARDING_MISSION_ID = "onboarding";
 const PROFILE_MEMORY_MAX_ITEMS = 5;
 const PROFILE_MEMORY_MAX_CHARS = 240;
+const MemoryClusterGraph = dynamic(() => import("@/app/admin/MemoryClusterGraph"), {
+  ssr: false,
+  loading: () => (
+    <div className="flex h-full min-h-96 items-center justify-center bg-white text-sm text-slate-400">
+      Graph view loading...
+    </div>
+  ),
+});
 
 type Message = {
   id: string;
@@ -306,6 +315,36 @@ type Reference = {
   searchProvider?: "openai-web" | "serper-image";
 };
 
+type ReferencePreferenceContext = {
+  scope: "mission";
+  missionId: string;
+  kept: Array<{
+    title: string;
+    description?: string;
+    tag?: string;
+    url?: string;
+    referenceMode?: Reference["referenceMode"];
+    searchProvider?: Reference["searchProvider"];
+    signal: "weak_kept";
+  }>;
+  cited: Array<{
+    title: string;
+    description?: string;
+    tag?: string;
+    url?: string;
+    referenceMode?: Reference["referenceMode"];
+    searchProvider?: Reference["searchProvider"];
+    signal: "strong_cited";
+  }>;
+  deleted: Array<{
+    title?: string;
+    description?: string;
+    tag?: string;
+    url?: string;
+    signal: "negative_deleted";
+  }>;
+};
+
 type DesignStyle = {
   id: string;
   title: string;
@@ -408,6 +447,74 @@ function referenceMatches(a: Reference, b: Reference) {
   const aImage = canonicalReferenceUrl(a.imageUrl);
   const bImage = canonicalReferenceUrl(b.imageUrl);
   return Boolean((aUrl && aUrl === bUrl) || (aImage && aImage === bImage));
+}
+
+function buildReferencePreferenceContext(
+  missionId: string,
+  references: Reference[],
+  activityLog: ActivityLogEvent[],
+  messages: Message[],
+): ReferencePreferenceContext | null {
+  const citedIds = new Set(
+    messages.flatMap((message) =>
+      (message.citedReferences ?? []).map((reference) => reference.id),
+    ),
+  );
+  const citedTitles = new Set(
+    messages.flatMap((message) =>
+      (message.citedReferences ?? []).map((reference) =>
+        reference.title.trim().toLowerCase(),
+      ),
+    ),
+  );
+  const cited = references
+    .filter(
+      (reference) =>
+        citedIds.has(reference.id) ||
+        citedTitles.has(reference.title.trim().toLowerCase()),
+    )
+    .slice(-6)
+    .map((reference) => ({
+      title: reference.title,
+      description: reference.description,
+      tag: reference.tag,
+      url: reference.url,
+      referenceMode: reference.referenceMode,
+      searchProvider: reference.searchProvider,
+      signal: "strong_cited" as const,
+    }));
+  const citedUrls = new Set(cited.map((reference) => reference.url).filter(Boolean));
+  const kept = references
+    .filter((reference) => !citedUrls.has(reference.url))
+    .slice(-8)
+    .map((reference) => ({
+      title: reference.title,
+      description: reference.description,
+      tag: reference.tag,
+      url: reference.url,
+      referenceMode: reference.referenceMode,
+      searchProvider: reference.searchProvider,
+      signal: "weak_kept" as const,
+    }));
+  const deleted = activityLog
+    .filter((event) => event.section === "reference" && event.action === "delete")
+    .slice(-6)
+    .map((event) => ({
+      title: event.outputTitle,
+      description: event.output,
+      url: event.link,
+      signal: "negative_deleted" as const,
+    }));
+  if (kept.length === 0 && cited.length === 0 && deleted.length === 0) {
+    return null;
+  }
+  return {
+    scope: "mission",
+    missionId,
+    kept,
+    cited,
+    deleted,
+  };
 }
 
 function normalizeMissionOptions(
@@ -2004,6 +2111,8 @@ export default function MainScreenPage() {
   const [selectedGraphMemoryId, setSelectedGraphMemoryId] = useState<
     string | null
   >(null);
+  const [selectedSessionGraphClusterId, setSelectedSessionGraphClusterId] =
+    useState<string | null>(null);
   const [selectedReferencedMemoryId, setSelectedReferencedMemoryId] = useState<
     string | null
   >(null);
@@ -3487,26 +3596,55 @@ export default function MainScreenPage() {
 
       // Parse special blocks from completed response
       let createdNote: Idea | null = null;
+      let turnIdeaOverride: Idea | null = null;
       const createNoteBlock = parseCreateNoteBlock(fullText);
       if (createNoteBlock) {
-        createdNote = {
-          id: crypto.randomUUID(),
-          title: nextDraftTitle(ideas),
-          description: createNoteBlock.description?.trim() || "",
-          createdAt: Date.now(),
-        };
-        appendActivityLog({
-          section: "note",
-          action: "create",
-          input: text,
-          output: createdNote.description,
-          outputTitle: createdNote.title,
-        });
-        setIdeas((prev) => [...prev, createdNote as Idea]);
-        setActiveIdeaId(createdNote.id);
-        setActiveArtboardId(null);
-        setIsIdeaExpanded(false);
-        setActiveIdeaTab("idea");
+        const activeIdea = ideas.find((idea) => idea.id === activeIdeaId);
+        const shouldFillStyleShell =
+          activeIdea &&
+          activeIdea.designStyle &&
+          !activeIdea.description.trim();
+        if (shouldFillStyleShell) {
+          turnIdeaOverride = {
+            ...activeIdea,
+            description: createNoteBlock.description?.trim() || "",
+            updatedAt: Date.now(),
+          };
+          appendActivityLog({
+            section: "note",
+            action: "update",
+            input: text,
+            output: turnIdeaOverride.description,
+            outputTitle: turnIdeaOverride.title,
+          });
+          setIdeas((prev) =>
+            prev.map((idea) =>
+              idea.id === turnIdeaOverride?.id ? turnIdeaOverride : idea,
+            ),
+          );
+          setActiveIdeaId(turnIdeaOverride.id);
+          setActiveIdeaTab("idea");
+        } else {
+          createdNote = {
+            id: crypto.randomUUID(),
+            title: nextDraftTitle(ideas),
+            description: createNoteBlock.description?.trim() || "",
+            createdAt: Date.now(),
+          };
+          turnIdeaOverride = createdNote;
+          appendActivityLog({
+            section: "note",
+            action: "create",
+            input: text,
+            output: createdNote.description,
+            outputTitle: createdNote.title,
+          });
+          setIdeas((prev) => [...prev, createdNote as Idea]);
+          setActiveIdeaId(createdNote.id);
+          setActiveArtboardId(null);
+          setIsIdeaExpanded(false);
+          setActiveIdeaTab("idea");
+        }
       }
 
       const updateNoteBlock = parseUpdateNoteBlock(fullText);
@@ -3538,9 +3676,33 @@ export default function MainScreenPage() {
 
       const designSpecBlock = parseCreateDesignSpecBlock(fullText);
       if (designSpecBlock?.content) {
-        const targetIdeaId = createdNote?.id ?? activeIdeaId;
-        const targetIdea =
-          createdNote ?? ideas.find((idea) => idea.id === targetIdeaId);
+        let targetIdeaId = turnIdeaOverride?.id ?? activeIdeaId;
+        let targetIdea =
+          turnIdeaOverride ??
+          ideas.find((idea) => idea.id === targetIdeaId) ??
+          null;
+        let autoCreatedStyleIdea: Idea | null = null;
+        if (!targetIdeaId) {
+          targetIdea = {
+            id: crypto.randomUUID(),
+            title: nextDraftTitle(ideas),
+            description: "",
+            createdAt: Date.now(),
+          };
+          autoCreatedStyleIdea = targetIdea;
+          targetIdeaId = targetIdea.id;
+          appendActivityLog({
+            section: "note",
+            action: "create",
+            input: text,
+            output: "",
+            outputTitle: targetIdea.title,
+          });
+          setActiveIdeaId(targetIdea.id);
+          setActiveArtboardId(null);
+          setIsIdeaExpanded(false);
+          setActiveIdeaTab("style");
+        }
         const newSpec: DesignStyle = {
           id: targetIdea?.designStyle?.id ?? crypto.randomUUID(),
           title: "디자인 스타일",
@@ -3549,7 +3711,10 @@ export default function MainScreenPage() {
         };
         if (targetIdeaId) {
           setIdeas((prev) =>
-            prev.map((idea) =>
+            [
+              ...prev,
+              ...(autoCreatedStyleIdea ? [autoCreatedStyleIdea] : []),
+            ].map((idea) =>
               idea.id === targetIdeaId
                 ? {
                     ...idea,
@@ -3558,6 +3723,10 @@ export default function MainScreenPage() {
                 : idea,
             ),
           );
+          turnIdeaOverride = {
+            ...(targetIdea as Idea),
+            designStyle: newSpec,
+          };
         }
         setIsDesignSpecOpen(true);
       }
@@ -3614,11 +3783,17 @@ export default function MainScreenPage() {
         : null;
 
       if (generateMatch || editMatch) {
-        const effectiveIdeas = createdNote ? [...ideas, createdNote] : ideas;
-        const effectiveActiveIdeaId = createdNote?.id ?? activeIdeaId;
+        const effectiveIdeas = turnIdeaOverride
+          ? ideas.some((idea) => idea.id === turnIdeaOverride?.id)
+            ? ideas.map((idea) =>
+                idea.id === turnIdeaOverride?.id ? turnIdeaOverride : idea,
+              )
+            : [...ideas, turnIdeaOverride]
+          : ideas;
+        const effectiveActiveIdeaId = turnIdeaOverride?.id ?? activeIdeaId;
         const isNew = true;
         const activeIdea =
-          createdNote ??
+          turnIdeaOverride ??
           ideas.find((i) => i.id === effectiveActiveIdeaId) ??
           null;
         const parsedPrompt = normalizeMockupActionPrompt(
@@ -3989,6 +4164,14 @@ export default function MainScreenPage() {
             missionBrief: brief,
             customQuery,
             existingReferences: [...references, ...loggedReferenceLinks],
+            referencePreferenceContext: missionId
+              ? buildReferencePreferenceContext(
+                  missionId,
+                  references,
+                  activityLog,
+                  messages,
+                )
+              : null,
           }),
         });
         const data = await res.json();
@@ -4037,7 +4220,15 @@ export default function MainScreenPage() {
       }
       return [];
     },
-    [activityLog, isFetchingRefs, isReadOnly, references, appendActivityLog],
+    [
+      activityLog,
+      isFetchingRefs,
+      isReadOnly,
+      missionId,
+      messages,
+      references,
+      appendActivityLog,
+    ],
   );
 
   const ideaArtboards = artboards.filter((a) => a.ideaId === activeIdeaId);
@@ -4124,6 +4315,11 @@ export default function MainScreenPage() {
     ];
   }, [clearSessionCompletionTimers]);
   useEffect(() => clearSessionCompletionTimers, [clearSessionCompletionTimers]);
+  const openSessionReview = useCallback(() => {
+    setIsCompletingSession(false);
+    setSessionCompletionReady(false);
+    router.push(`/main/${missionId}?review=1`);
+  }, [missionId, router]);
   const completeSession = async () => {
     if (isReadOnly || isCompletingSession || sessionCompleted || !missionId)
       return;
@@ -4720,102 +4916,111 @@ export default function MainScreenPage() {
 
   const renderSessionImpactGraph = (variant: "panel" | "overlay" = "overlay") => {
     const isOverlay = variant === "overlay";
-    const clusterByItemId = new Map<
-      string,
-      { clusterId: string; clusterLabel: string; clusterIndex: number }
-    >();
-    sessionMemorySummary.graphClusters.forEach((cluster, clusterIndex) => {
-      cluster.itemIds.forEach((itemId) => {
-        if (clusterByItemId.has(itemId)) return;
-        clusterByItemId.set(itemId, {
-          clusterId: cluster.id,
-          clusterLabel: cluster.label,
-          clusterIndex,
-        });
-      });
-    });
     const referencedByMemoryId = new Map(
       sessionMemorySummary.referenced.map((item) => [item.memoryId, item]),
     );
     const promotedIds = new Set(
       sessionMemorySummary.promoted.map((item) => item.id),
     );
-    const sessionArchivedIds = new Set(sessionArchivedMemories.map((item) => item.id));
-    const allNodes = sessionMemorySummary.graphMemories
-      .map((memory) => {
+    const sessionArchivedIds = new Set(
+      sessionArchivedMemories.map((item) => item.id),
+    );
+    const visibleMemoryItems = sessionMemorySummary.graphMemories.filter(
+      (memory) => {
         const referenced = referencedByMemoryId.get(memory.id);
         const isPromoted = promotedIds.has(memory.id);
-        const cluster = clusterByItemId.get(memory.id);
-        if (memoryGraphPhase === "before" && isPromoted) return null;
-        const weight =
-          memoryGraphPhase === "before" && referenced?.weightBefore != null
-            ? referenced.weightBefore
-            : memory.weight;
-        const isArchivedAfter = sessionArchivedIds.has(memory.id);
-        const isSessionTouched = Boolean(referenced) || isPromoted;
-        const isArchived =
-          isArchivedAfter && (memoryGraphPhase === "after" || !isSessionTouched);
-        const isTouched = isSessionTouched;
-        const weightValue =
-          weight != null && Number.isFinite(weight) ? Math.max(0, weight) : 0.45;
-        const size = isOverlay
-          ? Math.max(6, Math.min(18, 6 + weightValue * 12))
-          : Math.max(5, Math.min(14, 5 + weightValue * 9));
-        const label = memorySummaryText(memory);
-        return {
-          id: memory.id,
-          label,
-          weight,
-          isTouched,
-          isPromoted,
-          isReferenced: Boolean(referenced),
-          referencedMemoryId: referenced?.memoryId ?? null,
-          isArchived,
-          clusterId: cluster?.clusterId ?? null,
-          clusterLabel: cluster?.clusterLabel ?? null,
-          clusterIndex: cluster?.clusterIndex ?? 999,
-          color: isArchived
-            ? "bg-rose-300"
-            : isPromoted
-              ? "bg-emerald-400"
-              : referenced
-                ? "bg-blue-400"
-                : "bg-slate-300",
-          ring: isTouched ? "ring-white" : "ring-transparent",
-          size,
-          meta:
-            memoryGraphPhase === "before" && referenced?.weightBefore != null
-              ? `이전 ${formatReviewScore(referenced.weightBefore)}`
-              : memoryGraphPhase === "after" && referenced?.weightAfter != null
-                ? `이후 ${formatReviewScore(referenced.weightAfter)}`
-                : isPromoted
-                  ? "새 기억"
-                  : isArchived
-                    ? memory.archiveReason ?? "archived"
-                    : weight != null
-                      ? `weight ${formatReviewScore(weight)}`
-          : "weight -",
-        };
-      })
-      .filter((node): node is NonNullable<typeof node> => Boolean(node))
-      .filter((node) => {
+        const isArchived = sessionArchivedIds.has(memory.id);
+        if (memoryGraphPhase === "before" && isPromoted) return false;
+        if (memoryGraphPhase === "before" && isArchived && !referenced) {
+          return false;
+        }
         if (memoryGraphFilter === "all") return true;
         if (memoryGraphFilter === "changed") {
-          return node.isReferenced || node.isPromoted || node.isArchived;
+          return Boolean(referenced) || isPromoted || isArchived;
         }
-        if (memoryGraphFilter === "referenced") return node.isReferenced;
-        if (memoryGraphFilter === "promoted") return node.isPromoted;
-        return node.isArchived;
-      })
-      .sort((a, b) => {
-        if (a.isTouched !== b.isTouched) return a.isTouched ? -1 : 1;
-        if (a.clusterIndex !== b.clusterIndex) return a.clusterIndex - b.clusterIndex;
-        return (b.weight ?? 0) - (a.weight ?? 0);
-      });
-    const visibleNodes = allNodes.slice(0, isOverlay ? 220 : 120);
-    const hiddenCount = Math.max(0, allNodes.length - visibleNodes.length);
+        if (memoryGraphFilter === "referenced") return Boolean(referenced);
+        if (memoryGraphFilter === "promoted") return isPromoted;
+        return isArchived && memoryGraphPhase === "after";
+      },
+    );
+    const visibleMemoryIds = new Set(visibleMemoryItems.map((item) => item.id));
+    const graphItems = visibleMemoryItems.map((memory) => {
+      const referenced = referencedByMemoryId.get(memory.id);
+      const phaseWeight =
+        memoryGraphPhase === "before" && referenced?.weightBefore != null
+          ? referenced.weightBefore
+          : memory.weight;
+      return {
+        id: memory.id,
+        memoryId: memory.id,
+        semantic: memory.semantic ?? memory.episodic ?? memory.input ?? "",
+        episodic: memory.episodic ?? "",
+        input: memory.input ?? "",
+        output: memory.output ?? "",
+        action: [
+          referenced ? "referenced" : "",
+          promotedIds.has(memory.id) ? "promoted" : "",
+          sessionArchivedIds.has(memory.id) && memoryGraphPhase === "after"
+            ? "archived"
+            : "",
+        ]
+          .filter(Boolean)
+          .join(" / "),
+        timestamp: memory.timestamp ?? 0,
+        keyword: [
+          phaseWeight != null ? `weight ${formatReviewScore(phaseWeight)}` : "",
+          referenced?.weightDelta != null
+            ? `delta ${formatReviewDelta(referenced.weightDelta)}`
+            : "",
+        ].filter(Boolean),
+        keywords: [
+          phaseWeight != null ? `weight ${formatReviewScore(phaseWeight)}` : "",
+          referenced?.weightDelta != null
+            ? `delta ${formatReviewDelta(referenced.weightDelta)}`
+            : "",
+        ].filter(Boolean),
+        row: {
+          source: memory.source ?? undefined,
+        },
+      };
+    });
+    const baseGraphClusters = sessionMemorySummary.graphClusters
+      .map((cluster) => ({
+        ...cluster,
+        itemIds: cluster.itemIds.filter((itemId) => visibleMemoryIds.has(itemId)),
+        count: cluster.itemIds.filter((itemId) => visibleMemoryIds.has(itemId))
+          .length,
+      }))
+      .filter((cluster) => cluster.itemIds.length > 0);
+    const clusteredMemoryIds = new Set(
+      baseGraphClusters.flatMap((cluster) => cluster.itemIds),
+    );
+    const unclusteredMemoryIds = graphItems
+      .map((item) => item.id)
+      .filter((id) => !clusteredMemoryIds.has(id));
+    const graphClusters =
+      unclusteredMemoryIds.length > 0
+        ? [
+            ...baseGraphClusters,
+            {
+              id: "session-unclustered",
+              label: "Unclustered session memory",
+              summary:
+                "Session memory items not included in the saved similarity cluster cache.",
+              count: unclusteredMemoryIds.length,
+              relatedActions: [],
+              itemIds: unclusteredMemoryIds,
+              representativeItems: [],
+            },
+          ]
+        : baseGraphClusters;
+    const graphClusterIds = new Set(graphClusters.map((cluster) => cluster.id));
+    const selectedClusterId =
+      selectedSessionGraphClusterId && graphClusterIds.has(selectedSessionGraphClusterId)
+        ? selectedSessionGraphClusterId
+        : graphClusters[0]?.id ?? null;
 
-    if (visibleNodes.length === 0) {
+    if (graphItems.length === 0) {
       return (
         <p className="rounded-lg bg-slate-50 px-3 py-5 text-center text-xs text-slate-400">
           아직 node view로 표시할 세션 메모리 변화가 없습니다.
@@ -4823,67 +5028,9 @@ export default function MainScreenPage() {
       );
     }
 
-    const activeClusters = sessionMemorySummary.graphClusters.filter((cluster) =>
-      visibleNodes.some((node) => node.clusterId === cluster.id),
-    );
-    const clusterCenters = new Map<
-      string,
-      { x: number; y: number; label: string; count: number }
-    >();
-    activeClusters.forEach((cluster, index) => {
-      const total = Math.max(1, activeClusters.length);
-      const angle = -Math.PI / 2 + (Math.PI * 2 * index) / total;
-      const ring = Math.floor(index / Math.max(1, Math.min(total, 8)));
-      const radius = total === 1 ? 0 : Math.min(isOverlay ? 38 : 34, 20 + ring * 10);
-      const x = 50 + Math.cos(angle) * radius;
-      const y = 52 + Math.sin(angle) * radius * 0.78;
-      clusterCenters.set(cluster.id, {
-        x: Math.max(12, Math.min(88, x)),
-        y: Math.max(18, Math.min(84, y)),
-        label: cluster.label,
-        count: cluster.itemIds.length,
-      });
-    });
-    const clusterCounts = new Map<string, number>();
-    visibleNodes.forEach((node) => {
-      if (!node.clusterId) return;
-      clusterCounts.set(node.clusterId, (clusterCounts.get(node.clusterId) ?? 0) + 1);
-    });
-    const clusterSeen = new Map<string, number>();
-    let unclusteredIndex = 0;
-    const nodePositions = visibleNodes.map((node) => {
-      if (node.clusterId && clusterCenters.has(node.clusterId)) {
-        const center = clusterCenters.get(node.clusterId)!;
-        const index = clusterSeen.get(node.clusterId) ?? 0;
-        clusterSeen.set(node.clusterId, index + 1);
-        const total = Math.max(1, clusterCounts.get(node.clusterId) ?? 1);
-        const angle = -Math.PI / 2 + (Math.PI * 2 * index) / total;
-        const radius = node.isTouched
-          ? isOverlay
-            ? 8.5
-            : 7
-          : isOverlay
-            ? 5 + (index % 3) * 2.2
-            : 4 + (index % 3) * 1.6;
-        return {
-          ...node,
-          x: Math.max(4, Math.min(96, center.x + Math.cos(angle) * radius)),
-          y: Math.max(10, Math.min(92, center.y + Math.sin(angle) * radius)),
-        };
-      }
-      const angle = unclusteredIndex * 2.399963;
-      const radius = Math.min(isOverlay ? 42 : 36, 7 + Math.sqrt(unclusteredIndex) * 4.6);
-      unclusteredIndex += 1;
-      return {
-        ...node,
-        x: 50 + Math.cos(angle) * radius,
-        y: 54 + Math.sin(angle) * radius * 0.72,
-      };
-    });
-
     return (
       <div
-        className={`relative overflow-hidden rounded-lg border border-slate-100 bg-slate-50 ${
+        className={`relative overflow-hidden rounded-lg border border-slate-100 bg-white ${
           isOverlay ? "h-[min(68vh,760px)]" : "h-96"
         }`}
       >
@@ -4942,67 +5089,27 @@ export default function MainScreenPage() {
           ))}
         </div>
         <div className="absolute right-3 top-3 z-10 rounded-full bg-white/90 px-2.5 py-1 text-[10px] font-semibold text-slate-400 shadow-sm ring-1 ring-slate-100">
-          {sessionMemorySummary.graphClusters.length} clusters ·{" "}
-          {allNodes.length} nodes{hiddenCount > 0 ? ` · +${hiddenCount}` : ""}
+          {graphClusters.length} clusters · {graphItems.length} nodes
         </div>
-        {sessionMemorySummary.graphClusters.length === 0 && (
+        {graphClusters.length === 0 && (
           <div className="absolute right-3 top-10 z-10 max-w-64 rounded-lg border border-amber-100 bg-amber-50 px-3 py-2 text-[11px] leading-relaxed text-amber-700 shadow-sm">
             클러스터 cache가 없습니다. Admin Memory의 cluster view에서 Regenerate를 실행하면 similarity 묶음으로 표시됩니다.
           </div>
         )}
-        {Array.from(clusterCenters.entries()).map(([clusterId, cluster]) => (
-          <div
-            key={`cluster-label-${clusterId}`}
-            className="absolute z-0 max-w-36 -translate-x-1/2 rounded-full bg-white/75 px-2 py-0.5 text-center text-[9px] font-semibold text-slate-400 ring-1 ring-slate-100"
-            style={{ left: `${cluster.x}%`, top: `${Math.max(4, cluster.y - 13)}%` }}
-            title={`${cluster.label} · ${cluster.count} nodes`}
-          >
-            <span className="line-clamp-1">{cluster.label}</span>
-          </div>
-        ))}
-        {nodePositions.map((node) => (
-          <div
-            key={node.id}
-            role="button"
-            tabIndex={0}
-            onClick={() => {
-              setSelectedGraphMemoryId(node.id);
-              if (node.referencedMemoryId) {
-                setSelectedReferencedMemoryId(node.referencedMemoryId);
-              }
+        <div className="h-full pt-24">
+          <MemoryClusterGraph
+            clusters={graphClusters}
+            items={graphItems}
+            selectedClusterId={selectedClusterId}
+            onSelectCluster={setSelectedSessionGraphClusterId}
+            onSelectMemory={(memoryId) => {
+              setSelectedGraphMemoryId(memoryId);
+              const referenced = referencedByMemoryId.get(memoryId);
+              if (referenced) setSelectedReferencedMemoryId(referenced.memoryId);
             }}
-            onKeyDown={(event) => {
-              if (event.key !== "Enter" && event.key !== " ") return;
-              event.preventDefault();
-              setSelectedGraphMemoryId(node.id);
-              if (node.referencedMemoryId) {
-                setSelectedReferencedMemoryId(node.referencedMemoryId);
-              }
-            }}
-            className="absolute flex -translate-x-1/2 -translate-y-1/2 cursor-pointer flex-col items-center gap-1 text-center"
-            style={{ left: `${node.x}%`, top: `${node.y}%` }}
-            title={`${node.label}\n${node.meta}`}
-          >
-            <div
-              className={`rounded-full ${node.color} shadow-sm ring-2 ${node.ring} ${
-                node.isTouched ? "opacity-100" : "opacity-45"
-              }`}
-              style={{
-                height: node.size,
-                outline:
-                  selectedGraphMemoryId === node.id
-                    ? "3px solid rgb(15 23 42)"
-                    : undefined,
-                width: node.size,
-              }}
-            />
-            {node.isTouched && (
-              <p className="w-16 truncate rounded-full bg-white/80 px-1.5 py-0.5 text-[8px] font-semibold text-slate-500 shadow-sm ring-1 ring-slate-100">
-                {node.meta}
-              </p>
-            )}
-          </div>
-        ))}
+            fill
+          />
+        </div>
       </div>
     );
   };
@@ -5398,7 +5505,7 @@ export default function MainScreenPage() {
           {!isReadOnly && sessionCompleted && (
             <button
               type="button"
-              onClick={() => router.push(`/main/${missionId}?review=1`)}
+              onClick={openSessionReview}
               className="rounded-full border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:border-slate-400 hover:bg-slate-50"
             >
               리뷰 보기
@@ -5474,7 +5581,7 @@ export default function MainScreenPage() {
               <div className="mt-6 flex gap-2">
                 <button
                   type="button"
-                  onClick={() => router.push(`/main/${missionId}?review=1`)}
+                  onClick={openSessionReview}
                   className="flex-1 rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-slate-700"
                 >
                   리뷰 보기
@@ -7179,65 +7286,63 @@ export default function MainScreenPage() {
             {/* Memory panel */}
             {showReviewAnnotations && rightPanelTab === "memory" && (
               <div className="flex-1 space-y-5 overflow-y-auto p-5">
-                {isViewingAsAdmin && (
-                  <section>
-                    <div className="mb-2.5 flex items-center justify-between gap-3">
-                      <div className="flex items-center gap-2">
-                        <div className="h-2 w-2 shrink-0 rounded-full bg-slate-500" />
-                        <p className="text-xs font-semibold text-slate-600">
-                          전체 메모리 노드
-                        </p>
-                      </div>
-                      <div className="flex shrink-0 gap-1.5 text-[10px] font-semibold text-slate-400">
-                        <span>전체 {sessionMemorySummary.graphMemories.length}</span>
-                        <span>참고 {sessionMemorySummary.referenced.length}</span>
-                        <span>기억 {sessionMemorySummary.promoted.length}</span>
-                      </div>
+                <section>
+                  <div className="mb-2.5 flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-2">
+                      <div className="h-2 w-2 shrink-0 rounded-full bg-slate-500" />
+                      <p className="text-xs font-semibold text-slate-600">
+                        전체 메모리 노드
+                      </p>
                     </div>
-                    <div className="grid grid-cols-2 gap-2">
-                      <div className="rounded-lg bg-slate-50 px-3 py-2">
-                        <p className="text-[10px] font-semibold uppercase text-slate-400">
-                          전체
-                        </p>
-                        <p className="mt-1 text-lg font-semibold text-slate-900">
-                          {sessionMemorySummary.graphMemories.length}
-                        </p>
-                      </div>
-                      <div className="rounded-lg bg-blue-50 px-3 py-2">
-                        <p className="text-[10px] font-semibold uppercase text-blue-400">
-                          참고
-                        </p>
-                        <p className="mt-1 text-lg font-semibold text-blue-700">
-                          {sessionMemorySummary.referenced.length}
-                        </p>
-                      </div>
-                      <div className="rounded-lg bg-emerald-50 px-3 py-2">
-                        <p className="text-[10px] font-semibold uppercase text-emerald-500">
-                          기억됨
-                        </p>
-                        <p className="mt-1 text-lg font-semibold text-emerald-700">
-                          {sessionMemorySummary.promoted.length}
-                        </p>
-                      </div>
-                      <div className="rounded-lg bg-rose-50 px-3 py-2">
-                        <p className="text-[10px] font-semibold uppercase text-rose-400">
-                          보관됨
-                        </p>
-                        <p className="mt-1 text-lg font-semibold text-rose-700">
-                          {sessionArchivedMemories.length}
-                        </p>
-                      </div>
+                    <div className="flex shrink-0 gap-1.5 text-[10px] font-semibold text-slate-400">
+                      <span>전체 {sessionMemorySummary.graphMemories.length}</span>
+                      <span>참고 {sessionMemorySummary.referenced.length}</span>
+                      <span>기억 {sessionMemorySummary.promoted.length}</span>
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => setIsMemoryDiffOpen(true)}
-                      className="mt-3 flex w-full items-center justify-center gap-2 rounded-lg bg-slate-900 px-3 py-2 text-xs font-semibold text-white transition hover:bg-slate-700"
-                    >
-                      <ArrowsOutIcon size={14} />
-                      전체 메모리 변화 보기
-                    </button>
-                  </section>
-                )}
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="rounded-lg bg-slate-50 px-3 py-2">
+                      <p className="text-[10px] font-semibold uppercase text-slate-400">
+                        전체
+                      </p>
+                      <p className="mt-1 text-lg font-semibold text-slate-900">
+                        {sessionMemorySummary.graphMemories.length}
+                      </p>
+                    </div>
+                    <div className="rounded-lg bg-blue-50 px-3 py-2">
+                      <p className="text-[10px] font-semibold uppercase text-blue-400">
+                        참고
+                      </p>
+                      <p className="mt-1 text-lg font-semibold text-blue-700">
+                        {sessionMemorySummary.referenced.length}
+                      </p>
+                    </div>
+                    <div className="rounded-lg bg-emerald-50 px-3 py-2">
+                      <p className="text-[10px] font-semibold uppercase text-emerald-500">
+                        기억됨
+                      </p>
+                      <p className="mt-1 text-lg font-semibold text-emerald-700">
+                        {sessionMemorySummary.promoted.length}
+                      </p>
+                    </div>
+                    <div className="rounded-lg bg-rose-50 px-3 py-2">
+                      <p className="text-[10px] font-semibold uppercase text-rose-400">
+                        보관됨
+                      </p>
+                      <p className="mt-1 text-lg font-semibold text-rose-700">
+                        {sessionArchivedMemories.length}
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setIsMemoryDiffOpen(true)}
+                    className="mt-3 flex w-full items-center justify-center gap-2 rounded-lg bg-slate-900 px-3 py-2 text-xs font-semibold text-white transition hover:bg-slate-700"
+                  >
+                    <ArrowsOutIcon size={14} />
+                    전체 메모리 변화 보기
+                  </button>
+                </section>
                 {/* 직접 입력한 정보 */}
                 <section>
                   <div className="mb-2.5 flex items-center gap-2">

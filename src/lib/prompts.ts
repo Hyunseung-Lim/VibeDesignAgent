@@ -301,6 +301,7 @@ If the mission contains a fictional persona or selected option name, DO NOT sear
 Do not include these fictional names in any query: ${omittedNames.join(", ") || "(none)"}.
 Avoid generic dashboard, B2B SaaS, or broad gallery-browse queries unless the user explicitly requested those.
 When the user provided a custom query, refine it instead of replacing it.
+If same-mission reference preference context is provided, use it only to refine source type, UX pattern, structure, or visual direction within this current mission. Do not treat it as a global user preference.
 Keep each query under 12 words when possible.
 Do not include duplicate queries.`;
 }
@@ -316,6 +317,7 @@ Return ONLY a JSON array with up to ${finalCount} objects:
 ${mode === "style" ? "Choose references with strong visual style, useful mood, layout, color, typography, and aesthetic inspiration. Image quality matters." : "Choose concrete, inspectable references useful for product decisions, UX structure, feature patterns, writing a design memo, or comparing real products."}
 ${mode === "style" ? "Design galleries, portfolios, screenshots, and visual case studies are acceptable when they are relevant and image-rich." : "Prefer real product pages, official websites, design systems, specific case studies, specific app/screen pages, and reputable editorial design articles."}
 Avoid stock asset pages, generic search/tag/category pages, thin SEO listicles, irrelevant dashboards, and pages unrelated to the user's product domain.${mode === "style" ? "" : " Avoid Pinterest pins/boards."}
+If same-mission reference preference context is provided, prefer candidates similar to cited/kept references and avoid candidates similar to deleted references. Do not apply preferences from other missions.
 Use web search when needed to verify what a candidate URL actually is.
 Descriptions must be short Korean phrases explaining why it is useful as a reference.`;
 }
@@ -329,6 +331,7 @@ Find actual pages that help a designer make product or UX decisions: official pr
 If the project brief contains fictional people/personas, do not search or return pages for the exact fictional name. Use the persona's role, domain, mood, medium, and UI artifact instead.
 Never return pages for these fictional names: ${omittedNames.join(", ") || "(none)"}.
 Avoid stock image sites, Pinterest, Instagram/social posts, generic tag/search pages, template marketplaces, and thin SEO listicles.
+If same-mission reference preference context is provided, use it as mission-local evidence for source type, UX pattern, structure, and visual direction. Do not treat it as a global user preference.
 Descriptions must be short Korean phrases explaining the concrete design/UX value.`;
 }
 

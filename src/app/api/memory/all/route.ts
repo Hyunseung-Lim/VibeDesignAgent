@@ -39,6 +39,8 @@ export async function GET(request: Request) {
           id,
           episodic: str(data.episodic ?? data.episode),
           semantic: str(data.semantic),
+          input: str(data.input),
+          output: str(data.output),
           action: str(data.action),
           keywords: Array.isArray(data.keywords)
             ? data.keywords.map(String)
@@ -49,12 +51,22 @@ export async function GET(request: Request) {
           timestamp: num(data.timestamp ?? data.createdAt),
           archivedAt: num(data.archivedAt),
           archiveReason: str(data.archiveReason),
+          source: data.source && typeof data.source === "object"
+            ? data.source
+            : null,
         };
       }),
     );
 
     const memories = docs
-      .filter((d) => d.episodic)
+      .filter(
+        (d) =>
+          d.episodic ||
+          d.semantic ||
+          d.input ||
+          d.output ||
+          d.keywords.length > 0,
+      )
       .sort((a, b) => (b.timestamp ?? 0) - (a.timestamp ?? 0));
 
     return Response.json({ memories });
