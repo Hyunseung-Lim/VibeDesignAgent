@@ -122,6 +122,12 @@ function inferAgentActionCategory(output: string, interactionId: string) {
   return "agent_response";
 }
 
+function timestampContext(value: unknown) {
+  const timestamp = Number(value ?? 0);
+  if (!Number.isFinite(timestamp) || timestamp <= 0) return "";
+  return `${timestamp} (${new Date(timestamp).toISOString()})`;
+}
+
 async function loadPreviousDrafts(
   uid: string,
   missionId: string,
@@ -192,6 +198,13 @@ export async function POST(request: Request) {
     String(olderDraft?.episode ?? "").trim(),
   ].filter(Boolean);
   const content = [
+    `current interaction timestamp: ${timestampContext(timestamp) || "unknown"}`,
+    previousDraft
+      ? `previous interaction timestamp: ${timestampContext(previousDraft.timestamp ?? previousDraft.createdAt) || "unknown"}`
+      : "",
+    olderDraft
+      ? `older interaction timestamp: ${timestampContext(olderDraft.timestamp ?? olderDraft.createdAt) || "unknown"}`
+      : "",
     `previous episodic memory: ${previousEpisodes.join(" / ") || FIRST_SESSION_TURN}`,
     previousSemantic.length > 0
       ? `previous semantic memory: ${previousSemantic.join(" / ")}`

@@ -213,6 +213,10 @@ previous semantic memory:
 Optional prior durable inference about the user.
 Use as weak context only. Do not reinforce or repeat unless the current interaction clearly supports it.
 
+interaction timestamps:
+Optional current/previous interaction timestamps.
+Use only to understand order, recency, and session flow. Do not store timestamps or date strings as keywords or semantic preferences.
+
 user input:
 The query or instruction the user sent in this turn.
 May include cited references, quoted text, selected UI elements, or other contextual material.

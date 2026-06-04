@@ -6299,13 +6299,21 @@ export default function MainScreenPage() {
                     void persistSessionSnapshot(startedAt);
                   }
                 }}
-                className="w-full rounded-2xl bg-slate-900 py-3.5 text-sm font-semibold text-white transition hover:bg-slate-700 disabled:opacity-60"
+                className="flex w-full items-center justify-center gap-2 rounded-2xl bg-slate-900 py-3.5 text-sm font-semibold text-white transition hover:bg-slate-700 disabled:opacity-60"
               >
-                {profileSaving
-                  ? "저장 중…"
-                  : missionDurationMinutes
-                    ? `세션 시작하기 (${missionDurationMinutes}분)`
-                    : "세션 시작하기"}
+                {profileSaving ? (
+                  <>
+                    <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                    </svg>
+                    세션 준비 중…
+                  </>
+                ) : missionDurationMinutes ? (
+                  `세션 시작하기 (${missionDurationMinutes}분)`
+                ) : (
+                  "세션 시작하기"
+                )}
               </button>
             </div>
           </div>

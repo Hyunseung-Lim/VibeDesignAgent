@@ -110,6 +110,7 @@ export function parseStoredClusters(value: unknown) {
 }
 
 function embeddingText(item: ClusterInputItem) {
+  // Cluster vectors are semantic only; timestamp stays available as metadata.
   return [
     item.action ? `Action: ${item.action}` : "",
     item.keyword?.length ? `Keywords: ${item.keyword.join(", ")}` : "",

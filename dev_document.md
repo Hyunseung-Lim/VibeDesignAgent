@@ -1047,7 +1047,8 @@ type ChatPlan = {
   - 목표: profile도 유저 입력을 바탕으로 `keyword`, `episodic`, `semantic` 단위로 쪼개고 embedding/retrieval/clustering에서 함께 다룸
   - 구분 필드 추가: vectorized memory가 profile 기반인지 interaction 기반인지 구분할 수 있는 `sourceType` 또는 `memorySource` 필요
   - profile memory의 clustering input:
-    - 포함: `keyword`, `episodic`, `semantic`, 원본 사용자 입력, 생성/수정 시간
+    - 포함: `keyword`, `episodic`, `semantic`, 원본 사용자 입력
+    - 제외: 생성/수정 시간. 시간 정보는 context extraction에는 쓰되 vector similarity에는 섞지 않음
     - 비움: `agent response`, `action category`
   - 결정: 안전한 방식으로 진행. 기존 `profile_memories/{missionId}`는 source of truth로 유지하고, 여기서 쪼갠 derived memory만 공통 memory pipeline에 넣음
   - 기존 profile 데이터는 삭제 후 새 구조로 시작해도 무방하나, 구현은 destructive migration 없이 새 구조를 지원하는 방향 우선
@@ -1087,3 +1088,15 @@ type ChatPlan = {
   - 구현: reference card metadata(title/tag/url/mode/provider/description)에 더해 chat bubble의 `레퍼런스 선택 이유`에 쓰는 `rationale` 텍스트를 memory draft에 함께 넣어 source type/UX pattern/style signal 판단 근거로 사용
   - 구현: `MEMORY_ENCODE_PROMPT`에 reference handling scope 규칙을 추가해 official product/case-study 선호 같은 consumption behavior만 durable하게 보고, 도메인/UX 패턴/시각 스타일/삭제 negative는 현재 미션 evidence로 우선 해석하게 함
   - 구현: profile derived memory와 interaction memory가 같은 retrieval pipeline을 타므로, reference interaction memory도 다른 미션에서 similarity가 충분할 때 retrieved evidence로 약하게 활용됨
+
+### 14.7 Memory timestamp 정책
+
+- [x] timestamp는 context extraction에는 포함하고, vectorization에는 포함하지 않도록 정리
+  - 목표: LLM이 "이전/최근/세션 흐름"을 해석할 때는 timestamp를 참고할 수 있게 하되, embedding similarity가 날짜/시간 문자열에 끌려가지 않게 함
+  - 적용 범위:
+    - memory draft encoding prompt: 현재 interaction timestamp와 직전 draft timestamp를 context로 제공
+    - interaction/profile memory embedding text: `keyword`, `episodic`, `semantic`, input/output/action/link 등 의미 정보만 사용하고 timestamp/createdAt/updatedAt은 제외
+    - clustering embedding text: similarity 묶음은 의미 기반으로 유지하고 timestamp는 label/debug metadata로만 사용
+  - 저장 정책: memory document에는 `timestamp`, `createdAt`, `updatedAt` metadata를 계속 저장하되 `embeddingSource`는 timestamp 제외 source임을 명확히 표시
+  - 구현: memory draft encoding prompt에 current/previous interaction timestamp를 제공하고, `MEMORY_ENCODE_PROMPT`에는 timestamp를 순서/최근성 판단에만 쓰도록 명시
+  - 구현: interaction/profile/retrieval regenerate embedding은 `combined_no_timestamp` source를 사용. 기존 `combined` embedding은 이미 timestamp-free라 재생성 대상에서 제외

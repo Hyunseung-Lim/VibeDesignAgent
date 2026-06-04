@@ -15,6 +15,8 @@ const MEMORY_COLLECTION = "memories_0_1_2";
 const LEGACY_MEMORY_COLLECTION = "memories_0_1_1";
 const RETRIEVAL_LOG_COLLECTION = "memoryRetrievalLogs";
 const EMBEDDING_MODEL = "text-embedding-3-large";
+const EMBEDDING_SOURCE = "combined_no_timestamp";
+const ACCEPTED_EMBEDDING_SOURCES = new Set(["combined", EMBEDDING_SOURCE]);
 const MAX_MEMORY_DOCS = 200;
 const DEFAULT_LIMIT = 5;
 const NEAR_MISS_LIMIT = 20;
@@ -110,6 +112,7 @@ function stableHash(value: string) {
 }
 
 function buildEmbeddingText(candidate: Pick<Candidate, "action" | "keyword" | "episodic" | "semantic" | "input" | "output" | "link">) {
+  // Timestamp is retrieval metadata only; do not include it in vector text.
   return [
     candidate.action ? `Action: ${candidate.action}` : "",
     candidate.keyword.length ? `Keywords: ${candidate.keyword.join(", ")}` : "",
@@ -218,11 +221,13 @@ function legacyCandidates(uid: string, doc: MemoryDoc): Candidate[] {
 }
 
 async function ensureV2Embeddings(candidates: Candidate[], token: string) {
-  // Regenerate: missing embedding OR built with old single-field method (not "combined")
+  // Regenerate: missing embedding OR built with old single-field method.
+  // Existing "combined" embeddings are accepted because they were already timestamp-free.
   const stale = candidates.filter(
     (candidate) =>
       !candidate.legacy &&
-      (candidate.embedding.length === 0 || candidate.embeddingSource !== "combined"),
+      (candidate.embedding.length === 0 ||
+        !ACCEPTED_EMBEDDING_SOURCES.has(candidate.embeddingSource)),
   );
   if (stale.length === 0) return;
   const now = Date.now();
@@ -232,16 +237,16 @@ async function ensureV2Embeddings(candidates: Candidate[], token: string) {
   await Promise.all(
     stale.map((candidate, index) => {
       candidate.embedding = embeddings[index] ?? [];
-      candidate.embeddingSource = "combined";
+      candidate.embeddingSource = EMBEDDING_SOURCE;
       candidate.doc.embedding = candidate.embedding;
-      candidate.doc.embeddingSource = "combined";
+      candidate.doc.embeddingSource = EMBEDDING_SOURCE;
       candidate.doc.embeddingModel = EMBEDDING_MODEL;
       candidate.doc.updatedAt = now;
       return patchFirestoreDocument(
         candidate.path,
         {
           embedding: candidate.embedding,
-          embeddingSource: "combined",
+          embeddingSource: EMBEDDING_SOURCE,
           embeddingModel: EMBEDDING_MODEL,
           updatedAt: now,
         },

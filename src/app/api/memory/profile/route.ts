@@ -17,6 +17,7 @@ const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const MEMORY_COLLECTION = "memories_0_1_2";
 const PROFILE_MEMORY_SCHEMA_VERSION = "0.1.2-profile";
 const EMBEDDING_MODEL = "text-embedding-3-large";
+const EMBEDDING_SOURCE = "combined_no_timestamp";
 const PROFILE_MEMORY_MAX_ITEMS = 5;
 const PROFILE_MEMORY_MAX_CHARS = 240;
 const PROFILE_MEMORY_MAX_RAW_CHARS = 6000;
@@ -103,6 +104,7 @@ async function embedTexts(texts: string[]) {
 }
 
 function buildEmbeddingText(memory: DerivedProfileMemory, rawInput: string) {
+  // Keep profile revision timestamps as metadata only; vectors use semantic content.
   return [
     memory.keywords.length ? `Keywords: ${memory.keywords.join(", ")}` : "",
     memory.episodic ? `Episodic: ${memory.episodic}` : "",
@@ -218,7 +220,7 @@ async function writeProfileDerivedMemories(
           output: "",
           link: null,
           embedding: embeddings[index] ?? [],
-          embeddingSource: "combined",
+          embeddingSource: EMBEDDING_SOURCE,
           embeddingModel: EMBEDDING_MODEL,
           weight: 0.5,
           retrievedCount: 0,

@@ -14,6 +14,7 @@ const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const MEMORY_SCHEMA_VERSION = "0.1.2";
 const MEMORY_COLLECTION = "memories_0_1_2";
 const EMBEDDING_MODEL = "text-embedding-3-large";
+const EMBEDDING_SOURCE = "combined_no_timestamp";
 
 function jsonArray(value: unknown) {
   if (Array.isArray(value)) return value.map(String).filter(Boolean);
@@ -72,6 +73,7 @@ export async function POST(request: Request) {
         const action = String(draft.agentActionCategory ?? "agent_response");
         const input = String(draft.input ?? "").trim();
         const output = String(draft.output ?? "").trim();
+        // Keep timestamp as metadata only; vector similarity should stay semantic.
         const embeddingText = [
           action ? `Action: ${action}` : "",
           keywords.length ? `Keywords: ${keywords.join(", ")}` : "",
@@ -102,7 +104,7 @@ export async function POST(request: Request) {
               output: draft.output ?? "",
               link: null,
               embedding: embedding ?? [],
-              embeddingSource: "combined",
+              embeddingSource: EMBEDDING_SOURCE,
               embeddingModel: EMBEDDING_MODEL,
               weight: 0.5,
               retrievedCount: 0,
