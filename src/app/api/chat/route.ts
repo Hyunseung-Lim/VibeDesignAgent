@@ -20,6 +20,7 @@ import {
   chatSelectedElementPrompt,
   chatCitedRefsWithUrlPrompt,
   chatCitedRefsNoUrlPrompt,
+  chatReferencePreferencePrompt,
   chatPlannerPrompt,
 } from "@/lib/prompts";
 
@@ -650,6 +651,7 @@ export async function POST(request: Request) {
     citedTexts,
     review,
     responseProvider,
+    referencePreferenceContext,
   } = await request.json();
   const reviewConfig = (review && typeof review === "object"
     ? review
@@ -849,7 +851,7 @@ export async function POST(request: Request) {
     markContext("currentRequest");
     systemMessages.push({
       role: "system",
-      content: chatCurrentRequestPrompt(latestUserText),
+      content: chatCurrentRequestPrompt(),
     });
   }
 
@@ -937,6 +939,26 @@ export async function POST(request: Request) {
         content: `[인용된 레퍼런스: ${titles.join(", ")}]\n\n${originalContent}`,
       };
     }
+  }
+
+  const refPref = referencePreferenceContext as {
+    cited?: unknown[];
+    kept?: unknown[];
+    deleted?: unknown[];
+  } | null | undefined;
+  if (
+    refPref &&
+    ((refPref.cited?.length ?? 0) > 0 ||
+      (refPref.kept?.length ?? 0) > 0 ||
+      (refPref.deleted?.length ?? 0) > 0)
+  ) {
+    markContext("referencePreference");
+    systemMessages.push({
+      role: "system",
+      content: chatReferencePreferencePrompt(
+        refPref as Parameters<typeof chatReferencePreferencePrompt>[0],
+      ),
+    });
   }
 
   const hasRefUrls = includedRefUrls.length > 0;

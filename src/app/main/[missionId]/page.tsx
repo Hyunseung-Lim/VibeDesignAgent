@@ -37,8 +37,6 @@ import {
 } from "@phosphor-icons/react";
 import { isAdminEmail } from "@/lib/admin";
 const ONBOARDING_MISSION_ID = "onboarding";
-const PROFILE_MEMORY_MAX_ITEMS = 5;
-const PROFILE_MEMORY_MAX_CHARS = 240;
 const MemoryClusterGraph = dynamic(() => import("@/app/admin/MemoryClusterGraph"), {
   ssr: false,
   loading: () => (
@@ -722,14 +720,34 @@ function extractJsonActionPayload(
   return null;
 }
 
-function parseCreateNoteBlock(text: string): CreateNoteData | null {
-  const payload = extractJsonActionPayload(text, "CREATE_NOTE");
-  if (!payload) return null;
-  try {
-    return JSON.parse(payload) as CreateNoteData;
-  } catch {
-    return { description: payload.trim() };
+function extractPlainNoteContent(text: string, tag: "CREATE_NOTE" | "UPDATE_NOTE"): string | null {
+  const marker = `[${tag}:`;
+  const start = text.indexOf(marker);
+  if (start === -1) return null;
+  let depth = 1;
+  let i = start + marker.length;
+  const contentStart = i;
+  while (i < text.length && depth > 0) {
+    if (text[i] === "[") depth++;
+    else if (text[i] === "]") depth--;
+    i++;
   }
+  if (depth !== 0) return null;
+  return text.slice(contentStart, i - 1).trim();
+}
+
+function parseCreateNoteBlock(text: string): CreateNoteData | null {
+  const jsonPayload = extractJsonActionPayload(text, "CREATE_NOTE");
+  if (jsonPayload) {
+    try {
+      return JSON.parse(jsonPayload) as CreateNoteData;
+    } catch {
+      return { description: jsonPayload.trim() };
+    }
+  }
+  const plain = extractPlainNoteContent(text, "CREATE_NOTE");
+  if (!plain) return null;
+  return { description: plain };
 }
 
 function parseUpdateNoteBlock(text: string): UpdateNoteData | null {
@@ -1321,20 +1339,22 @@ html, body { min-height: 0 !important; height: auto !important; }
     : html + script;
 }
 
-type ContentChip = { label: string; done: boolean; code?: string };
+type ContentChip = { label: string; done: boolean; failed?: boolean; code?: string };
 type ContentPart =
   | { type: "text"; content: string }
   | { type: "chip"; chip: ContentChip };
 
 const BLOCK_RULES = [
   {
-    complete: /\[CREATE_NOTE:\s*\{[\s\S]*?\}\]/,
+    complete: /\[CREATE_NOTE:(?:\s*\{[\s\S]*?\}|[\s\S]*?\n)\]/,
     partial: /\[CREATE_NOTE:[\s\S]*$/,
     doneLabel: "노트 생성됨",
     pendingLabel: "노트 작성 중...",
+    failedLabel: "노트 작성 실패",
+    failedMarker: "⚠️ 노트를 먼저 저장해야",
   },
   {
-    complete: /\[UPDATE_NOTE:\s*\{[\s\S]*?\}\]/,
+    complete: /\[UPDATE_NOTE:(?:\s*\{[\s\S]*?\}|[\s\S]*?\n)\]/,
     partial: /\[UPDATE_NOTE:[\s\S]*$/,
     doneLabel: "노트 수정됨",
     pendingLabel: "노트 수정 중...",
@@ -1381,6 +1401,8 @@ function processMessageContent(content: string): ContentPart[] {
       matchStr: string;
       label: string;
       done: boolean;
+      failedLabel?: string;
+      failedMarker?: string;
     } | null = null;
 
     for (const rule of BLOCK_RULES) {
@@ -1394,7 +1416,14 @@ function processMessageContent(content: string): ContentPart[] {
           m.index !== undefined &&
           (earliest === null || m.index < earliest.index)
         ) {
-          earliest = { index: m.index, matchStr: m[0], label, done };
+          earliest = {
+            index: m.index,
+            matchStr: m[0],
+            label,
+            done,
+            failedLabel: (rule as { failedLabel?: string }).failedLabel,
+            failedMarker: (rule as { failedMarker?: string }).failedMarker,
+          };
         }
       }
     }
@@ -1408,6 +1437,13 @@ function processMessageContent(content: string): ContentPart[] {
     const before = remaining.slice(0, earliest.index).trim();
     if (before) parts.push({ type: "text", content: before });
 
+    const afterChip = remaining.slice(earliest.index + earliest.matchStr.length);
+    const failed = !!(
+      earliest.failedLabel &&
+      earliest.failedMarker &&
+      (afterChip.includes(earliest.failedMarker) || content.includes(earliest.failedMarker))
+    );
+
     // Extract code content from the matched block
     const codeMatch = earliest.matchStr.match(
       /```(?:html|presentation)\s*\n([\s\S]*?)(?:\n?\s*```|$)/,
@@ -1416,9 +1452,14 @@ function processMessageContent(content: string): ContentPart[] {
 
     parts.push({
       type: "chip",
-      chip: { label: earliest.label, done: earliest.done, code },
+      chip: {
+        label: failed ? (earliest.failedLabel as string) : earliest.label,
+        done: failed || earliest.done,
+        failed,
+        code,
+      },
     });
-    remaining = remaining.slice(earliest.index + earliest.matchStr.length);
+    remaining = afterChip;
   }
 
   return parts;
@@ -1529,7 +1570,12 @@ function cleanMessageContentForModel(content: string) {
     )
     .replace(
       /### 레퍼런스 선택 이유[\s\S]*?(?=\n### |\n```|\n\[|$)/g,
-      "이전 레퍼런스 결과 요약은 별도 reference preference context에 압축되어 전달됨.",
+      (match) => {
+        const trimmed = match.trim();
+        return trimmed.length <= 600
+          ? trimmed
+          : trimmed.slice(0, 600) + "\n\n[이하 reference preference context로 압축됨]";
+      },
     )
     .replace(/\[WEB_SEARCHED\]/g, "이전 액션: web search completed.")
     .replace(/\[CREATE_DESIGN_SPEC:\s*\{[\s\S]*?\}\]/g, "[디자인 스타일 추가]")
@@ -1670,7 +1716,9 @@ function CodeChip({
         onClick={() => hasCode && onToggle(chipKey)}
         className={`flex w-full items-center gap-2 px-3 py-2 text-left ${hasCode ? "cursor-pointer hover:bg-slate-100" : "cursor-default"}`}
       >
-        {chip.done ? (
+        {chip.failed ? (
+          <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-rose-400" />
+        ) : chip.done ? (
           <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-400" />
         ) : (
           <span className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-slate-400" />
@@ -2063,9 +2111,6 @@ function memorySummaryText(item: SessionMemoryItem | ReviewTurnMemory) {
   );
 }
 
-function truncateProfileInput(value: string) {
-  return value.trim().slice(0, PROFILE_MEMORY_MAX_CHARS);
-}
 
 async function stitchResponseError(response: Response) {
   const data = await response.clone().json().catch(() => null);
@@ -2119,10 +2164,7 @@ export default function MainScreenPage() {
   const [sessionLoaded, setSessionLoaded] = useState(false);
   const [profileModalConfirmed, setProfileModalConfirmed] = useState(false);
   const [profileStep, setProfileStep] = useState<2 | 3>(2);
-  const [profileItems, setProfileItems] = useState<
-    { id: string; input: string; createdAt: number; updatedAt: number }[]
-  >([]);
-  const [profileInput, setProfileInput] = useState("");
+  const [profileRawMarkdown, setProfileRawMarkdown] = useState("");
   const [profileSaving, setProfileSaving] = useState(false);
   const [parentMissionTitle, setParentMissionTitle] = useState("");
   const [parentMissionBrief, setParentMissionBrief] = useState("");
@@ -2285,20 +2327,6 @@ export default function MainScreenPage() {
   const activeOption =
     missionOptions.find((option) => option.id === selectedOptionId) ??
     (missionOptions.length === 1 ? missionOptions[0] : null);
-  const addProfileItem = useCallback(() => {
-    const input = truncateProfileInput(profileInput);
-    if (!input || profileItems.length >= PROFILE_MEMORY_MAX_ITEMS) return;
-    setProfileItems((prev) => [
-      ...prev.slice(0, PROFILE_MEMORY_MAX_ITEMS - 1),
-      {
-        id: crypto.randomUUID(),
-        input,
-        createdAt: Date.now(),
-        updatedAt: Date.now(),
-      },
-    ]);
-    setProfileInput("");
-  }, [profileInput, profileItems.length]);
   const appendActivityLog = useCallback(
     (event: Omit<ActivityLogEvent, "id" | "createdAt">) => {
       setActivityLog((prev) =>
@@ -2976,7 +3004,7 @@ export default function MainScreenPage() {
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
         if (cancelled) return;
-        setProfileItems(Array.isArray(data?.items) ? data.items : []);
+        setProfileRawMarkdown(typeof data?.rawMarkdown === "string" ? data.rawMarkdown : "");
       })
       .catch(() => {});
     return () => {
@@ -3652,6 +3680,9 @@ export default function MainScreenPage() {
               ? turnMemoryContext
               : undefined,
           citedTexts: citedTexts.length > 0 ? citedTexts : undefined,
+          referencePreferenceContext: missionId
+            ? buildReferencePreferenceContext(missionId, references, activityLog, messages)
+            : undefined,
           designSpec: (() => {
             const idea = ideas.find((i) => i.id === activeIdeaId);
             const appliedStyle = activeDesignStyle(idea);
@@ -6040,6 +6071,24 @@ export default function MainScreenPage() {
           </div>
           <div className="flex-1 overflow-y-auto">
             <div className="mx-auto max-w-3xl space-y-6 px-8 py-8">
+              {/* Profile input */}
+              <div className="rounded-2xl border border-slate-200 bg-white px-6 py-5">
+                <p className="font-semibold text-slate-900">
+                  에이전트가 알아야 할 것들
+                </p>
+                <p className="mt-1 text-sm leading-relaxed text-slate-500">
+                  대화를 통해 알아낼 수 없는 것들을 자유롭게 적어주세요. 브랜드
+                  컬러, 타겟 사용자, 프로젝트 제약 조건 등 처음부터 알아야
+                  하는 맥락이 좋습니다.
+                </p>
+                <textarea
+                  value={profileRawMarkdown}
+                  onChange={(e) => setProfileRawMarkdown(e.target.value)}
+                  placeholder="예: 브랜드 컬러는 네이비이고 바꿀 수 없어요. 타겟은 20대 여성이에요. 앱 출시는 3개월 안에 해야 해요."
+                  rows={5}
+                  className="mt-4 w-full resize-none rounded-xl border border-slate-200 px-3 py-2.5 text-sm leading-relaxed text-slate-700 outline-none focus:border-slate-400 placeholder:text-slate-300"
+                />
+              </div>
               {/* Mission context */}
               <div className="rounded-2xl border border-slate-200 bg-white px-6 py-5">
                 <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">
@@ -6069,97 +6118,13 @@ export default function MainScreenPage() {
                   </div>
                 )}
               </div>
-              {/* Profile input */}
-              <div className="rounded-2xl border border-slate-200 bg-white px-6 py-5">
-                <div className="flex items-baseline justify-between">
-                  <p className="font-semibold text-slate-900">
-                    에이전트가 알아야 할 것들
-                  </p>
-                  <span
-                    className={`text-xs font-semibold tabular-nums ${
-                      profileItems.length >= PROFILE_MEMORY_MAX_ITEMS
-                        ? "text-rose-400"
-                        : "text-slate-300"
-                    }`}
-                  >
-                    {profileItems.length} / {PROFILE_MEMORY_MAX_ITEMS}
-                  </span>
-                </div>
-                <p className="mt-1 text-sm leading-relaxed text-slate-500">
-                  대화를 통해 알아낼 수 없는 것들을 직접 알려주세요. 브랜드
-                  컬러, 타겟 사용자, 프로젝트 제약 조건 등 처음부터 알아야
-                  하는 맥락이 좋습니다.
-                </p>
-                <div className="mt-4 space-y-2">
-                  {profileItems.map((item) => (
-                    <div
-                      key={item.id}
-                      className="flex items-start gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-700"
-                    >
-                      <span className="flex-1 leading-relaxed">
-                        {item.input}
-                      </span>
-                      <button
-                        onClick={() =>
-                          setProfileItems((prev) =>
-                            prev.filter((p) => p.id !== item.id),
-                          )
-                        }
-                        className="mt-0.5 shrink-0 text-slate-300 hover:text-rose-400"
-                      >
-                        <XIcon size={14} />
-                      </button>
-                    </div>
-                  ))}
-                  {profileItems.length === 0 && (
-                    <p className="rounded-xl bg-slate-50 px-3 py-2.5 text-sm text-slate-400">
-                      아직 입력된 정보가 없습니다.
-                    </p>
-                  )}
-                </div>
-                {profileItems.length < PROFILE_MEMORY_MAX_ITEMS && (
-                  <div className="mt-3 flex gap-2">
-                    <div className="flex-1">
-                      <input
-                        type="text"
-                        value={profileInput}
-                        maxLength={PROFILE_MEMORY_MAX_CHARS}
-                        onChange={(e) => setProfileInput(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter" && profileInput.trim()) {
-                            e.preventDefault();
-                            addProfileItem();
-                          }
-                        }}
-                        placeholder="예: 브랜드 컬러는 네이비이고 바꿀 수 없어요"
-                        className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-700 outline-none focus:border-slate-400 placeholder:text-slate-300"
-                      />
-                      <p className="mt-1 text-right text-[11px] font-semibold text-slate-300">
-                        {profileInput.length} / {PROFILE_MEMORY_MAX_CHARS}
-                      </p>
-                    </div>
-                    <button
-                      onClick={addProfileItem}
-                      disabled={!profileInput.trim()}
-                      className="self-start rounded-xl bg-slate-100 px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-200 disabled:opacity-40"
-                    >
-                      추가
-                    </button>
-                  </div>
-                )}
-              </div>
             </div>
           </div>
           {/* Next button */}
           <div className="border-t border-slate-200 bg-white px-8 py-4">
             <div className="mx-auto max-w-3xl">
               <button
-                onClick={() => {
-                  if (profileInput.trim()) {
-                    addProfileItem();
-                  }
-                  setProfileStep(3);
-                }}
+                onClick={() => setProfileStep(3)}
                 className="w-full rounded-2xl bg-slate-900 py-3.5 text-sm font-semibold text-white transition hover:bg-slate-700"
               >
                 다음
@@ -6204,6 +6169,19 @@ export default function MainScreenPage() {
           </div>
           <div className="flex-1 overflow-y-auto">
             <div className="mx-auto max-w-3xl space-y-6 px-8 py-8">
+              {/* Profile review */}
+              <div className="rounded-2xl border border-slate-200 bg-white px-6 py-5">
+                <p className="font-semibold text-slate-900">입력한 정보</p>
+                <div className="mt-3">
+                  {profileRawMarkdown.trim() ? (
+                    <p className="whitespace-pre-wrap text-sm leading-relaxed text-slate-700">
+                      {profileRawMarkdown}
+                    </p>
+                  ) : (
+                    <p className="text-sm text-slate-400">입력한 정보가 없습니다.</p>
+                  )}
+                </div>
+              </div>
               {/* Mission context */}
               <div className="rounded-2xl border border-slate-200 bg-white px-6 py-5">
                 <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">
@@ -6243,25 +6221,6 @@ export default function MainScreenPage() {
                   </div>
                 )}
               </div>
-              {/* Profile items review */}
-              <div className="rounded-2xl border border-slate-200 bg-white px-6 py-5">
-                <p className="font-semibold text-slate-900">입력한 정보</p>
-                <div className="mt-3 space-y-2">
-                  {profileItems.length === 0 ? (
-                    <p className="text-sm text-slate-400">입력한 정보가 없습니다.</p>
-                  ) : (
-                    profileItems.map((item) => (
-                      <div
-                        key={item.id}
-                        className="flex items-start gap-2 rounded-xl bg-slate-50 px-3 py-2.5 text-sm text-slate-700"
-                      >
-                        <span className="mt-0.5 shrink-0 text-slate-300">·</span>
-                        <span className="leading-relaxed">{item.input}</span>
-                      </div>
-                    ))
-                  )}
-                </div>
-              </div>
             </div>
           </div>
           {/* Session start button */}
@@ -6283,10 +6242,8 @@ export default function MainScreenPage() {
                       },
                       body: JSON.stringify({
                         missionId,
-                        items: profileItems,
-                        rawMarkdown: profileItems
-                          .map((item) => `- ${item.input}`)
-                          .join("\n"),
+                        items: [],
+                        rawMarkdown: profileRawMarkdown,
                       }),
                     });
                   } catch {

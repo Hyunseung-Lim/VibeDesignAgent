@@ -130,8 +130,8 @@ export function chatActiveIdeaPrompt(title: string, description: string) {
   return `The user is currently working on this note:\nTitle: ${title}\nContent: ${description}\n\nAll mockups and presentations generated in this conversation should be designed for this note.\n\nFor [GENERATE_MOCKUP], treat the Content above as a binding product brief and visual style guide. Include the most important details directly in the generated mockup prompt so the downstream design generator receives them.`;
 }
 
-export function chatCurrentRequestPrompt(latestUserText: string) {
-  return `Current user request, highest priority:\n${latestUserText}\n\nTreat earlier conversation only as background. Do not repeat, continue, or complete a previous task unless this current request explicitly asks you to. If the current request says to make it Korean / 한국어로 만들어줘 and a current mockup exists, interpret that as editing the visible text in the current mockup into Korean, not as repeating a previous color or layout change.`;
+export function chatCurrentRequestPrompt() {
+  return `The most recent user message is the current request and has the highest priority.\nTreat earlier conversation only as background. Do not repeat, continue, or complete a previous task unless this current request explicitly asks you to. If the current request says to make it Korean / 한국어로 만들어줘 and a current mockup exists, interpret that as editing the visible text in the current mockup into Korean, not as repeating a previous color or layout change.`;
 }
 
 export function chatMockupHtmlPrompt(mockupHtml: string) {
@@ -151,6 +151,35 @@ export function chatCitedRefsWithUrlPrompt(
 
 export function chatCitedRefsNoUrlPrompt(titles: string[]) {
   return `The user is citing these references for inspiration: ${titles.join(", ")}. Use them as design direction.`;
+}
+
+export function chatReferencePreferencePrompt(context: {
+  cited: Array<{ title: string; description?: string; rationale?: string; tag?: string; url?: string }>;
+  kept: Array<{ title: string; description?: string; rationale?: string; tag?: string; url?: string }>;
+  deleted: Array<{ title?: string; description?: string; url?: string }>;
+}) {
+  const lines: string[] = [
+    "Same-mission reference preference context (mission-local evidence only; do not treat as global user preference):",
+  ];
+  if (context.cited.length > 0) {
+    lines.push("Cited (strong signal):");
+    for (const r of context.cited) {
+      lines.push(`- ${r.title}${r.tag ? ` [${r.tag}]` : ""}${r.rationale ? `: ${r.rationale}` : ""}${r.url ? ` (${r.url})` : ""}`);
+    }
+  }
+  if (context.kept.length > 0) {
+    lines.push("Kept (weak signal):");
+    for (const r of context.kept) {
+      lines.push(`- ${r.title}${r.tag ? ` [${r.tag}]` : ""}${r.rationale ? `: ${r.rationale}` : ""}`);
+    }
+  }
+  if (context.deleted.length > 0) {
+    lines.push("Deleted (negative signal — avoid similar):");
+    for (const r of context.deleted) {
+      lines.push(`- ${r.title ?? r.url ?? "(unknown)"}`);
+    }
+  }
+  return lines.join("\n");
 }
 
 export function chatPlannerPrompt(compactInputJson: string) {

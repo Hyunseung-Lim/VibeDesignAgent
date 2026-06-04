@@ -248,28 +248,28 @@ type Idea = {
 
 모든 LLM 프롬프트는 `src/lib/prompts.ts` 한 곳에서 관리한다. 각 API route는 이 파일에서 import해서 사용하며, 프롬프트를 직접 route 파일에 인라인으로 작성하지 않는다.
 
-| export                                               | 종류     | 사용처                                                        |
-| ---------------------------------------------------- | -------- | ------------------------------------------------------------- |
-| `CHAT_AGENT_BASE_PROMPT`                             | const    | `chat/route.ts` — 공통 에이전트 역할/명령 태그 정의           |
-| `chatActionInstructionPrompt(intent, includeRouter)` | function | `chat/route.ts` — planner intent에 맞는 행동 규칙만 주입      |
-| `chatDevicePrompt(deviceLabel)`                      | function | `chat/route.ts` — 대상 디바이스 명시                          |
-| `chatMissionPrompt(title, brief)`                    | function | `chat/route.ts` — 미션 컨텍스트 주입                          |
-| `chatProfileMemoryPrompt(lines)`                     | function | `chat/route.ts` — Legacy/backcompat profile_input 직접 주입   |
-| `chatInteractionMemoryPrompt(json)`                  | function | `chat/route.ts` — 상호작용 메모리 주입                        |
-| `chatDesignSpecPrompt(spec)`                         | function | `chat/route.ts` — 디자인 스타일 가이드 주입                   |
-| `chatCitedTextsPrompt(texts)`                        | function | `chat/route.ts` — 인용 텍스트 주입                            |
-| `chatActiveIdeaPrompt(title, desc)`                  | function | `chat/route.ts` — 현재 작업 시안 주입                         |
-| `chatCurrentRequestPrompt(text)`                     | function | `chat/route.ts` — 최신 사용자 요청 강조                       |
-| `chatMockupHtmlPrompt(html)`                         | function | `chat/route.ts` — 현재 목업 HTML 주입                         |
-| `chatSelectedElementPrompt(sel, html)`               | function | `chat/route.ts` — 선택된 UI 요소 주입                         |
-| `chatCitedRefsWithUrlPrompt(titles, urls)`           | function | `chat/route.ts` — URL 있는 레퍼런스                           |
-| `chatCitedRefsNoUrlPrompt(titles)`                   | function | `chat/route.ts` — URL 없는 레퍼런스                           |
-| `MEMORY_ENCODE_PROMPT`                               | const    | `memory/drafts/route.ts` — interaction → memory 인코딩        |
-| `REFERENCE_MODE_CLASSIFY_PROMPT`                     | const    | `references/route.ts` — style vs product 분류                 |
-| `referenceQueryBuilderPrompt(mode, names)`           | function | `references/route.ts` — 검색 쿼리 생성                        |
-| `referenceCandidateRankingPrompt(mode, n)`           | function | `references/route.ts` — 후보 랭킹                             |
-| `referenceProductSearchPrompt(names)`                | function | `references/route.ts` — 제품 레퍼런스 검색                    |
-| `referenceImageSourcePrompt(title, desc)`            | function | `reference-image/route.ts` — 앱 UI 레퍼런스 페이지 검색       |
+| export                                               | 종류     | 사용처                                                      |
+| ---------------------------------------------------- | -------- | ----------------------------------------------------------- |
+| `CHAT_AGENT_BASE_PROMPT`                             | const    | `chat/route.ts` — 공통 에이전트 역할/명령 태그 정의         |
+| `chatActionInstructionPrompt(intent, includeRouter)` | function | `chat/route.ts` — planner intent에 맞는 행동 규칙만 주입    |
+| `chatDevicePrompt(deviceLabel)`                      | function | `chat/route.ts` — 대상 디바이스 명시                        |
+| `chatMissionPrompt(title, brief)`                    | function | `chat/route.ts` — 미션 컨텍스트 주입                        |
+| `chatProfileMemoryPrompt(lines)`                     | function | `chat/route.ts` — Legacy/backcompat profile_input 직접 주입 |
+| `chatInteractionMemoryPrompt(json)`                  | function | `chat/route.ts` — 상호작용 메모리 주입                      |
+| `chatDesignSpecPrompt(spec)`                         | function | `chat/route.ts` — 디자인 스타일 가이드 주입                 |
+| `chatCitedTextsPrompt(texts)`                        | function | `chat/route.ts` — 인용 텍스트 주입                          |
+| `chatActiveIdeaPrompt(title, desc)`                  | function | `chat/route.ts` — 현재 작업 시안 주입                       |
+| `chatCurrentRequestPrompt(text)`                     | function | `chat/route.ts` — 최신 사용자 요청 강조                     |
+| `chatMockupHtmlPrompt(html)`                         | function | `chat/route.ts` — 현재 목업 HTML 주입                       |
+| `chatSelectedElementPrompt(sel, html)`               | function | `chat/route.ts` — 선택된 UI 요소 주입                       |
+| `chatCitedRefsWithUrlPrompt(titles, urls)`           | function | `chat/route.ts` — URL 있는 레퍼런스                         |
+| `chatCitedRefsNoUrlPrompt(titles)`                   | function | `chat/route.ts` — URL 없는 레퍼런스                         |
+| `MEMORY_ENCODE_PROMPT`                               | const    | `memory/drafts/route.ts` — interaction → memory 인코딩      |
+| `REFERENCE_MODE_CLASSIFY_PROMPT`                     | const    | `references/route.ts` — style vs product 분류               |
+| `referenceQueryBuilderPrompt(mode, names)`           | function | `references/route.ts` — 검색 쿼리 생성                      |
+| `referenceCandidateRankingPrompt(mode, n)`           | function | `references/route.ts` — 후보 랭킹                           |
+| `referenceProductSearchPrompt(names)`                | function | `references/route.ts` — 제품 레퍼런스 검색                  |
+| `referenceImageSourcePrompt(title, desc)`            | function | `reference-image/route.ts` — 앱 UI 레퍼런스 페이지 검색     |
 
 ---
 
@@ -1096,7 +1096,47 @@ type ChatPlan = {
   - 적용 범위:
     - memory draft encoding prompt: 현재 interaction timestamp와 직전 draft timestamp를 context로 제공
     - interaction/profile memory embedding text: `keyword`, `episodic`, `semantic`, input/output/action/link 등 의미 정보만 사용하고 timestamp/createdAt/updatedAt은 제외
-    - clustering embedding text: similarity 묶음은 의미 기반으로 유지하고 timestamp는 label/debug metadata로만 사용
+    - clustering embedding text: similarity 묶음은 의미 기반으로 유지하고 timestamp는 lab
+      el/debug metadata로만 사용
   - 저장 정책: memory document에는 `timestamp`, `createdAt`, `updatedAt` metadata를 계속 저장하되 `embeddingSource`는 timestamp 제외 source임을 명확히 표시
   - 구현: memory draft encoding prompt에 current/previous interaction timestamp를 제공하고, `MEMORY_ENCODE_PROMPT`에는 timestamp를 순서/최근성 판단에만 쓰도록 명시
   - 구현: interaction/profile/retrieval regenerate embedding은 `combined_no_timestamp` source를 사용. 기존 `combined` embedding은 이미 timestamp-free라 재생성 대상에서 제외
+
+### 14.8 세션 시작 버튼 로딩 UX
+
+- [x] profile memory 처리 중 세션 시작 버튼에 로딩 피드백 추가
+  - 배경: 세션 시작 클릭 시 `POST /api/memory/profile` → LLM 가공 + vector embedding 생성까지 await하므로 수초 대기 발생
+  - 구현: `profileSaving` 상태에서 버튼 텍스트를 "세션 시작하기" → "세션 준비 중…"으로 변경하고 spinner 아이콘 표시
+  - 버튼은 처리 완료 후 세션이 시작되므로, 이 로딩이 끝나면 profile memory는 즉시 retrieve 가능 상태
+
+### 14.9 세션 시작 전 profile 입력 UI 개선
+
+- [x] 에이전트가 알아야 할 것들 입력 방식을 리스트 추가 → 자유 입력 textarea로 변경
+  - 배경: 기존 UI는 유저가 항목을 하나씩 추가(최대 5개)해야 했으나, 줄글로 자유롭게 쓴 뒤 LLM이 분리하는 방식이 더 자연스러움
+  - 구현: `profileItems` / `profileInput` state 제거 → `profileRawMarkdown` (string) 하나로 대체
+  - 구현: textarea 입력 → `POST /api/memory/profile`에 `rawMarkdown` 그대로 전송 → 기존 `deriveProfileMemories` LLM 분리 로직 그대로 활용
+  - 구현: step 2(정보 입력), step 3(세션 시작 확인) 모두 "입력한 정보 → 미션" 순서로 카드 순서 통일
+
+### 14.10 [CREATE_NOTE:] plain text 파싱 및 실패 칩 UI
+
+- [x] `[CREATE_NOTE:]` 블록이 JSON이 아닌 plain text 형식으로 왔을 때 파싱 실패 버그 수정
+  - 배경: LLM이 `[CREATE_NOTE: Title: ...\n...\n]` 형식(JSON 없이)으로 응답하면 `extractJsonActionPayload`가 `{`를 찾지 못해 null 반환 → `turnIdeaOverride`가 null → `[GENERATE_MOCKUP]` 실행 시 아이디어 없음 오류 발생
+  - 구현: `extractPlainNoteContent` 함수 추가. JSON payload가 없으면 bracket 전체 내용을 description으로 사용
+  - 구현: `BLOCK_RULES`의 CREATE_NOTE `complete` 정규식을 JSON 포맷 외 plain text(`\n]`로 끝나는 형식)도 인식하도록 확장
+- [x] 노트 작성 실패 시 chat 칩 UI 피드백 추가
+  - 구현: `ContentChip`에 `failed?: boolean` 추가
+  - 구현: `processMessageContent`에서 `⚠️ 노트를 먼저 저장해야` 메시지가 content에 포함되면 CREATE_NOTE 칩을 실패 상태로 마킹
+  - 구현: 실패 칩은 빨간 점(`bg-rose-400`) + "노트 작성 실패" 라벨 표시
+
+### 14.11 Chat 프롬프트 구조 개선
+
+- [x] 현재 유저 요청 중복 제거
+  - 배경: `chatCurrentRequestPrompt`가 `latestUserText`를 system 메시지에 삽입하고, 동일 텍스트가 `builtMessages`의 마지막 user 메시지에도 포함되어 LLM이 같은 요청을 두 번 읽는 구조였음
+  - 구현: `chatCurrentRequestPrompt`에서 `latestUserText` 파라미터 제거. "The most recent user message is the current request and has the highest priority." framing만 system 메시지로 유지
+- [x] `### 레퍼런스 선택 이유` 섹션 과도한 압축 완화
+  - 배경: `cleanMessageContentForModel`이 해당 섹션을 단 한 줄로 완전히 대체하여 에이전트가 이전 턴에서 논의한 구조 추천·레퍼런스 분석 내용이 모두 소멸
+  - 구현: 600자 이내면 그대로 보존, 초과 시 앞 600자 + `[이하 reference preference context로 압축됨]` 마커로 표시
+- [x] reference preference context를 chat 모델에 실제 전달
+  - 배경: assistant 메시지에서 "별도 reference preference context에 압축되어 전달됨"이라고 했으나 `/api/chat`에는 해당 context가 전달되지 않았음
+  - 구현: `page.tsx`에서 `/api/chat` 호출 시 `referencePreferenceContext` 함께 전송
+  - 구현: `chat/route.ts`에서 수신 후 `chatReferencePreferencePrompt`로 시스템 메시지 생성하여 주입 (cited/kept/deleted signal 포함)
