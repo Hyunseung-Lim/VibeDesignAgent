@@ -17,9 +17,6 @@ const RETRIEVAL_LOG_COLLECTION = "memoryRetrievalLogs";
 const EMBEDDING_MODEL = "text-embedding-3-large";
 const MAX_MEMORY_DOCS = 200;
 const DEFAULT_LIMIT = 5;
-const PROFILE_MEMORY_MAX_CHARS = 240;
-const PROFILE_RETRIEVAL_LIMIT = 3;
-const PROFILE_RETRIEVAL_MIN_SIMILARITY = 0.25;
 const NEAR_MISS_LIMIT = 20;
 const NEAR_MISS_MIN_SIMILARITY = 0.55;
 const NEAR_MISS_WEIGHT_LOSS = 0.005;
@@ -142,7 +139,7 @@ async function loadCollectionDocs(uid: string, collection: string, token: string
       return { id, ...data } as MemoryDoc;
     }),
   );
-  return docs.filter((doc) => doc.type === "interaction");
+  return docs.filter((doc) => doc.type === "interaction" || doc.type === "profile");
 }
 
 function v2Candidate(uid: string, doc: MemoryDoc): Candidate | null {
@@ -261,10 +258,13 @@ async function loadCandidates(uid: string, token: string) {
     .filter((item): item is Candidate => Boolean(item));
   if (v2.length > 0) {
     await ensureV2Embeddings(v2, token);
-    return v2;
+    if (v2.some((candidate) => candidate.doc.type === "interaction")) {
+      return v2;
+    }
   }
   const legacyDocs = await loadCollectionDocs(uid, LEGACY_MEMORY_COLLECTION, token);
-  return legacyDocs.flatMap((doc) => legacyCandidates(uid, doc));
+  const legacy = legacyDocs.flatMap((doc) => legacyCandidates(uid, doc));
+  return [...v2, ...legacy];
 }
 
 function nextWeight(candidate: Candidate, wasRetrieved: boolean) {
@@ -399,58 +399,6 @@ async function updateNearMissWeights(
   return deltas;
 }
 
-async function loadProfileItems(
-  uid: string,
-  missionId: string,
-  token: string,
-): Promise<Array<{ id: string; input: string }>> {
-  if (!missionId) return [];
-  try {
-    const doc = (await getFirestoreDocument(
-      `users/${uid}/profile_memories/${encodeURIComponent(missionId)}`,
-      token,
-    )) as Record<string, unknown> | null;
-    if (!doc || !Array.isArray(doc.items)) return [];
-    return doc.items
-      .filter(
-        (item): item is { id: string; input: string } =>
-          item &&
-          typeof item === "object" &&
-          typeof item.input === "string" &&
-          item.input.trim(),
-      )
-      .slice(0, 5) // cap at 5 profile items
-      .map((item) => ({
-        id: String(item.id),
-        input: item.input.trim().slice(0, PROFILE_MEMORY_MAX_CHARS),
-      }));
-  } catch {
-    return [];
-  }
-}
-
-async function selectProfileItemsForQuery(
-  profileItems: Array<{ id: string; input: string }>,
-  queryEmbedding: number[],
-) {
-  if (profileItems.length === 0) return [];
-  const embeddings = await embedTexts(profileItems.map((item) => item.input));
-  const ranked = profileItems
-    .map((item, index) => ({
-      ...item,
-      similarity:
-        embeddings[index]?.length === queryEmbedding.length
-          ? cosineSimilarity(queryEmbedding, embeddings[index])
-          : -Infinity,
-    }))
-    .filter((item) => Number.isFinite(item.similarity))
-    .sort((a, b) => b.similarity - a.similarity);
-  const selected = ranked
-    .filter((item) => item.similarity >= PROFILE_RETRIEVAL_MIN_SIMILARITY)
-    .slice(0, PROFILE_RETRIEVAL_LIMIT);
-  return selected.length > 0 ? selected : ranked.slice(0, 1);
-}
-
 export async function POST(request: Request) {
   const user = await verifyFirebaseIdToken(request);
   if (!user) return Response.json({ error: "unauthorized" }, { status: 401 });
@@ -472,22 +420,12 @@ export async function POST(request: Request) {
   }
 
   let retrieved: Candidate[] = [];
-  let profileCandidates: Array<{ id: string; input: string }> = [];
-  let profileItems: Array<{ id: string; input: string; similarity: number }> = [];
   try {
     const token = await getFirebaseAccessToken();
     const now = Date.now();
     const [queryEmbedding] = await embedTexts([query]);
 
-    const [candidates, loadedProfileItems] = await Promise.all([
-      loadCandidates(user.localId, token),
-      loadProfileItems(user.localId, missionId, token),
-    ]);
-    profileCandidates = loadedProfileItems;
-    profileItems = await selectProfileItemsForQuery(
-      loadedProfileItems,
-      queryEmbedding,
-    );
+    const candidates = await loadCandidates(user.localId, token);
     const memoryCount = candidates.length;
 
     const ranked = candidates
@@ -526,12 +464,18 @@ export async function POST(request: Request) {
         similarities: retrieved.map((candidate) =>
           Number(candidate.similarity.toFixed(4)),
         ),
-        profileItemCount: profileItems.length,
-        profileCandidateCount: profileCandidates.length,
-        profileItemIds: profileItems.map((item) => item.id),
-        profileSimilarities: profileItems.map((item) =>
-          Number(item.similarity.toFixed(4)),
-        ),
+        profileItemCount: retrieved.filter(
+          (candidate) => candidate.doc.type === "profile",
+        ).length,
+        profileCandidateCount: candidates.filter(
+          (candidate) => candidate.doc.type === "profile",
+        ).length,
+        profileItemIds: retrieved
+          .filter((candidate) => candidate.doc.type === "profile")
+          .map((candidate) => candidate.id),
+        profileSimilarities: retrieved
+          .filter((candidate) => candidate.doc.type === "profile")
+          .map((candidate) => Number(candidate.similarity.toFixed(4))),
         memoryCount,
         nearMissDecayMultiplier: memoryCountDecayMultiplier(memoryCount),
         nearMissWeightLoss: nearMissWeightLoss(memoryCount),
@@ -546,36 +490,14 @@ export async function POST(request: Request) {
     return Response.json({ query, retrieved: [], unavailable: true });
   }
 
-  const profileResults = profileItems.map((item) => ({
-    id: `profile:${item.id}`,
-    memoryId: `profile:${item.id}`,
-    semanticItemId: null,
-    type: "profile_input",
-    action: "user_profile",
-    keyword: [],
-    episodic: item.input,
-    episode: item.input,
-    semantic: null,
-    input: item.input,
-    output: "",
-    link: null,
-    embeddingSource: "input",
-    source: { kind: "user_profile", missionId },
-    timestamp: null,
-    schemaVersion: "profile",
-    similarity: Number(item.similarity.toFixed(4)),
-    retrievedCount: 0,
-  }));
-
   return Response.json({
     query,
-    retrieved: [
-      ...profileResults,
-      ...retrieved.map((candidate) => ({
+    retrieved: retrieved.map((candidate) => ({
         id: candidate.id,
         memoryId: candidate.memoryId,
         semanticItemId: candidate.semanticItemId,
-        type: "memory",
+        type: candidate.doc.type === "profile" ? "profile_memory" : "memory",
+        sourceType: candidate.doc.sourceType ?? candidate.doc.memorySource ?? null,
         action: candidate.action,
         keyword: candidate.keyword,
         episodic: candidate.episodic,
@@ -593,6 +515,5 @@ export async function POST(request: Request) {
         weightDelta: candidate.weightDelta ?? 0,
         retrievedCount: candidate.retrievedCount,
       })),
-    ],
   });
 }

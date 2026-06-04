@@ -59,6 +59,8 @@ const CHAT_DESIGN_SPEC_ACTION_PROMPT = `Design spec rules:
 const CHAT_REFERENCE_ACTION_PROMPT = `Reference search rules:
 - Use [FETCH_REFERENCES: query] when the user asks for references, inspiration, examples, real apps, websites, product pages, UI patterns, or visual direction.
 - The query must include concrete mission/product keywords and the user's requested style/source/platform.
+- Preserve explicit source constraints from the user's request, such as real/actual/live, official, portfolio, case study, app, website, product page, visual style, structure, platform, or region.
+- When the user asks for real references, prioritize live, inspectable sources over concept-only gallery posts: official product/brand/person pages, working websites/apps, portfolios, case studies, documentation, design systems, or reputable editorial sources. Use gallery platforms only when they are the best available evidence or when the user explicitly asks for visual inspiration.
 - If the user refines a previous reference search, output a new [FETCH_REFERENCES: ...] query.
 - Do not satisfy reference requests by listing URLs or image links in chat.`;
 
@@ -232,6 +234,8 @@ Do not assume a cited reference is only about visual style. It may reflect layou
 
 If the agent response already analyzes a cited reference, preserve the most relevant interpretation in the episode when it materially explains the interaction.
 
+When encoding reference interactions, distinguish broad reference consumption behavior from mission-specific reference signals. Preferences for official product pages, case studies, or real inspectable apps may be durable. Domain, UX pattern, and visual style signals are usually mission-specific evidence unless the user explicitly states a general preference. Deleted or rejected references are negative evidence for the current mission; do not turn them into global dislikes without clear support.
+
 # Rules
 
 Always:
@@ -270,6 +274,28 @@ Return exactly this JSON shape:
   // Return null when there is no clearly supported durable inference.
 }`;
 
+export const PROFILE_MEMORY_DERIVE_PROMPT = `# Task
+
+Split user-provided profile memory into small structured memory records for a UI/UX design agent.
+
+The input may be markdown, bullet points, fragments, or short profile notes. Treat it as user-provided background, not as an interaction with the agent.
+
+# Output
+
+Return valid JSON only:
+{"items":[{"keywords":["..."],"episodic":"...","semantic":"..."}]}
+
+# Rules
+
+- Write every output value in English.
+- Create 0 to 8 records.
+- Each record should capture one important unit of information.
+- keywords: 1 to 6 concise keywords.
+- episodic: a concise statement of what the user explicitly provided about themselves, their project, constraints, taste, workflow, or context.
+- semantic: a durable preference, tendency, constraint, or working pattern inferred from that unit. Use null only if there is no durable implication.
+- Do not invent personal facts, demographics, or preferences not supported by the input.
+- Ignore empty, vague, duplicate, or purely administrative text.`;
+
 // ────────────────────────────────────────────────────────────
 // References — 레퍼런스 검색 파이프라인
 // 사용처: src/app/api/references/route.ts
@@ -291,6 +317,8 @@ Return ONLY a JSON array of strings.
 Each query should be specific, concrete, and include the product domain, target platform, UI artifact, and desired visual or structural direction when available.
 ${mode === "style" ? "Prefer image-rich style references, design galleries, portfolios, app screenshots, landing page screenshots, visual systems, and mood references." : "Prefer official websites, product pages, app pages, landing pages, design systems, concrete UX flows, specific case studies, and reputable design articles."}
 Every query must preserve the concrete domain nouns from the user request, such as "wine", "sommelier", "fashion", or "wellness".
+Every query must preserve explicit source constraints from the user request, such as real/actual/live, official, portfolio, case study, app, website, product page, visual style, structure, platform, or region.
+When the user asks for real references, prioritize live, inspectable sources over concept-only gallery posts: official product/brand/person pages, working websites/apps, portfolios, case studies, documentation, design systems, or reputable editorial sources. Use gallery platforms only when they are the best available evidence or when the user explicitly asks for visual inspiration.
 If the mission contains a fictional persona or selected option name, DO NOT search the exact name. Search by role, domain, mood, medium, and UI artifact instead.
 Do not include these fictional names in any query: ${omittedNames.join(", ") || "(none)"}.
 Avoid generic dashboard, B2B SaaS, or broad gallery-browse queries unless the user explicitly requested those.
@@ -306,27 +334,31 @@ export function referenceCandidateRankingPrompt(
 ) {
   return `You rank UI/UX design references for a design tool.
 Return ONLY a JSON array with up to ${finalCount} objects:
-[{"url":"...","title":"...","description":"...","score":0.0}]
+[{"url":"...","title":"...","description":"...","rationale":"...","score":0.0}]
 
 ${mode === "style" ? "Choose references with strong visual style, useful mood, layout, color, typography, and aesthetic inspiration. Image quality matters." : "Choose concrete, inspectable references useful for product decisions, UX structure, feature patterns, writing a design memo, or comparing real products."}
 ${mode === "style" ? "Design galleries, portfolios, screenshots, and visual case studies are acceptable when they are relevant and image-rich." : "Prefer real product pages, official websites, design systems, specific case studies, specific app/screen pages, and reputable editorial design articles."}
+When the user asks for real references, prioritize live, inspectable sources over concept-only gallery posts: official product/brand/person pages, working websites/apps, portfolios, case studies, documentation, design systems, or reputable editorial sources. Use gallery platforms only when they are the best available evidence or when the user explicitly asks for visual inspiration.
 Avoid stock asset pages, generic search/tag/category pages, thin SEO listicles, irrelevant dashboards, and pages unrelated to the user's product domain.${mode === "style" ? "" : " Avoid Pinterest pins/boards."}
 If same-mission reference preference context is provided, prefer candidates similar to cited/kept references and avoid candidates similar to deleted references. Do not apply preferences from other missions.
 Use web search when needed to verify what a candidate URL actually is.
-Descriptions must be short Korean phrases explaining why it is useful as a reference.`;
+Descriptions must be short Korean phrases explaining what the reference is.
+Rationales must be short Korean phrases explaining why this reference is useful for the current mission, UX pattern, structure, or visual/style direction.`;
 }
 
 export function referenceProductSearchPrompt(omittedNames: string[]) {
   return `Find high-quality UI/UX product references for a design tool.
 Return ONLY a JSON array with up to 6 objects:
-[{"url":"...","title":"...","description":"...","imageUrl":null,"source":"..."}]
+[{"url":"...","title":"...","description":"...","rationale":"...","imageUrl":null,"source":"..."}]
 
 Find actual pages that help a designer make product or UX decisions: official product pages, app pages, landing pages, design systems, concrete case studies, UX flow examples, or reputable design articles.
+When the user asks for real references, prioritize live, inspectable sources over concept-only gallery posts: official product/brand/person pages, working websites/apps, portfolios, case studies, documentation, design systems, or reputable editorial sources. Use gallery platforms only when they are the best available evidence or when the user explicitly asks for visual inspiration.
 If the project brief contains fictional people/personas, do not search or return pages for the exact fictional name. Use the persona's role, domain, mood, medium, and UI artifact instead.
 Never return pages for these fictional names: ${omittedNames.join(", ") || "(none)"}.
 Avoid stock image sites, Pinterest, Instagram/social posts, generic tag/search pages, template marketplaces, and thin SEO listicles.
 If same-mission reference preference context is provided, use it as mission-local evidence for source type, UX pattern, structure, and visual direction. Do not treat it as a global user preference.
-Descriptions must be short Korean phrases explaining the concrete design/UX value.`;
+Descriptions must be short Korean phrases explaining what the reference is.
+Rationales must be short Korean phrases explaining the concrete design/UX value for the current mission.`;
 }
 
 // ────────────────────────────────────────────────────────────

@@ -116,6 +116,7 @@ function inferAgentActionCategory(output: string, interactionId: string) {
     return "presentation_create";
   if (interactionId.startsWith("delete-idea-")) return "note_delete";
   if (interactionId.startsWith("delete-design-")) return "mockup_delete";
+  if (interactionId.startsWith("fetch-reference-")) return "references_fetch";
   if (interactionId.startsWith("cite-reference-")) return "reference_cite";
   if (interactionId.startsWith("delete-reference-")) return "reference_delete";
   return "agent_response";

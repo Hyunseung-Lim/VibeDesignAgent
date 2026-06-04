@@ -236,8 +236,44 @@ const SESSION_COMPLETION_STEPS = [
   "이번 세션의 내용을 정리하고 있어요",
   "다음 작업에 참고할 기억을 저장하고 있어요",
   "이미 저장된 내용과 겹치는 부분을 정돈하고 있어요",
+  "리뷰 화면에 필요한 기억을 불러오고 있어요",
   "세션이 저장되었어요",
 ] as const;
+
+function sessionMemorySummaryKey(targetUid: string, missionId: string) {
+  return `${targetUid}:${missionId}`;
+}
+
+async function fetchSessionMemorySummary(
+  token: string,
+  targetUid: string,
+  missionId: string,
+): Promise<SessionMemorySummary> {
+  const res = await fetch("/api/memory/session-summary", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      targetUid,
+      missionId,
+    }),
+  });
+  if (!res.ok) throw new Error(`Session memory summary failed: ${res.status}`);
+  const data = await res.json().catch(() => null);
+  return {
+    drafts: Array.isArray(data?.drafts) ? data.drafts : [],
+    promoted: Array.isArray(data?.promoted) ? data.promoted : [],
+    referenced: Array.isArray(data?.referenced) ? data.referenced : [],
+    graphMemories: Array.isArray(data?.graphMemories)
+      ? data.graphMemories
+      : [],
+    graphClusters: Array.isArray(data?.graphClusters)
+      ? data.graphClusters
+      : [],
+  };
+}
 
 const CHAT_MARKDOWN_COMPONENTS = {
   p: ({ children }: { children?: React.ReactNode }) => (
@@ -308,6 +344,7 @@ type Reference = {
   id: string;
   title: string;
   description: string;
+  rationale?: string;
   tag: string;
   url?: string;
   imageUrl?: string;
@@ -321,6 +358,7 @@ type ReferencePreferenceContext = {
   kept: Array<{
     title: string;
     description?: string;
+    rationale?: string;
     tag?: string;
     url?: string;
     referenceMode?: Reference["referenceMode"];
@@ -330,6 +368,7 @@ type ReferencePreferenceContext = {
   cited: Array<{
     title: string;
     description?: string;
+    rationale?: string;
     tag?: string;
     url?: string;
     referenceMode?: Reference["referenceMode"];
@@ -339,6 +378,7 @@ type ReferencePreferenceContext = {
   deleted: Array<{
     title?: string;
     description?: string;
+    rationale?: string;
     tag?: string;
     url?: string;
     signal: "negative_deleted";
@@ -477,6 +517,7 @@ function buildReferencePreferenceContext(
     .map((reference) => ({
       title: reference.title,
       description: reference.description,
+      rationale: reference.rationale,
       tag: reference.tag,
       url: reference.url,
       referenceMode: reference.referenceMode,
@@ -490,6 +531,7 @@ function buildReferencePreferenceContext(
     .map((reference) => ({
       title: reference.title,
       description: reference.description,
+      rationale: reference.rationale,
       tag: reference.tag,
       url: reference.url,
       referenceMode: reference.referenceMode,
@@ -1485,6 +1527,10 @@ function cleanMessageContentForModel(content: string) {
       /\[FETCH_REFERENCES(?::[^\]]+)?\]/g,
       "이전 액션: reference search requested.",
     )
+    .replace(
+      /### 레퍼런스 선택 이유[\s\S]*?(?=\n### |\n```|\n\[|$)/g,
+      "이전 레퍼런스 결과 요약은 별도 reference preference context에 압축되어 전달됨.",
+    )
     .replace(/\[WEB_SEARCHED\]/g, "이전 액션: web search completed.")
     .replace(/\[CREATE_DESIGN_SPEC:\s*\{[\s\S]*?\}\]/g, "[디자인 스타일 추가]")
     .replace(/\n{3,}/g, "\n\n")
@@ -1576,17 +1622,7 @@ function formatMemoryInputWithCitations(
       [
         `cited references (${citedReferences.length}):`,
         ...citedReferences.map((reference, index) =>
-          [
-            `${index + 1}. ${reference.title}`,
-            reference.tag ? `tag: ${reference.tag}` : "",
-            reference.url ? `url: ${reference.url}` : "",
-            reference.imageUrl ? `imageUrl: ${reference.imageUrl}` : "",
-            reference.description
-              ? `description: ${reference.description}`
-              : "",
-          ]
-            .filter(Boolean)
-            .join(" / "),
+          formatReferenceMemoryDetail(reference, index + 1),
         ),
       ].join("\n"),
     );
@@ -1857,6 +1893,34 @@ function isReferenceSearchRequest(text: string) {
   return asksForExamples && externalDesignTarget && inspirationQualifier;
 }
 
+function isReferenceMemory(record: MemoryRecord) {
+  const action = String(record.action ?? "");
+  if (/reference|references|FETCH_REFERENCES/i.test(action)) return true;
+  const text = [
+    ...(record.keyword ?? []),
+    ...(record.keywords ?? []),
+    record.episodic,
+    record.episode,
+    record.semantic,
+    record.input,
+    record.output,
+    record.link,
+  ]
+    .filter(Boolean)
+    .join(" ");
+  return /reference|references|레퍼런스|참고\s*(자료|이미지|사이트|앱|화면)?|벤치마크/i.test(
+    text,
+  );
+}
+
+function filterMemoryForReferenceSearch(records: MemoryRecord[] | null) {
+  if (!records) return null;
+  const filtered = records.filter(
+    (record) => isReferenceMemory(record) && (record.similarity ?? 0) >= 0.42,
+  );
+  return filtered.length > 0 ? filtered.slice(0, 3) : null;
+}
+
 function cleanSearchText(text: string) {
   return text
     .replace(/[^\p{L}\p{N}\s.-]/gu, " ")
@@ -1893,14 +1957,41 @@ function buildReferenceSearchQuery(
 function buildReferenceReasonSummary(references: Reference[]) {
   if (references.length === 0) return "";
   const lines = references.slice(0, 5).map((reference) => {
-    const description = reference.description?.trim()
-      ? reference.description.trim()
-      : "현재 미션과 관련된 UI/UX 패턴을 확인하기 위해 선택했습니다.";
+    const description = referenceRationale(reference);
     const title = reference.title?.trim() || reference.url || "레퍼런스";
     const link = reference.url ? ` ([link](${reference.url}))` : "";
     return `- **${title}**${link}: ${description}`;
   });
   return ["", "### 레퍼런스 선택 이유", ...lines].join("\n");
+}
+
+function referenceRationale(reference: Reference) {
+  if (reference.rationale?.trim()) return reference.rationale.trim();
+  if (reference.description?.trim()) return reference.description.trim();
+  return "현재 미션과 관련된 UI/UX 패턴을 확인하기 위해 선택했습니다.";
+}
+
+function formatReferenceMemoryDetail(reference: Reference, index?: number) {
+  return [
+    `${index ? `${index}. ` : ""}${reference.title || "Untitled reference"}`,
+    reference.tag ? `tag: ${reference.tag}` : "",
+    reference.url ? `url: ${reference.url}` : "",
+    reference.imageUrl ? `imageUrl: ${reference.imageUrl}` : "",
+    reference.referenceMode ? `mode: ${reference.referenceMode}` : "",
+    reference.searchProvider ? `provider: ${reference.searchProvider}` : "",
+    reference.description ? `card description: ${reference.description}` : "",
+    reference.rationale ? `rationale: ${reference.rationale}` : "",
+    `agent rationale: ${referenceRationale(reference)}`,
+  ]
+    .filter(Boolean)
+    .join(" / ");
+}
+
+function formatReferenceMemoryDetails(references: Reference[]) {
+  return references
+    .slice(0, 8)
+    .map((reference, index) => formatReferenceMemoryDetail(reference, index + 1))
+    .join("\n");
 }
 
 function buildEditMockupPrompt(changePrompt: string) {
@@ -2123,6 +2214,7 @@ export default function MainScreenPage() {
     string | null
   >(null);
   const referencedMemoryRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const sessionMemorySummaryKeyRef = useRef<string | null>(null);
   const [reviewProfileItems, setReviewProfileItems] = useState<
     { id: string; input: string }[]
   >([]);
@@ -2799,46 +2891,31 @@ export default function MainScreenPage() {
   useEffect(() => {
     if (!showReviewAnnotations || !targetSessionUserId || !missionId) {
       setSessionMemorySummary(EMPTY_SESSION_MEMORY_SUMMARY);
+      sessionMemorySummaryKeyRef.current = null;
       return;
     }
     const currentUser = firebaseAuth.currentUser;
     if (!currentUser) {
       setSessionMemorySummary(EMPTY_SESSION_MEMORY_SUMMARY);
+      sessionMemorySummaryKeyRef.current = null;
       return;
     }
+    const summaryKey = sessionMemorySummaryKey(targetSessionUserId, missionId);
+    if (sessionMemorySummaryKeyRef.current === summaryKey) return;
     let cancelled = false;
     getIdToken(currentUser)
       .then((token) =>
-        fetch("/api/memory/session-summary", {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${token}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            targetUid: targetSessionUserId,
-            missionId,
-          }),
-        }),
+        fetchSessionMemorySummary(token, targetSessionUserId, missionId),
       )
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data) => {
+      .then((summary) => {
         if (cancelled) return;
-        setSessionMemorySummary({
-          drafts: Array.isArray(data?.drafts) ? data.drafts : [],
-          promoted: Array.isArray(data?.promoted) ? data.promoted : [],
-          referenced: Array.isArray(data?.referenced) ? data.referenced : [],
-          graphMemories: Array.isArray(data?.graphMemories)
-            ? data.graphMemories
-            : [],
-          graphClusters: Array.isArray(data?.graphClusters)
-            ? data.graphClusters
-            : [],
-        });
+        setSessionMemorySummary(summary);
+        sessionMemorySummaryKeyRef.current = summaryKey;
       })
       .catch(() => {
         if (!cancelled) {
           setSessionMemorySummary(EMPTY_SESSION_MEMORY_SUMMARY);
+          sessionMemorySummaryKeyRef.current = summaryKey;
         }
       });
     return () => {
@@ -3413,6 +3490,10 @@ export default function MainScreenPage() {
       citedTexts,
       selectedElement,
     );
+    const citedReferenceMemoryDetails =
+      selectedReferences.length > 0
+        ? formatReferenceMemoryDetails(selectedReferences)
+        : "";
 
     setMessages((prev) => [...prev, userMsg, assistantMsg]);
     setInputText("");
@@ -3474,6 +3555,15 @@ export default function MainScreenPage() {
       return;
     }
 
+    if (citedReferenceMemoryDetails) {
+      void encodeMemoryDraft(
+        `cite-reference-${userMsg.id}`,
+        `레퍼런스 인용: ${text}`,
+        citedReferenceMemoryDetails,
+        userMsg.createdAt ?? Date.now(),
+      );
+    }
+
     setIsLoading(true);
 
     const controller = new AbortController();
@@ -3519,11 +3609,15 @@ export default function MainScreenPage() {
         .filter(Boolean)
         .join("\n\n");
       const retrievedMemory = await retrieveMemoryForQuery(retrievalQuery);
+      const isReferenceSearchTurn = isReferenceSearchRequest(text);
+      const promptMemory = isReferenceSearchTurn
+        ? filterMemoryForReferenceSearch(retrievedMemory)
+        : retrievedMemory;
       const turnMemoryContext =
-        retrievedMemory && retrievedMemory.length > 0
+        promptMemory && promptMemory.length > 0
           ? {
               episodic: [],
-              semantic: retrievedMemory,
+              semantic: promptMemory,
             }
           : { episodic: [], semantic: [] };
       const currentUser = firebaseAuth.currentUser;
@@ -3780,7 +3874,10 @@ export default function MainScreenPage() {
       const fetchRefMatch = fullText.match(
         /\[FETCH_REFERENCES(?::\s*(.*?))?\]/,
       );
-      const appendReferenceSummary = (newReferences: Reference[]) => {
+      const appendReferenceSummary = (
+        newReferences: Reference[],
+        query: string,
+      ) => {
         const summary = buildReferenceReasonSummary(newReferences);
         if (!summary) return;
         setMessages((prev) =>
@@ -3794,6 +3891,18 @@ export default function MainScreenPage() {
               : message,
           ),
         );
+        void encodeMemoryDraft(
+          `fetch-reference-${assistantId}`,
+          `레퍼런스 검색: ${query}`,
+          [
+            `[FETCH_REFERENCES: ${query}]`,
+            "reference result rationale:",
+            formatReferenceMemoryDetails(newReferences),
+          ]
+            .filter(Boolean)
+            .join("\n"),
+          Date.now(),
+        );
       };
       if (fetchRefMatch) {
         const customQuery = buildReferenceSearchQuery(
@@ -3806,7 +3915,9 @@ export default function MainScreenPage() {
           effectiveMissionTitle ?? "",
           effectiveMissionBrief ?? "",
           customQuery,
-        ).then(appendReferenceSummary);
+        ).then((newReferences) =>
+          appendReferenceSummary(newReferences, customQuery),
+        );
       } else if (isReferenceSearchRequest(text)) {
         const fallbackReferenceQuery = buildReferenceSearchQuery(
           text,
@@ -3818,7 +3929,12 @@ export default function MainScreenPage() {
           effectiveMissionTitle ?? "",
           effectiveMissionBrief ?? "",
           fallbackReferenceQuery || text,
-        ).then(appendReferenceSummary);
+        ).then((newReferences) =>
+          appendReferenceSummary(
+            newReferences,
+            fallbackReferenceQuery || text,
+          ),
+        );
       }
 
       const generateMatch = fullText.match(
@@ -4358,6 +4474,7 @@ export default function MainScreenPage() {
     sessionCompletionTimeoutsRef.current = [
       window.setTimeout(() => setSessionCompletionStep(1), 700),
       window.setTimeout(() => setSessionCompletionStep(2), 1800),
+      window.setTimeout(() => setSessionCompletionStep(3), 2800),
     ];
   }, [clearSessionCompletionTimers]);
   useEffect(() => clearSessionCompletionTimers, [clearSessionCompletionTimers]);
@@ -4411,6 +4528,24 @@ export default function MainScreenPage() {
         }
       }
       setTimerEndedAt(completedAt);
+      setSessionCompletionStep(3);
+      const reviewTargetUid = userId ?? currentUser.uid;
+      try {
+        const summary = await fetchSessionMemorySummary(
+          token,
+          reviewTargetUid,
+          missionId,
+        );
+        setSessionMemorySummary(summary);
+        sessionMemorySummaryKeyRef.current = sessionMemorySummaryKey(
+          reviewTargetUid,
+          missionId,
+        );
+      } catch (summaryError) {
+        console.warn("Unable to prepare review memory summary", summaryError);
+        setSessionMemorySummary(EMPTY_SESSION_MEMORY_SUMMARY);
+        sessionMemorySummaryKeyRef.current = null;
+      }
       setSessionCompletionStep(SESSION_COMPLETION_STEPS.length);
       setSessionCompleted(true);
       setSessionCompletionReady(true);
@@ -6146,7 +6281,13 @@ export default function MainScreenPage() {
                         Authorization: `Bearer ${token}`,
                         "Content-Type": "application/json",
                       },
-                      body: JSON.stringify({ missionId, items: profileItems }),
+                      body: JSON.stringify({
+                        missionId,
+                        items: profileItems,
+                        rawMarkdown: profileItems
+                          .map((item) => `- ${item.input}`)
+                          .join("\n"),
+                      }),
                     });
                   } catch {
                     // non-blocking
@@ -6475,7 +6616,7 @@ export default function MainScreenPage() {
                                   void encodeMemoryDraft(
                                     `delete-reference-${card.id}`,
                                     `레퍼런스 삭제: ${card.title}`,
-                                    `태그: ${card.tag}, URL: ${card.url ?? ""}`,
+                                    formatReferenceMemoryDetail(card),
                                     Date.now(),
                                   );
                                   setReferences((prev) =>
@@ -7725,7 +7866,8 @@ export default function MainScreenPage() {
                         )}
                       {msg.role === "assistant" &&
                         turnMemoryDraft &&
-                        (turnMemoryDraft.episodic || turnMemoryDraft.semantic) && (
+                        (turnMemoryDraft.episodic ||
+                          turnMemoryDraft.semantic) && (
                           <button
                             type="button"
                             onClick={() =>

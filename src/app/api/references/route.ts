@@ -173,6 +173,7 @@ function compactReferencePreferenceContext(value: unknown) {
               signal,
               title: sanitizeInput(reference.title, 120),
               description: sanitizeInput(reference.description, 220),
+              rationale: sanitizeInput(reference.rationale, 220),
               tag: sanitizeInput(reference.tag, 80),
               url: sanitizeInput(reference.url, 180),
               referenceMode: sanitizeInput(reference.referenceMode, 20),
@@ -446,6 +447,7 @@ type RankedReference = {
   url: string;
   title?: string;
   description?: string;
+  rationale?: string;
   score?: number;
 };
 
@@ -453,6 +455,7 @@ type ProductReference = {
   url: string;
   title?: string;
   description?: string;
+  rationale?: string;
   imageUrl?: string | null;
   source?: string;
 };
@@ -461,6 +464,7 @@ type ReferenceCard = {
   id: string;
   title: string;
   description: string;
+  rationale?: string;
   tag: string;
   url: string;
   imageUrl?: string;
@@ -585,6 +589,7 @@ function parseRankedReferences(text: string): RankedReference[] {
         url: String(item?.url ?? ""),
         title: item?.title ? String(item.title) : undefined,
         description: item?.description ? String(item.description) : undefined,
+        rationale: item?.rationale ? String(item.rationale) : undefined,
         score:
           typeof item?.score === "number" && Number.isFinite(item.score)
             ? item.score
@@ -607,6 +612,7 @@ function parseProductReferences(text: string): ProductReference[] {
         url: String(item?.url ?? ""),
         title: item?.title ? String(item.title) : undefined,
         description: item?.description ? String(item.description) : undefined,
+        rationale: item?.rationale ? String(item.rationale) : undefined,
         imageUrl: item?.imageUrl ? String(item.imageUrl) : null,
         source: item?.source ? String(item.source) : undefined,
       }))
@@ -848,6 +854,10 @@ export async function POST(request: Request) {
             title: reference.title || reference.url,
             description:
               reference.description || "실제 제품/UX 의사결정 참고 레퍼런스",
+            rationale:
+              reference.rationale ||
+              reference.description ||
+              "현재 미션의 제품/UX 의사결정에 참고하기 좋습니다.",
             tag: domainFor(reference.url, reference.source),
             url: reference.url,
             imageUrl: reference.imageUrl || undefined,
@@ -952,6 +962,10 @@ export async function POST(request: Request) {
           id: `ref-${crypto.randomUUID()}`,
           title: ranked?.title || img.title || kwLabel,
           description: ranked?.description || `${kwLabel} 관련 UI 레퍼런스`,
+          rationale:
+            ranked?.rationale ||
+            ranked?.description ||
+            `${kwLabel} 맥락에서 참고할 수 있는 UI/UX 레퍼런스입니다.`,
           tag: domain,
           url: img.link,
           imageUrl,
@@ -967,6 +981,10 @@ export async function POST(request: Request) {
         title: reference.title || reference.url,
         description:
           reference.description || "실제 제품/UX 의사결정 참고 레퍼런스",
+        rationale:
+          reference.rationale ||
+          reference.description ||
+          "현재 미션의 제품/UX 의사결정에 참고하기 좋습니다.",
         tag: domainFor(reference.url, reference.source),
         url: reference.url,
         imageUrl: reference.imageUrl || undefined,

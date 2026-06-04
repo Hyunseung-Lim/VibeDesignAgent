@@ -132,7 +132,7 @@
 - **확정 시점**: 사용자가 `세션 종료` 버튼을 누르면 `/api/memory/complete-session`에서 draft를 통합해 장기 메모리로 저장
 - **버전 관리**: admin memory modal에서 v0.1.0 / v0.1.1 / v0.1.2를 분리 조회
 - **현재 활용**: 각 채팅 turn 직전에 `/api/memory/retrieve`로 현재 query와 가까운 memory top 5를 검색해 채팅 context에 주입
-- **Prompt 주입 방식**: profile input은 별도 standing background system message로 분리하고, interaction memory는 prompt compact JSON에서 `episodic`/`semantic` 배열로 묶어 주입. 같은 memory document에 episodic/semantic이 모두 있어도 prompt에서는 각각 `episodic[].episodic`, `semantic[].semantic`으로 분리해 넣고 memory id/weight/similarity/source metadata는 제외
+- **Prompt 주입 방식**: profile input은 `profile_memories`에 source of truth로 보관한 뒤 derived memory로 쪼개 interaction memory와 같은 retrieved memory system message에 주입. prompt compact JSON은 `episodic`/`semantic` 배열만 포함한다. 같은 memory document에 episodic/semantic이 모두 있어도 prompt에서는 각각 `episodic[].episodic`, `semantic[].semantic`으로 분리해 넣고 memory id/weight/similarity/source metadata는 제외
 - **Legacy**: `GET /api/memory/bootstrap`은 세션 시작 시 memory를 preload하던 구 방식이며, 현재 main client에서는 호출하지 않음
 - **Retrieval 쿼리 구성**: `[user text] + Mission: [parentMissionTitle] + Active idea: [description]` — 선택된 옵션 이름(페르소나 등)은 제외해 임베딩 노이즈 방지
 - **Admin 관측**: researcher가 user별 memory cluster 결과와 graph/detail 진단값을 확인 가능
@@ -254,7 +254,7 @@ type Idea = {
 | `chatActionInstructionPrompt(intent, includeRouter)` | function | `chat/route.ts` — planner intent에 맞는 행동 규칙만 주입      |
 | `chatDevicePrompt(deviceLabel)`                      | function | `chat/route.ts` — 대상 디바이스 명시                          |
 | `chatMissionPrompt(title, brief)`                    | function | `chat/route.ts` — 미션 컨텍스트 주입                          |
-| `chatProfileMemoryPrompt(lines)`                     | function | `chat/route.ts` — 사용자 직접 입력 맥락 (standing background) |
+| `chatProfileMemoryPrompt(lines)`                     | function | `chat/route.ts` — Legacy/backcompat profile_input 직접 주입   |
 | `chatInteractionMemoryPrompt(json)`                  | function | `chat/route.ts` — 상호작용 메모리 주입                        |
 | `chatDesignSpecPrompt(spec)`                         | function | `chat/route.ts` — 디자인 스타일 가이드 주입                   |
 | `chatCitedTextsPrompt(texts)`                        | function | `chat/route.ts` — 인용 텍스트 주입                            |
@@ -671,7 +671,7 @@ archiveReason = "low-weight" | "duplicate" | "manual";
 - 리뷰 모드에서 우측 패널 상단에 **채팅 / 메모리 변화** 탭 바를 추가한다. 탭 바는 `showReviewAnnotations`(리뷰 모드 또는 admin 뷰어)일 때만 표시된다.
 - **메모리 변화 탭** 섹션 구성:
   - `직접 입력한 정보` (보라색 점): `/api/memory/profile`에서 조회한 해당 미션의 profile items
-  - `세션 중 참고됨` (파랑 점): `reviewTurns.retrieved` 기반, profile_input 타입은 보라색으로 구분
+  - `세션 중 참고됨` (파랑 점): `reviewTurns.retrieved` 기반, profile/profile_input 타입은 보라색으로 구분
   - `세션에서 기억됨` (초록 점): promoted memory. archived 항목은 취소선 + 로즈색 표시
   - `검토 중인 초안` (회색 빈 원): drafts 있을 때만 표시
 - `/api/memory/profile` GET에 `targetUid` param 추가 — admin이 다른 사용자의 profile 조회 가능
@@ -698,7 +698,7 @@ archiveReason = "low-weight" | "duplicate" | "manual";
 - [x] 모든 세션 시작 시 "나에 대해 알았으면 하는 정보" 입력 UI 추가
 - [x] UI 방식 결정 → **3단계 온보딩 페이지** 채택 (modal 방식에서 변경)
 - [x] 직접 입력 메모리 타입 정의
-- [x] interaction 학습 메모리와 직접 입력 메모리 구분 처리 (`type: "profile_input"`)
+- [x] interaction 학습 메모리와 직접 입력 메모리 구분 처리
 - [x] 이전 세션 입력 내용을 불러와 수정하는 upsert 방식 구현
 - [x] 직접 입력값 retrieval 활용 방식 설계
 - [x] revision log 또는 supersedes 정책 결정 — current items + revisions subcollection
@@ -713,7 +713,7 @@ archiveReason = "low-weight" | "duplicate" | "manual";
 - **컬렉션**: `users/{uid}/profile_memories/{missionId}` 별도 문서, `items[]` 배열로 관리.
 - **필수/선택**: 매 세션 필수(건너뛰기 없음). 항목이 0개여도 3단계에서 세션 시작 가능.
 - **미션별**: missionId를 문서 ID로 사용하므로 미션마다 독립적인 profile 데이터.
-- **weight**: 0.9 고정, retrieval 결과 최상단에 항상 주입 (similarity 계산 없이 포함).
+- **weight**: 초기 설계는 고정 weight/항상 주입이었으나, 14.4 이후 profile derived memory도 공통 memory pipeline의 `weight`와 similarity retrieval을 따른다.
 - **길이 제한**: 최대 5개, 항목당 240자. 프론트 입력과 서버 저장/retrieval에서 모두 제한한다.
 - **revision 정책**: runtime/retrieval은 최신 `items[]`만 사용하되, 변경 흔적은 `users/{uid}/profile_memories/{missionId}/revisions/{revisionId}`에 남긴다.
 - **미션별 history**: profile memory는 missionId별 문서와 revision subcollection을 가지므로, 같은 사용자라도 미션마다 현재 profile과 수정 이력이 다를 수 있다.
@@ -722,28 +722,25 @@ archiveReason = "low-weight" | "duplicate" | "manual";
 
 - `GET /api/memory/profile?missionId=...` — 해당 미션의 profile items 조회
 - `GET /api/memory/profile?missionId=...&includeRevisions=1` — 현재 items와 revision history 조회
-- `POST /api/memory/profile` — 현재 items 배열을 upsert하고, 이전/다음 items가 다르면 `revisions/{timestamp}`에 `previousItems`, `nextItems`, count, actor/source metadata 저장
-- `POST /api/memory/retrieve` — profile items를 `type: "profile_input"`으로 retrieved 앞에 prepend
+- `POST /api/memory/profile` — 현재 items 배열과 raw markdown source를 upsert하고, 이전/다음 source가 다르면 `revisions/{timestamp}`에 `previousItems`, `nextItems`, raw markdown, count, actor/source metadata 저장. 이후 profile derived memory를 `memories_0_1_2`에 생성
+- `POST /api/memory/retrieve` — profile derived memory와 interaction memory를 같은 후보군에서 similarity retrieval
 - `profileStep: 2 | 3` state로 2단계/3단계 페이지 전환 관리
-- profile input은 사용자가 명시적으로 제공한 standing background이므로 매 turn 항상 주입한다. interaction memory만 cosine similarity top-k retrieval을 탄다.
+- 14.4 이후 profile input 원문은 source of truth로 보관하고, runtime에는 LLM이 쪼갠 profile derived memory가 interaction memory와 같은 cosine similarity top-k retrieval을 탄다.
 
 #### 12.1.7 6단계: 직접 입력 메모리 retrieval 정책
 
-- [x] retrieval quota 정책 결정 — profile items 최대 5개 cap, interaction memory는 기존 limit(5) 유지
-- [x] profile memory를 항상 주입 — query similarity 계산 없이 항상 포함 (standing context 성격)
-- [x] retrieval log에 profile item ID 목록 추가 (`profileItemIds` 필드)
-- [x] prompt에서 직접 입력 메모리를 별도 system message로 분리
-  - profile items: "standing background" 레이블로 별도 system message
-  - interaction memory: 기존 retrieved memory system message 유지
+- [x] retrieval quota 정책 결정 — 14.4 이후 profile derived memory와 interaction memory를 같은 top-k 후보군으로 통합
+- [x] profile memory retrieval을 similarity 기반으로 변경
+- [x] retrieval log에 profile derived memory ID/similarity 요약 유지 (`profileItemIds`, `profileSimilarities`)
+- [x] prompt에서 직접 입력 메모리도 retrieved memory system message의 `episodic`/`semantic` 그룹으로 통합
 
 구현 메모:
 
-- `/api/memory/retrieve`: `loadProfileItems` 결과를 `.slice(0, 5)`로 cap
-- profile item은 항목당 240자로 잘라 standing background system message 크기를 제한
-- retrieval log: `profileItemIds` 배열 추가
+- `/api/memory/retrieve`: `memories_0_1_2`에서 `type: "interaction"`과 `type: "profile"`을 함께 읽음
+- profile item 원문은 `profile_memories`에 보관하고, prompt에는 derived memory의 episodic/semantic 텍스트만 들어감
+- retrieval log: profile derived memory 기준 `profileItemIds` 배열 유지
 - `/api/chat`: `memoryContextItems(...)`가 `memoryContext.episodic`과 `memoryContext.semantic`을 함께 읽고 중복 제거
-  - profile items → "standing background" system message (언급하지 않고 암묵적으로 적용)
-  - interaction items → retrieved memory system message. prompt compact JSON은 `episodic[].episodic`과 `semantic[].semantic` 텍스트만 전달하고, weight/similarity/source 등 metadata는 review/debug 저장에만 유지
+  - profile derived memory와 interaction items → retrieved memory system message. prompt compact JSON은 `episodic[].episodic`과 `semantic[].semantic` 텍스트만 전달하고, weight/similarity/source 등 metadata는 review/debug 저장에만 유지
   - 같은 memory document에 episodic/semantic이 모두 있으면 prompt에서는 두 배열에 각각 별도 item으로 들어간다. 모델에게는 같은 memory id에서 왔다는 정보는 전달하지 않는다.
 
 #### 12.1.8 7단계: 어드민 정리
@@ -897,7 +894,7 @@ type ChatPlan = {
 - Context selection rule 초안:
   - 항상 포함: `CHAT_AGENT_BASE_PROMPT`, planner intent별 `chatActionInstructionPrompt(...)`, target device, current request
   - mission: 기본 포함하되 brief는 planner가 `mission=true`일 때만 긴 버전 사용. 아니면 title + 1~2줄 summary만 사용
-  - profile input: `/api/memory/retrieve`가 반환한 `type: "profile_input"` 항목은 별도 standing background system message로 분리
+  - profile input: 14.4 이후 `/api/memory/profile`에서 derived memory로 분해되어 interaction memory와 같은 retrieval/context path를 사용
   - interactionMemory: planner가 `interactionMemory=true`일 때만 주입. prompt compact JSON은 `episodic[].episodic`과 `semantic[].semantic`만 포함
   - activeIdea: note 생성/수정/mockup 관련 intent에서만 주입
   - designSpec: mockup generate/edit/design spec 관련 intent에서만 주입
@@ -978,12 +975,9 @@ type ChatPlan = {
   - profile memory는 `users/{uid}/profile_memories/{missionId}`에 mission별 current items로 저장
   - 수정 이력은 `revisions/{revisionId}`에 `previousItems`, `nextItems`, actor/source metadata로 저장
 - [x] 온보딩 입력값 retrieval 활용 방식 변경
-  - 구현: `/api/memory/retrieve`에서 profile item 후보 최대 5개를 embedding ranking 후 top 3만 주입
-  - 기준: similarity `>= 0.25`, 없으면 가장 가까운 1개만 fallback
+  - 구현: 14.4 이후 `/api/memory/profile`에서 profile input을 derived memory로 분해하고, `/api/memory/retrieve`에서 interaction memory와 함께 similarity ranking
   - retrieval log에 `profileCandidateCount`, `profileItemCount`, `profileItemIds`, `profileSimilarities` 저장
-  - [x] profile input에는 weight 개념을 제거하고, interaction memory weight와 분리
-    - `/api/memory/retrieve`의 profile result에서 `weight`, `weightDelta` 제거
-    - `/api/chat` review/prompt compact 저장 시 `profile_input`은 weight 관련 필드를 null/undefined로 정규화
+  - [x] profile input 직접 주입/별도 weight 제거 설계는 14.4에서 공통 memory pipeline 방식으로 대체
 
 ### 13.8 데이터 생성/배포
 
@@ -1048,7 +1042,7 @@ type ChatPlan = {
 
 ### 14.4 Profile memory와 semantic/episodic 통합 설계
 
-- [ ] profile input과 interaction memory를 같은 memory pipeline으로 합칠지 설계
+- [x] profile input과 interaction memory를 같은 memory pipeline으로 합칠지 설계
   - 현재: profile은 `profile_memories`에 별도 저장되고, interaction memory는 `memory` 문서에 episodic/semantic/keyword/action/input/output/link/weight를 저장
   - 목표: profile도 유저 입력을 바탕으로 `keyword`, `episodic`, `semantic` 단위로 쪼개고 embedding/retrieval/clustering에서 함께 다룸
   - 구분 필드 추가: vectorized memory가 profile 기반인지 interaction 기반인지 구분할 수 있는 `sourceType` 또는 `memorySource` 필요
@@ -1058,23 +1052,27 @@ type ChatPlan = {
   - 결정: 안전한 방식으로 진행. 기존 `profile_memories/{missionId}`는 source of truth로 유지하고, 여기서 쪼갠 derived memory만 공통 memory pipeline에 넣음
   - 기존 profile 데이터는 삭제 후 새 구조로 시작해도 무방하나, 구현은 destructive migration 없이 새 구조를 지원하는 방향 우선
   - 1차 구현 단계:
-    1. `/api/memory/profile` POST에서 markdown/freeform 원문을 revision/source로 보관
-    2. profile item별 derived memory를 `keyword`, `episodic`, `semantic` 구조로 생성
-    3. derived memory에는 `sourceType: "profile"` 또는 `memorySource: "profile"`을 저장하고, interaction memory에는 `sourceType: "interaction"`을 보강
-    4. clustering/retrieval input은 profile derived memory도 같은 embedding text builder를 사용하되 `agent response`, `action category`는 빈 값으로 둠
-    5. runtime prompt에서는 profile derived memory를 retrieved evidence로 쓰되, 사용자 원문 markdown은 source/revision으로만 유지
+    1. [x] `/api/memory/profile` POST에서 markdown/freeform 원문을 revision/source로 보관
+    2. [x] profile item별 derived memory를 `keyword`, `episodic`, `semantic` 구조로 생성
+    3. [x] derived memory에는 `sourceType: "profile"`/`memorySource: "profile"`을 저장하고, interaction memory에는 `sourceType: "interaction"`을 보강
+    4. [x] retrieval input은 profile derived memory도 같은 embedding text builder를 사용하되 `agent response`, `action category`는 빈 값으로 둠
+    5. [x] runtime prompt에서는 profile derived memory를 retrieved evidence로 쓰되, 사용자 원문 markdown은 source/revision으로만 유지
+  - 구현: `/api/memory/profile`가 raw markdown/source를 저장하고, LLM으로 profile 내용을 0~8개 derived memory로 분해해 `users/{uid}/memories_0_1_2`에 저장
+  - 구현: `/api/memory/retrieve`는 `type: "interaction"`과 `type: "profile"` memory를 함께 후보로 읽고 cosine similarity/weight 업데이트를 같은 방식으로 적용
+  - 구현: 기존 profile item 직접 주입(`profile_input`)은 제거하고, profile derived memory가 retrieval된 경우 일반 memory처럼 prompt의 `episodic`/`semantic` 텍스트 그룹에 들어감
 
 ### 14.5 프로필 메모리 자유 입력 → 단위 분해
 
-- [ ] 사용자가 profile memory를 markdown으로 자유롭게 입력하면 시스템이 중요한 정보 단위로 쪼개 저장
+- [x] 사용자가 profile memory를 markdown으로 자유롭게 입력하면 시스템이 중요한 정보 단위로 쪼개 저장
   - LLM이 markdown 원문에서 중요한 정보 단위를 추출
   - 각 단위는 `keyword`, `episodic`, `semantic` 구조로 변환
   - 결정: 원문 markdown은 revision/source of truth로 계속 보관
   - runtime/retrieval/clustering에는 LLM이 쪼갠 structured item을 사용
+  - 구현: 현재 client는 기존 item UI를 유지하되 저장 시 item 목록을 markdown bullet source로 함께 전송한다. 백엔드는 `rawMarkdown`/`markdown` 입력도 받을 수 있어 추후 UI를 자유 markdown textarea로 교체 가능
 
 ### 14.6 레퍼런스 선호 scope 재검토
 
-- [ ] 레퍼런스는 "미션에 속하는지 아닌지"를 시스템이 과하게 판단하지 않고 모두 기록하는 방향 검토
+- [x] 레퍼런스는 "미션에 속하는지 아닌지"를 시스템이 과하게 판단하지 않고 모두 기록하는 방향 검토
   - 현재 구현: 같은 미션 안의 cited/kept/deleted reference만 `same_mission_only` context로 `/api/references` query generation/product search/reranking에 사용
   - 제안 방향: 레퍼런스 상호작용은 모두 memory로 기록하고, retrieval 결과가 자연스럽게 다른 미션에도 영향을 주게 함
   - 주의: 도메인/UX 패턴/시각 스타일이 다른 미션에 과도하게 전이될 수 있으므로, reference memory에는 scope/category/strength 필드가 필요
@@ -1084,3 +1082,8 @@ type ChatPlan = {
     - `negative_reference_signal`: 삭제/거절한 레퍼런스. 유사도와 현재 미션 relevance가 높을 때만 약하게 회피
   - 결정: consumption behavior만 전역화하고, 삭제/거절 negative는 기본적으로 같은 미션 negative로 둠
   - 구현 방향: 레퍼런스 상호작용은 memory로 기록하되, prompt에서는 "사용자의 전역 취향"으로 단정하지 않고 retrieved evidence로만 약하게 사용
+  - 구현: reference search/delete/cite 계열 interaction은 memory draft 경로를 통해 `references_fetch`, `reference_delete`, `reference_cite` action으로 인코딩 가능
+  - 구현: `/api/references`는 `description`(무엇인지)과 `rationale`(왜 이 미션에 골랐는지)을 reference별로 분리해 반환
+  - 구현: reference card metadata(title/tag/url/mode/provider/description)에 더해 chat bubble의 `레퍼런스 선택 이유`에 쓰는 `rationale` 텍스트를 memory draft에 함께 넣어 source type/UX pattern/style signal 판단 근거로 사용
+  - 구현: `MEMORY_ENCODE_PROMPT`에 reference handling scope 규칙을 추가해 official product/case-study 선호 같은 consumption behavior만 durable하게 보고, 도메인/UX 패턴/시각 스타일/삭제 negative는 현재 미션 evidence로 우선 해석하게 함
+  - 구현: profile derived memory와 interaction memory가 같은 retrieval pipeline을 타므로, reference interaction memory도 다른 미션에서 similarity가 충분할 때 retrieved evidence로 약하게 활용됨
