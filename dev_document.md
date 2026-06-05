@@ -1098,7 +1098,7 @@ type ChatPlan = {
     - `negative_reference_signal`: 삭제/거절한 레퍼런스. 유사도와 현재 미션 relevance가 높을 때만 약하게 회피
   - 결정: consumption behavior만 전역화하고, 삭제/거절 negative는 기본적으로 같은 미션 negative로 둠
   - 구현 방향: 레퍼런스 상호작용은 memory로 기록하되, prompt에서는 "사용자의 전역 취향"으로 단정하지 않고 retrieved evidence로만 약하게 사용
-  - 구현: reference search/delete/cite 계열 interaction은 memory draft 경로를 통해 `references_fetch`, `reference_delete`, `reference_cite` action으로 인코딩 가능
+  - 구현: reference delete처럼 독립 UI 행동인 interaction은 memory draft 경로를 통해 `reference_delete` action으로 인코딩한다. reference cite와 reference fetch 결과/rationale은 별도 orphan draft가 아니라 해당 chat turn의 input/output context에 합쳐 인코딩한다
   - 구현: `/api/references`는 `description`(무엇인지)과 `rationale`(왜 이 미션에 골랐는지)을 reference별로 분리해 반환
   - 구현: reference card metadata(title/tag/url/mode/provider/description)에 더해 chat bubble의 `레퍼런스 선택 이유`에 쓰는 `rationale` 텍스트를 memory draft에 함께 넣어 source type/UX pattern/style signal 판단 근거로 사용
   - 구현: `MEMORY_ENCODE_PROMPT`에 reference handling scope 규칙을 추가해 official product/case-study 선호 같은 consumption behavior만 durable하게 보고, 도메인/UX 패턴/시각 스타일/삭제 negative는 현재 미션 evidence로 우선 해석하게 함
@@ -1115,7 +1115,7 @@ type ChatPlan = {
       el/debug metadata로만 사용
   - 저장 정책: memory document에는 `timestamp`, `createdAt`, `updatedAt` metadata를 계속 저장하되 `embeddingSource`는 timestamp 제외 source임을 명확히 표시
   - 구현: memory draft encoding prompt에 current/previous interaction timestamp를 제공하고, `MEMORY_ENCODE_PROMPT`에는 timestamp를 순서/최근성 판단에만 쓰도록 명시
-  - 구현: interaction/profile/retrieval regenerate embedding은 `combined_no_timestamp` source를 사용. 기존 `combined` embedding은 이미 timestamp-free라 재생성 대상에서 제외
+  - 구현: interaction embedding source는 `interaction_record_text`, profile embedding source는 `profile_unit_text`를 사용. 기존 `combined`/`combined_no_timestamp` embedding은 retrieval 호환용으로 허용
 
 ### 14.8 세션 시작 버튼 로딩 UX
 
@@ -1155,3 +1155,29 @@ type ChatPlan = {
   - 배경: assistant 메시지에서 "별도 reference preference context에 압축되어 전달됨"이라고 했으나 `/api/chat`에는 해당 context가 전달되지 않았음
   - 구현: `page.tsx`에서 `/api/chat` 호출 시 `referencePreferenceContext` 함께 전송
   - 구현: `chat/route.ts`에서 수신 후 `chatReferencePreferencePrompt`로 시스템 메시지 생성하여 주입 (cited/kept/deleted signal 포함)
+- [x] chat phase log 보존 및 toggle 표시
+  - 배경: `[CHAT_PHASE: ...]` 로그가 스트리밍 중에만 보이고 완료 후 사라져, 리뷰/복기 시 어떤 context를 읽었는지 확인하기 어려웠음
+  - 구현: assistant message에 `chatPhases` 배열을 저장하고, chat bubble 안에서 `처리 과정 N개` toggle로 접고 펼칠 수 있게 표시
+- [x] note 작성과 디자인 스타일 규칙 분리 강화
+  - 배경: 시안 note 작성 중 `Visual Style Notes` 같은 색/타이포/무드 정보가 note description에 섞이는 케이스가 있었음
+  - 구현: `CHAT_NOTE_ACTION_PROMPT` 안에 visual style section 금지 규칙과 `[CREATE_DESIGN_SPEC: {"content":"..."}]` 분리 규칙을 명시
+  - 원칙: full `CHAT_DESIGN_SPEC_ACTION_PROMPT`와 `Reading design style rules...` phase는 planner intent가 `create_design_spec`일 때만 사용한다. note/update intent에서 디자인 스타일 prompt를 읽었다고 표시하지 않는다
+  - 구현: planner prompt와 `forceIntentFromUserText()`를 강화해 색/컬러/타이포/폰트/무드/톤/UI style/brand tone/avoid-list/visual style notes/레퍼런스 섹션 삽입용 스타일 정리 요청은 `create_design_spec`로 강제
+
+### 14.12 리뷰 타임라인의 UI event memory 표시
+
+- [x] chat bubble에 연결되지 않은 memory-generating UI event를 리뷰 타임라인에 표시
+  - 배경: `reference_delete`, `note_delete`, `mockup_delete`, `final_design_select` 등은 `/api/memory/drafts`를 통해 episodic/semantic memory를 만들지만, 현재 `기억 보기` 버튼은 assistant chat bubble 기준으로만 노출된다.
+  - 원칙: 사용자가 레퍼런스를 인용하고 텍스트 요청을 함께 보낸 경우(`reference_cite`)는 별도 UI event가 아니라 해당 chat interaction의 입력 맥락으로 본다. `[FETCH_REFERENCES]` 결과와 rationale도 별도 event가 아니라 해당 assistant turn의 결과 맥락으로 합친다.
+  - 문제: 레퍼런스 삭제/시안 삭제/목업 삭제/최종 디자인 선택처럼 독립적인 UI 행동의 기억이 생성되어도, 해당 행동 옆에서 바로 검토하기 어렵다. 세션 메모리 변화 패널에는 섞여 보일 수 있지만 시간순 interaction 복기에는 약하다.
+  - 결정: 리뷰 모드의 right panel을 단순 chat log가 아니라 `messages + orphan memory event` 타임라인으로 확장한다.
+  - 표시 기준: `sessionMemorySummary.drafts`와 `sessionMemorySummary.promoted` 중 message id 또는 assistant `reviewTurnId`와 연결되지 않은 draft/promoted memory를 orphan memory event로 간주한다.
+  - UI: chat bubble 사이에 작은 event card를 시간순으로 삽입하고, card 아래에 `기억 보기` 버튼을 제공한다.
+  - 시간순 규칙: message `createdAt`과 memory event `timestamp/promotedAt`을 기준으로 하나의 timeline을 만든다. 예를 들어 사용자가 채팅으로 레퍼런스를 받은 뒤 reference card를 삭제하면, 삭제 event card는 해당 chat turn 뒤와 다음 chat turn 사이에 표시된다.
+  - 일반 작업 중에는 `activityLog` 기반 optimistic event card를 즉시 표시한다. 리뷰/관리자 관측 모드에서는 저장된 memory draft/promoted memory 기반 event card를 사용해 `기억 보기`를 제공한다.
+  - event card label은 `agentActionCategory`/draft id prefix 기반으로 `레퍼런스 삭제`, `시안 삭제`, `목업 삭제`, `최종 디자인 선택` 등으로 매핑한다. `reference_cite`/`references_fetch`는 chat turn memory에 합치고 orphan event card에서는 제외한다.
+- [x] 해당 세션에 일어난 UI event가 아닌 것들도 뜨는 문제 수정
+  - 원인 1 (세션 전환 stale state): `sessionMemorySummary` fetch가 비동기로 이루어지는 동안, `targetSessionUserId` 또는 `missionId`가 바뀌면 기존 세션의 `sessionMemorySummary`가 즉시 초기화되지 않아 새 세션의 `messages`와 이전 세션의 memory events가 혼재되었다. 특히 admin이 `viewAs`를 전환할 때 발생.
+  - 수정 1: `summaryKey`가 변경되면 fetch 시작 전에 즉시 `setSessionMemorySummary(EMPTY_SESSION_MEMORY_SUMMARY)`로 초기화하고, `sessionMemorySummaryKeyRef.current = summaryKey`를 fetch 완료 전에 세팅해 중복 fetch도 방지.
+  - 원인 2 (데이터 레벨 오염): `session-summary` API의 `promoted` 배열은 `memories_0_1_2`와 `memories_0_1_1`(레거시)를 모두 포함하며, `source.missionId === missionId`만으로 필터링한다. 레거시 컬렉션이나 과거 버그로 인해 `source.missionId`가 잘못 설정된 메모리가 섞일 수 있다.
+  - 수정 2: `promoted` 필터에 세션의 실제 `memoryDrafts` subcollection과 교차 검증 추가. `source.draftId`가 있는 메모리는 반드시 현재 세션의 `draftIdSet`에 포함되어야 한다. `source.draftId`가 없는 메모리(레거시)는 통과.

@@ -33,7 +33,9 @@ const CHAT_NOTE_ACTION_PROMPT = `Note action rules:
 - Update a note when the user asks to revise, improve, expand, shorten, rewrite, or directly edit the selected note.
 - Notes are compact markdown briefs about WHAT to build. Keep only the product idea, target user, key screen/section direction, and must-have requirements that matter for the current mission.
 - Choose the length by mission complexity: simple drafts can be 2-4 focused sentences; complex flows may use short bullets, but avoid long background, decorative rationale, or exhaustive lists.
-- Do not put color tokens, typography, or visual style rules in notes. Those belong in 디자인 스타일.
+- Do not put color tokens, typography, mood, visual style rules, UI style rules, or style "avoid" lists in notes. Those belong in 디자인 스타일.
+- Never include sections such as "Visual Style", "Visual Style Notes", "Colors", "Typography", "Mood", "UI Style", or "Avoid" inside [CREATE_NOTE] or [UPDATE_NOTE].
+- If the user asks for both a 시안/idea and visual direction, output the product/UX idea in [CREATE_NOTE] and output the visual direction separately with [CREATE_DESIGN_SPEC: {"content":"markdown content"}].
 - The app preserves 시안 N titles, so keep title empty or omit it unless the user explicitly asks for a title.`;
 
 const CHAT_MOCKUP_GENERATE_ACTION_PROMPT = `Mockup generation rules:
@@ -127,7 +129,7 @@ export function chatCitedTextsPrompt(citedTexts: string[]) {
 }
 
 export function chatActiveIdeaPrompt(title: string, description: string) {
-  return `The user is currently working on this note:\nTitle: ${title}\nContent: ${description}\n\nAll mockups and presentations generated in this conversation should be designed for this note.\n\nFor [GENERATE_MOCKUP], treat the Content above as a binding product brief and visual style guide. Include the most important details directly in the generated mockup prompt so the downstream design generator receives them.`;
+  return `The user is currently working on this note:\nTitle: ${title}\nContent: ${description}\n\nAll mockups and presentations generated in this conversation should be designed for this note.\n\nFor [GENERATE_MOCKUP], treat the Content above as a binding product/UX brief only. Do not treat note content as the visual style source; visual style constraints must come from the separate 디자인 스타일 context. Include the most important product, structure, and requirement details directly in the generated mockup prompt so the downstream design generator receives them.`;
 }
 
 export function chatCurrentRequestPrompt() {
@@ -207,7 +209,8 @@ Output shape:
 
 Rules:
 - Always prefer the smallest useful context.
-- If the user asks to create, define, revise, or recommend 디자인 스타일, style guide, design system, design spec, colors, typography, spacing, or brand tone, choose intent "create_design_spec", not "generate_mockup".
+- If the user asks to create, define, revise, recommend, or write 디자인 스타일, style guide, design system, design spec, visual style notes, colors, typography, spacing, mood, tone, UI style, brand tone, or avoid-list style constraints, choose intent "create_design_spec", not "create_note" or "generate_mockup".
+- If the current request asks to organize visual direction so it can be inserted into a style/reference section, choose intent "create_design_spec".
 - Need mockupHtml for editing, presentation from current mockup, or explicit analysis of the existing mockup.
 - Need selectedElement when the user is editing a selected element.
 - Need activeIdea for note updates, mockup generation from the current note, presentations, or design spec work tied to the note.

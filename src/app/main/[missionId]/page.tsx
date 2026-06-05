@@ -59,6 +59,7 @@ type Message = {
   citedReferences?: { id: string; title: string; imageUrl?: string }[] | null;
   citedTexts?: string[] | null;
   reviewTurnId?: string | null;
+  chatPhases?: string[];
 };
 
 type ChatResponseProvider = "openai" | "anthropic";
@@ -136,6 +137,7 @@ type SessionMemoryItem = {
   semantic?: string | null;
   input?: string | null;
   output?: string | null;
+  agentActionCategory?: string | null;
   status?: string | null;
   promotedAt?: number | null;
   timestamp?: number | null;
@@ -150,6 +152,11 @@ type SessionMemoryItem = {
   } | null;
   source?: { missionId?: string; draftId?: string } | null;
 };
+
+type ReviewTimelineItem =
+  | { type: "message"; message: Message }
+  | { type: "memory-event"; memory: SessionMemoryItem }
+  | { type: "activity-event"; event: ActivityLogEvent };
 
 type ReferencedSessionMemoryItem = SessionMemoryItem & {
   memoryId: string;
@@ -2111,6 +2118,111 @@ function memorySummaryText(item: SessionMemoryItem | ReviewTurnMemory) {
   );
 }
 
+function memoryActionCategory(item: SessionMemoryItem) {
+  const id = item.source?.draftId ?? item.id;
+  if (id.startsWith("delete-reference-")) return "reference_delete";
+  if (id.startsWith("cite-reference-")) return "reference_cite";
+  if (id.startsWith("fetch-reference-")) return "references_fetch";
+  if (id.startsWith("delete-idea-")) return "note_delete";
+  if (id.startsWith("delete-design-")) return "mockup_delete";
+  if (id.startsWith("final-design-")) return "final_design_select";
+  if (item.agentActionCategory) return item.agentActionCategory;
+  return "memory_event";
+}
+
+function memoryEventLabel(item: SessionMemoryItem) {
+  switch (memoryActionCategory(item)) {
+    case "reference_delete":
+      return "레퍼런스 삭제";
+    case "reference_cite":
+      return "레퍼런스 인용";
+    case "references_fetch":
+      return "레퍼런스 검색";
+    case "note_delete":
+      return "시안 삭제";
+    case "mockup_delete":
+      return "목업 삭제";
+    default:
+      return "세션 이벤트";
+  }
+}
+
+function memoryEventDetail(item: SessionMemoryItem) {
+  return item.input || item.output || item.episodic || item.semantic || item.id;
+}
+
+function memoryEventKey(item: SessionMemoryItem) {
+  return item.source?.draftId ?? item.id;
+}
+
+function isMemoryLinkedToMessage(
+  item: SessionMemoryItem,
+  messageIds: Set<string>,
+) {
+  const keys = [item.id, item.source?.draftId].filter(Boolean).map(String);
+  return keys.some((key) => messageIds.has(key));
+}
+
+function shouldShowMemoryEventCard(item: SessionMemoryItem) {
+  const category = memoryActionCategory(item);
+  return [
+    "reference_delete",
+    "note_delete",
+    "mockup_delete",
+    "final_design_select",
+  ].includes(category);
+}
+
+function activityEventCategory(event: ActivityLogEvent) {
+  if (event.section === "reference" && event.action === "delete")
+    return "reference_delete";
+  if (event.section === "note" && event.action === "delete") return "note_delete";
+  if (event.section === "mockup" && event.action === "delete")
+    return "mockup_delete";
+  return "activity_event";
+}
+
+function shouldShowActivityEventCard(event: ActivityLogEvent) {
+  return ["reference_delete", "note_delete", "mockup_delete"].includes(
+    activityEventCategory(event),
+  );
+}
+
+function activityEventLabel(event: ActivityLogEvent) {
+  switch (activityEventCategory(event)) {
+    case "reference_delete":
+      return "레퍼런스 삭제";
+    case "note_delete":
+      return "시안 삭제";
+    case "mockup_delete":
+      return "목업 삭제";
+    default:
+      return "세션 이벤트";
+  }
+}
+
+function activityEventDetail(event: ActivityLogEvent) {
+  return event.outputTitle || event.output || event.input || event.link || event.id;
+}
+
+function compareTimelineItems(a: ReviewTimelineItem, b: ReviewTimelineItem) {
+  const aTime =
+    a.type === "message"
+      ? Number(a.message.createdAt ?? 0)
+      : a.type === "memory-event"
+        ? Number(a.memory.timestamp ?? a.memory.promotedAt ?? 0)
+        : Number(a.event.createdAt ?? 0);
+  const bTime =
+    b.type === "message"
+      ? Number(b.message.createdAt ?? 0)
+      : b.type === "memory-event"
+        ? Number(b.memory.timestamp ?? b.memory.promotedAt ?? 0)
+        : Number(b.event.createdAt ?? 0);
+  if (aTime !== bTime) return aTime - bTime;
+  if (a.type === b.type) return 0;
+  return a.type === "message" ? -1 : 1;
+}
+
 
 async function stitchResponseError(response: Response) {
   const data = await response.clone().json().catch(() => null);
@@ -2222,6 +2334,12 @@ export default function MainScreenPage() {
   const [chatPhasesByMessageId, setChatPhasesByMessageId] = useState<
     Record<string, string[]>
   >({});
+  const [expandedChatPhaseIds, setExpandedChatPhaseIds] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const [collapsedChatPhaseIds, setCollapsedChatPhaseIds] = useState<Set<string>>(
+    () => new Set(),
+  );
   const [rawPromptModal, setRawPromptModal] = useState<{
     turnId: string;
     rawPrompt: unknown;
@@ -2286,6 +2404,45 @@ export default function MainScreenPage() {
     [reviewTurnsById],
   );
   const reviewMemoryIdsKey = reviewMemoryIds.join("|");
+  const reviewTimelineItems = useMemo<ReviewTimelineItem[]>(() => {
+    if (!showReviewAnnotations) {
+      return [
+        ...messages.map((message) => ({ type: "message" as const, message })),
+        ...activityLog
+          .filter(shouldShowActivityEventCard)
+          .map((event) => ({ type: "activity-event" as const, event })),
+      ].sort(compareTimelineItems);
+    }
+    const messageIds = new Set<string>();
+    for (const message of messages) {
+      messageIds.add(message.id);
+      if (message.reviewTurnId) messageIds.add(message.reviewTurnId);
+    }
+    const seen = new Set<string>();
+    const memoryEvents = [
+      ...sessionMemorySummary.drafts,
+      ...sessionMemorySummary.promoted,
+    ].filter((item) => {
+      const key = memoryEventKey(item);
+      if (
+        !key ||
+        seen.has(key) ||
+        isMemoryLinkedToMessage(item, messageIds) ||
+        !shouldShowMemoryEventCard(item)
+      ) {
+        return false;
+      }
+      seen.add(key);
+      return Boolean(item.episodic || item.semantic || item.input || item.output);
+    });
+    return [
+      ...messages.map((message) => ({ type: "message" as const, message })),
+      ...memoryEvents.map((memory) => ({
+        type: "memory-event" as const,
+        memory,
+      })),
+    ].sort(compareTimelineItems);
+  }, [activityLog, messages, sessionMemorySummary, showReviewAnnotations]);
   const selectedGraphMemory = useMemo(() => {
     if (!selectedGraphMemoryId) return null;
     const memory =
@@ -2930,6 +3087,10 @@ export default function MainScreenPage() {
     }
     const summaryKey = sessionMemorySummaryKey(targetSessionUserId, missionId);
     if (sessionMemorySummaryKeyRef.current === summaryKey) return;
+    // Clear stale data immediately so the previous session's events don't bleed
+    // into the new session's timeline while the fetch is in-flight.
+    setSessionMemorySummary(EMPTY_SESSION_MEMORY_SUMMARY);
+    sessionMemorySummaryKeyRef.current = summaryKey;
     let cancelled = false;
     getIdToken(currentUser)
       .then((token) =>
@@ -2938,13 +3099,9 @@ export default function MainScreenPage() {
       .then((summary) => {
         if (cancelled) return;
         setSessionMemorySummary(summary);
-        sessionMemorySummaryKeyRef.current = summaryKey;
       })
       .catch(() => {
-        if (!cancelled) {
-          setSessionMemorySummary(EMPTY_SESSION_MEMORY_SUMMARY);
-          sessionMemorySummaryKeyRef.current = summaryKey;
-        }
+        if (!cancelled) setSessionMemorySummary(EMPTY_SESSION_MEMORY_SUMMARY);
       });
     return () => {
       cancelled = true;
@@ -3414,6 +3571,12 @@ export default function MainScreenPage() {
       `삭제된 시안 내용: ${target?.description?.slice(0, 500) ?? "(없음)"}`,
       Date.now(),
     );
+    appendActivityLog({
+      section: "note",
+      action: "delete",
+      output: target?.description?.slice(0, 500) ?? "",
+      outputTitle: target?.title ?? ideaId,
+    });
     setIdeas((prev) => {
       const remaining = prev.filter((i) => i.id !== ideaId);
       const wasActive = activeIdeaId === ideaId;
@@ -3511,6 +3674,18 @@ export default function MainScreenPage() {
       createdAt: Date.now(),
       reviewTurnId: assistantId,
     };
+    setCollapsedChatPhaseIds((prev) => {
+      if (!prev.has(assistantId)) return prev;
+      const next = new Set(prev);
+      next.delete(assistantId);
+      return next;
+    });
+    setExpandedChatPhaseIds((prev) => {
+      if (!prev.has(assistantId)) return prev;
+      const next = new Set(prev);
+      next.delete(assistantId);
+      return next;
+    });
     const manualReference = parseManualReferencePrompt(text);
     const memoryInput = formatMemoryInputWithCitations(
       text,
@@ -3518,10 +3693,6 @@ export default function MainScreenPage() {
       citedTexts,
       selectedElement,
     );
-    const citedReferenceMemoryDetails =
-      selectedReferences.length > 0
-        ? formatReferenceMemoryDetails(selectedReferences)
-        : "";
 
     setMessages((prev) => [...prev, userMsg, assistantMsg]);
     setInputText("");
@@ -3581,15 +3752,6 @@ export default function MainScreenPage() {
         return next;
       });
       return;
-    }
-
-    if (citedReferenceMemoryDetails) {
-      void encodeMemoryDraft(
-        `cite-reference-${userMsg.id}`,
-        `레퍼런스 인용: ${text}`,
-        citedReferenceMemoryDetails,
-        userMsg.createdAt ?? Date.now(),
-      );
     }
 
     setIsLoading(true);
@@ -3726,20 +3888,20 @@ export default function MainScreenPage() {
         setMessages((prev) =>
           prev.map((m) =>
             m.id === assistantId
-              ? { ...m, content: displayText.visibleText }
+              ? {
+                  ...m,
+                  content: displayText.visibleText,
+                  chatPhases: chatPhases.phases,
+                }
               : m,
           ),
         );
       }
 
+      const finalChatPhases = extractChatPhases(fullText).phases;
       fullText = normalizeActionBlockAliases(
         extractChatPhases(fullText).visibleText,
       );
-      setChatPhasesByMessageId((prev) => {
-        const next = { ...prev };
-        delete next[assistantId];
-        return next;
-      });
 
       // Convert web search citation domains (domain.com) to clickable markdown links
       fullText = fullText.replace(
@@ -3754,7 +3916,11 @@ export default function MainScreenPage() {
       setMessages((prev) =>
         prev.map((m) =>
           m.id === assistantId
-            ? { ...m, content: finalDisplayText.visibleText }
+            ? {
+                ...m,
+                content: finalDisplayText.visibleText,
+                chatPhases: finalChatPhases,
+              }
             : m,
         ),
       );
@@ -3905,10 +4071,7 @@ export default function MainScreenPage() {
       const fetchRefMatch = fullText.match(
         /\[FETCH_REFERENCES(?::\s*(.*?))?\]/,
       );
-      const appendReferenceSummary = (
-        newReferences: Reference[],
-        query: string,
-      ) => {
+      const appendReferenceSummary = (newReferences: Reference[]) => {
         const summary = buildReferenceReasonSummary(newReferences);
         if (!summary) return;
         setMessages((prev) =>
@@ -3923,16 +4086,16 @@ export default function MainScreenPage() {
           ),
         );
         void encodeMemoryDraft(
-          `fetch-reference-${assistantId}`,
-          `레퍼런스 검색: ${query}`,
+          assistantId,
+          memoryInput,
           [
-            `[FETCH_REFERENCES: ${query}]`,
+            fullText,
             "reference result rationale:",
             formatReferenceMemoryDetails(newReferences),
           ]
             .filter(Boolean)
-            .join("\n"),
-          Date.now(),
+            .join("\n\n"),
+          userMsg.createdAt ?? Date.now(),
         );
       };
       if (fetchRefMatch) {
@@ -3946,9 +4109,7 @@ export default function MainScreenPage() {
           effectiveMissionTitle ?? "",
           effectiveMissionBrief ?? "",
           customQuery,
-        ).then((newReferences) =>
-          appendReferenceSummary(newReferences, customQuery),
-        );
+        ).then((newReferences) => appendReferenceSummary(newReferences));
       } else if (isReferenceSearchRequest(text)) {
         const fallbackReferenceQuery = buildReferenceSearchQuery(
           text,
@@ -3960,12 +4121,7 @@ export default function MainScreenPage() {
           effectiveMissionTitle ?? "",
           effectiveMissionBrief ?? "",
           fallbackReferenceQuery || text,
-        ).then((newReferences) =>
-          appendReferenceSummary(
-            newReferences,
-            fallbackReferenceQuery || text,
-          ),
-        );
+        ).then((newReferences) => appendReferenceSummary(newReferences));
       }
 
       const generateMatch = fullText.match(
@@ -4445,6 +4601,12 @@ export default function MainScreenPage() {
       `삭제된 artboardId: ${artboardId}`,
       Date.now(),
     );
+    appendActivityLog({
+      section: "mockup",
+      action: "delete",
+      output: `삭제된 artboardId: ${artboardId}`,
+      outputTitle: ownerIdea?.title ?? target.label,
+    });
     setDesignContextMenu(null);
 
     setArtboards((prev) => {
@@ -7620,7 +7782,79 @@ export default function MainScreenPage() {
                 </div>
               )}
 
-              {messages.map((msg, msgIdx) => {
+              {reviewTimelineItems.map((timelineItem) => {
+                if (timelineItem.type === "activity-event") {
+                  const event = timelineItem.event;
+                  return (
+                    <div key={`activity-event-${event.id}`} className="flex justify-center">
+                      <div className="w-full max-w-[85%] rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-xs">
+                        <div className="min-w-0">
+                          <p className="font-semibold text-slate-600">
+                            {activityEventLabel(event)}
+                          </p>
+                          <p className="mt-1 line-clamp-2 text-slate-400">
+                            {activityEventDetail(event)}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                }
+                if (timelineItem.type === "memory-event") {
+                  const memory = timelineItem.memory;
+                  const eventKey = memoryEventKey(memory);
+                  const isEventSelected =
+                    reviewDetailModal?.mode === "turn-memory" &&
+                    reviewDetailModal.turnId === eventKey;
+                  return (
+                    <div key={`memory-event-${eventKey}`} className="flex justify-center">
+                      <div
+                        className={`w-full max-w-[85%] rounded-xl border px-3 py-2.5 text-xs ${
+                          isEventSelected
+                            ? "border-violet-200 bg-violet-50"
+                            : "border-slate-200 bg-white"
+                        }`}
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <p className="font-semibold text-slate-600">
+                              {memoryEventLabel(memory)}
+                            </p>
+                            <p className="mt-1 line-clamp-2 text-slate-400">
+                              {memoryEventDetail(memory)}
+                            </p>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setReviewDetailModal(
+                                isEventSelected
+                                  ? null
+                                  : {
+                                      mode: "turn-memory",
+                                      turnId: eventKey,
+                                      reviewTurn: {} as ReviewTurn,
+                                      memories: [],
+                                      turnDraft: memory,
+                                    },
+                              )
+                            }
+                            className={`shrink-0 rounded-full border px-2.5 py-1 font-medium transition ${
+                              isEventSelected
+                                ? "border-violet-300 bg-violet-100 text-violet-600"
+                                : "border-slate-200 text-slate-400 hover:border-slate-300 hover:bg-slate-100 hover:text-slate-600"
+                            }`}
+                            title="이 이벤트에서 생성된 기억"
+                          >
+                            기억 보기
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                }
+                const msg = timelineItem.message;
+                const isLastMessage = msg.id === messages.at(-1)?.id;
                 const reviewTurn =
                   msg.role === "assistant"
                     ? reviewTurnsById[msg.reviewTurnId ?? msg.id]
@@ -7637,9 +7871,13 @@ export default function MainScreenPage() {
                 const streamingChatPhases =
                   msg.role === "assistant" &&
                   isLoading &&
-                  msgIdx === messages.length - 1
+                  isLastMessage
                     ? chatPhasesByMessageId[msg.id] ?? []
                     : [];
+                const visibleChatPhases =
+                  streamingChatPhases.length > 0
+                    ? streamingChatPhases
+                    : (msg.chatPhases ?? []);
                 return (
                   <div
                     key={msg.id}
@@ -7700,50 +7938,87 @@ export default function MainScreenPage() {
                           )}
                           <div>{msg.content}</div>
                         </div>
-                      ) : msg.content || streamingChatPhases.length > 0 ? (
+                      ) : msg.content || visibleChatPhases.length > 0 ? (
                         (() => {
                           const parts = processMessageContent(msg.content);
                           const isStreamingThis =
-                            isLoading && msgIdx === messages.length - 1;
+                            isLoading && isLastMessage;
+                          const isChatPhaseExpanded =
+                            isStreamingThis
+                              ? !collapsedChatPhaseIds.has(msg.id)
+                              : expandedChatPhaseIds.has(msg.id);
                           return (
                             <div className="space-y-2">
-                              {streamingChatPhases.length > 0 && (
-                                  <div className="space-y-1 border-b border-slate-200 pb-2 text-xs">
-                                    {streamingChatPhases.map(
-                                      (phase, phaseIndex, phases) => {
-                                        const isActive =
-                                          phaseIndex === phases.length - 1;
-                                        return (
-                                          <div
-                                            key={`${msg.id}-${phase}`}
-                                            className={`flex items-center gap-1.5 ${
-                                              isActive
-                                                ? "font-medium text-slate-500"
-                                                : "text-slate-400"
-                                            }`}
-                                          >
-                                            <span
-                                              className={`flex h-3 w-3 shrink-0 items-center justify-center rounded-full ${
+                              {visibleChatPhases.length > 0 && (
+                                <div className="border-b border-slate-200 pb-2 text-xs">
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      isStreamingThis
+                                        ? setCollapsedChatPhaseIds((prev) => {
+                                            const next = new Set(prev);
+                                            if (next.has(msg.id))
+                                              next.delete(msg.id);
+                                            else next.add(msg.id);
+                                            return next;
+                                          })
+                                        : setExpandedChatPhaseIds((prev) => {
+                                            const next = new Set(prev);
+                                            if (next.has(msg.id))
+                                              next.delete(msg.id);
+                                            else next.add(msg.id);
+                                            return next;
+                                          })
+                                    }
+                                    className="flex items-center gap-1.5 font-medium text-slate-400 transition hover:text-slate-600"
+                                  >
+                                    {isChatPhaseExpanded ? (
+                                      <CaretUpIcon size={12} />
+                                    ) : (
+                                      <CaretDownIcon size={12} />
+                                    )}
+                                    처리 과정 {visibleChatPhases.length}개
+                                  </button>
+                                  {isChatPhaseExpanded && (
+                                    <div className="mt-2 space-y-1">
+                                      {visibleChatPhases.map(
+                                        (phase, phaseIndex, phases) => {
+                                          const isActive =
+                                            isStreamingThis &&
+                                            phaseIndex === phases.length - 1;
+                                          return (
+                                            <div
+                                              key={`${msg.id}-${phase}`}
+                                              className={`flex items-center gap-1.5 ${
                                                 isActive
-                                                  ? "bg-slate-300"
-                                                  : "bg-slate-200"
+                                                  ? "font-medium text-slate-500"
+                                                  : "text-slate-400"
                                               }`}
                                             >
-                                              {isActive ? (
-                                                <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-slate-600" />
-                                              ) : (
-                                                <span className="text-[8px] leading-none text-slate-500">
-                                                  ✓
-                                                </span>
-                                              )}
-                                            </span>
-                                            {phase}
-                                          </div>
-                                        );
-                                      },
-                                    )}
-                                  </div>
-                                )}
+                                              <span
+                                                className={`flex h-3 w-3 shrink-0 items-center justify-center rounded-full ${
+                                                  isActive
+                                                    ? "bg-slate-300"
+                                                    : "bg-slate-200"
+                                                }`}
+                                              >
+                                                {isActive ? (
+                                                  <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-slate-600" />
+                                                ) : (
+                                                  <span className="text-[8px] leading-none text-slate-500">
+                                                    ✓
+                                                  </span>
+                                                )}
+                                              </span>
+                                              {phase}
+                                            </div>
+                                          );
+                                        },
+                                      )}
+                                    </div>
+                                  )}
+                                </div>
+                              )}
                               {parts.map((part, i) =>
                                 part.type === "text" ? (
                                   <ReactMarkdown

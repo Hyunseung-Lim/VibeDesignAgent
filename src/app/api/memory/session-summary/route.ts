@@ -105,6 +105,7 @@ function compactMemory(id: string, doc: Record<string, unknown>) {
     semantic: stringOrNull(doc.semantic),
     input: stringOrNull(doc.input),
     output: stringOrNull(doc.output),
+    agentActionCategory: stringOrNull(doc.agentActionCategory ?? doc.action),
     weight: memoryWeight(doc),
     archivedAt: numberOrNull(doc.archivedAt),
     archiveReason: stringOrNull(doc.archiveReason),
@@ -205,6 +206,7 @@ export async function POST(request: Request) {
     `${sessionPath}/memoryDrafts`,
     token,
   );
+  const draftIdSet = new Set(draftIds);
   const drafts = (
     await Promise.all(
       draftIds.map(async (id) => {
@@ -223,6 +225,9 @@ export async function POST(request: Request) {
               : null),
           input: stringOrNull(doc.input),
           output: stringOrNull(doc.output),
+          agentActionCategory: stringOrNull(
+            doc.agentActionCategory ?? doc.action,
+          ),
           status: stringOrNull(doc.status),
           promotedAt: numberOrNull(doc.promotedAt),
           timestamp: numberOrNull(doc.timestamp ?? doc.createdAt),
@@ -254,7 +259,18 @@ export async function POST(request: Request) {
   const memoryById = new Map(allMemories.map((item) => [item.id, item]));
 
   const promoted = allMemories
-    .filter((item) => sourceMissionId(item.source) === missionId)
+    .filter((item) => {
+      if (sourceMissionId(item.source) !== missionId) return false;
+      const src =
+        item.source && typeof item.source === "object"
+          ? (item.source as Record<string, unknown>)
+          : null;
+      const draftId = stringOrNull(src?.draftId);
+      // Cross-check against the session's actual memoryDrafts to prevent memories
+      // from other sessions (e.g. legacy collection contamination) from leaking in.
+      if (draftId !== null && !draftIdSet.has(draftId)) return false;
+      return true;
+    })
     .sort((a, b) => Number(b.timestamp ?? 0) - Number(a.timestamp ?? 0));
 
   const logIds = await listFirestoreDocumentIds(

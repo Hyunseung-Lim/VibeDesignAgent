@@ -577,11 +577,13 @@ function forceIntentFromUserText(
 ) {
   const text = latestUserText.toLowerCase();
   const explicitDesignSpec =
-    /(디자인\s*스타일|디자인스타일|스타일\s*가이드|디자인\s*시스템|design\s*spec|design\s*style|style\s*guide)/i.test(
+    /(디자인\s*스타일|디자인스타일|스타일\s*가이드|디자인\s*시스템|비주얼\s*스타일|시각\s*스타일|visual\s*style|visual\s*style\s*notes|design\s*spec|design\s*style|style\s*guide|design\s*system)/i.test(
       text,
     );
   const styleCreation =
-    /스타일/i.test(text) &&
+    /(스타일|색|컬러|color|colour|타이포|typography|폰트|font|무드|mood|톤|tone|ui\s*style|브랜드\s*톤|brand\s*tone|avoid|피해야|하지\s*말|레퍼런스\s*섹션|style\s*section)/i.test(
+      text,
+    ) &&
     /(만들|작성|정의|정리|설계|생성|제안|추천|잡아|세팅|정해|create|define|make|generate)/i.test(
       text,
     ) &&
