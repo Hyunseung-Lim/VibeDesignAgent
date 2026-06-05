@@ -235,12 +235,10 @@ This is memory encoding, not a general summary. Analyze the full structured inpu
 # Input Fields
 
 previous episodic memory:
-One or two concise summaries of prior interactions, most recent first.
+Prior interaction summaries from the same session, most recent first.
 If this is the first turn, the value is "${MEMORY_FIRST_TURN}".
-
-previous semantic memory:
-Optional prior durable inference about the user.
-Use as weak context only. Do not reinforce or repeat unless the current interaction clearly supports it.
+If this is the second turn, this contains exactly one prior episode.
+From the third turn onward, this contains exactly two prior episodes when both are available.
 
 interaction timestamps:
 Optional current/previous interaction timestamps.
@@ -307,26 +305,50 @@ Return exactly this JSON shape:
   // Return null when there is no clearly supported durable inference.
 }`;
 
-export const PROFILE_MEMORY_DERIVE_PROMPT = `# Task
+export const PROFILE_MEMORY_SEGMENT_PROMPT = `# Task
 
-Split user-provided profile memory into small structured memory records for a UI/UX design agent.
+Split user-provided profile memory markdown into small source units.
 
 The input may be markdown, bullet points, fragments, or short profile notes. Treat it as user-provided background, not as an interaction with the agent.
 
 # Output
 
 Return valid JSON only:
-{"items":[{"keywords":["..."],"episodic":"...","semantic":"..."}]}
+{"items":[{"text":"..."}]}
 
 # Rules
 
-- Write every output value in English.
-- Create 0 to 8 records.
-- Each record should capture one important unit of information.
+- Preserve the user's meaning. Do not infer preferences, rewrite into memory, or add interpretation.
+- Create 0 to 8 items.
+- Each item should capture one important unit of information from the source.
+- Keep items in the user's original language when possible.
+- Keep each item concise but self-contained.
+- Merge duplicates and ignore empty, vague, or purely administrative text.`;
+
+export const PROFILE_MEMORY_ENCODE_PROMPT = `# Task
+
+Convert segmented profile memory source units into structured memory records for a UI/UX design agent.
+
+The input is already segmented. Do not split or merge units unless an item is empty or unusable.
+
+# Input
+
+{"items":[{"text":"..."}]}
+
+# Output
+
+Return valid JSON only:
+{"items":[{"sourceText":"...","keywords":["..."],"episodic":"...","semantic":"..."}]}
+
+# Rules
+
+- Write keywords, episodic, and semantic in English.
+- Preserve one output item per usable input item.
 - keywords: 1 to 6 concise keywords.
 - episodic: a concise statement of what the user explicitly provided about themselves, their project, constraints, taste, workflow, or context.
 - semantic: a durable preference, tendency, constraint, or working pattern inferred from that unit. Use null only if there is no durable implication.
 - Do not invent personal facts, demographics, or preferences not supported by the input.
+- sourceText: copy the input unit text that this record encodes.
 - Ignore empty, vague, duplicate, or purely administrative text.`;
 
 // ────────────────────────────────────────────────────────────

@@ -1,5 +1,16 @@
 # VibeDesign Agent 개발 문서
 
+## 문서 사용 기준
+
+이 문서는 한 파일 안에서 두 가지 역할을 가진다.
+
+- **1-9장: Current Snapshot** — 현재 구현과 운영 기준을 빠르게 확인하기 위한 source of truth. 새로운 결정이 구현되면 이 영역에 반영한다.
+- **10장 이후: Decision / Implementation Log** — 시간순 의사결정, 실행 계획, 구현 흔적을 보존하기 위한 기록. 현재 기준과 충돌할 수 있으므로, 실제 동작 기준은 1-9장을 우선한다.
+
+의사결정 로그는 삭제하지 않고 복기용으로 남긴다. 단, 이후 구현으로 대체된 내용은 `[superseded]`, 완료되어 현재 스펙에 반영된 내용은 `[implemented]`, 아직 보류 중인 내용은 `[deferred]`처럼 상태를 명시한다.
+
+---
+
 ## 1. 서비스 개요
 
 - **목표**: UI/UX 디자이너가 AI 에이전트와의 대화만으로 디자인 과업을 진행할 수 있게 해주는 협업 연구 도구.
@@ -16,7 +27,7 @@
 | 스타일링        | Tailwind CSS v4, @phosphor-icons/react                |
 | 인증            | Firebase Authentication (Google OAuth)                |
 | 데이터베이스    | Firebase Firestore                                    |
-| AI 채팅         | OpenAI Responses API (gpt-4o) + web_search_preview 툴 |
+| AI 채팅         | OpenAI Responses API (기본 `gpt-5.4`) / Anthropic Claude 선택 + web_search_preview 툴 |
 | 목업 생성       | Google Stitch SDK                                     |
 | 이미지 검색     | Serper API (Google 이미지 검색)                       |
 | 마크다운 렌더링 | react-markdown                                        |
@@ -54,7 +65,8 @@
 
 ### `/agent` — Agent Manage
 
-- Placeholder (향후 에이전트 메모리/상태 관리 예정)
+- 에이전트 메모리/상태 관리 뷰
+- memory cluster graph, cluster list/detail, included memory items 표시
 
 ---
 
@@ -72,8 +84,8 @@
 
 - 채팅에서 "레퍼런스 찾아줘" → `[FETCH_REFERENCES: {query}]` 블록 → Serper API로 이미지/웹 검색
 - 검색당 3개씩 누적 표시 (삭제 가능, confirm 팝업)
-- 레퍼런스 선택(인용) 후 메시지 전송 시 이미지를 base64로 서버에서 변환해 GPT-4o에 전달
-- 인용된 레퍼런스 URL도 시스템 컨텍스트로 전달, GPT-4o가 웹 검색으로 방문 가능
+- 레퍼런스 선택(인용) 후 메시지 전송 시 이미지를 base64로 서버에서 변환해 chat provider에 전달
+- 인용된 레퍼런스 URL도 시스템 컨텍스트로 전달. OpenAI provider에서는 웹 검색으로 방문 가능
 - **검색 모드 분기**: `inferReferenceMode(query)`로 "style" vs "product" 모드를 분류
   - **product 모드**: Serper 이미지 검색 × 3 병렬 실행
   - **style 모드**: 이미지 검색 × 3 + `searchCurationSites()` 병렬 실행
@@ -94,8 +106,8 @@
 ### 4.4 목업 (Mockup)
 
 - **생성 조건**: 아이디어가 1개 이상 저장된 경우에만 생성 가능
-- **생성 흐름**: 채팅 → GPT-4o가 `[GENERATE_MOCKUP: {prompt}]` 출력 → Google Stitch API 호출 → HTML 반환 → 캔버스에 표시
-- **GPT-4o 컨텍스트**: 미션 제목/브리핑, 현재 아이디어 내용, 기존 목업 HTML, 선택된 UI 요소, 인용 레퍼런스, 대화 히스토리
+- **생성 흐름**: 채팅 모델이 `[GENERATE_MOCKUP: {prompt}]` 출력 → Google Stitch API 호출 → HTML 반환 → 캔버스에 표시
+- **채팅 컨텍스트**: 미션 제목/브리핑, 현재 아이디어 내용, 기존 목업 HTML, 선택된 UI 요소, 인용 레퍼런스, 대화 히스토리
 - **missionBrief 보완 주입**: 신규 목업 생성 시 아이디어 내용이 300자 미만으로 빈약하면 `missionBrief`를 `buildMockupPrompt`에 직접 주입해 제품 데이터가 Stitch에 전달되도록 보장 (수정 시에는 주입 안 함)
 - **캔버스**: 드래그 패닝, 휠 줌, Fit 버튼, 확대(fullscreen) 모드
 - **편집 모드**: 특정 UI 요소 클릭 선택 → `[EDIT_MOCKUP: {prompt}]`로 수정
@@ -228,7 +240,7 @@ type Idea = {
 
 | 경로                                              | 설명                                                                    |
 | ------------------------------------------------- | ----------------------------------------------------------------------- |
-| `POST /api/chat`                                  | GPT-4o 채팅 (Responses API + web_search)                                |
+| `POST /api/chat`                                  | 채팅 응답 생성 (OpenAI Responses API 기본, Anthropic 선택 가능)         |
 | `POST /api/stitch`                                | Google Stitch 목업 생성/편집                                            |
 | `GET /api/stitch/html`                            | Stitch 스크린 HTML 재조회                                               |
 | `POST /api/references`                            | Serper 이미지 검색 + 큐레이션 사이트 웹 검색 (3개 반환)                 |
@@ -236,8 +248,9 @@ type Idea = {
 | `POST /api/memory/complete-session`               | 세션 종료 시 draft를 장기 메모리로 확정                                 |
 | `GET /api/memory/bootstrap`                       | Legacy: 세션 시작 시 user memory preload. 현재 main client에서는 미사용 |
 | `POST /api/memory/retrieve`                       | query embedding 기반 memory top 5 검색 및 weight 업데이트               |
+| `GET/POST /api/memory/profile`                    | profile source 저장/조회 및 derived memory 생성                         |
 | `POST /api/admin/missions`                        | 미션 생성 (관리자 전용)                                                 |
-| `GET /api/admin/users/[uid]/memory`               | admin memory table 조회                                                 |
+| `GET /api/admin/users/[uid]/memory`               | admin memory/cluster view용 메모리 조회                                  |
 | `GET/POST /api/admin/users/[uid]/memory/clusters` | admin memory cluster 캐시 조회/생성                                     |
 | `GET /api/admin/users/[uid]/memory/forgetting`    | archive 후보 산출                                                       |
 | `PATCH /api/admin/users/[uid]/memory/forgetting`  | semantic item soft archive                                              |
@@ -259,7 +272,7 @@ type Idea = {
 | `chatDesignSpecPrompt(spec)`                         | function | `chat/route.ts` — 디자인 스타일 가이드 주입                 |
 | `chatCitedTextsPrompt(texts)`                        | function | `chat/route.ts` — 인용 텍스트 주입                          |
 | `chatActiveIdeaPrompt(title, desc)`                  | function | `chat/route.ts` — 현재 작업 시안 주입                       |
-| `chatCurrentRequestPrompt(text)`                     | function | `chat/route.ts` — 최신 사용자 요청 강조                     |
+| `chatCurrentRequestPrompt()`                         | function | `chat/route.ts` — 최신 user message가 현재 요청임을 명시    |
 | `chatMockupHtmlPrompt(html)`                         | function | `chat/route.ts` — 현재 목업 HTML 주입                       |
 | `chatSelectedElementPrompt(sel, html)`               | function | `chat/route.ts` — 선택된 UI 요소 주입                       |
 | `chatCitedRefsWithUrlPrompt(titles, urls)`           | function | `chat/route.ts` — URL 있는 레퍼런스                         |
@@ -294,8 +307,6 @@ OPENAI_API_KEY
 CHAT_RESPONSE_PROVIDER # optional: openai | anthropic
 OPENAI_CHAT_MODEL # optional, default gpt-5.4
 ANTHROPIC_API_KEY # required when CHAT_RESPONSE_PROVIDER=anthropic
-ANTHROPIC_CHAT_MODEL # optional, default claude-sonnet-4-6
-ANTHROPIC_API_VERSION # optional, default 2023-06-01
 FIREBASE_API_KEY
 FIREBASE_AUTH_DOMAIN
 FIREBASE_PROJECT_ID
@@ -307,7 +318,9 @@ FIREBASE_MEASUREMENT_ID
 
 ---
 
-## 10. 최근 구현된 변경 사항
+## 10. Decision / Implementation Log — 최근 구현된 변경 사항 `[implemented]`
+
+이 장은 구현 히스토리 보존용이다. 현재 동작 설명은 1-9장에 반영된 내용을 우선한다.
 
 ### 10.1 메모리 클러스터링 개선
 
@@ -385,7 +398,7 @@ FIREBASE_MEASUREMENT_ID
 
 ---
 
-## 11. 메모리 Retrieval / Forgetting 개발 계획
+## 11. Decision / Implementation Log — 메모리 Retrieval / Forgetting 개발 계획 `[implemented / partially superseded]`
 
 > **상태**: v0.1.2 기준으로 재정리됨. v0.1.1의 semanticItems/retentionScore 설계는 fallback adapter로만 유지.
 
@@ -517,17 +530,17 @@ archiveReason = "low-weight" | "duplicate" | "manual";
 
 ---
 
-## 12. 미구현 / 향후 계획
+## 12. Active Backlog / Roadmap — 미구현 / 향후 계획 `[active]`
 
-- `/agent` 페이지: 에이전트 메모리/상태 관리 UI
 - 반응형/접근성 개선
 - E2E 테스트
-- Memory forgetting / archive pipeline 자동화
 - Forgetting threshold tuning 및 automatic archive feature flag
+- 공통 memory UI 컴포넌트 추출 (`MemoryCard`, `MemorySelector`, `RetrievedMemoryBadge`, `PromptViewer`, `SessionMemoryDiff`)
+- 전체 UI polish
 
 ---
 
-### 12.1 메모리 리뷰/온보딩 개선 로드맵
+### 12.1 메모리 리뷰/온보딩 개선 로드맵 `[implemented / active tail]`
 
 이 섹션은 향후 작업을 하나씩 체크하며 진행하기 위한 실행 문서다. 원칙은 **데이터 계약 → 사용자 리뷰 경험 → 온보딩 입력 모델 → 어드민/UI 정리** 순서로 진행한다.
 
@@ -774,9 +787,11 @@ archiveReason = "low-weight" | "duplicate" | "manual";
 
 ---
 
-## 13. 0604 14:00 실행 계획
+## 13. Decision / Implementation Log — 0604 14:00 실행 계획 `[mostly implemented]`
 
 이 섹션은 0604 논의 기준의 최신 작업 큐다. 우선순위는 **사용자에게 바로 깨져 보이는 디버깅 → 메모리 뷰 정보 구조 정리 → 메모리 시스템 정책 → 프롬프트/에이전트 구조 → 어드민/컴포넌트 정리 → 데이터 생성/배포** 순서로 둔다.
+
+현재 기준은 1-9장에 반영한다. 이 장은 당시 의사결정의 순서와 맥락을 복기하기 위해 남긴다.
 
 ### 13.0 세션 플로우 개편 (추가 작업)
 
@@ -1007,7 +1022,7 @@ type ChatPlan = {
 9. 공통 memory UI 컴포넌트 추출
 10. 전체 UI 개선
 
-## 14. 0604 TODO / 설계 확인
+## 14. Decision / Implementation Log — 0604 TODO / 설계 확인 `[implemented]`
 
 ### 14.1 세션 종료 버튼 상태 버그
 

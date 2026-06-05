@@ -26,16 +26,6 @@ function stringArray(value: unknown, fallback: string[] = []) {
     : fallback;
 }
 
-function jsonArray(value: unknown) {
-  if (Array.isArray(value)) return stringArray(value);
-  if (typeof value !== "string") return [];
-  try {
-    return stringArray(JSON.parse(value));
-  } catch {
-    return [];
-  }
-}
-
 function parseMemory(raw: string): EncodedMemory {
   try {
     const parsed = JSON.parse(raw) as Partial<EncodedMemory>;
@@ -189,10 +179,6 @@ export async function POST(request: Request) {
   );
   const agentActionCategory = inferAgentActionCategory(output, interactionId);
   const agentActions = extractAgentActions(output);
-  const previousSemantic = [
-    ...jsonArray(olderDraft?.semanticJson),
-    ...jsonArray(previousDraft?.semanticJson),
-  ].filter((item, idx, arr) => arr.indexOf(item) === idx);
   const previousEpisodes = [
     String(previousDraft?.episode ?? "").trim(),
     String(olderDraft?.episode ?? "").trim(),
@@ -206,9 +192,6 @@ export async function POST(request: Request) {
       ? `older interaction timestamp: ${timestampContext(olderDraft.timestamp ?? olderDraft.createdAt) || "unknown"}`
       : "",
     `previous episodic memory: ${previousEpisodes.join(" / ") || FIRST_SESSION_TURN}`,
-    previousSemantic.length > 0
-      ? `previous semantic memory: ${previousSemantic.join(" / ")}`
-      : "",
     `user input: ${input}`,
     `agent response: ${output.slice(0, 10000)}`,
     `agent action category: ${agentActionCategory}${agentActions.length > 0 ? ` (${agentActions.map((a) => a.type).join(", ")})` : ""}`,

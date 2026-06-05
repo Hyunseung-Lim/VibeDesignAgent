@@ -15,8 +15,14 @@ const MEMORY_COLLECTION = "memories_0_1_2";
 const LEGACY_MEMORY_COLLECTION = "memories_0_1_1";
 const RETRIEVAL_LOG_COLLECTION = "memoryRetrievalLogs";
 const EMBEDDING_MODEL = "text-embedding-3-large";
-const EMBEDDING_SOURCE = "combined_no_timestamp";
-const ACCEPTED_EMBEDDING_SOURCES = new Set(["combined", EMBEDDING_SOURCE]);
+const INTERACTION_EMBEDDING_SOURCE = "interaction_record_text";
+const PROFILE_EMBEDDING_SOURCE = "profile_unit_text";
+const ACCEPTED_EMBEDDING_SOURCES = new Set([
+  "combined",
+  "combined_no_timestamp",
+  INTERACTION_EMBEDDING_SOURCE,
+  PROFILE_EMBEDDING_SOURCE,
+]);
 const MAX_MEMORY_DOCS = 200;
 const DEFAULT_LIMIT = 5;
 const NEAR_MISS_LIMIT = 20;
@@ -222,7 +228,7 @@ function legacyCandidates(uid: string, doc: MemoryDoc): Candidate[] {
 
 async function ensureV2Embeddings(candidates: Candidate[], token: string) {
   // Regenerate: missing embedding OR built with old single-field method.
-  // Existing "combined" embeddings are accepted because they were already timestamp-free.
+  // Existing combined embeddings are accepted for backward compatibility.
   const stale = candidates.filter(
     (candidate) =>
       !candidate.legacy &&
@@ -236,17 +242,21 @@ async function ensureV2Embeddings(candidates: Candidate[], token: string) {
   );
   await Promise.all(
     stale.map((candidate, index) => {
+      const embeddingSource =
+        candidate.doc.type === "profile"
+          ? PROFILE_EMBEDDING_SOURCE
+          : INTERACTION_EMBEDDING_SOURCE;
       candidate.embedding = embeddings[index] ?? [];
-      candidate.embeddingSource = EMBEDDING_SOURCE;
+      candidate.embeddingSource = embeddingSource;
       candidate.doc.embedding = candidate.embedding;
-      candidate.doc.embeddingSource = EMBEDDING_SOURCE;
+      candidate.doc.embeddingSource = embeddingSource;
       candidate.doc.embeddingModel = EMBEDDING_MODEL;
       candidate.doc.updatedAt = now;
       return patchFirestoreDocument(
         candidate.path,
         {
           embedding: candidate.embedding,
-          embeddingSource: EMBEDDING_SOURCE,
+          embeddingSource,
           embeddingModel: EMBEDDING_MODEL,
           updatedAt: now,
         },

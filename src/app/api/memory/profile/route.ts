@@ -9,7 +9,10 @@ import {
   patchFirestoreDocument,
   verifyFirebaseIdToken,
 } from "@/lib/server/firebaseAdminRest";
-import { PROFILE_MEMORY_DERIVE_PROMPT } from "@/lib/prompts";
+import {
+  PROFILE_MEMORY_ENCODE_PROMPT,
+  PROFILE_MEMORY_SEGMENT_PROMPT,
+} from "@/lib/prompts";
 
 export const runtime = "nodejs";
 
@@ -17,7 +20,7 @@ const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const MEMORY_COLLECTION = "memories_0_1_2";
 const PROFILE_MEMORY_SCHEMA_VERSION = "0.1.2-profile";
 const EMBEDDING_MODEL = "text-embedding-3-large";
-const EMBEDDING_SOURCE = "combined_no_timestamp";
+const EMBEDDING_SOURCE = "profile_unit_text";
 const PROFILE_MEMORY_MAX_ITEMS = 5;
 const PROFILE_MEMORY_MAX_CHARS = 240;
 const PROFILE_MEMORY_MAX_RAW_CHARS = 6000;
@@ -42,6 +45,7 @@ type ProfileMemoryItem = {
 };
 
 type DerivedProfileMemory = {
+  sourceText: string;
   keywords: string[];
   episodic: string;
   semantic: string | null;
@@ -103,16 +107,35 @@ async function embedTexts(texts: string[]) {
   return response.data.map((item) => l2Normalize(item.embedding));
 }
 
-function buildEmbeddingText(memory: DerivedProfileMemory, rawInput: string) {
+function buildEmbeddingText(memory: DerivedProfileMemory) {
   // Keep profile revision timestamps as metadata only; vectors use semantic content.
   return [
+    memory.sourceText ? `Source: ${memory.sourceText}` : "",
     memory.keywords.length ? `Keywords: ${memory.keywords.join(", ")}` : "",
     memory.episodic ? `Episodic: ${memory.episodic}` : "",
     memory.semantic ? `Semantic: ${memory.semantic}` : "",
-    rawInput ? `Input: ${rawInput}` : "",
   ]
     .filter(Boolean)
     .join("\n");
+}
+
+function parseProfileSegments(raw: string): string[] {
+  try {
+    const parsed = JSON.parse(raw) as { items?: unknown };
+    if (!Array.isArray(parsed.items)) return [];
+    return parsed.items
+      .map((item) => {
+        if (typeof item === "string") return item.trim();
+        if (!item || typeof item !== "object") return "";
+        const record = item as Record<string, unknown>;
+        return String(record.text ?? record.sourceText ?? "").trim();
+      })
+      .filter(Boolean)
+      .map((item) => item.slice(0, 1200))
+      .slice(0, 8);
+  } catch {
+    return [];
+  }
 }
 
 function parseDerivedProfileMemory(raw: string): DerivedProfileMemory[] {
@@ -121,7 +144,9 @@ function parseDerivedProfileMemory(raw: string): DerivedProfileMemory[] {
     if (!Array.isArray(parsed.items)) return [];
     return parsed.items
       .map((item) => {
+        if (!item || typeof item !== "object") return null;
         const record = item as Record<string, unknown>;
+        const sourceText = String(record.sourceText ?? record.text ?? "").trim();
         const episodic = String(record.episodic ?? record.episode ?? "").trim();
         const semantic =
           typeof record.semantic === "string" && record.semantic.trim()
@@ -129,6 +154,7 @@ function parseDerivedProfileMemory(raw: string): DerivedProfileMemory[] {
             : null;
         if (!episodic && !semantic) return null;
         return {
+          sourceText: sourceText.slice(0, 1200),
           keywords: stringArray(record.keywords ?? record.keyword).slice(0, 6),
           episodic: episodic.slice(0, 1200),
           semantic: semantic?.slice(0, 1200) ?? null,
@@ -141,20 +167,48 @@ function parseDerivedProfileMemory(raw: string): DerivedProfileMemory[] {
   }
 }
 
-async function deriveProfileMemories(rawMarkdown: string) {
+async function segmentProfileMemoryUnits(rawMarkdown: string) {
   const input = rawMarkdown.trim().slice(0, PROFILE_MEMORY_MAX_RAW_CHARS);
   if (!input) return [];
   const completion = await openai.chat.completions.create({
     model: "gpt-5.4-mini",
     response_format: { type: "json_object" },
     messages: [
-      { role: "system", content: PROFILE_MEMORY_DERIVE_PROMPT },
+      { role: "system", content: PROFILE_MEMORY_SEGMENT_PROMPT },
       { role: "user", content: input },
+    ],
+  });
+  return parseProfileSegments(
+    completion.choices[0]?.message?.content ?? "{}",
+  );
+}
+
+async function encodeProfileMemoryUnits(segments: string[]) {
+  if (segments.length === 0) return [];
+  const completion = await openai.chat.completions.create({
+    model: "gpt-5.4-mini",
+    response_format: { type: "json_object" },
+    messages: [
+      { role: "system", content: PROFILE_MEMORY_ENCODE_PROMPT },
+      {
+        role: "user",
+        content: JSON.stringify({
+          items: segments.map((text) => ({ text })),
+        }),
+      },
     ],
   });
   return parseDerivedProfileMemory(
     completion.choices[0]?.message?.content ?? "{}",
-  );
+  ).map((memory, index) => ({
+    ...memory,
+    sourceText: memory.sourceText || segments[index] || "",
+  }));
+}
+
+async function deriveProfileMemories(rawMarkdown: string) {
+  const segments = await segmentProfileMemoryUnits(rawMarkdown);
+  return encodeProfileMemoryUnits(segments);
 }
 
 async function deleteProfileDerivedMemories(
@@ -194,7 +248,7 @@ async function writeProfileDerivedMemories(
   const derived = await deriveProfileMemories(rawMarkdown);
   if (derived.length === 0) return { count: 0, ids: [] as string[] };
   const embeddings = await embedTexts(
-    derived.map((memory) => buildEmbeddingText(memory, rawMarkdown)),
+    derived.map((memory) => buildEmbeddingText(memory)),
   );
   const ids = await Promise.all(
     derived.map(async (memory, index) => {
@@ -233,6 +287,7 @@ async function writeProfileDerivedMemories(
             kind: "user_profile",
             missionId,
             profileItemIds: items.map((item) => item.id),
+            sourceText: memory.sourceText,
           },
           createdAt: now,
           ownerUid: uid,
