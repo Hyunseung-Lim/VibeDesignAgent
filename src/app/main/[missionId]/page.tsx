@@ -35,7 +35,24 @@ import {
   DownloadSimpleIcon,
   XIcon,
 } from "@phosphor-icons/react";
+import { toast } from "sonner";
 import { isAdminEmail } from "@/lib/admin";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { ToolActionChip } from "@/components/session/tool-action-chip";
+import {
+  TimelineActivityEventCard,
+  TimelineMemoryEventCard,
+} from "@/components/session/timeline-event-card";
+import { MemoryScoreBar } from "@/components/memory/memory-score-bar";
 const ONBOARDING_MISSION_ID = "onboarding";
 const MemoryClusterGraph = dynamic(() => import("@/app/admin/MemoryClusterGraph"), {
   ssr: false,
@@ -429,6 +446,10 @@ type Artboard = {
   ideaId: string;
 };
 
+type DestructiveSessionAction =
+  | { type: "idea"; idea: Idea }
+  | { type: "design"; artboard: Artboard; ideaTitle: string }
+  | { type: "reference"; reference: Reference };
 
 const DEVICE_SIZE: Record<Device, { width: number; height: number }> = {
   desktop: { width: 1280, height: 900 },
@@ -1705,48 +1726,6 @@ function formatMemoryInputWithCitations(
   return sections.join("\n\n");
 }
 
-function CodeChip({
-  chipKey,
-  chip,
-  expanded,
-  onToggle,
-}: {
-  chipKey: string;
-  chip: ContentChip;
-  expanded: boolean;
-  onToggle: (key: string) => void;
-}) {
-  const hasCode = !!chip.code;
-  return (
-    <div className="overflow-hidden rounded-xl border border-slate-200 bg-slate-50 text-xs">
-      <button
-        onClick={() => hasCode && onToggle(chipKey)}
-        className={`flex w-full items-center gap-2 px-3 py-2 text-left ${hasCode ? "cursor-pointer hover:bg-slate-100" : "cursor-default"}`}
-      >
-        {chip.failed ? (
-          <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-rose-400" />
-        ) : chip.done ? (
-          <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-400" />
-        ) : (
-          <span className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-slate-400" />
-        )}
-        <span className="flex-1 text-slate-600">{chip.label}</span>
-        {hasCode &&
-          (expanded ? (
-            <CaretUpIcon size={12} className="text-slate-400" />
-          ) : (
-            <CaretDownIcon size={12} className="text-slate-400" />
-          ))}
-      </button>
-      {expanded && hasCode && (
-        <pre className="max-h-64 overflow-y-auto border-t border-slate-200 bg-slate-900 p-3 font-mono text-[11px] leading-relaxed text-slate-100 whitespace-pre-wrap break-all">
-          {chip.code}
-        </pre>
-      )}
-    </div>
-  );
-}
-
 function injectSelectionScript(html: string, artboardId: string): string {
   const script = `
 <style>
@@ -2268,6 +2247,8 @@ export default function MainScreenPage() {
   const [sessionCompleted, setSessionCompleted] = useState(false);
   const [showLobbyWarning, setShowLobbyWarning] = useState(false);
   const [showFinalDesignWarning, setShowFinalDesignWarning] = useState(false);
+  const [destructiveAction, setDestructiveAction] =
+    useState<DestructiveSessionAction | null>(null);
   const [editMode, setEditMode] = useState(false);
   const [device, setDevice] = useState<Device>("desktop");
   const [missionTitle, setMissionTitle] = useState("");
@@ -3205,7 +3186,11 @@ export default function MainScreenPage() {
           finalArtboardId: finalArtboardId ?? null,
           startedAt: effectiveTimerStartedAt ?? null,
           timerStartedAt: effectiveTimerStartedAt ?? null,
-          status: sessionCompleted ? "completed" : "active",
+          status: sessionCompleted
+            ? "completed"
+            : effectiveTimerStartedAt
+              ? "active"
+              : "draft",
           updatedAt: Date.now(),
         }),
         { merge: true },
@@ -3562,9 +3547,15 @@ export default function MainScreenPage() {
     setTimeout(() => fitToCanvasForIdea(ideaId), 0);
   };
 
-  const deleteIdea = (ideaId: string) => {
+  const requestDeleteIdea = (ideaId: string) => {
+    if (isReadOnly) return;
     const target = ideas.find((i) => i.id === ideaId);
-    if (!confirm("이 시안과 연결된 목업을 모두 삭제할까요?")) return;
+    if (!target) return;
+    setDestructiveAction({ type: "idea", idea: target });
+  };
+
+  const performDeleteIdea = (ideaId: string) => {
+    const target = ideas.find((i) => i.id === ideaId);
     void encodeMemoryDraft(
       `delete-idea-${ideaId}`,
       `시안 삭제: ${target?.title ?? ideaId}`,
@@ -4589,11 +4580,22 @@ export default function MainScreenPage() {
     ideaArtboards.find((a) => a.id === activeArtboardId) ??
     ideaArtboards[ideaArtboards.length - 1] ??
     null;
-  const deleteDesign = (artboardId: string) => {
+  const requestDeleteDesign = (artboardId: string) => {
     if (isReadOnly) return;
     const target = artboards.find((artboard) => artboard.id === artboardId);
     if (!target) return;
-    if (!confirm("이 디자인을 삭제할까요?")) return;
+    const ownerIdea = ideas.find((i) => i.id === target.ideaId);
+    setDestructiveAction({
+      type: "design",
+      artboard: target,
+      ideaTitle: ownerIdea?.title ?? target.ideaId,
+    });
+  };
+
+  const performDeleteDesign = (artboardId: string) => {
+    if (isReadOnly) return;
+    const target = artboards.find((artboard) => artboard.id === artboardId);
+    if (!target) return;
     const ownerIdea = ideas.find((i) => i.id === target.ideaId);
     void encodeMemoryDraft(
       `delete-design-${artboardId}`,
@@ -4628,6 +4630,34 @@ export default function MainScreenPage() {
       prev?.artboardId === artboardId ? null : prev,
     );
   };
+
+  const requestDeleteReference = (reference: Reference) => {
+    if (isReadOnly) return;
+    setDestructiveAction({ type: "reference", reference });
+  };
+
+  const performDeleteReference = (reference: Reference) => {
+    appendActivityLog({
+      section: "reference",
+      action: "delete",
+      output: reference.description,
+      outputTitle: reference.title,
+      link: reference.url,
+      imageUrl: reference.imageUrl,
+    });
+    void encodeMemoryDraft(
+      `delete-reference-${reference.id}`,
+      `레퍼런스 삭제: ${reference.title}`,
+      formatReferenceMemoryDetail(reference),
+      Date.now(),
+    );
+    setReferences((prev) =>
+      prev.filter((candidate) => candidate.id !== reference.id),
+    );
+    setSelectedReferences((prev) =>
+      prev.filter((candidate) => candidate.id !== reference.id),
+    );
+  };
   const chooseMissionOption = async (option: MissionOption) => {
     const now = Date.now();
     const nextDevice = option.device ?? device;
@@ -4647,6 +4677,7 @@ export default function MainScreenPage() {
           missionTitle: option.title,
           missionBrief: optionBrief(option),
           selectedDevice: nextDevice,
+          status: "draft",
           updatedAt: now,
         },
         { merge: true },
@@ -4745,9 +4776,7 @@ export default function MainScreenPage() {
       completedSuccessfully = true;
     } catch (error) {
       console.warn("Unable to complete session", error);
-      alert(
-        "세션 종료 및 메모리 확정에 실패했습니다. 잠시 후 다시 시도해주세요.",
-      );
+      toast.error("세션 종료 및 메모리 확정에 실패했습니다. 잠시 후 다시 시도해주세요.");
     } finally {
       clearSessionCompletionTimers();
       if (!completedSuccessfully) {
@@ -5272,27 +5301,6 @@ export default function MainScreenPage() {
   const contextMenuArtboard = designContextMenu
     ? artboards.find((artboard) => artboard.id === designContextMenu.artboardId)
     : null;
-  const renderMemoryScoreBar = (
-    value: number | null | undefined,
-    colorClass: string,
-  ) => {
-    if (value == null || !Number.isFinite(value)) return null;
-    const pct = Math.min(100, Math.max(0, Math.round(value * 100)));
-    return (
-      <div className="flex items-center gap-1.5">
-        <div className="h-1 w-14 overflow-hidden rounded-full bg-slate-100">
-          <div
-            className={`h-full rounded-full ${colorClass}`}
-            style={{ width: `${pct}%` }}
-          />
-        </div>
-        <span className="text-[10px] tabular-nums text-slate-400">
-          {formatReviewScore(value)}
-        </span>
-      </div>
-    );
-  };
-
   const renderSessionImpactGraph = (variant: "panel" | "overlay" = "overlay") => {
     const isOverlay = variant === "overlay";
     const referencedByMemoryId = new Map(
@@ -5562,7 +5570,13 @@ export default function MainScreenPage() {
                 </p>
                 <div className="mt-1 space-y-0.5">
                   {isViewingAsAdmin && kind === "retrieved" &&
-                    renderMemoryScoreBar(similarity, "bg-blue-300")}
+                    similarity != null && (
+                      <MemoryScoreBar
+                        value={similarity}
+                        label={formatReviewScore(similarity)}
+                        colorClass="bg-blue-300"
+                      />
+                    )}
                   {isViewingAsAdmin &&
                     kind === "retrieved" &&
                     weightBefore != null &&
@@ -5588,7 +5602,13 @@ export default function MainScreenPage() {
                     )}
                   {isViewingAsAdmin && kind === "promoted" &&
                     !isArchived &&
-                    renderMemoryScoreBar(weight, "bg-emerald-400")}
+                    weight != null && (
+                      <MemoryScoreBar
+                        value={weight}
+                        label={formatReviewScore(weight)}
+                        colorClass="bg-emerald-400"
+                      />
+                    )}
                   {isViewingAsAdmin && kind === "promoted" &&
                     !isArchived &&
                     weightDelta != null &&
@@ -5624,11 +5644,75 @@ export default function MainScreenPage() {
     );
   };
 
+  const destructiveDialogCopy = destructiveAction
+    ? destructiveAction.type === "idea"
+      ? {
+          title: "시안을 삭제할까요?",
+          description: `${destructiveAction.idea.title} 시안과 연결된 목업이 함께 삭제됩니다. 삭제 내역은 세션 활동과 메모리 draft에 기록됩니다.`,
+          actionLabel: "시안 삭제",
+        }
+      : destructiveAction.type === "design"
+        ? {
+            title: "디자인을 삭제할까요?",
+            description: `${destructiveAction.ideaTitle} 시안의 ${destructiveAction.artboard.label} 목업을 삭제합니다. 다른 목업과 시안은 유지됩니다.`,
+            actionLabel: "디자인 삭제",
+          }
+        : {
+            title: "레퍼런스를 삭제할까요?",
+            description: `${destructiveAction.reference.title} 레퍼런스를 현재 세션에서 제거합니다. 삭제 내역은 세션 활동과 메모리 draft에 기록됩니다.`,
+            actionLabel: "레퍼런스 삭제",
+          }
+    : null;
+
+  const runDestructiveAction = () => {
+    if (!destructiveAction) return;
+    const action = destructiveAction;
+    setDestructiveAction(null);
+    if (action.type === "idea") {
+      performDeleteIdea(action.idea.id);
+      return;
+    }
+    if (action.type === "design") {
+      performDeleteDesign(action.artboard.id);
+      return;
+    }
+    performDeleteReference(action.reference);
+  };
+
   const isInitialSessionContextPending =
     !sessionLoaded || !isMissionContextReady;
 
   return (
     <div className="flex h-screen flex-col bg-[#f5f5f5] text-slate-900">
+      <AlertDialog
+        open={Boolean(destructiveAction)}
+        onOpenChange={(open) => {
+          if (!open) setDestructiveAction(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {destructiveDialogCopy?.title ?? "삭제할까요?"}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {destructiveDialogCopy?.description}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>취소</AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              onClick={(event) => {
+                event.preventDefault();
+                runDestructiveAction();
+              }}
+            >
+              {destructiveDialogCopy?.actionLabel ?? "삭제"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
       <div
         ref={citeMenuRef}
         data-cite-menu="1"
@@ -5669,7 +5753,7 @@ export default function MainScreenPage() {
         >
           <button
             type="button"
-            onClick={() => deleteDesign(contextMenuArtboard.id)}
+            onClick={() => requestDeleteDesign(contextMenuArtboard.id)}
             className="flex w-full items-center gap-2 px-3 py-2 text-left text-red-500 transition hover:bg-red-50"
           >
             <XIcon size={14} />
@@ -6730,28 +6814,7 @@ export default function MainScreenPage() {
                               <button
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  if (!confirm("이 레퍼런스를 삭제할까요?"))
-                                    return;
-                                  appendActivityLog({
-                                    section: "reference",
-                                    action: "delete",
-                                    output: card.description,
-                                    outputTitle: card.title,
-                                    link: card.url,
-                                    imageUrl: card.imageUrl,
-                                  });
-                                  void encodeMemoryDraft(
-                                    `delete-reference-${card.id}`,
-                                    `레퍼런스 삭제: ${card.title}`,
-                                    formatReferenceMemoryDetail(card),
-                                    Date.now(),
-                                  );
-                                  setReferences((prev) =>
-                                    prev.filter((r) => r.id !== card.id),
-                                  );
-                                  setSelectedReferences((prev) =>
-                                    prev.filter((r) => r.id !== card.id),
-                                  );
+                                  requestDeleteReference(card);
                                 }}
                                 className="rounded-full p-1 text-slate-400 hover:bg-red-50 hover:text-red-400 transition"
                                 title="삭제"
@@ -6799,7 +6862,7 @@ export default function MainScreenPage() {
                           <button
                             onClick={(e) => {
                               e.stopPropagation();
-                              deleteIdea(idea.id);
+                              requestDeleteIdea(idea.id);
                             }}
                             className={`ml-1 rounded-md p-0.5 opacity-0 group-hover:opacity-100 transition-opacity ${
                               activeIdeaId === idea.id
@@ -7786,18 +7849,11 @@ export default function MainScreenPage() {
                 if (timelineItem.type === "activity-event") {
                   const event = timelineItem.event;
                   return (
-                    <div key={`activity-event-${event.id}`} className="flex justify-center">
-                      <div className="w-full max-w-[85%] rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-xs">
-                        <div className="min-w-0">
-                          <p className="font-semibold text-slate-600">
-                            {activityEventLabel(event)}
-                          </p>
-                          <p className="mt-1 line-clamp-2 text-slate-400">
-                            {activityEventDetail(event)}
-                          </p>
-                        </div>
-                      </div>
-                    </div>
+                    <TimelineActivityEventCard
+                      key={`activity-event-${event.id}`}
+                      label={activityEventLabel(event)}
+                      detail={activityEventDetail(event)}
+                    />
                   );
                 }
                 if (timelineItem.type === "memory-event") {
@@ -7807,50 +7863,25 @@ export default function MainScreenPage() {
                     reviewDetailModal?.mode === "turn-memory" &&
                     reviewDetailModal.turnId === eventKey;
                   return (
-                    <div key={`memory-event-${eventKey}`} className="flex justify-center">
-                      <div
-                        className={`w-full max-w-[85%] rounded-xl border px-3 py-2.5 text-xs ${
+                    <TimelineMemoryEventCard
+                      key={`memory-event-${eventKey}`}
+                      label={memoryEventLabel(memory)}
+                      detail={memoryEventDetail(memory)}
+                      selected={isEventSelected}
+                      onToggle={() =>
+                        setReviewDetailModal(
                           isEventSelected
-                            ? "border-violet-200 bg-violet-50"
-                            : "border-slate-200 bg-white"
-                        }`}
-                      >
-                        <div className="flex items-start justify-between gap-3">
-                          <div className="min-w-0">
-                            <p className="font-semibold text-slate-600">
-                              {memoryEventLabel(memory)}
-                            </p>
-                            <p className="mt-1 line-clamp-2 text-slate-400">
-                              {memoryEventDetail(memory)}
-                            </p>
-                          </div>
-                          <button
-                            type="button"
-                            onClick={() =>
-                              setReviewDetailModal(
-                                isEventSelected
-                                  ? null
-                                  : {
-                                      mode: "turn-memory",
-                                      turnId: eventKey,
-                                      reviewTurn: {} as ReviewTurn,
-                                      memories: [],
-                                      turnDraft: memory,
-                                    },
-                              )
-                            }
-                            className={`shrink-0 rounded-full border px-2.5 py-1 font-medium transition ${
-                              isEventSelected
-                                ? "border-violet-300 bg-violet-100 text-violet-600"
-                                : "border-slate-200 text-slate-400 hover:border-slate-300 hover:bg-slate-100 hover:text-slate-600"
-                            }`}
-                            title="이 이벤트에서 생성된 기억"
-                          >
-                            기억 보기
-                          </button>
-                        </div>
-                      </div>
-                    </div>
+                            ? null
+                            : {
+                                mode: "turn-memory",
+                                turnId: eventKey,
+                                reviewTurn: {} as ReviewTurn,
+                                memories: [],
+                                turnDraft: memory,
+                              },
+                        )
+                      }
+                    />
                   );
                 }
                 const msg = timelineItem.message;
@@ -8029,7 +8060,7 @@ export default function MainScreenPage() {
                                     {part.content}
                                   </ReactMarkdown>
                                 ) : (
-                                  <CodeChip
+                                  <ToolActionChip
                                     key={i}
                                     chipKey={`${msg.id}-${i}`}
                                     chip={part.chip}

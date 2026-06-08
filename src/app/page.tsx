@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { getAdditionalUserInfo, getIdToken, signInWithPopup } from "firebase/auth";
 import { firebaseAuth, googleProvider } from "@/lib/firebase";
 import { GoogleLogoIcon } from "@phosphor-icons/react";
+import { Button } from "@/components/ui/button";
 
 export default function Home() {
   const router = useRouter();
@@ -51,36 +52,37 @@ export default function Home() {
   };
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-slate-950 px-4 text-white">
-      <div className="w-full max-w-md space-y-8 rounded-3xl border border-white/10 bg-white/5 p-10 backdrop-blur">
+    <div className="flex min-h-screen items-center justify-center bg-surface-page px-4 text-foreground">
+      <div className="w-full max-w-md space-y-8 rounded-xl border border-border bg-card p-10 shadow-panel">
         <div>
-          <p className="text-xs uppercase tracking-[0.4em] text-slate-400">
+          <p className="text-xs font-semibold uppercase tracking-[0.32em] text-muted-foreground">
             VIBEDESIGN AGENT
           </p>
-          <h1 className="mt-4 text-3xl font-semibold text-white">
+          <h1 className="mt-4 text-3xl font-semibold text-foreground">
             Google 계정으로 로그인
           </h1>
-          <p className="mt-2 text-sm text-slate-300">
+          <p className="mt-2 text-sm text-muted-foreground">
             로그인 후 주차별 과제와 진행 상태를 로비에서 확인할 수 있습니다.
           </p>
         </div>
-        <button
-          type="button"
+        <Button
           onClick={handleGoogleLogin}
           disabled={isLoading}
-          className="flex w-full items-center justify-center gap-3 rounded-2xl bg-white px-6 py-3 text-base font-semibold text-slate-900 transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-70"
+          variant="outline"
+          size="lg"
+          className="w-full bg-surface-panel text-base"
         >
           {isLoading ? (
-            <span className="h-5 w-5 animate-spin rounded-full border-2 border-slate-900 border-t-transparent" />
+            <span className="h-5 w-5 animate-spin rounded-full border-2 border-foreground border-t-transparent" />
           ) : (
             <GoogleLogoIcon size={20} />
           )}
           {isLoading ? "로그인 중..." : "Google 계정으로 시작하기"}
-        </button>
+        </Button>
         {errorMessage && (
           <p
             role="alert"
-            className="text-center text-sm text-red-300"
+            className="text-center text-sm text-destructive"
           >
             {errorMessage}
           </p>

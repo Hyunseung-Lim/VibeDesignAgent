@@ -5,6 +5,9 @@ import { useRouter } from "next/navigation";
 import { getIdToken, onAuthStateChanged } from "firebase/auth";
 import { useEffect, useState } from "react";
 import { firebaseAuth } from "@/lib/firebase";
+import { Button, buttonVariants } from "@/components/ui/button";
+import { toast } from "sonner";
+import { OnboardingSteps } from "@/components/onboarding/onboarding-steps";
 
 export default function OnboardingPage() {
   const router = useRouter();
@@ -69,65 +72,49 @@ export default function OnboardingPage() {
       router.replace("/lobby");
     } catch (error) {
       console.warn("Unable to persist onboarding completion", error);
-      alert("온보딩 상태 저장에 실패했습니다. 잠시 후 다시 시도해주세요.");
+      toast.error("온보딩 상태 저장에 실패했습니다. 잠시 후 다시 시도해주세요.");
       setIsSaving(false);
     }
   };
 
   return (
-    <div className="min-h-screen bg-slate-950 px-4 py-10 text-white">
+    <div className="min-h-screen bg-surface-page px-4 py-10 text-foreground">
       <div className="mx-auto flex min-h-[calc(100vh-5rem)] max-w-3xl flex-col justify-center">
-        <div className="rounded-3xl border border-white/10 bg-white/5 p-8 shadow-2xl shadow-black/20 backdrop-blur">
-          <p className="text-xs font-semibold uppercase tracking-[0.35em] text-slate-400">
+        <div className="rounded-xl border border-border bg-card p-8 shadow-panel">
+          <p className="text-xs font-semibold uppercase tracking-[0.32em] text-muted-foreground">
             Onboarding
           </p>
           <h1 className="mt-4 text-3xl font-semibold">
             {isCompleted ? "나의 온보딩" : "Vibe Design Agent 시작하기"}
           </h1>
-          <p className="mt-3 text-sm leading-6 text-slate-300">
+          <p className="mt-3 text-sm leading-6 text-muted-foreground">
             이 워크스페이스에서는 에이전트와 대화하며 레퍼런스를 찾고, 노트를
             만들고, 목업과 프레젠테이션을 생성합니다. 온보딩을 완료하면 오늘의
             미션을 시작할 수 있습니다.
           </p>
           {isCompleted && (
-            <p className="mt-3 rounded-2xl border border-emerald-400/20 bg-emerald-400/10 px-4 py-3 text-sm font-medium text-emerald-200">
+            <p className="mt-3 rounded-lg border border-emerald-100 bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-700">
               온보딩을 완료했습니다. 언제든 이 페이지에서 진행 방식을 다시 확인할 수 있습니다.
             </p>
           )}
 
-          <div className="mt-8 grid gap-3 text-sm text-slate-200">
-            {[
-              "미션 옵션을 먼저 선택합니다.",
-              "에이전트가 노트를 작성하고, 사용자는 노트를 선택합니다.",
-              "목업은 여러 디자인으로 생성할 수 있고, 우클릭으로 삭제할 수 있습니다.",
-              "프레젠테이션은 생성된 목업 캡쳐를 기반으로 만듭니다.",
-            ].map((item, index) => (
-              <div
-                key={item}
-                className="flex gap-3 rounded-2xl border border-white/10 bg-white/5 p-4"
-              >
-                <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-white text-xs font-semibold text-slate-950">
-                  {index + 1}
-                </span>
-                <p>{item}</p>
-              </div>
-            ))}
-          </div>
+          <OnboardingSteps />
 
           <div className="mt-8 flex flex-wrap items-center gap-3">
             {!isCompleted && (
-              <button
-                type="button"
+              <Button
                 onClick={completeOnboarding}
                 disabled={!userId || isSaving}
-                className="rounded-2xl bg-white px-5 py-3 text-sm font-semibold text-slate-950 transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-60"
+                variant="default"
               >
                 {isSaving ? "완료 처리 중..." : "온보딩 완료하기"}
-              </button>
+              </Button>
             )}
             <Link
               href="/lobby"
-              className="rounded-2xl border border-white/15 px-5 py-3 text-sm font-semibold text-slate-200 transition hover:bg-white/10"
+              className={buttonVariants({
+                variant: "outline",
+              })}
             >
               로비로 돌아가기
             </Link>

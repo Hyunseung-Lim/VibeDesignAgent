@@ -1181,3 +1181,640 @@ type ChatPlan = {
   - 수정 1: `summaryKey`가 변경되면 fetch 시작 전에 즉시 `setSessionMemorySummary(EMPTY_SESSION_MEMORY_SUMMARY)`로 초기화하고, `sessionMemorySummaryKeyRef.current = summaryKey`를 fetch 완료 전에 세팅해 중복 fetch도 방지.
   - 원인 2 (데이터 레벨 오염): `session-summary` API의 `promoted` 배열은 `memories_0_1_2`와 `memories_0_1_1`(레거시)를 모두 포함하며, `source.missionId === missionId`만으로 필터링한다. 레거시 컬렉션이나 과거 버그로 인해 `source.missionId`가 잘못 설정된 메모리가 섞일 수 있다.
   - 수정 2: `promoted` 필터에 세션의 실제 `memoryDrafts` subcollection과 교차 검증 추가. `source.draftId`가 있는 메모리는 반드시 현재 세션의 `draftIdSet`에 포함되어야 한다. `source.draftId`가 없는 메모리(레거시)는 통과.
+
+## 15. Decision / Implementation Plan — 전체 UX/UI 개선 `[active]`
+
+### 15.1 목표
+
+- 로그인 → 온보딩 → 로비 → 미션 세션 → 에이전트 메모리 → 어드민까지 하나의 제품처럼 느껴지도록 UX/UI를 정리한다.
+- 단순한 시각 리스킨이 아니라 정보 구조, 상태 표현, 공통 컴포넌트, 접근성, 반응형 동작, micro-interaction을 함께 개선한다.
+- 연구 도구 성격을 유지한다. SaaS/작업도구형 UI처럼 조용하고 밀도 있게 구성하되, 디자인 세션과 목업 캔버스는 창의적 작업 흐름이 잘 드러나게 한다.
+
+### 15.2 도구 선택
+
+- **주 도구**: `shadcn/ui`
+  - 이유: Next.js + React + Tailwind 기반 프로젝트와 잘 맞고, 컴포넌트 소스가 프로젝트 안으로 들어와 커스터마이즈/소유가 가능하다.
+  - 역할: Button, Input, Textarea, Dialog, Sheet, Tabs, Select, Dropdown Menu, Tooltip, Badge, Card, Skeleton, Table, Scroll Area, Separator, Toast/Sonner 등 공통 UI의 기준점.
+- **보조 지침**: `jakubkrehel/make-interfaces-feel-better`
+  - 이유: radius, shadow, text wrapping, hover/press state, tabular numbers, icon animation, loading/exit animation 등 UI polish 기준이 구체적이다.
+  - 역할: 컴포넌트와 화면 구현 후 마감 체크리스트로 사용.
+- **참고/확장**: `emilkowalski/skill`
+  - 이유: 디자인 엔지니어링 철학과 상호작용 품질을 점검하는 보조 기준으로 유용하다.
+  - 역할: 주요 화면 재설계 리뷰, 컴포넌트 품질 리뷰, 애니메이션/상태 표현 리뷰.
+- **비주 도구**: `anthropics/skills`
+  - 이유: 특정 UI 개선 도구라기보다 Agent Skill 예시/표준 저장소에 가깝다.
+  - 역할: 추후 VibeDesignAgent 전용 `UX/UI skill`을 만들 때 참고.
+
+### 15.3 구현 전 필수 확인
+
+- 이 프로젝트는 `Next.js 16.2.2`, `React 19.2.4`, `Tailwind CSS v4`를 사용한다.
+- 코드 작성 전 `AGENTS.md` 규칙에 따라 `node_modules/next/dist/docs/`에서 관련 Next 16 문서를 확인한다.
+  - App Router routing/layout 관련 변경
+  - Client/Server Component 경계
+  - CSS/Tailwind 관련 가이드
+  - Metadata/Image/Link/navigation 관련 deprecation
+- shadcn CLI 또는 registry 도입 전에 Tailwind v4, React 19, Next 16 호환 방식을 확인한다.
+- 네트워크로 패키지를 설치해야 하는 작업은 별도 승인 후 진행한다.
+
+### 15.4 현재 UI 문제 가설
+
+- 로그인/온보딩은 dark glass card 스타일이고, 로비/세션/어드민은 light dashboard 스타일이라 제품 톤이 분리되어 보인다.
+- 버튼, 카드, 배지, 탭, 패널, 로딩, 빈 상태가 화면마다 다른 radius/spacing/shadow 규칙을 사용한다.
+- 로비는 미션 진행 상태를 보여주지만 다음 행동 우선순위가 약하다.
+- 메인 세션은 Mission/Reference/Idea/Mockup/Chat/Memory review가 한 파일에 밀집되어 있어 정보 구조와 컴포넌트 경계가 흐릴 가능성이 높다.
+- 어드민은 기능 밀도가 높아 table, filter, modal/sheet, detail panel, debug view의 위계가 더 필요하다.
+- mobile viewport에서 작업도구형 화면의 패널 전환, sticky 영역, 긴 텍스트 overflow를 별도로 검증해야 한다.
+
+### 15.5 화면별 UX Audit 체크리스트
+
+#### `/` 로그인
+
+- [x] 첫 화면에서 서비스 정체성과 사용자의 다음 행동이 즉시 보이는지 확인
+- [x] Google 로그인 버튼의 loading/disabled/error 상태 정리
+- [x] 실패 메시지가 alert role, 색 대비, 재시도 안내를 충족하는지 확인
+- [x] dark/light 톤을 전체 제품 토큰과 맞출지 결정
+
+#### `/onboarding`
+
+- [x] 온보딩 설명이 실제 세션 흐름과 일치하는지 확인
+- [x] 완료 상태, 저장 중, 실패 상태를 컴포넌트화
+- [x] 리스트형 안내를 단계형 progress/stepper로 바꿀지 검토
+- [x] 완료 후 로비로 돌아가는 흐름과 "다시 보기" 맥락 분리
+
+#### `/lobby`
+
+- [x] 온보딩 필수 상태와 일반 미션 접근 잠금 상태를 더 명확하게 표현
+- [x] 미션 카드의 primary action, review action, status badge 위계 정리
+- [x] 관리자/에이전트 메모리 진입점을 topbar 또는 action rail로 재배치할지 검토
+- [x] empty/loading/error 상태 추가
+- [x] 미션 수, 진행중/완료/대기 미션 요약을 dashboard summary로 제공할지 검토
+
+#### `/main/[missionId]`
+
+- [ ] 좌측 Mission/Reference/Idea/Mockup과 우측 Chat의 정보 위계 재정의 `[deferred: large route redesign]`
+- [ ] 세션 시작 전, 진행 중, 종료/리뷰 모드의 layout state를 명시 `[deferred: large route redesign]`
+- [ ] Reference card, Idea editor, Mockup canvas, Chat bubble, Memory event card를 공통 컴포넌트로 분리 `[partially implemented: ToolActionChip, MemoryScoreBar extracted]`
+- [ ] 목업 캔버스의 zoom/pan/fit/fullscreen controls를 icon button + tooltip 기준으로 정리
+- [ ] Chat streaming, tool action chip, web searched badge, memory toggle의 visual language 통일 `[partially implemented: ToolActionChip tokenized]`
+- [ ] 세션 종료/최종 디자인 선택 흐름의 confirm/warning state 개선
+- [ ] 모바일에서는 panel tabs 또는 sheet 기반 전환으로 재설계
+
+#### `/agent`
+
+- [ ] 사용자용 메모리 뷰와 admin/debug 뷰의 정보 수준을 분리 `[deferred]`
+- [ ] cluster list/detail/graph의 선택 상태와 empty state 정리 `[deferred]`
+- [ ] graph loading/nonblank/resize 상태 확인 `[deferred]`
+- [ ] "재생성" action의 권한/위험/로딩 피드백 강화 `[deferred]`
+
+#### `/admin`
+
+- [ ] 미션 CRUD, 참여자, 세션, 메모리, retrieval/forgetting debug를 task group별로 재구성 `[deferred]`
+- [ ] 고밀도 table + detail sheet 패턴 도입 `[deferred]`
+- [ ] destructive action은 Alert Dialog와 명확한 scope text 사용 `[deferred]`
+- [ ] admin-only debug 정보는 기본 화면에서 숨기고 필요 시 drawer/sheet로 노출 `[deferred]`
+- [ ] 긴 메모리/프롬프트/raw JSON은 code viewer 또는 collapsible 영역으로 분리 `[deferred]`
+
+### 15.6 디자인 토큰 계획
+
+- 토큰은 `src/app/globals.css`의 CSS variable과 Tailwind v4 `@theme inline`을 기준으로 관리한다.
+- 1차 토큰:
+  - color: background, foreground, muted, border, input, ring, primary, secondary, accent, destructive, success, warning
+  - surface: page, panel, elevated, overlay
+  - radius: xs, sm, md, lg, xl. 기본 card radius는 8px 이하를 우선하되 기존 shadcn preset과 충돌 시 프로젝트 기준을 명시
+  - shadow: none, sm, popover, dialog. border만으로 분리하기 어려운 floating UI에 제한적으로 사용
+  - typography: page title, section title, panel title, body, caption, mono/debug
+  - spacing: page padding, section gap, panel padding, control height
+  - focus ring: keyboard focus가 명확하게 보이는 단일 규칙
+- 색상 방향:
+  - 단일 hue에 과도하게 의존하지 않는다.
+  - 현재 slate 중심 UI를 유지하되 action/success/warning/destructive를 명확히 분리한다.
+  - 교육/연구 도구 특성상 과한 purple/blue gradient, glassmorphism, 장식성 hero는 피한다.
+  - 전역 color mode는 라이트 모드로 고정한다. OS `prefers-color-scheme: dark`에 따라 토큰이 자동 전환되지 않게 한다.
+
+### 15.7 공통 컴포넌트 도입 순서
+
+1. 기반 유틸
+   - [x] `cn()` 유틸 추가
+   - [x] shadcn component import path, alias, registry 설정 확인
+   - [x] `components.json` 도입 여부 결정
+2. Primitive UI
+   - [x] Button
+   - [x] Input / Textarea / Label
+   - [x] Badge
+   - [x] Tooltip
+   - [x] Dialog / Alert Dialog / Sheet
+   - [x] Tabs
+   - [x] Select / Dropdown Menu
+   - [x] Skeleton / Spinner
+   - [x] Separator / Scroll Area
+   - [x] Toast 또는 Sonner
+3. Product Components
+   - [x] `AppTopbar`
+   - [x] `UserMenu`
+   - [x] `MissionCard`
+   - [x] `StatusBadge`
+   - [ ] `ReferenceCard`
+   - [ ] `IdeaTabs`
+   - [ ] `IdeaEditor`
+   - [ ] `MockupCanvasToolbar`
+   - [ ] `ChatPanel`
+   - [ ] `ChatBubble`
+   - [x] `ToolActionChip`
+   - [ ] `MemoryEventCard`
+   - [ ] `MemoryClusterPanel`
+   - [ ] `AdminDataTable`
+   - [ ] `PromptViewer`
+
+### 15.8 주요 화면 재설계 방향
+
+- 로그인/온보딩:
+  - 제품 도입부는 간결하게 유지하고, 사용자의 다음 action을 가장 크게 둔다.
+  - 설명 텍스트는 기능 홍보가 아니라 실제 진행에 필요한 안내만 둔다.
+- 로비:
+  - "지금 해야 할 일"과 "전체 미션 목록"을 분리한다.
+  - 온보딩 잠금은 막연한 disabled가 아니라 왜 잠겼고 무엇을 누르면 되는지 보여준다.
+- 메인 세션:
+  - 세션 단계: option/profile/start → active design session → review/complete를 layout state로 분리한다.
+  - 작업 영역은 canvas/editor/chat의 3개 핵심 축이 보이게 정리한다.
+  - 레퍼런스/아이디어/목업은 "에이전트가 생성한 산출물"이자 "사용자가 선택/편집하는 재료"로 보이게 한다.
+- 에이전트/어드민:
+  - researcher/admin이 빠르게 비교, 필터링, 원인 추적을 할 수 있도록 밀도 있는 table/detail 패턴을 사용한다.
+  - 사용자에게 불필요한 raw debug 정보는 admin-only로 유지한다.
+
+### 15.9 Micro-interaction Polish 체크리스트
+
+- [ ] hover state는 색 변화만이 아니라 border/shadow/translate 중 하나를 일관되게 사용
+- [ ] press state는 `scale(0.98)` 또는 명확한 active state를 짧게 제공
+- [ ] `transition-all` 사용 금지. 필요한 property만 지정
+- [ ] loading은 skeleton/spinner/progress를 상황별로 구분
+- [ ] 숫자/시간/카운트는 tabular numbers 적용
+- [ ] 긴 제목과 설명은 `text-wrap: balance` 또는 `pretty` 적용 여부 검토
+- [ ] nested card/button radius는 concentric하게 맞춤
+- [ ] icon-only button에는 tooltip과 accessible label 제공
+- [ ] enter/exit animation은 interruptible CSS transition 우선
+- [ ] 페이지 첫 로드에서 과한 animation을 실행하지 않음
+
+### 15.10 접근성 / 모바일 / 상태 검증
+
+- 접근성:
+  - [ ] 모든 interactive element에 keyboard focus 표시
+  - [ ] icon-only button에 `aria-label`
+  - [ ] Dialog/Sheet focus trap과 escape close 확인
+  - [ ] destructive action은 Alert Dialog 사용
+  - [ ] error message는 `role="alert"` 또는 적절한 live region 사용
+  - [ ] 색 대비 확인
+- 모바일:
+  - [ ] 360px, 390px, 430px, 768px, desktop viewport에서 확인
+  - [ ] 세션 화면은 패널을 탭/시트로 전환
+  - [ ] 긴 버튼 텍스트와 긴 미션 제목 overflow 확인
+  - [ ] canvas controls가 목업을 가리지 않는지 확인
+- 상태:
+  - [ ] loading
+  - [ ] empty
+  - [ ] error
+  - [ ] disabled
+  - [ ] saving
+  - [ ] streaming
+  - [ ] success/completed
+  - [ ] destructive confirmation
+
+### 15.11 구현 단계
+
+1. UX Audit
+   - [x] 각 route의 현재 소스 기반 구조와 주요 user flow 기록
+   - [ ] 각 route의 현재 screenshot 기록
+   - [x] 화면별 문제/개선안을 `dev_document.md` 또는 별도 issue에 정리
+2. Design Tokens
+   - [x] color/radius/spacing/type/focus/shadow 토큰 확정
+   - [x] `globals.css` 업데이트
+3. shadcn-style Foundation
+   - [x] Next 16/Tailwind v4 호환 확인
+   - [x] 최소 primitive component부터 도입
+   - [x] 기존 Phosphor icon 사용 정책 유지 또는 lucide 전환 범위 결정
+4. Product Component Refactor
+   - [x] 중복 UI를 product component로 추출
+   - [x] 큰 route file의 UI 책임을 단계적으로 분리
+5. Route Redesign
+   - [x] `/`
+   - [x] `/onboarding`
+   - [x] `/lobby`
+   - [ ] `/main/[missionId]` `[partially implemented]`
+   - [ ] `/agent` `[deferred]`
+   - [ ] `/admin` `[deferred]`
+6. Polish Pass
+   - [x] jakubkrehel checklist 적용
+   - [x] emilkowalski 관점으로 주요 화면 리뷰
+7. Verification
+   - [x] `npm run lint`
+   - [x] `npm run build`
+   - [ ] local dev server에서 desktop/mobile 시각 확인 `[blocked: existing Next dev lock/PID]`
+   - [ ] auth가 필요한 화면은 mock 불가 시 최소 public route와 static state를 먼저 확인
+
+### 15.12 리스크와 대응
+
+- shadcn/ui 도입이 Tailwind v4/Next 16과 충돌할 수 있다.
+  - 대응: 한 번에 대량 설치하지 않고 Button/Badge/Dialog 등 작은 primitive부터 검증한다.
+- 기존 route file이 커서 리팩터링 중 회귀가 발생할 수 있다.
+  - 대응: 화면 단위가 아니라 공통 컴포넌트 단위로 작게 추출하고, 동작 로직은 가능한 한 그대로 둔다.
+- 연구/관리 기능은 정보량이 많아 "예쁘지만 느린 UI"가 될 수 있다.
+  - 대응: admin은 card-heavy layout보다 table/detail/sheet 중심으로 유지한다.
+- Firebase auth와 외부 API 의존성 때문에 모든 상태를 로컬에서 재현하기 어렵다.
+  - 대응: loading/empty/error/readonly review state를 컴포넌트 단위로 먼저 검증한다.
+- 디자인 개선 중 memory/retrieval/debug 의미가 흐려질 수 있다.
+  - 대응: 사용자용 표현과 admin/debug 표현을 분리하고 raw 데이터는 숨기되 접근 가능하게 둔다.
+
+### 15.13 완료 기준
+
+- 모든 주요 route가 같은 토큰/컴포넌트 규칙을 사용한다.
+- 로그인/온보딩/로비/세션/에이전트/어드민의 primary action이 명확하다.
+- 공통 버튼, 입력, 배지, 탭, 다이얼로그, 시트, 툴팁, 로딩/빈/오류 상태가 일관된다.
+- 모바일에서 주요 화면이 깨지지 않고, 작업 화면은 패널 전환이 가능하다.
+- keyboard focus와 dialog 접근성이 기본 기준을 충족한다.
+- `npm run lint`와 `npm run build`가 통과한다.
+- 구현 후 이 문서의 `[active]` 항목을 `[implemented]` 또는 `[partially implemented]`로 갱신한다.
+
+### 15.14 UX Audit — 1차 소스 기반 점검 `[completed 2026-06-08]`
+
+#### Next 16 / Tailwind 사전 확인
+
+- 로컬 문서 확인:
+  - `node_modules/next/dist/docs/01-app/01-getting-started/03-layouts-and-pages.md`
+  - `node_modules/next/dist/docs/01-app/01-getting-started/05-server-and-client-components.md`
+  - `node_modules/next/dist/docs/01-app/01-getting-started/11-css.md`
+  - `node_modules/next/dist/docs/01-app/03-api-reference/02-components/link.md`
+- 확인한 기준:
+  - App Router page/layout 파일 구조는 현재 `src/app` 구조와 일치한다.
+  - `use client` 파일은 import tree 전체가 client bundle에 들어가므로, 공통 UI를 추출할 때 interactive component와 static component 경계를 작게 잡는다.
+  - Tailwind v4는 현재처럼 `@import "tailwindcss"`를 global CSS에서 import하고, 토큰은 `@theme inline` + CSS variable 중심으로 확장한다.
+  - `next/link`는 className/target 등 anchor props를 직접 받을 수 있으므로, 공통 `Button`의 `asChild` 또는 Link wrapper 도입 시 중복 `<a>` 패턴을 피한다.
+
+#### 전체 구조
+
+- 현재 주요 화면 라인 수:
+  - `/`: 91 lines
+  - `/onboarding`: 139 lines
+  - `/lobby`: 462 lines
+  - `/main/[missionId]`: 8,639 lines
+  - `/agent`: 391 lines
+  - `/admin`: 3,123 lines
+  - `MemoryClusterGraph`: 415 lines
+- 가장 큰 리스크는 `/main/[missionId]`와 `/admin`이 거대한 client component라는 점이다. UI 개선 전에 모든 로직을 옮기면 회귀 위험이 커지므로, 1차 refactor는 visual/product component 추출에 한정한다.
+- 반복되는 UI 패턴:
+  - `rounded-2xl`/`rounded-3xl` card, modal, input container가 많다.
+  - `bg-slate-*`, `text-slate-*`, `border-slate-*` 직접 지정이 대부분이다.
+  - focus style이 `focus:border-slate-400` 또는 `outline-none` 중심이라 keyboard focus 기준이 약하다.
+  - icon-only button 중 일부만 `aria-label`이 있다.
+  - loading/empty/error 표현이 화면별로 다르다.
+
+#### `/` 로그인
+
+- 좋은 점:
+  - 로그인 액션이 명확하고 loading/error 상태가 있다.
+  - error message에 `role="alert"`가 있다.
+- 문제:
+  - dark glass card가 온보딩과만 연결되고 로비/작업 화면의 light dashboard와 톤이 끊긴다.
+  - `rounded-3xl`, `rounded-2xl`, hover translate가 이후 화면과 통일되지 않는다.
+  - 실패 상태가 재시도 행동과 시각적으로 연결되지 않는다.
+- 개선 방향:
+  - 제품 전체 토큰을 적용한 compact auth layout으로 정리.
+  - Google login button을 공통 `Button` variant로 교체.
+  - loading spinner, disabled, error alert를 공통 패턴으로 맞춘다.
+
+#### `/onboarding`
+
+- 좋은 점:
+  - 사용자에게 전체 작업 흐름을 알려주는 4단계 안내가 있다.
+  - 완료 상태와 저장 중 상태가 분리되어 있다.
+- 문제:
+  - 실제 `/main/[missionId]`의 3단계 option/profile/start 흐름과 설명 카드가 완전히 같은 구조는 아니다.
+  - dark glass card와 nested rounded card가 많아 로비로 이동했을 때 제품 경험이 갈라진다.
+  - 저장 실패가 `alert()`에 의존한다.
+- 개선 방향:
+  - onboarding guide를 stepper 또는 checklist component로 분리.
+  - 완료/저장중/실패 상태를 Alert/Toast/Dialog 패턴으로 통일.
+  - auth 화면과 같은 shell을 쓰되, 로비와도 이어지는 light token을 우선 검토.
+
+#### `/lobby`
+
+- 좋은 점:
+  - onboarding mission과 일반 mission의 잠금 흐름이 구현되어 있다.
+  - mission status badge가 derived status로 분리되어 있다.
+  - user menu와 admin/agent entry가 있다.
+- 문제:
+  - "Agent Actions" 섹션이 미션 로비에서 가장 먼저 보이지만, 일반 사용자에게 primary task처럼 보이지 않을 수 있다.
+  - mission card 전체 click과 `리뷰 보기` nested button이 섞여 있어 keyboard/semantics 개선 여지가 있다.
+  - empty state는 있으나 loading/error state가 약하다.
+  - `rounded-3xl` card, menu, empty box가 많아 작업도구 UI치고 다소 부피가 크다.
+- 개선 방향:
+  - top summary: 오늘 할 일 / 진행중 / 완료 / 대기 미션 요약 추가 검토.
+  - `MissionCard`, `StatusBadge`, `UserMenu`, `AppTopbar` 추출.
+  - locked mission은 disabled opacity만이 아니라 reason + primary redirect action을 명확히 표시.
+  - card click 대신 명시적 action 영역 또는 accessible button/card pattern 적용.
+
+#### `/main/[missionId]`
+
+- 좋은 점:
+  - 세션 준비, 미션 선택, profile input, active session, review, memory impact graph까지 제품의 핵심 기능이 한 화면에 연결되어 있다.
+  - chat action chip, reference cite, mockup canvas controls, memory event timeline 등 연구/복기 기능이 풍부하다.
+- 문제:
+  - 8,639-line client component라 UI 변경 blast radius가 매우 크다.
+  - route 안에 markdown renderer, reference logic, mockup capture, canvas controls, chat timeline, memory graph overlay, modal, context menu가 모두 섞여 있다.
+  - 같은 버튼/칩/모달/패널 패턴이 파일 안에서 여러 스타일로 반복된다.
+  - `transition`, `hover:*`, `rounded-full`, `rounded-2xl`, `rounded-3xl`, raw color class가 혼재한다.
+  - mobile 대응은 일부 overlay와 `md:right-112` 같은 레이아웃이 있으나, 전체 작업 흐름을 mobile panel model로 명확히 분리하지는 않는다.
+  - 일부 custom modal은 dialog semantics/focus trap 없이 fixed overlay로 구현되어 있다.
+- 개선 방향:
+  - 1차로 로직 이동 없이 visual component만 추출:
+    - `SessionTopbar`
+    - `SessionStepper`
+    - `ReferenceCard`
+    - `IdeaEditor`
+    - `MockupCanvasToolbar`
+    - `ChatBubble`
+    - `ToolActionChip`
+    - `MemoryEventCard`
+    - `MemoryImpactPanel`
+  - modal/confirm은 shadcn `Dialog`/`AlertDialog` 도입 이후 순차 교체.
+  - mobile은 active session에서 `Workspace`, `Chat`, `Memory` tab 또는 sheet 기반 전환을 설계.
+  - canvas controls는 icon button + tooltip + aria-label 기준으로 정리.
+
+#### `/agent`
+
+- 좋은 점:
+  - cluster list/detail/graph가 비교적 명확한 2-column 구조다.
+  - empty state와 regenerate action이 있다.
+  - graph는 client-only dynamic import로 분리되어 있다.
+- 문제:
+  - user-facing memory view와 admin/debug view의 경계가 더 명확해야 한다.
+  - graph/list/detail 패널 style이 admin memory modal과 유사하지만 공통 컴포넌트가 아니다.
+  - regenerate action의 loading/error/success 피드백이 약하다.
+- 개선 방향:
+  - `MemoryClusterPanel`과 `MemoryClusterGraphShell` 공통화.
+  - regenerate는 Button loading + Toast feedback으로 통일.
+  - graph/detail/empty/loading state를 공통 memory UI 기준으로 맞춘다.
+
+#### `/admin`
+
+- 좋은 점:
+  - 미션/참여자/세션/메모리/retrieval/forgetting까지 researcher workflow에 필요한 기능이 들어 있다.
+  - table 기반 고밀도 정보 표현이 이미 일부 존재한다.
+- 문제:
+  - 3,123-line client component로 기능과 UI가 밀집되어 있다.
+  - form control, segmented tab, table, modal, filter, destructive action 스타일이 반복된다.
+  - 일부 destructive action은 alert/confirm 또는 custom UI로 흩어져 있을 가능성이 있어 AlertDialog 기준 정리가 필요하다.
+  - admin debug 정보가 많아 기본 task와 raw 관측 정보의 위계가 흐려질 수 있다.
+- 개선 방향:
+  - `AdminShell`, `AdminTopbar`, `AdminDataTable`, `AdminFilterBar`, `AdminSectionHeader`, `DangerActionButton` 추출.
+  - memory modal은 `Sheet` 또는 full-screen `Dialog` 패턴으로 정리.
+  - destructive action은 AlertDialog + scope text + disabled/loading state로 통일.
+  - raw prompt/json/debug는 collapsible/code viewer로 분리.
+
+#### 우선순위 결정
+
+1. `globals.css` 디자인 토큰 확장과 공통 class/utility 기반 마련.
+2. shadcn-style primitive 중 dependency가 적은 `Button`, `Badge`, `Input`, `Textarea`, `Label`부터 수동 도입 또는 CLI 도입 검토.
+3. `/lobby`에서 `AppTopbar`, `UserMenu`, `MissionCard`, `StatusBadge`를 먼저 추출해 작은 화면에서 토큰을 검증.
+4. `/main/[missionId]`는 바로 전체 재설계하지 않고 `ToolActionChip`, `ChatBubble`, `ReferenceCard`처럼 isolated component부터 추출.
+5. Dialog/Sheet/Tooltip/AlertDialog는 Radix dependency가 필요하므로 shadcn 호환 확인 후 한 번에 foundation으로 도입.
+
+### 15.15 Design Token / Foundation Implementation Log `[partially implemented 2026-06-08]`
+
+- `src/app/globals.css`
+  - shadcn-style CSS variables 추가: background, foreground, card, popover, primary, secondary, muted, accent, destructive, success, warning, border, input, ring.
+  - surface token 추가: `surface-page`, `surface-panel`, `surface-elevated`.
+  - radius token 추가: `xs`, `sm`, `md`, `lg`, `xl`.
+  - shadow token 추가: `panel`, `popover`, `dialog`.
+  - Tailwind v4 `@theme inline`에 color/radius/shadow/font token 연결.
+  - 전역 `:focus-visible` outline 추가.
+  - font smoothing과 text rendering 기준 추가.
+- `src/app/layout.tsx`
+  - `next/font/google`의 Geist/Geist Mono 의존 제거.
+  - 이유: 빌드 환경에서 Google Fonts fetch가 실패하면 production build가 깨짐.
+  - root `lang`을 `ko`로 변경.
+- `src/lib/utils.ts`
+  - `cn()` 유틸 추가.
+- `src/components/ui/*`
+  - dependency-free shadcn-style primitive 5종 추가:
+    - `button.tsx`
+    - `badge.tsx`
+    - `input.tsx`
+    - `textarea.tsx`
+    - `label.tsx`
+- 1차 적용 화면:
+  - `/`: Google login button을 공통 `Button`으로 교체.
+  - `/onboarding`: 완료 버튼과 로비 링크를 `Button`/`buttonVariants`로 교체.
+  - `/lobby`: user menu action, agent action link, mission status/device/duration badge, review action에 공통 primitive 적용.
+- 검증:
+  - `PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin /opt/homebrew/bin/npm run lint`
+    - 통과. 기존 warning 19개 유지.
+  - `PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin /opt/homebrew/bin/npm run build`
+    - 통과. Turbopack NFT tracing warning 1개 유지.
+    - 최초 sandbox build는 internal port binding 제한으로 실패했으며, escalated build에서 통과.
+- Foundation 후속 결정 `[completed in 15.16]`:
+  - `components.json` 도입 완료.
+  - Tooltip/Dialog/AlertDialog/Sheet/Tabs/Select/Dropdown/Skeleton/ScrollArea/Sonner를 shadcn CLI로 추가 완료.
+  - 기존 화면은 Phosphor icon을 유지하고, shadcn registry component 내부 필요분만 lucide를 허용하기로 결정.
+
+### 15.16 shadcn/ui Official Initialization Log `[implemented 2026-06-08]`
+
+- 공식 문서 확인:
+  - `https://ui.shadcn.com/docs/installation/next`
+  - `https://ui.shadcn.com/docs/tailwind-v4`
+  - `https://ui.shadcn.com/docs/cli`
+- CLI 확인:
+  - `npx shadcn@latest info`
+  - 프로젝트를 `Next.js (next-app)`, `srcDirectory: Yes`, `rsc: Yes`, `tailwindVersion: v4`, `tailwindCss: src/app/globals.css`, `importAlias: @`로 정상 인식.
+- 초기화:
+  - 실행: `npx shadcn@latest init --template next --base radix --preset nova --css-variables --no-reinstall --no-pointer`
+  - 생성: `components.json`
+  - 설치 dependency:
+    - `class-variance-authority`
+    - `clsx`
+    - `lucide-react`
+    - `radix-ui`
+    - `shadcn`
+    - `tailwind-merge`
+    - `tw-animate-css`
+  - `globals.css`에 `tw-animate-css`, `shadcn/tailwind.css`, shadcn OKLCH token, chart/sidebar token 추가.
+- 보정:
+  - CLI init가 `next/font/google`의 Geist를 다시 추가했으나, network-restricted build 안정성을 위해 제거하고 Pretendard/CSS token 방식 유지.
+  - root `lang="ko"` 유지.
+  - `TooltipProvider`를 root layout에 추가.
+  - shadcn 공식 `Button`에 프로젝트 호환 alias 추가:
+    - `size="md"`
+    - `size="lg"`를 기존 적용 화면에 맞는 높이로 조정
+    - button element 기본 `type="button"` 보강
+  - shadcn 공식 `Badge`에 프로젝트 상태 variant 추가:
+    - `success`
+    - `warning`
+- 추가한 공식 컴포넌트:
+  - `badge`
+  - `input`
+  - `textarea`
+  - `label`
+  - `skeleton`
+  - `separator`
+  - `tooltip`
+  - `dialog`
+  - `alert-dialog`
+  - `sheet`
+  - `tabs`
+  - `select`
+  - `dropdown-menu`
+  - `scroll-area`
+  - `sonner`
+- 아이콘 정책:
+  - `components.json`의 `iconLibrary`는 shadcn preset에 맞춰 `lucide`로 유지.
+  - 기존 앱 화면은 `@phosphor-icons/react`를 계속 사용한다.
+  - 새 shadcn registry component가 lucide를 요구하는 경우에만 해당 component 내부에서 lucide를 사용한다.
+- 검증:
+  - `PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin /opt/homebrew/bin/npm run lint`
+    - 통과. 기존 warning 19개 유지.
+  - `PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin /opt/homebrew/bin/npm run build`
+    - 통과. 기존 Turbopack NFT tracing warning 1개 유지.
+- 다음 작업:
+  - `/lobby` product component 추출:
+    - `AppTopbar`
+    - `UserMenu`
+    - `MissionCard`
+    - `StatusBadge`
+  - 이후 `/main/[missionId]`의 isolated component(`ToolActionChip`, `ChatBubble`, `ReferenceCard`) 추출.
+
+### 15.17 Color Mode Policy `[implemented 2026-06-08]`
+
+- 문제:
+  - shadcn init 이후 `globals.css`에 OS 다크모드 자동 토큰 전환(`@media (prefers-color-scheme: dark)`)과 `.dark` token block이 함께 존재했다.
+  - 사용자의 OS/theme 상태에 따라 `border`, `input`, `card`, `background` token이 어둡게 바뀌어 라이트 화면 안에 다크 border line이 섞여 보일 수 있었다.
+- 결정:
+  - 현재 제품 UI는 전체 라이트 모드로 고정한다.
+  - 다크모드는 이번 UX/UI 개선 범위에서 제외한다.
+  - 추후 다크모드를 지원하려면 별도 theme toggle과 `.dark` root class 제어를 명시적으로 설계한 뒤 진행한다.
+- 구현:
+  - `src/app/globals.css`에서 `@media (prefers-color-scheme: dark)` token override 제거.
+  - `src/app/globals.css`에서 `.dark` token block 제거.
+  - shadcn component 내부의 `dark:` utility는 `.dark` class가 없으면 적용되지 않으므로 현재는 비활성 상태로 둔다.
+  - `/` 로그인 화면의 명시 dark background/card/text class를 light token 기반 UI로 변경.
+  - `/onboarding` 화면의 명시 dark background/card/text class를 light token 기반 UI로 변경.
+- 검증:
+  - `npm run lint` 통과. 기존 warning 19개 유지.
+  - `npm run build` 통과. 기존 Turbopack NFT tracing warning 1개 유지.
+
+### 15.18 Product Component / Route Polish Log `[partially implemented 2026-06-08]`
+
+- `/lobby` product component 추출:
+  - `src/components/lobby/app-topbar.tsx`
+  - `src/components/lobby/user-menu.tsx`
+  - `src/components/lobby/mission-card.tsx`
+  - `src/components/lobby/status-badge.tsx`
+  - `src/components/lobby/lobby-summary.tsx`
+- `/lobby` UX 개선:
+  - mission card 전체 클릭을 제거하고 명시적인 `시작` / `다시 열기` / `리뷰 보기` action으로 정리.
+  - 온보딩 잠금 상태를 `잠김` 버튼과 안내 문구로 분리.
+  - summary dashboard 추가: 전체, 대기, 진행중, 완료, 시간 초과.
+  - mission loading skeleton 추가.
+  - mission error state 추가.
+  - top hero를 `Agent Actions` 중심에서 `미션 로비` 중심으로 재구성.
+- `/onboarding` product component 추출:
+  - `src/components/onboarding/onboarding-steps.tsx`
+  - `alert()` 기반 실패 피드백을 Sonner `toast.error()`로 교체.
+- `/main/[missionId]` isolated component 추출:
+  - `src/components/session/tool-action-chip.tsx`
+  - `src/components/memory/memory-score-bar.tsx`
+  - `src/components/session/timeline-event-card.tsx`
+  - chat action block chip의 token/radius/border 기준을 shadcn foundation에 맞춤.
+  - review timeline의 activity/memory event card를 분리하고 token 기반 border/card/text 규칙으로 정리.
+- `/agent` product component 추출:
+  - `src/components/memory/memory-cluster-types.ts`
+  - `src/components/memory/memory-cluster-list.tsx`
+  - `src/components/memory/memory-cluster-empty-state.tsx`
+  - `src/components/memory/memory-cluster-detail.tsx`
+  - cluster tab을 shadcn `Tabs`로 교체.
+  - regenerate 성공/실패 피드백을 Sonner toast로 교체.
+- `/admin` 피드백 정리:
+  - mission delete, user mission record delete, onboarding settings save, memory delete/load, session backup/delete 결과를 Sonner toast로 통일.
+  - 앱/컴포넌트 범위의 `alert()` 제거.
+- 전역 피드백:
+  - `src/app/layout.tsx`에 `Toaster` 추가.
+  - `src/components/ui/sonner.tsx`는 라이트 모드로 고정.
+  - `next-themes` dependency 제거.
+- 보류한 항목:
+  - `/main/[missionId]` 전체 layout redesign은 8,500+ line client route라 이번 pass에서는 isolated component 추출까지만 진행.
+  - `/admin` 전체 재구성은 3,000+ line admin route의 regression risk가 커서 별도 pass로 보류.
+  - destructive `confirm()`은 15.20에서 shadcn `AlertDialog`로 전환 완료.
+  - screenshot 기록은 기존 Next dev lock/PID 때문에 보류. `npm run dev -- -p 3002`도 같은 프로젝트 lock을 감지하고 종료됨.
+- 검증:
+  - `PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin /opt/homebrew/bin/npm run lint`
+    - 통과. 기존 warning 19개 유지.
+  - `PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin /opt/homebrew/bin/npm run build`
+    - 통과. 기존 Turbopack NFT tracing warning 1개 유지.
+
+### 15.19 Continuation Pass — Agent/Admin/Main `[implemented 2026-06-08]`
+
+- `/agent`
+  - cluster list/detail/empty state를 product component로 분리.
+  - graph/detail 전환을 shadcn `Tabs`로 정리.
+  - 재생성 액션에 success/error toast를 추가.
+  - page/card/border/text 색을 라이트 토큰 기반으로 변경.
+- `/main/[missionId]`
+  - review timeline의 activity event card와 memory event card를 `TimelineActivityEventCard`, `TimelineMemoryEventCard`로 분리.
+  - 세션 종료 실패 `alert()`를 `toast.error()`로 교체.
+- `/admin`
+  - 브라우저 `alert()` 기반 피드백을 모두 Sonner toast로 교체.
+  - destructive action 확인은 15.20에서 shadcn `AlertDialog`로 scope text와 함께 전환 완료.
+- 남은 큰 항목:
+  - `/main/[missionId]` layout state 재설계.
+  - `/admin` table/detail/sheet 기반 재구성.
+  - screenshot/mobile 시각 검증. 현재 기존 Next dev lock/PID 때문에 보류.
+- 검증:
+  - `PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin /opt/homebrew/bin/npm run lint`
+    - 통과. 기존 warning 19개 유지.
+  - `PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin /opt/homebrew/bin/npm run build`
+    - 통과. 기존 Turbopack NFT tracing warning 1개 유지.
+
+### 15.20 Destructive Action Dialog Pass `[implemented 2026-06-08]`
+
+- 목적:
+  - 브라우저 기본 `confirm()`을 제거하고, 제품 토큰과 접근성 패턴을 따르는 shadcn `AlertDialog`로 통일한다.
+- `/admin`
+  - mission delete, participant mission records delete, session backup/delete를 하나의 `DestructiveAdminAction` state로 통합.
+  - Dialog 문구에 삭제 scope를 명시:
+    - 미션 삭제는 미션 목록 제거.
+    - 참여자 미션 기록 삭제는 해당 미션 세션과 하위 기록만 삭제.
+    - 세션 백업/삭제는 Storage 파일 포함, 메모리 컬렉션 유지.
+  - 확인 버튼은 `destructive` variant, 취소 버튼은 `outline` variant 사용.
+- `/main/[missionId]`
+  - idea delete, design/mockup delete, reference delete를 하나의 `DestructiveSessionAction` state로 통합.
+  - 삭제 요청 함수와 실제 실행 함수를 분리:
+    - `requestDeleteIdea` / `performDeleteIdea`
+    - `requestDeleteDesign` / `performDeleteDesign`
+    - `requestDeleteReference` / `performDeleteReference`
+  - 삭제 전 Dialog에서 연결된 목업, 삭제 범위, 세션 활동/메모리 draft 기록 여부를 설명.
+- 검증:
+  - `rg "confirm\\(" src/app/admin/page.tsx 'src/app/main/[missionId]/page.tsx' src/app/agent/page.tsx -n`
+    - 결과 없음.
+  - `PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin /opt/homebrew/bin/npm run lint`
+    - 통과. warning 18개 유지.
+  - `PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin /opt/homebrew/bin/npm run build`
+    - 통과. 기존 Turbopack NFT tracing warning 1개 유지.
+- 남은 큰 항목:
+  - `/admin` table/detail/sheet 기반 재구성.
+  - `/main/[missionId]` layout state 재설계.
+  - mobile/screenshot 시각 검증. 현재 기존 Next dev lock/PID 때문에 보류.
+
+### 15.21 Lobby Status Bugfix — Start Button Not Clicked But Timed Out `[implemented 2026-06-08]`
+
+- 증상:
+  - 사용자가 세션 시작 버튼을 누르지 않았는데 로비에서 미션이 `시간 초과`로 표시되는 경우가 있었다.
+- 원인:
+  - `/main/[missionId]`에서 옵션을 선택하면 `selectedOptionId`, `missionTitle`, `missionBrief`가 먼저 저장된다.
+  - 이 시점에는 아직 시작 버튼을 누르지 않았으므로 `timerStartedAt`은 `null`이다.
+  - `/lobby`의 `missionProgress()`는 `selectedOptionId`만 있어도 `hasActivity=true`로 판단했다.
+  - 이후 `derivedStatus()`가 `hasActivity=true`, `timerStartedAt=null`, `durationMinutes>0`인 상태를 `시간 초과`로 분류했다.
+- 수정:
+  - `/lobby`에서 `hasActivity=true`여도 `timerStartedAt`이 없으면 `준비중`으로 표시한다.
+  - summary의 `대기` 카운트는 `대기 + 준비중`을 포함한다.
+  - `/main/[missionId]` 저장 시 시작 전 snapshot은 `status: "draft"`, 시작 후 snapshot은 `status: "active"`로 저장한다.
+  - 옵션 선택 직후 저장에도 `status: "draft"`를 명시한다.
+- 검증:
+  - `npm run lint` 통과. warning 18개 유지.
+  - `npm run build` 통과. 기존 Turbopack NFT tracing warning 1개 유지.

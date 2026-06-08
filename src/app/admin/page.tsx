@@ -13,6 +13,7 @@ import {
   PencilSimpleIcon,
   UsersThreeIcon,
 } from "@phosphor-icons/react";
+import { toast } from "sonner";
 import { getIdToken, onAuthStateChanged } from "firebase/auth";
 import {
   collection,
@@ -26,6 +27,16 @@ import {
 } from "firebase/firestore";
 import { firebaseAuth, db } from "@/lib/firebase";
 import { isAdminEmail } from "@/lib/admin";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 const MemoryClusterGraph = dynamic(() => import("./MemoryClusterGraph"), {
   ssr: false,
@@ -98,6 +109,16 @@ type MemoryViewTab =
   | "forgetting"
   | "archived";
 type MemoryClusterViewTab = "graph" | "detail";
+type DestructiveAdminAction =
+  | { type: "mission"; missionId: string; title: string }
+  | {
+      type: "participant-records";
+      participant: Participant;
+      missionId: string;
+      label: string;
+    }
+  | { type: "all-memory"; userId: string; version: string }
+  | { type: "sessions"; user: AdminUser; label: string };
 
 type MemoryCluster = {
   id: string;
@@ -426,6 +447,8 @@ export default function AdminPage() {
     useState<OnboardingSettings>(defaultOnboardingSettings);
   const [isSavingOnboardingSettings, setIsSavingOnboardingSettings] =
     useState(false);
+  const [destructiveAction, setDestructiveAction] =
+    useState<DestructiveAdminAction | null>(null);
 
   useEffect(() => {
     return onAuthStateChanged(firebaseAuth, (user) => {
@@ -454,9 +477,22 @@ export default function AdminPage() {
     };
   }, [memoryModal]);
 
+  const requestDeleteMission = (mission: Mission) => {
+    setDestructiveAction({
+      type: "mission",
+      missionId: mission.id,
+      title: mission.title,
+    });
+  };
+
   const deleteMission = async (id: string) => {
-    if (!confirm("미션을 삭제할까요?")) return;
-    await deleteDoc(doc(db, "missions", id));
+    try {
+      await deleteDoc(doc(db, "missions", id));
+      toast.success("미션을 삭제했어요.");
+    } catch (error) {
+      console.error("[admin] mission delete failed", error);
+      toast.error("미션 삭제에 실패했습니다.");
+    }
   };
 
   const startEdit = (mission: Mission) => {
@@ -524,25 +560,27 @@ export default function AdminPage() {
     setParticipants(adminUsers);
   };
 
-  const deleteUserData = async (participant: Participant) => {
+  const requestDeleteUserData = (participant: Participant) => {
     const targetMissionId = participantsMissionId;
     if (!targetMissionId) {
-      alert("삭제할 미션 정보가 없습니다.");
+      toast.error("삭제할 미션 정보가 없습니다.");
       return;
     }
     const label =
       participant.displayName ?? participant.email ?? participant.id;
-    if (
-      !confirm(
-        `${label} 사용자의 ${missionTitle(targetMissionId)} 기록만 삭제할까요?\n\n해당 미션 세션과 하위 memoryDrafts/reviewTurns를 삭제합니다. 유저 정보, 장기 메모리, 다른 미션 기록은 유지됩니다.`,
-      )
-    )
-      return;
+    setDestructiveAction({
+      type: "participant-records",
+      participant,
+      missionId: targetMissionId,
+      label,
+    });
+  };
 
+  const deleteUserData = async (participant: Participant, targetMissionId: string) => {
     try {
       const currentUser = firebaseAuth.currentUser;
       if (!currentUser) {
-        alert("관리자 인증 정보가 없습니다. 다시 로그인해주세요.");
+        toast.error("관리자 인증 정보가 없습니다. 다시 로그인해주세요.");
         return;
       }
       const token = await getIdToken(currentUser, true);
@@ -555,22 +593,21 @@ export default function AdminPage() {
       );
       if (!res.ok) {
         const data = await res.json().catch(() => null);
-        alert(data?.error ?? "유저 데이터 삭제에 실패했습니다.");
+        toast.error(data?.error ?? "유저 데이터 삭제에 실패했습니다.");
         return;
       }
       const data = await res.json().catch(() => null);
-      alert(
-        [
-          "미션 기록 삭제가 완료됐습니다.",
-          `삭제된 세션: ${data?.deletedSessionMissions ?? 0}개`,
-          `삭제된 참여 기록: ${data?.deletedParticipantRecords ?? 0}개`,
-          `삭제된 memoryDrafts: ${data?.deletedMemoryDrafts ?? 0}개`,
-          `삭제된 reviewTurns: ${data?.deletedReviewTurns ?? 0}개`,
-        ].join("\n"),
-      );
+      toast.success("미션 기록 삭제가 완료됐습니다.", {
+        description: [
+          `세션 ${data?.deletedSessionMissions ?? 0}개`,
+          `참여 기록 ${data?.deletedParticipantRecords ?? 0}개`,
+          `memoryDrafts ${data?.deletedMemoryDrafts ?? 0}개`,
+          `reviewTurns ${data?.deletedReviewTurns ?? 0}개`,
+        ].join(" · "),
+      });
     } catch (error) {
       console.error("[admin] user delete failed", error);
-      alert("유저 데이터 삭제 중 오류가 발생했습니다.");
+      toast.error("유저 데이터 삭제 중 오류가 발생했습니다.");
       return;
     }
 
@@ -678,7 +715,7 @@ export default function AdminPage() {
   const saveOnboardingSettings = async () => {
     const token = await getAdminToken();
     if (!token) {
-      alert("관리자 인증 정보가 없습니다. 다시 로그인해주세요.");
+      toast.error("관리자 인증 정보가 없습니다. 다시 로그인해주세요.");
       return;
     }
     setIsSavingOnboardingSettings(true);
@@ -696,16 +733,16 @@ export default function AdminPage() {
         throw new Error(data?.error ?? `온보딩 설정 저장 실패 (${res.status})`);
       }
       await loadOnboardingSettings();
+      toast.success("온보딩 설정을 저장했어요.");
     } catch (error) {
       console.error("[admin] onboarding settings save failed", error);
-      alert("온보딩 설정 저장에 실패했습니다.");
+      toast.error("온보딩 설정 저장에 실패했습니다.");
     } finally {
       setIsSavingOnboardingSettings(false);
     }
   };
 
   const deleteAllMemory = async (userId: string, version: string) => {
-    if (!confirm(`v${version} 메모리를 전체 삭제할까요?`)) return;
     const token = await getAdminToken();
     if (!token) return;
     setIsDeletingMemory(true);
@@ -719,9 +756,10 @@ export default function AdminPage() {
       );
       if (!res.ok) throw new Error("삭제 실패");
       setMemoryModal(null);
+      toast.success(`v${version} 메모리를 삭제했어요.`);
     } catch (e) {
-      alert("메모리 삭제에 실패했습니다.");
       console.error(e);
+      toast.error("메모리 삭제에 실패했습니다.");
     } finally {
       setIsDeletingMemory(false);
     }
@@ -762,22 +800,19 @@ export default function AdminPage() {
         counts,
       });
     } catch (e) {
-      alert("메모리를 불러오지 못했습니다.");
       console.error(e);
+      toast.error("메모리를 불러오지 못했습니다.");
     } finally {
       setIsLoadingMemory(false);
     }
   };
 
-  const backupAndDeleteSessions = async (user: AdminUser) => {
+  const requestBackupAndDeleteSessions = (user: AdminUser) => {
     const label = user.displayName ?? user.email ?? user.id;
-    if (
-      !confirm(
-        `${label}의 세션 데이터와 Storage 파일을 백업한 뒤 삭제할까요?\n\n메모리 컬렉션은 삭제하지 않습니다.`,
-      )
-    ) {
-      return;
-    }
+    setDestructiveAction({ type: "sessions", user, label });
+  };
+
+  const backupAndDeleteSessions = async (user: AdminUser) => {
     const token = await getAdminToken();
     if (!token) return;
     setDeletingSessionsUserId(user.id);
@@ -792,21 +827,17 @@ export default function AdminPage() {
       });
       const data = await res.json().catch(() => null);
       if (!res.ok) throw new Error(data?.error ?? "세션 삭제 실패");
-      alert(
-        [
-          "백업 후 세션 삭제가 완료됐습니다.",
-          `백업 경로: ${data.backupPath}`,
-          `삭제된 세션: ${data.deletedSessionMissions ?? 0}개`,
-          `삭제된 참여 기록: ${data.deletedParticipantRecords ?? 0}개`,
-          `삭제된 memoryDrafts: ${data.deletedMemoryDrafts ?? 0}개`,
-          `삭제된 reviewTurns: ${data.deletedReviewTurns ?? 0}개`,
-          `삭제된 Storage 파일: ${data.deletedStorageFiles ?? 0}개`,
-        ].join("\n"),
-      );
+      toast.success("백업 후 세션 삭제가 완료됐습니다.", {
+        description: [
+          `세션 ${data.deletedSessionMissions ?? 0}개`,
+          `참여 기록 ${data.deletedParticipantRecords ?? 0}개`,
+          `Storage ${data.deletedStorageFiles ?? 0}개`,
+        ].join(" · "),
+      });
       await loadUsers();
     } catch (e) {
-      alert("세션 백업/삭제에 실패했습니다.");
       console.error(e);
+      toast.error("세션 백업/삭제에 실패했습니다.");
     } finally {
       setDeletingSessionsUserId(null);
     }
@@ -1381,10 +1412,84 @@ export default function AdminPage() {
     await navigator.clipboard.writeText(JSON.stringify(payload, null, 2));
   };
 
+  const destructiveDialogCopy = destructiveAction
+    ? destructiveAction.type === "mission"
+      ? {
+          title: "미션을 삭제할까요?",
+          description: `${destructiveAction.title} 미션이 목록에서 제거됩니다. 참여자 데이터와 연결된 세션은 이 작업에서 삭제하지 않습니다.`,
+          actionLabel: "미션 삭제",
+        }
+      : destructiveAction.type === "participant-records"
+        ? {
+            title: "미션 기록을 삭제할까요?",
+            description: `${destructiveAction.label} 사용자의 ${missionTitle(destructiveAction.missionId)} 기록만 삭제합니다. 해당 미션 세션과 하위 memoryDrafts/reviewTurns를 삭제하며, 유저 정보와 다른 미션 기록은 유지됩니다.`,
+            actionLabel: "기록 삭제",
+          }
+        : destructiveAction.type === "all-memory"
+          ? {
+              title: "메모리를 전체 삭제할까요?",
+              description: `선택한 사용자의 v${destructiveAction.version} 메모리를 전체 삭제합니다. 이 작업은 되돌릴 수 없습니다.`,
+              actionLabel: "메모리 삭제",
+            }
+          : {
+              title: "세션 데이터를 백업 후 삭제할까요?",
+              description: `${destructiveAction.label}의 세션 데이터와 Storage 파일을 백업한 뒤 삭제합니다. 메모리 컬렉션은 삭제하지 않습니다.`,
+              actionLabel: "백업 후 삭제",
+            }
+    : null;
+
+  const runDestructiveAction = async () => {
+    if (!destructiveAction) return;
+    const action = destructiveAction;
+    setDestructiveAction(null);
+    if (action.type === "mission") {
+      await deleteMission(action.missionId);
+      return;
+    }
+    if (action.type === "participant-records") {
+      await deleteUserData(action.participant, action.missionId);
+      return;
+    }
+    if (action.type === "all-memory") {
+      await deleteAllMemory(action.userId, action.version);
+      return;
+    }
+    await backupAndDeleteSessions(action.user);
+  };
+
   if (!ready) return null;
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900">
+      <AlertDialog
+        open={Boolean(destructiveAction)}
+        onOpenChange={(open) => {
+          if (!open) setDestructiveAction(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {destructiveDialogCopy?.title ?? "삭제할까요?"}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {destructiveDialogCopy?.description}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>취소</AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              onClick={(event) => {
+                event.preventDefault();
+                void runDestructiveAction();
+              }}
+            >
+              {destructiveDialogCopy?.actionLabel ?? "삭제"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
       {/* Memory modal */}
       {memoryModal && (
         <div
@@ -2701,7 +2806,7 @@ export default function AdminPage() {
                       </button>
                       <button
                         type="button"
-                        onClick={() => backupAndDeleteSessions(user)}
+                        onClick={() => requestBackupAndDeleteSessions(user)}
                         disabled={deletingSessionsUserId === user.id}
                         className="text-[11px] font-semibold text-red-400 hover:text-red-600 disabled:text-slate-300"
                       >
@@ -2998,7 +3103,7 @@ export default function AdminPage() {
                             <PencilSimpleIcon size={16} />
                           </button>
                           <button
-                            onClick={() => deleteMission(mission.id)}
+                            onClick={() => requestDeleteMission(mission)}
                             className="rounded-full p-1.5 text-slate-300 transition hover:bg-red-50 hover:text-red-400"
                             title="삭제"
                           >
@@ -3101,7 +3206,7 @@ export default function AdminPage() {
                         </Link>
                         <button
                           type="button"
-                          onClick={() => deleteUserData(p)}
+                          onClick={() => requestDeleteUserData(p)}
                           className="rounded-full p-1.5 text-slate-300 transition hover:bg-red-50 hover:text-red-500"
                           title={
                             p.isAdmin ? "관리자 미션 기록 삭제" : "미션 기록 삭제"
