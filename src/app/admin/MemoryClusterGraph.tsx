@@ -32,6 +32,7 @@ type ClusterableMemoryItem = {
   output?: string;
   link?: string;
   action: string;
+  sourceType?: string | null;
   weight?: number | null;
   embedding?: number[];
   timestamp: number;
@@ -312,6 +313,20 @@ export default function MemoryClusterGraph({
     });
     const clusterIndexById = new Map(clusters.map((cluster, index) => [cluster.id, index] as const));
     const projection = projectEmbeddings(items);
+    const weights = items
+      .map((item) => item.weight)
+      .filter((weight): weight is number => weight != null && Number.isFinite(weight));
+    const minWeight = weights.length ? Math.min(...weights) : null;
+    const maxWeight = weights.length ? Math.max(...weights) : null;
+    const weightRange =
+      minWeight != null && maxWeight != null ? maxWeight - minWeight : 0;
+    const radiusForWeight = (weight: number | null | undefined) => {
+      if (weight == null || !Number.isFinite(weight) || weightRange < 0.02 || minWeight == null) {
+        return 5.5;
+      }
+      const normalized = (weight - minWeight) / weightRange;
+      return 4.2 + Math.sqrt(Math.min(1, Math.max(0, normalized))) * 6.8;
+    };
     const sourcePoints = items.map((item) => {
       const cluster = clusterByItemId.get(item.id) ?? null;
       const clusterId = cluster?.id ?? "unclustered";
@@ -331,7 +346,7 @@ export default function MemoryClusterGraph({
         rawY: projected.y,
         x: 0,
         y: 0,
-        radius: item.weight ? Math.max(4.5, Math.min(8.5, 4 + item.weight * 4)) : 5,
+        radius: radiusForWeight(item.weight),
         hasEmbedding: projected.hasEmbedding,
       };
     });

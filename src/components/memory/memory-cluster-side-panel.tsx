@@ -22,6 +22,46 @@ function formatDate(timestamp: number) {
   });
 }
 
+function formatWeight(weight: number | null | undefined) {
+  if (weight == null || !Number.isFinite(weight)) return null;
+  return `${Math.round(weight * 100)}%`;
+}
+
+function sourceLabel(sourceType: string | null | undefined) {
+  if (sourceType === "profile") return "Profile";
+  if (sourceType === "interaction") return "Interaction";
+  return "Unknown source";
+}
+
+function sourceBadgeClass(sourceType: string | null | undefined) {
+  if (sourceType === "profile") {
+    return "border-sky-200 bg-sky-50 text-sky-700";
+  }
+  if (sourceType === "interaction") {
+    return "border-slate-300 bg-slate-100 text-slate-700";
+  }
+  return "border-slate-200 bg-slate-50 text-slate-500";
+}
+
+function MemoryField({
+  label,
+  value,
+}: {
+  label: string;
+  value: string;
+}) {
+  return (
+    <div className="rounded-lg border border-border bg-background px-3 py-2">
+      <p className="mb-1 text-[10px] font-semibold uppercase text-muted-foreground">
+        {label}
+      </p>
+      <p className="wrap-anywhere text-xs leading-relaxed text-foreground">
+        {value}
+      </p>
+    </div>
+  );
+}
+
 export function MemoryClusterSidePanel({
   cluster,
   items,
@@ -88,6 +128,7 @@ export function MemoryClusterSidePanel({
                   const memory =
                     memories.find((candidate) => candidate.id === item.id) ??
                     null;
+                  const weightLabel = formatWeight(item.weight);
                   return (
                     <button
                       key={item.id}
@@ -108,15 +149,34 @@ export function MemoryClusterSidePanel({
                         />
                         <div className="min-w-0 flex-1">
                           <div className="flex items-start gap-2">
-                            <p
-                              className={`min-w-0 flex-1 leading-relaxed ${
-                                selected
-                                  ? "wrap-anywhere font-semibold text-slate-950"
-                                  : "line-clamp-2 text-foreground"
-                              }`}
-                            >
-                              {item.semantic || item.episodic || item.input}
-                            </p>
+                            <div className="min-w-0 flex-1">
+                              <div className="mb-1 flex flex-wrap items-center gap-1.5">
+                                {item.semantic ? (
+                                  <Badge
+                                    variant="secondary"
+                                    className="rounded-full border-emerald-200 bg-emerald-50 text-[10px] text-emerald-700"
+                                  >
+                                    Semantic summary
+                                  </Badge>
+                                ) : (
+                                  <Badge
+                                    variant="secondary"
+                                    className="rounded-full border-slate-200 bg-slate-50 text-[10px] text-slate-500"
+                                  >
+                                    No semantic summary
+                                  </Badge>
+                                )}
+                              </div>
+                              <p
+                                className={`min-w-0 leading-relaxed ${
+                                  selected
+                                    ? "wrap-anywhere font-semibold text-slate-950"
+                                    : "line-clamp-2 text-foreground"
+                                }`}
+                              >
+                                {item.episodic || item.input || item.semantic}
+                              </p>
+                            </div>
                             {selected ? (
                               <Badge
                                 variant="secondary"
@@ -130,6 +190,12 @@ export function MemoryClusterSidePanel({
                       </div>
                       <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
                         {item.timestamp ? <span>{formatDate(item.timestamp)}</span> : null}
+                        <Badge
+                          variant="secondary"
+                          className={`rounded-full ${sourceBadgeClass(item.sourceType)}`}
+                        >
+                          {sourceLabel(item.sourceType)}
+                        </Badge>
                         {item.action ? (
                           <Badge
                             variant="warning"
@@ -138,9 +204,14 @@ export function MemoryClusterSidePanel({
                             {item.action}
                           </Badge>
                         ) : null}
-                        {item.embedding?.length ? (
+                        {!item.embedding?.length ? (
                           <Badge variant="secondary" className="rounded-full">
-                            embedding
+                            Fallback position
+                          </Badge>
+                        ) : null}
+                        {weightLabel ? (
+                          <Badge variant="secondary" className="rounded-full">
+                            weight {weightLabel}
                           </Badge>
                         ) : null}
                         {memory?.archivedAt ? (
@@ -151,15 +222,31 @@ export function MemoryClusterSidePanel({
                       </div>
                       {selected ? (
                         <div className="mt-3 space-y-3">
-                          {item.episodic && item.semantic ? (
-                            <p className="wrap-anywhere text-muted-foreground">
-                              {item.episodic}
-                            </p>
+                          {item.semantic ? (
+                            <MemoryField label="Semantic summary" value={item.semantic} />
                           ) : null}
                           {item.input ? (
-                            <p className="wrap-anywhere rounded-lg bg-muted/40 px-3 py-2 text-muted-foreground">
-                              {item.input}
-                            </p>
+                            <MemoryField label="Original input" value={item.input} />
+                          ) : null}
+                          {weightLabel ? (
+                            <div className="rounded-lg border border-border bg-background px-3 py-2">
+                              <div className="mb-1 flex items-center justify-between gap-2">
+                                <p className="text-[10px] font-semibold uppercase text-muted-foreground">
+                                  Weight
+                                </p>
+                                <p className="text-[10px] font-semibold tabular-nums text-slate-600">
+                                  {weightLabel}
+                                </p>
+                              </div>
+                              <div className="h-1.5 overflow-hidden rounded-full bg-slate-200">
+                                <div
+                                  className="h-full rounded-full bg-slate-700"
+                                  style={{
+                                    width: `${Math.min(100, Math.max(0, Math.round((item.weight ?? 0) * 100)))}%`,
+                                  }}
+                                />
+                              </div>
+                            </div>
                           ) : null}
                           {item.keywords.length > 0 ? (
                             <div className="flex flex-wrap gap-1.5">

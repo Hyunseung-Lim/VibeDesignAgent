@@ -5,6 +5,7 @@ export type MemoryItem = {
   input: string | null;
   output: string | null;
   action: string | null;
+  sourceType: string | null;
   keywords: string[];
   weight: number | null;
   embedding?: number[];
@@ -32,6 +33,7 @@ export type ClusterGraphItem = {
   input: string;
   output: string;
   action: string;
+  sourceType?: string | null;
   weight?: number | null;
   embedding?: number[];
   timestamp: number;

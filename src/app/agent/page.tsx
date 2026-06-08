@@ -102,6 +102,7 @@ export default function AgentMemoryPage() {
     input: m.input ?? "",
     output: m.output ?? "",
     action: m.action ?? "",
+    sourceType: m.sourceType,
     weight: m.weight,
     embedding: m.embedding,
     timestamp: m.timestamp ?? 0,
