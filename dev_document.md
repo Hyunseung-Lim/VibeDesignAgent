@@ -1323,8 +1323,8 @@ type ChatPlan = {
    - [ ] `IdeaTabs`
    - [ ] `IdeaEditor`
    - [x] `MockupCanvasToolbar`
-   - [ ] `ChatPanel`
-   - [ ] `ChatBubble`
+   - [x] `ChatPanel`
+   - [x] `ChatBubble`
    - [x] `ToolActionChip`
    - [x] `TimelineActivityEventCard`
    - [x] `TimelineMemoryEventCard`
@@ -1943,8 +1943,8 @@ type ChatPlan = {
    - `IdeaTabs`
    - `IdeaEditor`
    - `MockupCanvasToolbar` `[done 2026-06-08]`
-   - `ChatPanel`
-   - `ChatBubble`
+   - `ChatPanel` `[done 2026-06-08]`
+   - `ChatBubble` `[done 2026-06-08]`
    - 공통 `RetrievedMemoryBadge`
    - 공통 `SessionMemoryDiff`
 
@@ -2003,3 +2003,377 @@ type ChatPlan = {
   - `PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin /opt/homebrew/bin/npm run lint` 통과. warning 18개 유지.
 - 다음 작업:
   - `IdeaEditor` (Note/Style/Mockup sub-tab 콘텐츠) 추출.
+
+### 15.30 Memory Graph / Review UX Todo `[updated 2026-06-08]`
+
+#### 우선순위 A — Memory Graph Layout
+
+- [x] PCA projection과 similarity graph clustering의 불일치 1차 완화.
+  - 현상:
+    - clustering은 cosine similarity graph + label propagation 기반인데, 화면 좌표는 PCA 2D projection이라 cluster membership과 2D 거리감이 다르게 보일 수 있다.
+    - PCA는 전체 분산을 잘 보존하지만, local neighborhood와 graph community를 반드시 보존하지 않는다.
+  - 후보:
+    - graph layout: similarity edge를 그대로 force-directed layout에 넣고 cluster별 force/edge weight로 2D 배치.
+    - UMAP: local neighbor structure 보존이 PCA보다 좋아서 similarity graph와 더 비슷하게 보일 가능성이 높음.
+    - t-SNE: local cluster separation은 강하지만 전역 거리 해석이 약하고 incremental/cache 관리가 어려움.
+    - MDS / stress majorization: pairwise distance를 직접 2D 거리로 맞추는 방식이라 similarity distance 설명이 직관적임.
+  - 1차 추천:
+    - 저장된 similarity edges를 기반으로 force-directed/stress layout을 만들고, PCA는 fallback/debug projection으로 유지.
+    - amem 시각화 방식을 참고해 node + edge + community area 중심으로 전환.
+  - 구현:
+    - `MemoryClusterGraph`가 `graphEdges`가 있으면 PCA를 초기값으로 한 deterministic force layout을 사용한다.
+    - edge weight가 높을수록 node 사이 target distance를 짧게 잡고, 전체 node에는 repulsion을 적용한다.
+    - cluster membership은 약한 centroid attraction으로만 반영해 edge 구조가 우선되도록 했다.
+    - edge가 없으면 기존 PCA projection으로 fallback한다.
+
+- [x] similarity edge 시각화.
+  - edge는 node 사이의 cosine similarity가 threshold 이상이거나 top-k neighbor일 때만 표시.
+  - edge opacity/width는 similarity weight에 비례.
+  - selected node/cluster 주변 edge를 우선 강조하고, 전체 edge는 과밀해지지 않게 기본 opacity를 낮춘다.
+
+- [x] edge similarity를 cache document에 저장.
+  - 현재 clustering 과정에서 이미 `similarityEdges(vectors)`를 계산하므로, cluster cache에 edge list를 함께 저장한다.
+  - `MemoryClusterGraph`는 매 렌더마다 pairwise similarity를 계산하지 않고 API 응답의 `edges`를 사용한다.
+  - cache invalidation은 기존 memory item signature와 같은 기준을 사용한다.
+
+#### 우선순위 B — Source / Admin Memory View
+
+- [x] source label 워딩 변경.
+  - `profile` → `Before session`
+  - `interaction` → `During session`
+
+- [x] admin 페이지 memory cluster view를 `/agent` 페이지와 같은 정보 구조로 개편.
+  - cluster list + graph canvas + right detail panel 구조를 admin memory modal에도 적용.
+  - admin-only raw/debug 정보는 기본 detail panel에서 숨기고 별도 drawer/collapsible로 분리.
+  - admin view도 cluster color swatch, selected memory expansion, weight/source/semantic summary 표기 규칙을 `/agent`와 맞춘다.
+
+#### 우선순위 C — Data / Production Validation
+
+- [x] 기존 데이터 삭제.
+  - legacy memory/cluster cache 호환 코드는 별도로 추가하지 않는다.
+  - 이후 구현은 current schema 기준으로 단순화하고, 필요한 경우 새 데이터를 재생성한다.
+
+- [ ] 배포 서버에서 실제 데이터를 충분히 생성해 memory graph 품질 확인.
+  - 최소 확인:
+    - before session memory만 있는 경우
+    - during session memory가 많은 경우
+    - 같은 미션에서 여러 session이 누적된 경우
+    - reference/delete/mockup/note/final selection action이 섞인 경우
+
+#### 우선순위 D — Memory Record Shape / Review UX
+
+- [x] reference delete 같은 interaction memory의 input/output 표현 방식 점검.
+  - 우려:
+    - 일반 대화/생성 action은 input/output 쌍이 자연스럽지만, 삭제/선택 같은 UI action은 input만 있거나 output이 빈약해 detail card에서 어색할 수 있다.
+  - 검토 방향:
+    - 저장 schema를 바로 바꾸기 전에, detail UI에서 `input + output + action metadata`를 하나의 event summary로 합쳐 보여주는 방식부터 검증.
+    - 실제 데이터에서 reference delete, note delete, mockup delete가 얼마나 어색하게 보이는지 샘플 확인 후 schema 변경 여부 결정.
+  - 구현:
+    - 저장 schema는 변경하지 않고 UI summary layer를 먼저 개선.
+    - reference delete/cite/search, note delete, mockup delete, final design select는 action-aware event summary로 표시.
+    - detail panel에는 `Event summary`, `Original input`, `Original output`을 함께 노출.
+
+- [x] 세션 리뷰 화면에서 세션 전에 입력한 memory가 어떻게 반영됐는지 표시.
+  - 현재는 채팅 기록 중심이라 before session memory가 어떤 식으로 session context에 들어갔는지 잘 보이지 않는다.
+  - review timeline 또는 memory side panel에 before session memory usage/impact section 추가.
+
+- [x] 미션별/세션 리뷰 화면에도 node view 추가 및 edge 연결.
+  - `/agent`는 누적 memory graph.
+  - session review는 해당 session의 before/during/changed memory graph.
+  - mission review는 해당 mission에 누적된 graph로 구분한다.
+
+### 15.31 Memory Graph Edge Cache / Visualization `[implemented 2026-06-08]`
+
+- 목적:
+  - clustering에 사용한 similarity graph를 화면에도 드러내 PCA projection과 community membership의 관계를 이해할 수 있게 한다.
+  - edge similarity를 매 렌더마다 다시 계산하지 않고 cluster cache/API 응답에서 재사용한다.
+- 구현:
+  - `ClusterGraphEdge` 타입 추가: `{ sourceId, targetId, weight }`.
+  - `src/lib/server/memoryClustering.ts`
+    - `similarityEdges(vectors)` 결과를 memory item id 기반 `graphEdges`로 변환.
+    - cluster cache document에 `graphEdges` 저장.
+    - `parseStoredGraphEdges()` 추가.
+  - `/api/memory/clusters`
+    - GET/POST 응답에 `edges` 포함.
+    - cache miss/empty 응답도 `edges: []`로 shape 통일.
+  - `/api/admin/users/[uid]/memory/clusters`
+    - admin cluster cache에도 `graphEdges` 저장/조회.
+    - GET/POST 응답에 `graphEdges` 포함.
+  - `/agent`
+    - cluster API 응답의 `edges`를 `MemoryClusterGraph`에 전달.
+  - `/admin`
+    - memory modal cluster graph에 `graphEdges` state 추가.
+    - cluster export JSON에도 `edges` 포함.
+  - `MemoryClusterGraph`
+    - cluster area와 node 사이에 similarity edge layer 추가.
+    - edge opacity/width를 similarity weight에 비례시킴.
+    - selected node 또는 selected cluster와 연결된 edge를 더 강조.
+    - graph metadata badge에 edge count 표시.
+- 데이터 전제:
+  - 기존 데이터는 삭제된 상태이므로 legacy cluster cache migration/fallback은 구현하지 않는다.
+  - graph edge가 필요한 경우 current schema로 cluster를 재생성한다.
+- 검증:
+  - `PATH=/usr/local/bin:$PATH ./node_modules/.bin/tsc --noEmit` 통과.
+  - `PATH=/usr/local/bin:$PATH ./node_modules/.bin/eslint src/lib/server/memoryClustering.ts src/app/api/memory/clusters/route.ts 'src/app/api/admin/users/[uid]/memory/clusters/route.ts' src/app/admin/MemoryClusterGraph.tsx src/app/agent/page.tsx src/app/admin/page.tsx src/components/memory/memory-cluster-types.ts` 통과. 기존 admin warning 4개 유지.
+  - `PATH=/usr/local/bin:$PATH npm run lint` 통과. warning 18개 유지.
+  - `PATH=/usr/local/bin:$PATH npm run build`는 기존과 같은 Turbopack local process/port binding sandbox 제한으로 실패.
+
+### 15.32 Memory Graph Similarity Layout `[implemented 2026-06-08]`
+
+- 목적:
+  - clustering에 사용한 similarity graph와 2D 화면 좌표가 크게 어긋나는 문제를 줄인다.
+  - PCA는 fallback/debug projection으로 남기고, 실제 graph view는 edge-aware layout을 기본으로 사용한다.
+- 구현:
+  - `MemoryClusterGraph`에 `projectSimilarityGraph()` 추가.
+  - PCA projection을 deterministic 초기값으로 사용한 뒤 force-directed/stress-style layout을 계산.
+  - layout force:
+    - edge spring: cosine similarity weight가 높을수록 target distance를 짧게 설정.
+    - node repulsion: node overlap과 과밀화를 줄임.
+    - weak cluster attraction: 같은 cluster가 너무 흩어지지 않게 보조하되 edge 구조를 우선.
+    - center gravity: 전체 graph가 canvas 밖으로 퍼지지 않게 보정.
+  - graph edge가 있는 경우 상단 badge를 `Similarity graph layout`으로 표시.
+  - edge가 없으면 기존 `PCA 2D projection`으로 fallback.
+- 검증:
+  - `PATH=/usr/local/bin:$PATH ./node_modules/.bin/tsc --noEmit` 통과.
+  - `PATH=/usr/local/bin:$PATH ./node_modules/.bin/eslint src/app/admin/MemoryClusterGraph.tsx` 통과.
+
+### 15.33 Admin Memory Cluster View Alignment `[implemented 2026-06-08]`
+
+- 목적:
+  - admin memory modal도 `/agent`처럼 graph를 계속 보면서 오른쪽 detail panel에서 cluster/memory detail을 확인하게 한다.
+- 구현:
+  - `/admin` memory cluster view의 `Graph / Detail` 탭 제거.
+  - layout을 `admin tools/list + graph canvas + right detail panel` 구조로 변경.
+  - 기존 admin diagnostics/regenerate/export controls는 왼쪽 admin tool 영역에 유지.
+  - cluster card에 `/agent`와 같은 cluster color swatch 추가.
+  - `MemoryClusterSidePanel`을 admin modal에서도 재사용.
+  - graph node 클릭 시 오른쪽 panel의 memory row가 확장되도록 `selectedAdminGraphMemoryId` 연결.
+  - admin row를 `MemoryItem` shape로 mapping해 source/weight/semantic/archived 표시 규칙을 `/agent`와 맞춤.
+  - admin detail tab에 남아 있던 `Representative semantics` 노출 제거.
+- 검증:
+  - `PATH=/usr/local/bin:$PATH ./node_modules/.bin/tsc --noEmit` 통과.
+  - `PATH=/usr/local/bin:$PATH ./node_modules/.bin/eslint src/app/admin/page.tsx` 통과. 기존 admin warning 4개 유지.
+
+### 15.34 Session Review Before-Session Memory Impact `[implemented 2026-06-08]`
+
+- 목적:
+  - 세션 리뷰 화면에서 세션 전에 입력한 memory가 실제 세션 중 어떻게 쓰였는지 보이게 한다.
+- 구현:
+  - `SessionMemoryItem` 타입에 `sourceType` 추가.
+  - review memory side panel에 `세션 전 정보 반영` 섹션 추가.
+  - `sessionMemorySummary.graphMemories` 중 `sourceType === "profile"` 항목을 before-session memory로 계산.
+  - before-session memory 중 `sessionMemorySummary.referenced`와 매칭되는 항목을 `세션 중 참고됨`으로 표시.
+  - before-session memory 총 개수와 세션 중 참고된 개수를 summary card로 표시.
+  - 각 before-session memory row에 weight와 weight delta를 표시.
+  - row 클릭 시 전체 메모리 변화 modal을 열고 해당 memory node/reference를 선택.
+  - graph memory가 아직 없고 raw profile input만 있는 경우 fallback 안내와 raw input list 표시.
+- 검증:
+  - `PATH=/usr/local/bin:$PATH ./node_modules/.bin/tsc --noEmit` 통과.
+  - `PATH=/usr/local/bin:$PATH ./node_modules/.bin/eslint 'src/app/main/[missionId]/page.tsx'` 통과. 기존 warning 12개 유지.
+
+### 15.35 Interaction Memory Event Summary `[implemented 2026-06-08]`
+
+- 목적:
+  - reference delete 같은 UI action memory가 input/output 한쪽만 있는 것처럼 보여 detail card에서 어색해지는 문제를 줄인다.
+  - 저장 schema를 바꾸기 전에 UI 표현 계층에서 먼저 검증한다.
+- 구현:
+  - `/main/[missionId]`의 `memorySummaryText()`를 action-aware summary로 변경.
+  - `reference_delete`, `reference_cite`, `references_fetch`, `note_delete`, `mockup_delete`, `final_design_select`는 action label과 target text를 합쳐 표시.
+  - `/agent`와 `/admin`이 공유하는 `MemoryClusterSidePanel`에 `Event summary` field 추가.
+  - expanded memory detail에서 `Original input`, `Original output`도 함께 표시해 원본 raw fields를 잃지 않게 함.
+- 검증:
+  - `PATH=/usr/local/bin:$PATH ./node_modules/.bin/tsc --noEmit` 통과.
+  - `PATH=/usr/local/bin:$PATH ./node_modules/.bin/eslint 'src/app/main/[missionId]/page.tsx' src/components/memory/memory-cluster-side-panel.tsx` 통과. 기존 warning 유지.
+
+### 15.36 Session Review Node View Edges `[implemented 2026-06-08]`
+
+- 목적:
+  - `/agent` 누적 graph와 세션 리뷰 graph의 시각 언어를 맞춘다.
+  - 세션 리뷰의 memory node view에서도 similarity edge를 보여줘 before/during/changed memory의 연결 관계를 읽을 수 있게 한다.
+- 구현:
+  - `/api/memory/session-summary`에서 선택된 cluster cache document의 `graphEdges`를 함께 반환.
+  - `SessionMemorySummary`에 `graphEdges` 추가.
+  - `fetchSessionMemorySummary()`가 `graphEdges`를 로드하도록 변경.
+  - `renderSessionImpactGraph()`에서 현재 filter/phase로 보이는 node 사이의 edge만 필터링.
+  - session review `MemoryClusterGraph`에 filtered edge를 전달.
+  - graph badge에 cluster/node/edge count 표시.
+- 검증:
+  - `PATH=/usr/local/bin:$PATH ./node_modules/.bin/tsc --noEmit` 통과.
+  - `PATH=/usr/local/bin:$PATH ./node_modules/.bin/eslint 'src/app/main/[missionId]/page.tsx' src/app/api/memory/session-summary/route.ts` 통과. 기존 warning 유지.
+
+### 15.37 Main Session Product Component Extraction Pass 3 — ChatBubble `[implemented 2026-06-08]`
+
+- 목적:
+  - `/main/[missionId]`의 거대한 chat message JSX를 product component로 분리한다.
+  - 이후 `ChatPanel` 추출과 채팅 UI polish를 쉽게 만든다.
+- 구현:
+  - `src/components/session/chat-bubble.tsx` 추가.
+  - user bubble:
+    - cited element, cited references, cited text snippets, user content 렌더링 분리.
+  - assistant bubble:
+    - markdown content, tool action chip, streaming dots, chat phase disclosure 렌더링 분리.
+    - retrieved memory button, turn memory button, raw prompt button을 props callback으로 연결.
+  - `/main/[missionId]/page.tsx`의 message map 내부 인라인 bubble JSX를 `ChatBubble` 호출로 교체.
+  - page-level data lookup, modal state, review turn lookup은 route에 유지해 behavior 변경 범위를 줄임.
+- 검증:
+  - `PATH=/usr/local/bin:$PATH ./node_modules/.bin/tsc --noEmit` 통과.
+  - `PATH=/usr/local/bin:$PATH ./node_modules/.bin/eslint 'src/app/main/[missionId]/page.tsx' src/components/session/chat-bubble.tsx` 통과. 기존 warning 유지.
+
+### 15.38 Main Session Product Component Extraction Pass 4 — ChatPanel `[implemented 2026-06-08]`
+
+- 목적:
+  - `/main/[missionId]` 오른쪽 chat panel shell을 product component로 분리한다.
+  - 이후 memory panel, chat input, prompt/citation controls를 더 작은 단위로 추출하기 쉽게 만든다.
+- 구현:
+  - `src/components/session/chat-panel.tsx` 추가.
+  - review mode tab bar(`채팅`, `메모리 변화`)를 `ChatPanel` 내부로 이동.
+  - scroll-to-bottom floating button을 `ChatPanel` 내부로 이동.
+  - `/main/[missionId]/page.tsx`는 memory panel, message list, input area를 children slot으로 전달.
+  - panel 내부의 상태/동작은 기존 route state와 callback을 그대로 사용해 behavior 변경 범위를 제한.
+- 검증:
+  - `PATH=/usr/local/bin:$PATH ./node_modules/.bin/tsc --noEmit` 통과.
+  - `PATH=/usr/local/bin:$PATH ./node_modules/.bin/eslint 'src/app/main/[missionId]/page.tsx' src/components/session/chat-panel.tsx src/components/session/chat-bubble.tsx` 통과. 기존 warning 유지.
+
+### 15.39 Main Session Product Component Extraction Pass 5 — ChatInput `[implemented 2026-06-08]`
+
+- 목적:
+  - `/main/[missionId]`의 chat input/citation tray JSX를 product component로 분리한다.
+  - session route는 입력 상태와 handler 연결만 담당하게 하고, read-only/citation/reference/send/cancel UI는 독립 컴포넌트에서 관리한다.
+- 구현:
+  - `src/components/session/chat-input.tsx` 추가.
+  - read-only notice, selected element pill, cited text tray, selected reference tray, textarea, send/cancel buttons를 `ChatInput`으로 이동.
+  - `selectedElement`, `citedTexts`, `selectedReferences`, `textareaRef`, loading/mockup state를 props로 전달.
+  - clear/remove/send/cancel/input keyboard handler는 page state를 유지한 채 callback props로 연결.
+  - 기존 input UX와 mockup cancel label behavior는 유지.
+- 검증:
+  - `PATH=/usr/local/bin:$PATH ./node_modules/.bin/tsc --noEmit` 통과.
+  - `PATH=/usr/local/bin:$PATH ./node_modules/.bin/eslint 'src/app/main/[missionId]/page.tsx' src/components/session/chat-input.tsx src/components/session/chat-panel.tsx src/components/session/chat-bubble.tsx` 통과. 기존 warning 유지.
+  - `PATH=/usr/local/bin:$PATH npm run lint` 통과. warning 17개 유지.
+
+### 15.40 Main Session Product Component Extraction Pass 6 — Idea Note / Design Style `[implemented 2026-06-08]`
+
+- 목적:
+  - `IdeaEditor` 추출 전, `/main/[missionId]`의 note/style content blocks를 먼저 product component로 분리한다.
+  - route component에서 markdown rendering detail과 style color-token rendering detail을 제거한다.
+- 구현:
+  - `src/components/session/idea-note-section.tsx` 추가.
+    - 시안 노트 title/description markdown, empty state, expand/collapse control을 분리.
+    - 기존 caret icon dependency를 컴포넌트 내부 lucide icon으로 이동.
+  - `src/components/session/design-style-section.tsx` 추가.
+    - 디자인 스타일 accordion, configured/empty state, style markdown renderer를 분리.
+    - hex color token swatch rendering helper를 컴포넌트 내부로 이동.
+  - `/main/[missionId]/page.tsx`는 active idea lookup과 section state만 유지하고, note/style UI는 component props로 전달.
+- 검증:
+  - `PATH=/usr/local/bin:$PATH ./node_modules/.bin/tsc --noEmit` 통과.
+  - `PATH=/usr/local/bin:$PATH ./node_modules/.bin/eslint 'src/app/main/[missionId]/page.tsx' src/components/session/design-style-section.tsx src/components/session/idea-note-section.tsx` 통과. 기존 warning 유지.
+  - `PATH=/usr/local/bin:$PATH npm run lint` 통과. warning 17개 유지.
+
+### 15.41 Main Session Product Component Extraction Pass 7 — MockupSection `[implemented 2026-06-09]`
+
+- 목적:
+  - `/main/[missionId]`의 active idea 영역에서 남아 있던 mockup section shell을 product component로 분리한다.
+  - route component는 canvas 생성/zoom/export state와 handler를 유지하고, toolbar/empty/loading/expanded UI는 component로 이동한다.
+- 구현:
+  - `src/components/session/mockup-section.tsx` 추가.
+  - `MockupCanvasToolbar` 사용 위치를 `MockupSection` 내부로 이동.
+  - mockup expanded placeholder, generating placeholder, empty prompt, cancel button UI를 `MockupSection`으로 이동.
+  - 실제 canvas는 기존 `renderMockupCanvas()` 결과를 `canvas` slot으로 전달해 canvas interaction logic 변경 범위를 제한.
+  - `/main/[missionId]/page.tsx`의 mockup section JSX를 `MockupSection` 호출로 교체.
+- 검증:
+  - `PATH=/usr/local/bin:$PATH ./node_modules/.bin/tsc --noEmit` 통과.
+  - `PATH=/usr/local/bin:$PATH ./node_modules/.bin/eslint 'src/app/main/[missionId]/page.tsx' src/components/session/mockup-section.tsx src/components/session/mockup-canvas-toolbar.tsx` 통과. 기존 warning 유지.
+  - `PATH=/usr/local/bin:$PATH npm run lint` 통과. warning 17개 유지.
+
+### 15.42 Main Session Product Component Extraction Pass 8 — IdeaWorkspace `[implemented 2026-06-09]`
+
+- 목적:
+  - `/main/[missionId]`의 active idea workspace shell을 product component로 분리한다.
+  - route component에서 idea tab bar, empty state, section sidebar navigation, content column layout을 제거한다.
+- 구현:
+  - `src/components/session/idea-workspace.tsx` 추가.
+  - `IdeaTabs` 사용 위치를 `IdeaWorkspace` 내부로 이동.
+  - 시안 없음 empty state를 `IdeaWorkspace` 내부로 이동.
+  - Note/Style/Mockup section sidebar navigation과 scrollIntoView behavior를 `IdeaWorkspace` 내부로 이동.
+  - `/main/[missionId]/page.tsx`는 active idea content assembly와 mockup handler wiring만 유지.
+- 검증:
+  - `PATH=/usr/local/bin:$PATH ./node_modules/.bin/tsc --noEmit` 통과.
+  - `PATH=/usr/local/bin:$PATH ./node_modules/.bin/eslint 'src/app/main/[missionId]/page.tsx' src/components/session/idea-workspace.tsx src/components/session/idea-tabs.tsx` 통과. 기존 warning 유지.
+  - `PATH=/usr/local/bin:$PATH npm run lint` 통과. warning 17개 유지.
+
+### 15.43 Main Session Product Component Extraction Pass 9 — FinalDesignSelector `[implemented 2026-06-09]`
+
+- 목적:
+  - `/main/[missionId]`의 mission-level final design selection UI를 product component로 분리한다.
+  - route component에서 thumbnail sizing, iframe preview, selected badge, empty state rendering detail을 제거한다.
+- 구현:
+  - `src/components/session/final-design-selector.tsx` 추가.
+  - final design empty state, idea별 artboard grouping, thumbnail scale calculation, iframe preview, final selected badge를 컴포넌트로 이동.
+  - `/main/[missionId]/page.tsx`는 final artboard state update와 memory draft 저장 handler만 유지.
+  - 선택/해제 동작과 `최종 디자인 선택` memory draft 기록 behavior는 유지.
+- 검증:
+  - `PATH=/usr/local/bin:$PATH ./node_modules/.bin/tsc --noEmit` 통과.
+  - `PATH=/usr/local/bin:$PATH ./node_modules/.bin/eslint 'src/app/main/[missionId]/page.tsx' src/components/session/final-design-selector.tsx` 통과. 기존 warning 유지.
+  - `PATH=/usr/local/bin:$PATH npm run lint` 통과. warning 17개 유지.
+
+### 15.44 Main Session Product Component Extraction Pass 10 — ReferenceSection `[implemented 2026-06-09]`
+
+- 목적:
+  - `/main/[missionId]`의 reference area shell을 product component로 분리한다.
+  - route component에서 reference loading/error/empty/grid rendering detail을 제거한다.
+- 구현:
+  - `src/components/session/reference-section.tsx` 추가.
+  - `ReferenceCard` grid, fetching indicator, search error panel, empty 안내를 `ReferenceSection`으로 이동.
+  - `/main/[missionId]/page.tsx`는 selected reference state update와 delete handler만 유지.
+  - selected state는 `selectedReferenceIds` set으로 전달해 card rendering과 page state mutation을 분리.
+- 검증:
+  - `PATH=/usr/local/bin:$PATH ./node_modules/.bin/tsc --noEmit` 통과.
+  - `PATH=/usr/local/bin:$PATH ./node_modules/.bin/eslint 'src/app/main/[missionId]/page.tsx' src/components/session/reference-section.tsx src/components/session/reference-card.tsx` 통과. 기존 warning 유지.
+  - `PATH=/usr/local/bin:$PATH npm run lint` 통과. warning 17개 유지.
+
+### 15.45 Main Session Product Component Extraction Pass 11 — MissionBriefSection `[implemented 2026-06-09]`
+
+- 목적:
+  - `/main/[missionId]`의 mission brief card를 product component로 분리한다.
+  - route component에서 mission markdown renderer, device badge, selected option accordion UI detail을 제거한다.
+- 구현:
+  - `src/components/session/mission-brief-section.tsx` 추가.
+  - mission title/brief empty state, device badge, mission markdown rendering, selected option accordion을 컴포넌트로 이동.
+  - `/main/[missionId]/page.tsx`는 mission/option data와 option accordion state만 전달.
+  - 기존 active option이 있을 때 parent mission brief를 우선 보여주고, active option이 없을 때 mission brief fallback을 보여주는 behavior 유지.
+- 검증:
+  - `PATH=/usr/local/bin:$PATH ./node_modules/.bin/tsc --noEmit` 통과.
+  - `PATH=/usr/local/bin:$PATH ./node_modules/.bin/eslint 'src/app/main/[missionId]/page.tsx' src/components/session/mission-brief-section.tsx src/components/session/reference-section.tsx` 통과. 기존 warning 유지.
+  - `PATH=/usr/local/bin:$PATH npm run lint` 통과. warning 17개 유지.
+
+### 15.46 Main Session Product Component Extraction Pass 12 — Session Setup Components `[implemented 2026-06-09]`
+
+- 목적:
+  - `/main/[missionId]`의 세션 시작 전 setup flow에서 반복되는 stepper/card UI를 product component로 분리한다.
+  - route component에서 step indicator 중복, profile input/review card, setup mission summary card rendering detail을 제거한다.
+- 구현:
+  - `src/components/session/session-setup-stepper.tsx` 추가.
+    - 1/2/3단계 step indicator와 back button UI를 공통화.
+    - mission select, profile input, session start 단계에서 동일 컴포넌트 사용.
+  - `src/components/session/session-setup-cards.tsx` 추가.
+    - `ProfileInputCard`, `ProfileReviewCard`, `SetupMissionSummaryCard` 분리.
+    - step 2/3의 중복 mission summary card를 하나의 컴포넌트로 통일.
+  - `/main/[missionId]/page.tsx`는 setup flow state transition과 profile save/start handler만 유지.
+- 검증:
+  - `PATH=/usr/local/bin:$PATH ./node_modules/.bin/tsc --noEmit` 통과.
+  - `PATH=/usr/local/bin:$PATH ./node_modules/.bin/eslint 'src/app/main/[missionId]/page.tsx' src/components/session/session-setup-stepper.tsx src/components/session/session-setup-cards.tsx` 통과. 기존 warning 유지.
+  - `PATH=/usr/local/bin:$PATH npm run lint` 통과. warning 17개 유지.
+
+### 15.47 Main Session Product Component Extraction Pass 13 — MissionOptionSelection `[implemented 2026-06-09]`
+
+- 목적:
+  - `/main/[missionId]`의 mission option selection page를 product component로 분리한다.
+  - route component에서 option preview tabs, mission intro card, option markdown detail, next button rendering detail을 제거한다.
+- 구현:
+  - `src/components/session/mission-option-selection.tsx` 추가.
+  - step 1 `SessionSetupStepper`, parent mission info, device/time badges, option tabs, active option markdown detail, bottom next button을 컴포넌트로 이동.
+  - `/main/[missionId]/page.tsx`는 active preview id state와 `chooseMissionOption` handler만 전달.
+  - 분리 후 `/main/[missionId]/page.tsx`에서 더 이상 사용하지 않는 `ReactMarkdown`, `DeviceMobileIcon`, `MonitorIcon` import 제거.
+- 검증:
+  - `PATH=/usr/local/bin:$PATH ./node_modules/.bin/tsc --noEmit` 통과.
+  - `PATH=/usr/local/bin:$PATH ./node_modules/.bin/eslint 'src/app/main/[missionId]/page.tsx' src/components/session/mission-option-selection.tsx` 통과. 기존 warning 유지.
+  - `PATH=/usr/local/bin:$PATH npm run lint` 통과. warning 17개 유지.

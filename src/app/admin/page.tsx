@@ -43,6 +43,9 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
+import { memoryClusterColor } from "@/components/memory/memory-cluster-colors";
+import { MemoryClusterSidePanel } from "@/components/memory/memory-cluster-side-panel";
+import type { MemoryItem } from "@/components/memory/memory-cluster-types";
 
 const MemoryClusterGraph = dynamic(() => import("./MemoryClusterGraph"), {
   ssr: false,
@@ -115,7 +118,6 @@ type MemoryViewTab =
   | "retrievals"
   | "forgetting"
   | "archived";
-type MemoryClusterViewTab = "graph" | "detail";
 type DestructiveAdminAction =
   | { type: "mission"; missionId: string; title: string }
   | {
@@ -135,6 +137,12 @@ type MemoryCluster = {
   relatedActions: string[];
   itemIds: string[];
   representativeItems: string[];
+};
+
+type ClusterGraphEdge = {
+  sourceId: string;
+  targetId: string;
+  weight: number;
 };
 
 type MemoryGraphClusterDiagnostics = {
@@ -405,12 +413,16 @@ export default function AdminPage() {
   const [memoryEndDate, setMemoryEndDate] = useState("");
   const [memoryViewTab, setMemoryViewTab] =
     useState<MemoryViewTab>("clusters");
-  const [memoryClusterViewTab, setMemoryClusterViewTab] =
-    useState<MemoryClusterViewTab>("graph");
   const [memoryGraphClusters, setMemoryGraphClusters] = useState<
     MemoryCluster[]
   >([]);
+  const [memoryGraphEdges, setMemoryGraphEdges] = useState<ClusterGraphEdge[]>(
+    [],
+  );
   const [selectedMemoryClusterId, setSelectedMemoryClusterId] = useState<
+    string | null
+  >(null);
+  const [selectedAdminGraphMemoryId, setSelectedAdminGraphMemoryId] = useState<
     string | null
   >(null);
   const [isLoadingMemoryClusters, setIsLoadingMemoryClusters] = useState(false);
@@ -797,9 +809,10 @@ export default function AdminPage() {
       );
       resetMemoryFilters();
       setMemoryViewTab("clusters");
-      setMemoryClusterViewTab("graph");
       setMemoryGraphClusters([]);
+      setMemoryGraphEdges([]);
       setSelectedMemoryClusterId(null);
+      setSelectedAdminGraphMemoryId(null);
       setMemoryClusterError(null);
       setMemoryGraphClusterDiagnostics(null);
       setMemoryRetrievalLogs([]);
@@ -1105,6 +1118,7 @@ export default function AdminPage() {
           output: row.output ?? "",
           link: row.link ?? "",
           action: row.agentActionCategory ?? "",
+          sourceType: row.type === "profile" ? "profile" : "interaction",
           weight: row.weight ?? null,
           embedding: row.embedding,
           timestamp: row.timestamp ?? 0,
@@ -1119,7 +1133,30 @@ export default function AdminPage() {
       new Map(clusterableMemoryItems.map((item) => [item.id, item] as const)),
     [clusterableMemoryItems],
   );
+  const adminClusterMemories = useMemo<MemoryItem[]>(
+    () =>
+      visibleMemoryRows.map((row) => ({
+        id: row.id,
+        episodic: row.episode ?? null,
+        semantic: row.semantic ?? null,
+        input: row.input ?? null,
+        output: row.output ?? null,
+        action: row.agentActionCategory ?? null,
+        sourceType: row.type === "profile" ? "profile" : "interaction",
+        keywords: row.keyword ?? row.keywords ?? [],
+        weight: row.weight ?? null,
+        embedding: row.embedding,
+        timestamp: row.timestamp ?? null,
+        archivedAt:
+          row.semanticItems?.find((item) => item.archivedAt)?.archivedAt ??
+          null,
+        archiveReason: null,
+        source: row.source ?? null,
+      })),
+    [visibleMemoryRows],
+  );
   const activeMemoryClusters = memoryGraphClusters;
+  const activeMemoryGraphEdges = memoryGraphEdges;
   const activeMemoryClusterDiagnostics = memoryGraphClusterDiagnostics;
   const selectedMemoryCluster =
     activeMemoryClusters.find(
@@ -1167,9 +1204,11 @@ export default function AdminPage() {
   }, [clusterableMemoryItems]);
   useEffect(() => {
     setSelectedMemoryClusterId(activeMemoryClusters[0]?.id ?? null);
+    setSelectedAdminGraphMemoryId(null);
   }, [activeMemoryClusters]);
   useEffect(() => {
     setMemoryGraphClusters([]);
+    setMemoryGraphEdges([]);
     setSelectedMemoryClusterId(null);
     setMemoryClusterError(null);
     setMemoryGraphClusterDiagnostics(null);
@@ -1198,7 +1237,11 @@ export default function AdminPage() {
         const graphClusters = Array.isArray(data.graphClusters)
           ? data.graphClusters
           : [];
+        const graphEdges: ClusterGraphEdge[] = Array.isArray(data.graphEdges)
+          ? data.graphEdges
+          : [];
         setMemoryGraphClusters(graphClusters);
+        setMemoryGraphEdges(graphEdges);
         setMemoryGraphClusterDiagnostics(
           parseMemoryGraphClusterDiagnostics(data.graphDiagnostics),
         );
@@ -1369,7 +1412,11 @@ export default function AdminPage() {
       const graphClusters = Array.isArray(data?.graphClusters)
         ? data.graphClusters
         : [];
+      const graphEdges: ClusterGraphEdge[] = Array.isArray(data?.graphEdges)
+        ? data.graphEdges
+        : [];
       setMemoryGraphClusters(graphClusters);
+      setMemoryGraphEdges(graphEdges);
       setMemoryGraphClusterDiagnostics(
         parseMemoryGraphClusterDiagnostics(data?.graphDiagnostics),
       );
@@ -1418,6 +1465,7 @@ export default function AdminPage() {
       sourceItemCount: clusterableMemoryItems.length,
       method: "similarity-graph",
       diagnostics: activeMemoryClusterDiagnostics,
+      edges: activeMemoryGraphEdges,
       clusters: activeMemoryClusters.map((cluster) => ({
         ...cluster,
         items: cluster.itemIds.map(itemForExport).filter(Boolean),
@@ -2397,7 +2445,7 @@ export default function AdminPage() {
                   </div>
                 </div>
               ) : (
-                <div className="grid h-full grid-cols-[minmax(220px,320px)_1fr] overflow-hidden">
+                <div className="grid h-full grid-cols-[minmax(220px,320px)_minmax(0,1fr)_minmax(22rem,24rem)] overflow-hidden">
                   <div className="h-full overflow-y-auto overscroll-contain border-r border-border bg-muted/60">
                     <div className="border-b border-border bg-muted/95 p-4">
                       <div className="space-y-2">
@@ -2508,19 +2556,33 @@ export default function AdminPage() {
                             <button
                               key={cluster.id}
                               type="button"
-                              onClick={() =>
-                                setSelectedMemoryClusterId(cluster.id)
-                              }
+                              onClick={() => {
+                                setSelectedMemoryClusterId(cluster.id);
+                                setSelectedAdminGraphMemoryId(null);
+                              }}
                               className={`w-full rounded-xl border px-3 py-3 text-left transition ${
                                 selectedMemoryCluster?.id === cluster.id
-                                  ? "border-border bg-card shadow-sm"
+                                  ? "border-slate-400 bg-card shadow-sm ring-2 ring-slate-200"
                                   : "border-transparent bg-card/60 hover:border-border hover:bg-card"
                               }`}
                             >
                               <div className="flex items-start justify-between gap-2">
-                                <p className="text-sm font-semibold text-foreground">
-                                  {cluster.label}
-                                </p>
+                                <div className="flex min-w-0 flex-1 items-start gap-2">
+                                  <span
+                                    className="mt-1.5 size-2.5 shrink-0 rounded-full ring-2 ring-white"
+                                    style={{
+                                      backgroundColor: memoryClusterColor(
+                                        activeMemoryClusters.findIndex(
+                                          (item) => item.id === cluster.id,
+                                        ),
+                                      ),
+                                    }}
+                                    aria-hidden="true"
+                                  />
+                                  <p className="min-w-0 text-sm font-semibold text-foreground">
+                                    {cluster.label}
+                                  </p>
+                                </div>
                                 <Badge variant="secondary" className="rounded-full">
                                   {cluster.count}
                                 </Badge>
@@ -2536,29 +2598,16 @@ export default function AdminPage() {
                   </div>
                   <div className="flex h-full min-h-0 flex-col overflow-hidden">
                     <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border bg-card px-5 py-3">
-                      <div className="inline-flex rounded-lg border border-border bg-muted p-1">
-                        {(["graph", "detail"] as const).map((tab) => (
-                          <button
-                            key={tab}
-                            type="button"
-                            onClick={() => setMemoryClusterViewTab(tab)}
-                            className={`rounded-md px-3 py-1.5 text-xs font-semibold transition ${
-                              memoryClusterViewTab === tab
-                                ? "bg-card text-foreground shadow-sm"
-                                : "text-muted-foreground hover:text-foreground"
-                            }`}
-                          >
-                            {tab === "graph" ? "Graph" : "Detail"}
-                          </button>
-                        ))}
-                      </div>
+                      <p className="text-xs font-semibold text-foreground">
+                        Similarity Graph
+                      </p>
                       <span className="text-xs text-muted-foreground">
-                        Similarity Graph · {activeMemoryClusters.length}{" "}
-                        clusters · {clusterableMemoryItems.length} semantic
-                        nodes
+                        {activeMemoryClusters.length} clusters ·{" "}
+                        {clusterableMemoryItems.length} semantic nodes ·{" "}
+                        {activeMemoryGraphEdges.length} edges
                       </span>
                     </div>
-                    <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-5">
+                    <div className="min-h-0 flex-1 overflow-hidden">
                       {isLoadingMemoryClusters ? (
                         <div className="flex h-full min-h-80 items-center justify-center text-sm text-muted-foreground">
                           저장된 클러스터를 불러오는 중입니다.
@@ -2568,119 +2617,31 @@ export default function AdminPage() {
                           저장된 클러스터가 없으면 Regenerate를 눌러 새로 생성할
                           수 있습니다.
                         </div>
-                      ) : memoryClusterViewTab === "graph" ? (
-                        <div className="h-full min-h-128 overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
-                          <MemoryClusterGraph
-                            clusters={activeMemoryClusters}
-                            items={clusterableMemoryItems}
-                            selectedClusterId={selectedMemoryCluster.id}
-                            onSelectCluster={setSelectedMemoryClusterId}
-                            fill
-                          />
-                        </div>
                       ) : (
-                        <div className="space-y-5">
-                          <div>
-                            <div className="flex flex-wrap items-center gap-2">
-                              <h3 className="text-lg font-semibold text-foreground">
-                                {selectedMemoryCluster.label}
-                              </h3>
-                              <Badge variant="secondary" className="rounded-full">
-                                {selectedClusterItems.length} items
-                              </Badge>
-                            </div>
-                            <p className="mt-2 max-w-3xl text-sm leading-relaxed text-muted-foreground">
-                              {selectedMemoryCluster.summary}
-                            </p>
-                            {selectedMemoryCluster.relatedActions.length >
-                              0 && (
-                              <div className="mt-3 flex flex-wrap gap-1.5">
-                                {selectedMemoryCluster.relatedActions.map(
-                                  (action) => (
-                                    <span
-                                      key={action}
-                                      className="rounded-full bg-amber-50 px-2.5 py-1 text-xs font-medium text-amber-700"
-                                    >
-                                      {action}
-                                    </span>
-                                  ),
-                                )}
-                              </div>
-                            )}
-                          </div>
-                          {selectedMemoryCluster.representativeItems.length >
-                            0 && (
-                            <section>
-                              <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                                Representative semantics
-                              </p>
-                              <div className="space-y-2">
-                                {selectedMemoryCluster.representativeItems.map(
-                                  (item, index) => (
-                                    <p
-                                      key={index}
-                                      className="rounded-xl bg-indigo-50 px-3 py-2 text-xs leading-relaxed text-indigo-700"
-                                    >
-                                      {item}
-                                    </p>
-                                  ),
-                                )}
-                              </div>
-                            </section>
-                          )}
-                          <section>
-                            <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                              Included memory items
-                            </p>
-                            <div className="space-y-3">
-                              {selectedClusterItems.map((item) => (
-                                <div
-                                  key={item.id}
-                                  className="rounded-2xl border border-border bg-card p-4 text-xs shadow-sm"
-                                >
-                                  <p className="wrap-anywhere text-sm leading-relaxed text-foreground">
-                                    {item.semantic}
-                                  </p>
-                                  <div className="mt-3 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
-                                    {item.timestamp ? (
-                                      <span>
-                                        {new Date(
-                                          item.timestamp as number,
-                                        ).toLocaleString("ko-KR", {
-                                          month: "numeric",
-                                          day: "numeric",
-                                          hour: "2-digit",
-                                          minute: "2-digit",
-                                        })}
-                                      </span>
-                                    ) : null}
-                                    {item.action ? (
-                                      <Badge variant="warning" className="rounded-full">
-                                        {item.action}
-                                      </Badge>
-                                    ) : null}
-                                    <span>
-                                      {item.row.source?.missionId ?? "—"}
-                                    </span>
-                                  </div>
-                                  {item.episodic && (
-                                    <p className="mt-3 wrap-anywhere text-muted-foreground">
-                                      {item.episodic}
-                                    </p>
-                                  )}
-                                  {item.input && (
-                                    <p className="mt-2 wrap-anywhere text-muted-foreground">
-                                      Input: {item.input}
-                                    </p>
-                                  )}
-                                </div>
-                              ))}
-                            </div>
-                          </section>
-                        </div>
+                        <MemoryClusterGraph
+                          clusters={activeMemoryClusters}
+                          items={clusterableMemoryItems}
+                          edges={activeMemoryGraphEdges}
+                          selectedClusterId={selectedMemoryCluster.id}
+                          selectedMemoryId={selectedAdminGraphMemoryId}
+                          onSelectCluster={(clusterId) => {
+                            setSelectedMemoryClusterId(clusterId);
+                            setSelectedAdminGraphMemoryId(null);
+                          }}
+                          onSelectMemory={setSelectedAdminGraphMemoryId}
+                          showInlineDetail={false}
+                          fill
+                        />
                       )}
                     </div>
                   </div>
+                  <MemoryClusterSidePanel
+                    cluster={selectedMemoryCluster}
+                    items={selectedClusterItems}
+                    memories={adminClusterMemories}
+                    selectedMemoryId={selectedAdminGraphMemoryId}
+                    onSelectMemory={setSelectedAdminGraphMemoryId}
+                  />
                 </div>
               )}
             </div>

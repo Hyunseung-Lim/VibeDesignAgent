@@ -10,7 +10,6 @@ import React, {
   useRef,
   useState,
 } from "react";
-import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { firebaseAuth, db } from "@/lib/firebase";
 import { getIdToken, onAuthStateChanged } from "firebase/auth";
@@ -26,10 +25,6 @@ import {
   ArrowsOutIcon,
   ArrowsInIcon,
   BrainIcon,
-  CaretUpIcon,
-  CaretDownIcon,
-  DeviceMobileIcon,
-  MonitorIcon,
   EyeIcon,
   DownloadSimpleIcon,
   XIcon,
@@ -46,14 +41,27 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { ToolActionChip } from "@/components/session/tool-action-chip";
+import { ChatBubble } from "@/components/session/chat-bubble";
+import { ChatInput } from "@/components/session/chat-input";
+import { ChatPanel } from "@/components/session/chat-panel";
+import { DesignStyleSection } from "@/components/session/design-style-section";
+import { FinalDesignSelector } from "@/components/session/final-design-selector";
+import { IdeaNoteSection } from "@/components/session/idea-note-section";
 import {
   TimelineActivityEventCard,
   TimelineMemoryEventCard,
 } from "@/components/session/timeline-event-card";
-import { MockupCanvasToolbar } from "@/components/session/mockup-canvas-toolbar";
-import { ReferenceCard } from "@/components/session/reference-card";
-import { IdeaTabs } from "@/components/session/idea-tabs";
+import { MockupSection } from "@/components/session/mockup-section";
+import { ReferenceSection } from "@/components/session/reference-section";
+import { IdeaWorkspace } from "@/components/session/idea-workspace";
+import { MissionBriefSection } from "@/components/session/mission-brief-section";
+import { MissionOptionSelection } from "@/components/session/mission-option-selection";
+import {
+  ProfileInputCard,
+  ProfileReviewCard,
+  SetupMissionSummaryCard,
+} from "@/components/session/session-setup-cards";
+import { SessionSetupStepper } from "@/components/session/session-setup-stepper";
 import { MemoryScoreBar } from "@/components/memory/memory-score-bar";
 const ONBOARDING_MISSION_ID = "onboarding";
 const MemoryClusterGraph = dynamic(() => import("@/app/admin/MemoryClusterGraph"), {
@@ -164,6 +172,7 @@ type SessionMemoryItem = {
   archivedAt?: number | null;
   archiveReason?: string | null;
   duplicateOf?: string | null;
+  sourceType?: string | null;
   duplicate?: {
     memoryId?: string;
     semantic?: string | null;
@@ -203,6 +212,11 @@ type SessionMemorySummary = {
     itemIds: string[];
     representativeItems: string[];
   }>;
+  graphEdges: Array<{
+    sourceId: string;
+    targetId: string;
+    weight: number;
+  }>;
 };
 
 type MemoryGraphFilter = "changed" | "all" | "referenced" | "promoted" | "archived";
@@ -213,6 +227,7 @@ const EMPTY_SESSION_MEMORY_SUMMARY: SessionMemorySummary = {
   referenced: [],
   graphMemories: [],
   graphClusters: [],
+  graphEdges: [],
 };
 
 type ActivityLogEvent = {
@@ -296,6 +311,7 @@ async function fetchSessionMemorySummary(
     graphClusters: Array.isArray(data?.graphClusters)
       ? data.graphClusters
       : [],
+    graphEdges: Array.isArray(data?.graphEdges) ? data.graphEdges : [],
   };
 }
 
@@ -1854,52 +1870,6 @@ function nextDraftTitle(ideas: Idea[]) {
   return `시안 ${maxNumber + 1}`;
 }
 
-const HEX_COLOR_RE = /(#[0-9A-Fa-f]{6}|#[0-9A-Fa-f]{3})\b/g;
-
-function parseColorTokens(text: string): React.ReactNode[] {
-  const parts: React.ReactNode[] = [];
-  let last = 0;
-  let match: RegExpExecArray | null;
-  HEX_COLOR_RE.lastIndex = 0;
-  while ((match = HEX_COLOR_RE.exec(text)) !== null) {
-    if (match.index > last) parts.push(text.slice(last, match.index));
-    const hex = match[1];
-    parts.push(
-      <span
-        key={match.index}
-        className="inline-flex items-center gap-1 align-middle"
-      >
-        <span
-          className="inline-block h-3 w-3 shrink-0 rounded-sm border border-black/10"
-          style={{ backgroundColor: hex }}
-        />
-        <code className="font-mono text-[10px] text-indigo-700">{hex}</code>
-      </span>,
-    );
-    last = match.index + match[0].length;
-  }
-  if (last < text.length) parts.push(text.slice(last));
-  return parts;
-}
-
-function withColorTokens(children: React.ReactNode): React.ReactNode {
-  if (typeof children === "string") return parseColorTokens(children);
-  if (Array.isArray(children)) {
-    return children.map((child, index) =>
-      typeof child === "string"
-        ? parseColorTokens(child).map((node, nodeIndex) =>
-            typeof node === "string"
-              ? node
-              : React.cloneElement(node as React.ReactElement, {
-                  key: `${index}-${nodeIndex}`,
-                }),
-          )
-        : child,
-    );
-  }
-  return children;
-}
-
 function isExplicitNewMockupRequest(text: string) {
   return /아예\s*(새|새로운|다른)|새(로운|로)?\s*(목업|디자인|버전|시안|화면|캔버스|레이아웃|구조|컨셉|콘셉트)|새\s*레이아웃|다른\s*(목업|디자인|버전|시안|화면|캔버스|레이아웃|구조|컨셉|콘셉트)|처음부터|다시\s*(만들|생성)|완전(히)?\s*(새|다른)|another\s+(mockup|version|design|layout|concept)|new\s+(mockup|version|design|layout|concept)|fresh\s+(mockup|canvas|design|layout|concept)/i.test(
     text,
@@ -2089,16 +2059,6 @@ function cleanForFirestore<T>(value: T): T {
   );
 }
 
-function memorySummaryText(item: SessionMemoryItem | ReviewTurnMemory) {
-  return (
-    item.semantic ||
-    item.episodic ||
-    ("input" in item ? item.input : "") ||
-    ("output" in item ? item.output : "") ||
-    "내용 없는 메모리"
-  );
-}
-
 function memoryActionCategory(item: SessionMemoryItem) {
   const id = item.source?.draftId ?? item.id;
   if (id.startsWith("delete-reference-")) return "reference_delete";
@@ -2109,6 +2069,15 @@ function memoryActionCategory(item: SessionMemoryItem) {
   if (id.startsWith("final-design-")) return "final_design_select";
   if (item.agentActionCategory) return item.agentActionCategory;
   return "memory_event";
+}
+
+function compactEventTarget(item: SessionMemoryItem | ReviewTurnMemory) {
+  const output = "output" in item ? item.output?.trim() : "";
+  const input = "input" in item ? item.input?.trim() : "";
+  const episodic = item.episodic?.trim();
+  const semantic = item.semantic?.trim();
+  const id = "id" in item ? item.id : item.memoryId;
+  return output || input || episodic || semantic || id;
 }
 
 function memoryEventLabel(item: SessionMemoryItem) {
@@ -2129,7 +2098,46 @@ function memoryEventLabel(item: SessionMemoryItem) {
 }
 
 function memoryEventDetail(item: SessionMemoryItem) {
-  return item.input || item.output || item.episodic || item.semantic || item.id;
+  const target = compactEventTarget(item);
+  switch (memoryActionCategory(item)) {
+    case "reference_delete":
+      return `삭제한 레퍼런스: ${target}`;
+    case "reference_cite":
+      return `인용한 레퍼런스: ${target}`;
+    case "references_fetch":
+      return `검색한 레퍼런스 맥락: ${target}`;
+    case "note_delete":
+      return `삭제한 시안: ${target}`;
+    case "mockup_delete":
+      return `삭제한 목업: ${target}`;
+    case "final_design_select":
+      return `최종 선택한 디자인: ${target}`;
+    default:
+      return target || "내용 없는 메모리";
+  }
+}
+
+function memorySummaryText(item: SessionMemoryItem | ReviewTurnMemory) {
+  if ("agentActionCategory" in item) {
+    const action = memoryActionCategory(item);
+    if (
+      action === "reference_delete" ||
+      action === "reference_cite" ||
+      action === "references_fetch" ||
+      action === "note_delete" ||
+      action === "mockup_delete" ||
+      action === "final_design_select"
+    ) {
+      return memoryEventDetail(item);
+    }
+  }
+  return (
+    item.semantic ||
+    item.episodic ||
+    ("input" in item ? item.input : "") ||
+    ("output" in item ? item.output : "") ||
+    "내용 없는 메모리"
+  );
 }
 
 function memoryEventKey(item: SessionMemoryItem) {
@@ -2463,6 +2471,34 @@ export default function MainScreenPage() {
           (referencedIds.has(duplicateOf) || promotedIds.has(duplicateOf)),
       );
     });
+  }, [sessionMemorySummary]);
+  const beforeSessionMemoryImpact = useMemo(() => {
+    const referencedByMemoryId = new Map(
+      sessionMemorySummary.referenced.map((item) => [item.memoryId, item] as const),
+    );
+    const promotedById = new Map(
+      sessionMemorySummary.promoted.map((item) => [item.id, item] as const),
+    );
+    const beforeSessionMemories = sessionMemorySummary.graphMemories
+      .filter((item) => item.sourceType === "profile")
+      .map((memory) => ({
+        memory,
+        referenced: referencedByMemoryId.get(memory.id) ?? null,
+        promoted: promotedById.get(memory.id) ?? null,
+      }))
+      .sort((a, b) => {
+        const aTouched = a.referenced ? 1 : 0;
+        const bTouched = b.referenced ? 1 : 0;
+        if (aTouched !== bTouched) return bTouched - aTouched;
+        return Number(b.memory.weight ?? 0) - Number(a.memory.weight ?? 0);
+      });
+
+    return {
+      items: beforeSessionMemories,
+      referencedCount: beforeSessionMemories.filter((item) => item.referenced)
+        .length,
+      availableCount: beforeSessionMemories.length,
+    };
   }, [sessionMemorySummary]);
   const activeOption =
     missionOptions.find((option) => option.id === selectedOptionId) ??
@@ -5333,6 +5369,11 @@ export default function MainScreenPage() {
       },
     );
     const visibleMemoryIds = new Set(visibleMemoryItems.map((item) => item.id));
+    const visibleGraphEdges = sessionMemorySummary.graphEdges.filter(
+      (edge) =>
+        visibleMemoryIds.has(edge.sourceId) &&
+        visibleMemoryIds.has(edge.targetId),
+    );
     const graphItems = visibleMemoryItems.map((memory) => {
       const referenced = referencedByMemoryId.get(memory.id);
       const phaseWeight =
@@ -5478,7 +5519,8 @@ export default function MainScreenPage() {
           ))}
         </div>
         <div className="absolute right-3 top-3 z-10 rounded-full bg-white/90 px-2.5 py-1 text-[10px] font-semibold text-slate-400 shadow-sm ring-1 ring-slate-100">
-          {graphClusters.length} clusters · {graphItems.length} nodes
+          {graphClusters.length} clusters · {graphItems.length} nodes ·{" "}
+          {visibleGraphEdges.length} edges
         </div>
         {graphClusters.length === 0 && (
           <div className="absolute right-3 top-10 z-10 max-w-64 rounded-lg border border-amber-100 bg-amber-50 px-3 py-2 text-[11px] leading-relaxed text-amber-700 shadow-sm">
@@ -5489,6 +5531,7 @@ export default function MainScreenPage() {
           <MemoryClusterGraph
             clusters={graphClusters}
             items={graphItems}
+            edges={visibleGraphEdges}
             selectedClusterId={selectedClusterId}
             onSelectCluster={setSelectedSessionGraphClusterId}
             onSelectMemory={(memoryId) => {
@@ -6072,300 +6115,36 @@ export default function MainScreenPage() {
           </div>
         </main>
       ) : missionOptions.length > 0 && !selectedOptionId ? (
-        /* Option selection page */
-        <main className="flex flex-1 flex-col overflow-hidden">
-          {/* Step indicator */}
-          <div className="border-b border-slate-100 bg-white px-8 py-4">
-            <div className="mx-auto flex max-w-3xl items-center gap-3">
-              <div className="flex items-center gap-2">
-                <div className="flex h-6 w-6 items-center justify-center rounded-full bg-slate-900 text-xs font-bold text-white">
-                  1
-                </div>
-                <span className="text-sm font-semibold text-slate-900">미션 선택</span>
-              </div>
-              <div className="h-px flex-1 bg-slate-200" />
-              <div className="flex items-center gap-2">
-                <div className="flex h-6 w-6 items-center justify-center rounded-full border-2 border-slate-200 text-xs font-bold text-slate-300">
-                  2
-                </div>
-                <span className="text-sm text-slate-300">정보 입력</span>
-              </div>
-              <div className="h-px flex-1 bg-slate-200" />
-              <div className="flex items-center gap-2">
-                <div className="flex h-6 w-6 items-center justify-center rounded-full border-2 border-slate-200 text-xs font-bold text-slate-300">
-                  3
-                </div>
-                <span className="text-sm text-slate-300">세션 시작</span>
-              </div>
-            </div>
-          </div>
-          <div className="flex-1 overflow-y-auto">
-            <div className="mx-auto max-w-3xl px-8 py-8 space-y-6">
-              {/* Mission info */}
-              {(parentMissionTitle || parentMissionBrief) && (
-                <div className="rounded-2xl border border-slate-200 bg-white px-6 py-5">
-                  <div className="flex items-center gap-2">
-                    <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">
-                      미션
-                    </p>
-                    <span className="flex items-center gap-1 rounded-full bg-slate-100 px-2.5 py-0.5 text-xs text-slate-500">
-                      {isOnboardingMission ? (
-                        <>
-                          <MonitorIcon size={11} className="inline" /> PC ·{" "}
-                          <DeviceMobileIcon size={11} className="inline" />{" "}
-                          모바일 선택
-                        </>
-                      ) : device === "mobile" ? (
-                        <>
-                          <DeviceMobileIcon size={11} className="inline" />{" "}
-                          모바일
-                        </>
-                      ) : (
-                        <>
-                          <MonitorIcon size={11} className="inline" /> PC
-                        </>
-                      )}
-                    </span>
-                    <span className="rounded-full bg-slate-100 px-2.5 py-0.5 text-xs text-slate-500">
-                      {missionDurationMinutes
-                        ? `제한 시간 ${missionDurationMinutes}분`
-                        : "시간 제한 없음"}
-                    </span>
-                  </div>
-                  {parentMissionTitle && (
-                    <h2 className="mt-2 text-lg font-semibold text-slate-900">
-                      {parentMissionTitle}
-                    </h2>
-                  )}
-                  {parentMissionBrief && (
-                    <p className="mt-1.5 text-sm leading-relaxed text-slate-500 whitespace-pre-wrap">
-                      {parentMissionBrief}
-                    </p>
-                  )}
-                </div>
-              )}
-
-              {/* Option tabs — only shown when multiple options exist */}
-              {missionOptions.length > 1 && (
-                <div className="flex gap-2 overflow-x-auto pb-1">
-                  {missionOptions.map((o, i) => {
-                    const isActive =
-                      activeOptionPreviewId === o.id ||
-                      (!activeOptionPreviewId && i === 0);
-                    return (
-                      <button
-                        key={o.id}
-                        onClick={() => setActiveOptionPreviewId(o.id)}
-                        className={`shrink-0 rounded-xl border px-4 py-2 text-sm font-semibold transition ${isActive ? "border-slate-900 bg-slate-900 text-white" : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"}`}
-                      >
-                        <span className="inline-flex items-center gap-1">
-                          {o.device === "mobile" ? (
-                            <DeviceMobileIcon size={13} />
-                          ) : o.device === "desktop" ? (
-                            <MonitorIcon size={13} />
-                          ) : null}
-                          {o.title}
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
-
-              {/* Option detail */}
-              {(() => {
-                const option =
-                  missionOptions.find((o) => o.id === activeOptionPreviewId) ??
-                  missionOptions[0];
-                if (!option) return null;
-                return (
-                  <div className="space-y-6">
-                    {option.description && (
-                      <p className="text-base leading-relaxed text-slate-500">
-                        {option.description}
-                      </p>
-                    )}
-
-                    {/* Content — markdown */}
-                    {option.content && (
-                      <div className="space-y-2">
-                        <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">
-                          콘텐츠
-                        </p>
-                        <div className="rounded-2xl border border-slate-100 bg-white px-6 py-5 text-sm text-slate-700 space-y-2">
-                          <ReactMarkdown
-                            components={{
-                              h1: ({ children }) => (
-                                <h1 className="text-xl font-bold text-slate-900 mb-2 mt-4 first:mt-0">
-                                  {children}
-                                </h1>
-                              ),
-                              h2: ({ children }) => (
-                                <h2 className="text-base font-semibold text-slate-900 mb-2 mt-4 first:mt-0">
-                                  {children}
-                                </h2>
-                              ),
-                              h3: ({ children }) => (
-                                <h3 className="text-sm font-semibold text-slate-800 mb-1 mt-3">
-                                  {children}
-                                </h3>
-                              ),
-                              p: ({ children }) => (
-                                <p className="leading-relaxed mb-2 last:mb-0">
-                                  {children}
-                                </p>
-                              ),
-                              ul: ({ children }) => (
-                                <ul className="list-disc ml-5 space-y-1 mb-2">
-                                  {children}
-                                </ul>
-                              ),
-                              ol: ({ children }) => (
-                                <ol className="list-decimal ml-5 space-y-1 mb-2">
-                                  {children}
-                                </ol>
-                              ),
-                              li: ({ children }) => (
-                                <li className="leading-relaxed">{children}</li>
-                              ),
-                              strong: ({ children }) => (
-                                <strong className="font-semibold text-slate-900">
-                                  {children}
-                                </strong>
-                              ),
-                              em: ({ children }) => (
-                                <em className="italic text-slate-600">
-                                  {children}
-                                </em>
-                              ),
-                              code: ({ children }) => (
-                                <code className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-xs text-slate-800">
-                                  {children}
-                                </code>
-                              ),
-                              blockquote: ({ children }) => (
-                                <blockquote className="border-l-2 border-slate-300 pl-4 italic text-slate-500 my-2">
-                                  {children}
-                                </blockquote>
-                              ),
-                              hr: () => (
-                                <hr className="border-slate-200 my-4" />
-                              ),
-                            }}
-                          >
-                            {option.content}
-                          </ReactMarkdown>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                );
-              })()}
-            </div>
-          </div>
-
-          {/* Start button — fixed bottom */}
-          <div className="border-t border-slate-200 bg-white px-8 py-4">
-            <div className="mx-auto max-w-3xl">
-              <button
-                onClick={() => {
-                  const option =
-                    missionOptions.find(
-                      (o) => o.id === activeOptionPreviewId,
-                    ) ?? missionOptions[0];
-                  if (option) chooseMissionOption(option);
-                }}
-                className="w-full rounded-2xl bg-slate-900 py-3.5 text-sm font-semibold text-white transition hover:bg-slate-700"
-              >
-                다음
-              </button>
-            </div>
-          </div>
-        </main>
+        <MissionOptionSelection
+          options={missionOptions}
+          activePreviewId={activeOptionPreviewId}
+          parentMissionTitle={parentMissionTitle}
+          parentMissionBrief={parentMissionBrief}
+          device={device}
+          onboarding={isOnboardingMission}
+          missionDurationMinutes={missionDurationMinutes}
+          onPreviewChange={setActiveOptionPreviewId}
+          onChooseOption={chooseMissionOption}
+        />
       ) : !isReadOnly && isMissionContextReady && sessionLoaded && !sessionCompleted && !profileModalConfirmed && profileStep === 2 ? (
         /* Step 2: Profile input */
         <main className="flex flex-1 flex-col overflow-hidden">
-          {/* Step indicator */}
-          <div className="border-b border-slate-100 bg-white px-8 py-4">
-            <div className="mx-auto flex max-w-3xl items-center gap-3">
-              <button
-                onClick={() => setSelectedOptionId(null)}
-                className="mr-1 flex shrink-0 items-center gap-1 text-sm text-slate-400 hover:text-slate-700"
-              >
-                <ArrowLeftIcon size={13} />
-                이전
-              </button>
-              <div className="flex items-center gap-2">
-                <div className="flex h-6 w-6 items-center justify-center rounded-full bg-slate-300 text-xs font-bold text-white">
-                  1
-                </div>
-                <span className="text-sm text-slate-400">미션 선택</span>
-              </div>
-              <div className="h-px flex-1 bg-slate-900" />
-              <div className="flex items-center gap-2">
-                <div className="flex h-6 w-6 items-center justify-center rounded-full bg-slate-900 text-xs font-bold text-white">
-                  2
-                </div>
-                <span className="text-sm font-semibold text-slate-900">정보 입력</span>
-              </div>
-              <div className="h-px flex-1 bg-slate-200" />
-              <div className="flex items-center gap-2">
-                <div className="flex h-6 w-6 items-center justify-center rounded-full border-2 border-slate-200 text-xs font-bold text-slate-300">
-                  3
-                </div>
-                <span className="text-sm text-slate-300">세션 시작</span>
-              </div>
-            </div>
-          </div>
+          <SessionSetupStepper
+            currentStep={2}
+            onBack={() => setSelectedOptionId(null)}
+          />
           <div className="flex-1 overflow-y-auto">
             <div className="mx-auto max-w-3xl space-y-6 px-8 py-8">
-              {/* Profile input */}
-              <div className="rounded-2xl border border-slate-200 bg-white px-6 py-5">
-                <p className="font-semibold text-slate-900">
-                  에이전트가 알아야 할 것들
-                </p>
-                <p className="mt-1 text-sm leading-relaxed text-slate-500">
-                  대화를 통해 알아낼 수 없는 것들을 자유롭게 적어주세요. 브랜드
-                  컬러, 타겟 사용자, 프로젝트 제약 조건 등 처음부터 알아야
-                  하는 맥락이 좋습니다.
-                </p>
-                <textarea
-                  value={profileRawMarkdown}
-                  onChange={(e) => setProfileRawMarkdown(e.target.value)}
-                  placeholder="예: 브랜드 컬러는 네이비이고 바꿀 수 없어요. 타겟은 20대 여성이에요. 앱 출시는 3개월 안에 해야 해요."
-                  rows={5}
-                  className="mt-4 w-full resize-none rounded-xl border border-slate-200 px-3 py-2.5 text-sm leading-relaxed text-slate-700 outline-none focus:border-slate-400 placeholder:text-slate-300"
-                />
-              </div>
-              {/* Mission context */}
-              <div className="rounded-2xl border border-slate-200 bg-white px-6 py-5">
-                <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">
-                  미션
-                </p>
-                <h2 className="mt-2 text-lg font-semibold text-slate-900">
-                  {missionTitle}
-                </h2>
-                {missionBrief && (
-                  <p className="mt-1.5 whitespace-pre-wrap text-sm leading-relaxed text-slate-500">
-                    {missionBrief}
-                  </p>
-                )}
-                {activeOption && missionOptions.length > 1 && (
-                  <div className="mt-4 border-t border-slate-100 pt-4">
-                    <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">
-                      선택한 옵션
-                    </p>
-                    <p className="mt-1.5 font-medium text-slate-800">
-                      {activeOption.title}
-                    </p>
-                    {activeOption.description && (
-                      <p className="mt-1 text-sm leading-relaxed text-slate-500">
-                        {activeOption.description}
-                      </p>
-                    )}
-                  </div>
-                )}
-              </div>
+              <ProfileInputCard
+                value={profileRawMarkdown}
+                onChange={setProfileRawMarkdown}
+              />
+              <SetupMissionSummaryCard
+                missionTitle={missionTitle}
+                missionBrief={missionBrief}
+                activeOption={activeOption}
+                showOption={missionOptions.length > 1}
+              />
             </div>
           </div>
           {/* Next button */}
@@ -6383,92 +6162,20 @@ export default function MainScreenPage() {
       ) : !isReadOnly && isMissionContextReady && sessionLoaded && !sessionCompleted && !profileModalConfirmed && profileStep === 3 ? (
         /* Step 3: Review + start */
         <main className="flex flex-1 flex-col overflow-hidden">
-          {/* Step indicator */}
-          <div className="border-b border-slate-100 bg-white px-8 py-4">
-            <div className="mx-auto flex max-w-3xl items-center gap-3">
-              <button
-                onClick={() => setProfileStep(2)}
-                className="mr-1 flex shrink-0 items-center gap-1 text-sm text-slate-400 hover:text-slate-700"
-              >
-                <ArrowLeftIcon size={13} />
-                이전
-              </button>
-              <div className="flex items-center gap-2">
-                <div className="flex h-6 w-6 items-center justify-center rounded-full bg-slate-300 text-xs font-bold text-white">
-                  1
-                </div>
-                <span className="text-sm text-slate-400">미션 선택</span>
-              </div>
-              <div className="h-px flex-1 bg-slate-900" />
-              <div className="flex items-center gap-2">
-                <div className="flex h-6 w-6 items-center justify-center rounded-full bg-slate-300 text-xs font-bold text-white">
-                  2
-                </div>
-                <span className="text-sm text-slate-400">정보 입력</span>
-              </div>
-              <div className="h-px flex-1 bg-slate-900" />
-              <div className="flex items-center gap-2">
-                <div className="flex h-6 w-6 items-center justify-center rounded-full bg-slate-900 text-xs font-bold text-white">
-                  3
-                </div>
-                <span className="text-sm font-semibold text-slate-900">세션 시작</span>
-              </div>
-            </div>
-          </div>
+          <SessionSetupStepper
+            currentStep={3}
+            onBack={() => setProfileStep(2)}
+          />
           <div className="flex-1 overflow-y-auto">
             <div className="mx-auto max-w-3xl space-y-6 px-8 py-8">
-              {/* Profile review */}
-              <div className="rounded-2xl border border-slate-200 bg-white px-6 py-5">
-                <p className="font-semibold text-slate-900">입력한 정보</p>
-                <div className="mt-3">
-                  {profileRawMarkdown.trim() ? (
-                    <p className="whitespace-pre-wrap text-sm leading-relaxed text-slate-700">
-                      {profileRawMarkdown}
-                    </p>
-                  ) : (
-                    <p className="text-sm text-slate-400">입력한 정보가 없습니다.</p>
-                  )}
-                </div>
-              </div>
-              {/* Mission context */}
-              <div className="rounded-2xl border border-slate-200 bg-white px-6 py-5">
-                <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">
-                  미션
-                </p>
-                <h2 className="mt-2 text-lg font-semibold text-slate-900">
-                  {missionTitle}
-                </h2>
-                {missionBrief && (
-                  <p className="mt-1.5 whitespace-pre-wrap text-sm leading-relaxed text-slate-500">
-                    {missionBrief}
-                  </p>
-                )}
-                {activeOption && missionOptions.length > 1 && (
-                  <div className="mt-4 border-t border-slate-100 pt-4">
-                    <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">
-                      선택한 옵션
-                    </p>
-                    <p className="mt-1.5 font-medium text-slate-800">
-                      {activeOption.title}
-                    </p>
-                    {activeOption.description && (
-                      <p className="mt-1 text-sm leading-relaxed text-slate-500">
-                        {activeOption.description}
-                      </p>
-                    )}
-                  </div>
-                )}
-                {missionDurationMinutes && (
-                  <div className="mt-4 border-t border-slate-100 pt-4">
-                    <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">
-                      제한 시간
-                    </p>
-                    <p className="mt-1.5 text-2xl font-bold text-slate-900">
-                      {missionDurationMinutes}분
-                    </p>
-                  </div>
-                )}
-              </div>
+              <ProfileReviewCard value={profileRawMarkdown} />
+              <SetupMissionSummaryCard
+                missionTitle={missionTitle}
+                missionBrief={missionBrief}
+                activeOption={activeOption}
+                showOption={missionOptions.length > 1}
+                missionDurationMinutes={missionDurationMinutes}
+              />
             </div>
           </div>
           {/* Session start button */}
@@ -6530,797 +6237,144 @@ export default function MainScreenPage() {
             ref={missionPanelRef}
             className="flex-1 space-y-6 overflow-y-auto pb-32 pt-8 pl-10 pr-6"
           >
-            {/* Mission */}
-            <div className="rounded-3xl border border-slate-200 bg-white p-6">
-              <div className="flex items-center justify-between">
-                <p className="text-xl font-semibold text-slate-900">Mission</p>
-                <div className="flex items-center gap-2">
-                  <span className="rounded-full bg-slate-100 px-3 py-1 text-xs text-slate-500">
-                    {device === "mobile" ? (
-                      <>
-                        <DeviceMobileIcon size={12} className="inline" /> 모바일
-                      </>
-                    ) : (
-                      <>
-                        <MonitorIcon size={12} className="inline" /> PC
-                      </>
-                    )}
-                  </span>
-                </div>
-              </div>
-              <div className="mt-4 space-y-4">
-                <div className="space-y-3">
-                  <p className="rounded-2xl border border-slate-100 bg-slate-50 px-4 py-3 text-base font-semibold text-slate-900">
-                    {parentMissionTitle || missionTitle || (
-                      <span className="font-normal text-slate-400">
-                        미션 제목 없음
-                      </span>
-                    )}
-                  </p>
-                  {parentMissionBrief || (!activeOption && missionBrief) ? (
-                    <div className="rounded-2xl border border-slate-100 bg-slate-50 px-4 py-3 text-sm text-slate-700 space-y-2">
-                      <p className="text-xs font-semibold text-slate-500 mb-1">
-                        전체 미션 브리핑
-                      </p>
-                      <ReactMarkdown
-                        components={{
-                          h1: ({ children }) => (
-                            <h1 className="text-base font-bold text-slate-900 mb-1 mt-3 first:mt-0">
-                              {children}
-                            </h1>
-                          ),
-                          h2: ({ children }) => (
-                            <h2 className="text-sm font-semibold text-slate-900 mb-1 mt-3 first:mt-0">
-                              {children}
-                            </h2>
-                          ),
-                          h3: ({ children }) => (
-                            <h3 className="text-sm font-medium text-slate-800 mb-1 mt-2">
-                              {children}
-                            </h3>
-                          ),
-                          p: ({ children }) => (
-                            <p className="leading-relaxed mb-2 last:mb-0">
-                              {children}
-                            </p>
-                          ),
-                          ul: ({ children }) => (
-                            <ul className="list-disc ml-4 space-y-1 mb-2">
-                              {children}
-                            </ul>
-                          ),
-                          ol: ({ children }) => (
-                            <ol className="list-decimal ml-4 space-y-1 mb-2">
-                              {children}
-                            </ol>
-                          ),
-                          li: ({ children }) => (
-                            <li className="leading-relaxed">{children}</li>
-                          ),
-                          strong: ({ children }) => (
-                            <strong className="font-semibold text-slate-900">
-                              {children}
-                            </strong>
-                          ),
-                          code: ({ children }) => (
-                            <code className="rounded bg-slate-200 px-1 py-0.5 font-mono text-xs text-slate-800">
-                              {children}
-                            </code>
-                          ),
-                          blockquote: ({ children }) => (
-                            <blockquote className="border-l-2 border-slate-300 pl-3 italic text-slate-500 my-2">
-                              {children}
-                            </blockquote>
-                          ),
-                        }}
-                      >
-                        {parentMissionBrief || missionBrief}
-                      </ReactMarkdown>
-                    </div>
-                  ) : (
-                    <p className="rounded-2xl border border-slate-100 bg-slate-50 px-4 py-3 text-sm text-slate-400">
-                      전체 미션 브리핑 없음
-                    </p>
-                  )}
-                </div>
+            <MissionBriefSection
+              title={parentMissionTitle || missionTitle}
+              brief={parentMissionBrief || (!activeOption ? missionBrief : "")}
+              option={activeOption}
+              device={device}
+              optionExpanded={isOptionExpanded}
+              onToggleOption={() => setIsOptionExpanded((expanded) => !expanded)}
+            />
 
-                {activeOption && (
-                  <div className="border-t border-slate-100 pt-4">
-                    <div className="rounded-2xl border border-slate-100 bg-white overflow-hidden">
-                      <button
-                        onClick={() => setIsOptionExpanded((p) => !p)}
-                        className="flex w-full items-center justify-between px-4 py-3 text-left hover:bg-slate-50 transition"
-                      >
-                        <span className="text-sm font-semibold text-slate-800">
-                          선택된 옵션: {activeOption.title}
-                        </span>
-                        <span className="text-xs font-semibold text-slate-500">
-                          {isOptionExpanded ? "▲" : "▼"}
-                        </span>
-                      </button>
-                      {isOptionExpanded && (
-                        <div className="border-t border-slate-100 px-4 py-3 space-y-4">
-                          {activeOption.description && (
-                            <p className="text-sm text-slate-600 leading-relaxed whitespace-pre-wrap">
-                              {activeOption.description}
-                            </p>
-                          )}
-                          {activeOption.content && (
-                            <div className="rounded-2xl border border-slate-100 bg-slate-50 px-4 py-3 text-sm text-slate-700 space-y-2">
-                              <ReactMarkdown
-                                components={{
-                                  h1: ({ children }) => (
-                                    <h1 className="text-base font-bold text-slate-900 mb-1 mt-3 first:mt-0">
-                                      {children}
-                                    </h1>
-                                  ),
-                                  h2: ({ children }) => (
-                                    <h2 className="text-sm font-semibold text-slate-900 mb-1 mt-3 first:mt-0">
-                                      {children}
-                                    </h2>
-                                  ),
-                                  h3: ({ children }) => (
-                                    <h3 className="text-sm font-medium text-slate-800 mb-1 mt-2">
-                                      {children}
-                                    </h3>
-                                  ),
-                                  p: ({ children }) => (
-                                    <p className="leading-relaxed mb-2 last:mb-0">
-                                      {children}
-                                    </p>
-                                  ),
-                                  ul: ({ children }) => (
-                                    <ul className="list-disc ml-4 space-y-1 mb-2">
-                                      {children}
-                                    </ul>
-                                  ),
-                                  ol: ({ children }) => (
-                                    <ol className="list-decimal ml-4 space-y-1 mb-2">
-                                      {children}
-                                    </ol>
-                                  ),
-                                  li: ({ children }) => (
-                                    <li className="leading-relaxed">
-                                      {children}
-                                    </li>
-                                  ),
-                                  strong: ({ children }) => (
-                                    <strong className="font-semibold text-slate-900">
-                                      {children}
-                                    </strong>
-                                  ),
-                                  code: ({ children }) => (
-                                    <code className="rounded bg-slate-200 px-1 py-0.5 font-mono text-xs text-slate-800">
-                                      {children}
-                                    </code>
-                                  ),
-                                  blockquote: ({ children }) => (
-                                    <blockquote className="border-l-2 border-slate-300 pl-3 italic text-slate-500 my-2">
-                                      {children}
-                                    </blockquote>
-                                  ),
-                                }}
-                              >
-                                {activeOption.content}
-                              </ReactMarkdown>
-                            </div>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
+            <ReferenceSection
+              references={references}
+              selectedReferenceIds={
+                new Set(selectedReferences.map((reference) => reference.id))
+              }
+              fetching={isFetchingRefs}
+              error={referenceSearchError}
+              readOnly={isReadOnly}
+              onToggleReference={(reference) => {
+                setSelectedReferences((prev) =>
+                  prev.some((selected) => selected.id === reference.id)
+                    ? prev.filter((selected) => selected.id !== reference.id)
+                    : [...prev, reference],
+                );
+              }}
+              onDeleteReference={requestDeleteReference}
+            />
 
-            {/* Reference */}
-            <div className="rounded-3xl border border-slate-200 bg-white p-6">
-              <div className="flex items-center justify-between">
-                <p className="text-xl font-semibold text-slate-900">
-                  Reference
-                </p>
-                {isFetchingRefs && (
-                  <span className="flex items-center gap-1.5 text-xs text-slate-400">
-                    <span className="h-3 w-3 animate-spin rounded-full border-2 border-slate-300 border-t-slate-500" />
-                    레퍼런스 검색 중...
-                  </span>
-                )}
-              </div>
-              {referenceSearchError && !isFetchingRefs && (
-                <div className="mt-4 rounded-2xl border border-amber-100 bg-amber-50 px-4 py-3 text-sm text-amber-700">
-                  {referenceSearchError}
-                </div>
-              )}
-              {references.length === 0 && !isFetchingRefs ? (
-                referenceSearchError ? null : (
-                  <div className="mt-4 rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-6 text-center text-sm text-slate-400">
-                    {
-                      '채팅에서 "레퍼런스 찾아줘"라고 입력하면 관련 UI 이미지가 표시됩니다.'
-                    }
-                  </div>
-                )
-              ) : (
-                <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-                  {references.map((card) => {
-                    const isSelected = selectedReferences.some(
-                      (r) => r.id === card.id,
-                    );
-                    return (
-                      <ReferenceCard
-                        key={card.id}
-                        reference={card}
-                        selected={isSelected}
-                        readOnly={isReadOnly}
-                        onToggle={(reference) => {
-                          setSelectedReferences((prev) =>
-                            isSelected
-                              ? prev.filter((r) => r.id !== reference.id)
-                              : [...prev, reference],
-                          );
-                        }}
-                        onDelete={requestDeleteReference}
-                      />
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-
-            {/* Note / Mockup */}
-            <div className="rounded-3xl border border-slate-200 bg-white p-6">
-              {ideas.length === 0 ? (
-                <div className="flex flex-col items-center gap-4 rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-8 text-center text-sm text-slate-400">
-                  <p>에이전트에게 시안을 작성해달라고 요청하세요.</p>
-                </div>
-              ) : (
-                <>
-                  {/* Top: note tabs */}
-                  <IdeaTabs
-                    ideas={ideas}
-                    activeIdeaId={activeIdeaId}
-                    readOnly={isReadOnly}
-                    onSwitch={switchIdea}
-                    onDelete={requestDeleteIdea}
-                  />
-
-                  <div className="flex gap-4">
-                    {/* Sub-tab sidebar */}
-                    <div className="sticky top-4 flex flex-col space-y-2 self-start text-sm text-slate-600">
-                      {[
-                        { id: "idea", label: "Note", ref: ideaSectionRef },
-                        {
-                          id: "style",
-                          label: "Style",
-                          ref: styleSectionRef,
-                        },
-                        {
-                          id: "mockup",
-                          label: "Mockup",
-                          ref: mockupSectionRef,
-                        },
-                      ].map((tab) => (
-                        <button
-                          key={tab.id}
-                          onClick={() => {
-                            setActiveIdeaTab(tab.id);
-                            setTimeout(
-                              () =>
-                                tab.ref.current?.scrollIntoView({
-                                  behavior: "smooth",
-                                  block: "start",
-                                }),
-                              0,
-                            );
-                          }}
-                          className={`rounded-xl border px-4 py-2 text-left transition ${
-                            activeIdeaTab === tab.id
-                              ? "border-slate-900 bg-slate-900 text-white"
-                              : "border-slate-200 bg-white hover:bg-slate-50"
-                          }`}
-                        >
-                          {tab.label}
-                        </button>
-                      ))}
-                    </div>
-
-                    {/* Content — all sections always visible */}
-                    <div className="flex-1 min-w-0 space-y-10">
-                      {/* Note */}
-                      {(() => {
-                        const idea =
-                          ideas.find((i) => i.id === activeIdeaId) ?? null;
-                        if (!idea) return null;
-                        return (
-                          <>
-                            <section
-                              ref={ideaSectionRef}
-                              className="space-y-4 scroll-mt-4"
-                            >
-                              <div className="flex items-center justify-between">
-                                <div className="space-y-1">
-                                  <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">
-                                    시안 노트
-                                  </p>
-                                  <p className="text-base font-semibold text-slate-900">
-                                    {idea.title}
-                                  </p>
-                                </div>
-                              </div>
-                              <div className="relative rounded-2xl border border-slate-100 bg-white shadow-sm">
-                                <div
-                                  className={`space-y-2 px-5 pb-14 pt-5 text-sm text-slate-700 ${isIdeaExpanded ? "max-h-[60vh] overflow-y-auto" : "max-h-64 overflow-hidden"}`}
-                                >
-                                  {idea.description ? (
-                                    <ReactMarkdown
-                                      components={{
-                                        h1: ({ children }) => (
-                                          <h1 className="text-base font-bold text-slate-900 mb-1">
-                                            {children}
-                                          </h1>
-                                        ),
-                                        h2: ({ children }) => (
-                                          <h2 className="text-sm font-semibold text-slate-900 mb-1 mt-3">
-                                            {children}
-                                          </h2>
-                                        ),
-                                        h3: ({ children }) => (
-                                          <h3 className="text-sm font-medium text-slate-800 mb-1 mt-2">
-                                            {children}
-                                          </h3>
-                                        ),
-                                        p: ({ children }) => (
-                                          <p className="leading-relaxed mb-2 last:mb-0">
-                                            {children}
-                                          </p>
-                                        ),
-                                        ul: ({ children }) => (
-                                          <ul className="list-disc ml-4 space-y-1 mb-2">
-                                            {children}
-                                          </ul>
-                                        ),
-                                        ol: ({ children }) => (
-                                          <ol className="list-decimal ml-4 space-y-1 mb-2">
-                                            {children}
-                                          </ol>
-                                        ),
-                                        li: ({ children }) => (
-                                          <li className="leading-relaxed">
-                                            {children}
-                                          </li>
-                                        ),
-                                        strong: ({ children }) => (
-                                          <strong className="font-semibold text-slate-900">
-                                            {children}
-                                          </strong>
-                                        ),
-                                        em: ({ children }) => (
-                                          <em className="italic text-slate-600">
-                                            {children}
-                                          </em>
-                                        ),
-                                        code: ({ children }) => (
-                                          <code className="rounded bg-slate-200 px-1 py-0.5 font-mono text-xs text-slate-800">
-                                            {children}
-                                          </code>
-                                        ),
-                                        blockquote: ({ children }) => (
-                                          <blockquote className="border-l-2 border-slate-300 pl-3 italic text-slate-500 my-2">
-                                            {children}
-                                          </blockquote>
-                                        ),
-                                        hr: () => (
-                                          <hr className="border-slate-200 my-3" />
-                                        ),
-                                        a: ({ href, children }) => (
-                                          <a
-                                            href={href}
-                                            target="_blank"
-                                            rel="noopener noreferrer"
-                                            className="text-indigo-500 underline underline-offset-2 hover:text-indigo-700"
-                                          >
-                                            {children}
-                                          </a>
-                                        ),
-                                      }}
-                                    >
-                                      {idea.description}
-                                    </ReactMarkdown>
-                                  ) : (
-                                    <p className="text-slate-400">
-                                      에이전트가 아직 노트 내용을 작성하지
-                                      않았습니다.
-                                    </p>
-                                  )}
-                                </div>
-                                {!isIdeaExpanded && (
-                                  <div className="pointer-events-none absolute inset-x-0 bottom-0 h-20 bg-linear-to-t from-white via-white to-transparent" />
-                                )}
-                                <div className="absolute inset-x-0 bottom-3 z-10 flex justify-center">
-                                  <button
-                                    onClick={() => setIsIdeaExpanded((p) => !p)}
-                                    className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-3 py-1 text-xs text-slate-500 shadow-sm transition hover:bg-slate-50"
-                                  >
-                                    {isIdeaExpanded ? (
-                                      <CaretUpIcon size={12} />
-                                    ) : (
-                                      <CaretDownIcon size={12} />
-                                    )}
-                                    {isIdeaExpanded ? "접기" : "펼치기"}
-                                  </button>
-                                </div>
-                              </div>
-                            </section>
-
-                            <section
-                              ref={styleSectionRef}
-                              className="space-y-3 scroll-mt-4"
-                            >
-                              <div className="overflow-hidden rounded-2xl border border-indigo-100 bg-indigo-50/40">
-                                <button
-                                  type="button"
-                                  onClick={() =>
-                                    setIsDesignSpecOpen((open) => !open)
-                                  }
-                                  className="flex w-full items-center justify-between px-4 py-3 text-left"
-                                >
-                                  <span className="flex items-center gap-2">
-                                    <span className="flex h-7 w-7 items-center justify-center rounded-lg border border-indigo-100 bg-white text-xs font-semibold text-indigo-600">
-                                      Aa
-                                    </span>
-                                    <span className="space-y-0.5">
-                                      <span className="block text-xs font-semibold text-slate-800">
-                                        디자인 스타일
-                                      </span>
-                                      <span className="block text-[11px] text-slate-500">
-                                        {idea.designStyle
-                                          ? "현재 시안의 시각 규칙"
-                                          : "아직 정의되지 않음"}
-                                      </span>
-                                    </span>
-                                  </span>
-                                  <span className="flex items-center gap-2 text-xs text-slate-500">
-                                    <span
-                                      className={`rounded-full px-2 py-0.5 font-semibold ${
-                                        idea.designStyle
-                                          ? "bg-indigo-100 text-indigo-700"
-                                          : "bg-white text-slate-400"
-                                      }`}
-                                    >
-                                      {idea.designStyle ? "설정됨" : "미정의"}
-                                    </span>
-                                    {isDesignSpecOpen ? "접기" : "펼치기"}
-                                  </span>
-                                </button>
-                                {isDesignSpecOpen && (
-                                  <div className="space-y-3 border-t border-indigo-100 px-4 py-3">
-                                    {!idea.designStyle ? (
-                                      <p className="text-xs text-slate-500">
-                                        에이전트에게 이 시안의 디자인 스타일을
-                                        정의해달라고 요청하세요.
-                                      </p>
-                                    ) : (
-                                      (() => {
-                                        const style = idea.designStyle;
-                                        return (
-                                          <div className="space-y-3">
-                                            <div className="max-h-56 overflow-y-auto rounded-xl border border-indigo-100 bg-white px-4 py-3 text-xs text-slate-600">
-                                              <ReactMarkdown
-                                                components={{
-                                                  h1: ({ children }) => (
-                                                    <h1 className="mb-2 mt-3 text-sm font-bold text-slate-900 first:mt-0">
-                                                      {children}
-                                                    </h1>
-                                                  ),
-                                                  h2: ({ children }) => (
-                                                    <h2 className="mb-1.5 mt-3 text-xs font-semibold uppercase text-slate-800 first:mt-0">
-                                                      {children}
-                                                    </h2>
-                                                  ),
-                                                  h3: ({ children }) => (
-                                                    <h3 className="mb-1 mt-2 text-xs font-semibold text-slate-700">
-                                                      {children}
-                                                    </h3>
-                                                  ),
-                                                  p: ({ children }) => (
-                                                    <p className="mb-1.5 leading-relaxed last:mb-0">
-                                                      {withColorTokens(
-                                                        children,
-                                                      )}
-                                                    </p>
-                                                  ),
-                                                  ul: ({ children }) => (
-                                                    <ul className="mb-1.5 ml-4 list-disc space-y-0.5">
-                                                      {children}
-                                                    </ul>
-                                                  ),
-                                                  ol: ({ children }) => (
-                                                    <ol className="mb-1.5 ml-4 list-decimal space-y-0.5">
-                                                      {children}
-                                                    </ol>
-                                                  ),
-                                                  li: ({ children }) => (
-                                                    <li className="leading-relaxed">
-                                                      {withColorTokens(
-                                                        children,
-                                                      )}
-                                                    </li>
-                                                  ),
-                                                  strong: ({ children }) => (
-                                                    <strong className="font-semibold text-slate-900">
-                                                      {children}
-                                                    </strong>
-                                                  ),
-                                                  em: ({ children }) => (
-                                                    <em className="italic text-slate-600">
-                                                      {children}
-                                                    </em>
-                                                  ),
-                                                  code: ({ children }) => {
-                                                    const text = String(
-                                                      children ?? "",
-                                                    );
-                                                    const trimmed = text.trim();
-                                                    const isHex =
-                                                      /^#([0-9A-Fa-f]{6}|[0-9A-Fa-f]{3})$/.test(
-                                                        trimmed,
-                                                      );
-                                                    return (
-                                                      <span className="inline-flex items-center gap-1 align-middle">
-                                                        {isHex && (
-                                                          <span
-                                                            className="inline-block h-3 w-3 shrink-0 rounded-sm border border-black/10"
-                                                            style={{
-                                                              backgroundColor:
-                                                                trimmed,
-                                                            }}
-                                                          />
-                                                        )}
-                                                        <code className="rounded bg-indigo-50 px-1.5 py-0.5 font-mono text-[10px] text-indigo-700">
-                                                          {text}
-                                                        </code>
-                                                      </span>
-                                                    );
-                                                  },
-                                                  blockquote: ({
-                                                    children,
-                                                  }) => (
-                                                    <blockquote className="my-2 border-l-2 border-indigo-200 pl-3 italic text-slate-500">
-                                                      {children}
-                                                    </blockquote>
-                                                  ),
-                                                  hr: () => (
-                                                    <hr className="my-2 border-indigo-100" />
-                                                  ),
-                                                  a: ({ href, children }) => (
-                                                    <a
-                                                      href={href}
-                                                      target="_blank"
-                                                      rel="noopener noreferrer"
-                                                      className="text-indigo-600 underline underline-offset-2 hover:text-indigo-800"
-                                                    >
-                                                      {children}
-                                                    </a>
-                                                  ),
-                                                }}
-                                              >
-                                                {style.content}
-                                              </ReactMarkdown>
-                                            </div>
-                                          </div>
-                                        );
-                                      })()
-                                    )}
-                                  </div>
-                                )}
-                              </div>
-                            </section>
-                          </>
-                        );
-                      })()}
-
-                      {/* Mockup */}
-                      <section
-                        ref={mockupSectionRef}
-                        className="space-y-3 scroll-mt-4"
-                      >
-                        <div className="flex items-center justify-between">
-                          <p className="text-base font-semibold text-slate-900">
-                            Mockup
-                          </p>
-                          {ideaArtboards.length > 0 && (
-                            <MockupCanvasToolbar
-                              editMode={editMode}
-                              selectedElement={selectedElement}
-                              canvasScale={canvasScale}
-                              activeArtboard={activeArtboard}
-                              onToggleEditMode={() => {
-                                setEditMode((p) => {
-                                  if (p) setSelectedElement(null);
-                                  return !p;
-                                });
-                              }}
-                              onClearSelectedElement={clearSelectedElement}
-                              onFit={fitToCanvas}
-                              onZoomIn={() =>
-                                setCanvasScale((s) =>
-                                  Math.min(s * 1.2, MAX_CANVAS_SCALE),
-                                )
-                              }
-                              onZoomOut={() =>
-                                setCanvasScale((s) =>
-                                  Math.max(s * 0.8, MIN_CANVAS_SCALE),
-                                )
-                              }
-                              onExport={() => {
-                                const html = activeArtboard?.html;
-                                if (!html) return;
-                                const blob = new Blob([html], {
-                                  type: "text/html",
-                                });
-                                const url = URL.createObjectURL(blob);
-                                const a = document.createElement("a");
-                                a.href = url;
-                                a.download = `${activeArtboard?.label ?? "mockup"}.html`;
-                                a.click();
-                                URL.revokeObjectURL(url);
-                              }}
-                              onExpand={() => setIsMockupExpanded(true)}
-                            />
-                          )}
-                        </div>
-                        {shouldRenderMockupCanvas ? (
-                          isMockupExpanded ? (
-                            <div className="flex h-64 items-center justify-center rounded-2xl bg-[#1a1a1a] text-xs text-white/40">
-                              확대 보기 중...
-                            </div>
-                          ) : (
-                            renderMockupCanvas()
-                          )
-                        ) : (
-                          <div className="flex h-64 flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-slate-300 bg-white/70 text-sm text-slate-400">
-                            {isGeneratingCurrentIdeaMockup ? (
-                              <>
-                                <div className="h-7 w-7 animate-spin rounded-full border-2 border-slate-300 border-t-slate-600" />
-                                <p className="text-slate-500">
-                                  Stitch로 목업{" "}
-                                  {mockupOperation === "edit" ? "수정" : "생성"}{" "}
-                                  중...
-                                </p>
-                                {!isReadOnly && (
-                                  <button
-                                    onClick={cancelMockupGeneration}
-                                    className="rounded-full bg-slate-900 px-4 py-2 text-xs font-semibold text-white transition hover:bg-slate-700"
-                                  >
-                                    취소
-                                  </button>
-                                )}
-                              </>
-                            ) : (
-                              <p>
-                                {
-                                  '에이전트에게 "목업 만들어줘"라고 말하면 여기에 표시됩니다.'
-                                }
-                              </p>
-                            )}
-                          </div>
-                        )}
-                      </section>
-
-                    </div>
-                  </div>
-                </>
-              )}
-            </div>
-
-            {/* Final Design — mission-level */}
-            <div
-              ref={finalDesignSectionRef}
-              className="rounded-3xl border border-slate-200 bg-white p-6 space-y-4"
+            <IdeaWorkspace
+              ideas={ideas}
+              activeIdeaId={activeIdeaId}
+              activeSectionId={activeIdeaTab}
+              readOnly={isReadOnly}
+              sections={[
+                { id: "idea", label: "Note", ref: ideaSectionRef },
+                { id: "style", label: "Style", ref: styleSectionRef },
+                { id: "mockup", label: "Mockup", ref: mockupSectionRef },
+              ]}
+              onSwitchIdea={switchIdea}
+              onDeleteIdea={requestDeleteIdea}
+              onSelectSection={setActiveIdeaTab}
             >
-              <div className="flex items-center justify-between">
-                <p className="text-base font-semibold text-slate-900">
-                  Final Design
-                </p>
-                {finalArtboardId && (
-                  <span className="text-xs font-medium text-emerald-600">
-                    선택됨
-                  </span>
-                )}
-              </div>
-              {artboards.length === 0 ? (
-                <div className="flex h-40 items-center justify-center rounded-2xl border border-dashed border-slate-300 bg-slate-50 text-sm text-slate-400">
-                  목업을 생성하면 여기서 최종 디자인을 선택할 수 있습니다.
-                </div>
-              ) : (
-                <div className="space-y-4">
-                  {ideas.map((idea) => {
-                    const boards = artboards.filter(
-                      (a) => a.ideaId === idea.id,
-                    );
-                    if (boards.length === 0) return null;
-                    return (
-                      <div key={idea.id} className="space-y-2">
-                        {ideas.length > 1 && (
-                          <p className="text-xs font-medium text-slate-500">
-                            {idea.title}
-                          </p>
-                        )}
-                        <div className="flex flex-wrap gap-3">
-                          {boards.map((board) => {
-                            const isFinal = board.id === finalArtboardId;
-                            const { width, height } =
-                              DEVICE_SIZE[board.device ?? "desktop"];
-                            const thumbH =
-                              board.device === "mobile" ? 200 : 160;
-                            const scale = thumbH / height;
-                            const thumbW = Math.round(width * scale);
-                            return (
-                              <button
-                                key={board.id}
-                                onClick={() => {
-                                  if (!isReadOnly) {
-                                    const next = isFinal ? null : board.id;
-                                    setFinalArtboardId(next);
-                                    if (next) {
-                                      void encodeMemoryDraft(
-                                        `final-design-${board.id}`,
-                                        `최종 디자인 선택: ${board.label}`,
-                                        `시안: ${idea.title} / 생성일: ${board.createdAt ? new Date(board.createdAt).toLocaleString("ko-KR") : "미상"}`,
-                                        Date.now(),
-                                      );
-                                    }
-                                  }
-                                }}
-                                disabled={isReadOnly}
-                                className={`relative overflow-hidden rounded-xl border-2 transition ${
-                                  isFinal
-                                    ? "border-emerald-500 ring-2 ring-emerald-200"
-                                    : "border-slate-200 hover:border-slate-400"
-                                } ${isReadOnly ? "cursor-default" : "cursor-pointer"}`}
-                                style={{ width: thumbW, height: thumbH }}
-                                title={board.label}
-                              >
-                                {board.html ? (
-                                  <iframe
-                                    srcDoc={board.html}
-                                    sandbox="allow-scripts allow-same-origin"
-                                    scrolling="no"
-                                    className="pointer-events-none origin-top-left"
-                                    style={{
-                                      width,
-                                      height,
-                                      transform: `scale(${scale})`,
-                                      transformOrigin: "top left",
-                                    }}
-                                    title={board.label}
-                                  />
-                                ) : (
-                                  <div className="flex h-full w-full items-center justify-center bg-slate-50 text-xs text-slate-400">
-                                    로딩 중...
-                                  </div>
-                                )}
-                                <div className="absolute bottom-0 left-0 right-0 bg-linear-to-t from-black/40 to-transparent px-2 py-1.5">
-                                  <p className="truncate text-left text-xs text-white">
-                                    {board.label}
-                                  </p>
-                                </div>
-                                {isFinal && (
-                                  <div className="absolute left-0 right-0 top-2 flex justify-center">
-                                    <span className="rounded-full bg-emerald-500 px-2 py-0.5 text-xs font-medium text-white shadow">
-                                      최종 선택
-                                    </span>
-                                  </div>
-                                )}
-                              </button>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
+              {(() => {
+                const idea = ideas.find((i) => i.id === activeIdeaId) ?? null;
+                if (!idea) return null;
+                return (
+                  <>
+                    <IdeaNoteSection
+                      sectionRef={ideaSectionRef}
+                      title={idea.title}
+                      description={idea.description}
+                      expanded={isIdeaExpanded}
+                      onToggleExpanded={() =>
+                        setIsIdeaExpanded((expanded) => !expanded)
+                      }
+                    />
+
+                    <DesignStyleSection
+                      sectionRef={styleSectionRef}
+                      style={idea.designStyle}
+                      open={isDesignSpecOpen}
+                      onToggle={() => setIsDesignSpecOpen((open) => !open)}
+                    />
+                  </>
+                );
+              })()}
+
+              <MockupSection
+                sectionRef={mockupSectionRef}
+                hasArtboards={ideaArtboards.length > 0}
+                editMode={editMode}
+                selectedElement={selectedElement}
+                canvasScale={canvasScale}
+                activeArtboard={activeArtboard}
+                shouldRenderCanvas={shouldRenderMockupCanvas}
+                expanded={isMockupExpanded}
+                generating={isGeneratingCurrentIdeaMockup}
+                mockupOperation={mockupOperation}
+                readOnly={isReadOnly}
+                canvas={renderMockupCanvas()}
+                onToggleEditMode={() => {
+                  setEditMode((p) => {
+                    if (p) setSelectedElement(null);
+                    return !p;
+                  });
+                }}
+                onClearSelectedElement={clearSelectedElement}
+                onFit={fitToCanvas}
+                onZoomIn={() =>
+                  setCanvasScale((scale) =>
+                    Math.min(scale * 1.2, MAX_CANVAS_SCALE),
+                  )
+                }
+                onZoomOut={() =>
+                  setCanvasScale((scale) =>
+                    Math.max(scale * 0.8, MIN_CANVAS_SCALE),
+                  )
+                }
+                onExport={() => {
+                  const html = activeArtboard?.html;
+                  if (!html) return;
+                  const blob = new Blob([html], {
+                    type: "text/html",
+                  });
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement("a");
+                  a.href = url;
+                  a.download = `${activeArtboard?.label ?? "mockup"}.html`;
+                  a.click();
+                  URL.revokeObjectURL(url);
+                }}
+                onExpand={() => setIsMockupExpanded(true)}
+                onCancelGeneration={cancelMockupGeneration}
+              />
+            </IdeaWorkspace>
+
+            <FinalDesignSelector
+              sectionRef={finalDesignSectionRef}
+              ideas={ideas}
+              artboards={artboards}
+              finalArtboardId={finalArtboardId}
+              readOnly={isReadOnly}
+              onSelect={(board, idea) => {
+                const next = board.id === finalArtboardId ? null : board.id;
+                setFinalArtboardId(next);
+                if (next) {
+                  void encodeMemoryDraft(
+                    `final-design-${board.id}`,
+                    `최종 디자인 선택: ${board.label}`,
+                    `시안: ${idea.title} / 생성일: ${
+                      board.createdAt
+                        ? new Date(board.createdAt).toLocaleString("ko-KR")
+                        : "미상"
+                    }`,
+                    Date.now(),
+                  );
+                }
+              }}
+            />
           </section>
 
           {/* Memory detail side panel */}
@@ -7486,39 +6540,21 @@ export default function MainScreenPage() {
           )}
 
           {/* Right panel: agent chat */}
-          <aside className="relative flex h-full w-full max-w-md flex-col overflow-hidden border-l border-slate-200 bg-white">
-            {/* Tab bar - review mode only */}
-            {showReviewAnnotations && (
-              <div className="flex shrink-0 border-b border-slate-200">
-                <button
-                  onClick={() => setRightPanelTab("chat")}
-                  className={`flex flex-1 items-center justify-center gap-1.5 py-3 text-sm font-medium transition ${
-                    rightPanelTab === "chat"
-                      ? "border-b-2 border-slate-900 text-slate-900"
-                      : "text-slate-400 hover:text-slate-600"
-                  }`}
-                >
-                  채팅
-                  <span className="text-xs text-slate-300">
-                    {messages.length}
-                  </span>
-                </button>
-                <button
-                  onClick={() => setRightPanelTab("memory")}
-                  className={`flex flex-1 items-center justify-center gap-1.5 py-3 text-sm font-medium transition ${
-                    rightPanelTab === "memory"
-                      ? "border-b-2 border-slate-900 text-slate-900"
-                      : "text-slate-400 hover:text-slate-600"
-                  }`}
-                >
-                  메모리 변화
-                  <span className="text-xs text-slate-300">
-                    {sessionMemorySummary.referenced.length +
-                      sessionMemorySummary.promoted.length}
-                  </span>
-                </button>
-              </div>
-            )}
+          <ChatPanel
+            showReviewTabs={showReviewAnnotations}
+            activeTab={rightPanelTab}
+            messageCount={messages.length}
+            memoryChangeCount={
+              sessionMemorySummary.referenced.length +
+              sessionMemorySummary.promoted.length
+            }
+            showScrollToBottom={showScrollToBottom}
+            onTabChange={setRightPanelTab}
+            onScrollToBottom={() => {
+              const element = chatScrollRef.current;
+              if (element) element.scrollTop = element.scrollHeight;
+            }}
+          >
             {/* Memory panel */}
             {showReviewAnnotations && rightPanelTab === "memory" && (
               <div className="flex-1 space-y-5 overflow-y-auto p-5">
@@ -7579,27 +6615,122 @@ export default function MainScreenPage() {
                     전체 메모리 변화 보기
                   </button>
                 </section>
-                {/* 직접 입력한 정보 */}
+                {/* Before session memory impact */}
                 <section>
                   <div className="mb-2.5 flex items-center gap-2">
-                    <div className="h-2 w-2 shrink-0 rounded-full bg-violet-400" />
+                    <div className="h-2 w-2 shrink-0 rounded-full bg-sky-400" />
                     <p className="text-xs font-semibold text-slate-600">
-                      직접 입력한 정보
+                      세션 전 정보 반영
                     </p>
                     <span className="text-[11px] text-slate-300">
-                      {reviewProfileItems.length}
+                      {beforeSessionMemoryImpact.availableCount}
                     </span>
                   </div>
-                  {reviewProfileItems.length === 0 ? (
+                  {beforeSessionMemoryImpact.availableCount > 0 ? (
+                    <div className="space-y-2">
+                      <div className="grid grid-cols-2 gap-2">
+                        <div className="rounded-lg bg-sky-50 px-3 py-2">
+                          <p className="text-[10px] font-semibold uppercase text-sky-500">
+                            Before session
+                          </p>
+                          <p className="mt-1 text-lg font-semibold text-sky-700">
+                            {beforeSessionMemoryImpact.availableCount}
+                          </p>
+                        </div>
+                        <div className="rounded-lg bg-blue-50 px-3 py-2">
+                          <p className="text-[10px] font-semibold uppercase text-blue-500">
+                            Used in session
+                          </p>
+                          <p className="mt-1 text-lg font-semibold text-blue-700">
+                            {beforeSessionMemoryImpact.referencedCount}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="space-y-2">
+                        {beforeSessionMemoryImpact.items.slice(0, 5).map(
+                          ({ memory, referenced }) => (
+                            <button
+                              key={memory.id}
+                              type="button"
+                              onClick={() => {
+                                setSelectedGraphMemoryId(memory.id);
+                                setIsMemoryDiffOpen(true);
+                                if (referenced) {
+                                  setSelectedReferencedMemoryId(
+                                    referenced.memoryId,
+                                  );
+                                }
+                              }}
+                              className={`w-full rounded-lg border px-3 py-2 text-left transition ${
+                                referenced
+                                  ? "border-blue-100 bg-blue-50 hover:border-blue-200"
+                                  : "border-slate-100 bg-slate-50 hover:border-slate-200"
+                              }`}
+                            >
+                              <div className="flex items-start gap-2">
+                                <span
+                                  className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${
+                                    referenced ? "bg-blue-400" : "bg-sky-300"
+                                  }`}
+                                  aria-hidden="true"
+                                />
+                                <div className="min-w-0 flex-1">
+                                  <p className="line-clamp-2 text-xs leading-relaxed text-slate-700">
+                                    {memorySummaryText(memory)}
+                                  </p>
+                                  <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[10px] font-semibold text-slate-400">
+                                    <span>
+                                      {referenced
+                                        ? "세션 중 참고됨"
+                                        : "세션 전 정보로 유지"}
+                                    </span>
+                                    {memory.weight != null ? (
+                                      <span>
+                                        weight {formatReviewScore(memory.weight)}
+                                      </span>
+                                    ) : null}
+                                    {referenced?.weightDelta != null &&
+                                    referenced.weightDelta !== 0 ? (
+                                      <span
+                                        className={
+                                          referenced.weightDelta > 0
+                                            ? "text-blue-500"
+                                            : "text-slate-400"
+                                        }
+                                      >
+                                        {formatReviewDelta(
+                                          referenced.weightDelta,
+                                        )}
+                                      </span>
+                                    ) : null}
+                                  </div>
+                                </div>
+                              </div>
+                            </button>
+                          ),
+                        )}
+                        {beforeSessionMemoryImpact.items.length > 5 ? (
+                          <p className="pl-5 text-[11px] text-slate-400">
+                            외 {beforeSessionMemoryImpact.items.length - 5}개 더
+                            있음
+                          </p>
+                        ) : null}
+                      </div>
+                    </div>
+                  ) : reviewProfileItems.length === 0 ? (
                     <p className="pl-5 text-xs text-slate-400">
                       이 미션에 입력한 정보가 없습니다.
                     </p>
                   ) : (
-                    <div className="space-y-1.5">
+                    <div className="space-y-1.5 rounded-lg border border-dashed border-slate-200 bg-slate-50 p-3">
+                      <p className="text-[11px] leading-relaxed text-slate-400">
+                        세션 전 입력은 있지만 아직 graph memory로 반영된 항목이
+                        없습니다.
+                      </p>
                       {reviewProfileItems.map((item) => (
                         <div key={item.id} className="flex gap-3">
                           <div className="flex flex-col items-center">
-                            <div className="mt-1 h-2 w-2 shrink-0 rounded-full bg-violet-400" />
+                            <div className="mt-1 h-2 w-2 shrink-0 rounded-full bg-sky-400" />
                           </div>
                           <p className="text-xs leading-relaxed text-slate-700">
                             {item.input}
@@ -7761,447 +6892,133 @@ export default function MainScreenPage() {
                   streamingChatPhases.length > 0
                     ? streamingChatPhases
                     : (msg.chatPhases ?? []);
+                const contentParts = processMessageContent(msg.content);
+                const isStreamingThis =
+                  msg.role === "assistant" && isLoading && isLastMessage;
+                const isChatPhaseExpanded =
+                  isStreamingThis
+                    ? !collapsedChatPhaseIds.has(msg.id)
+                    : expandedChatPhaseIds.has(msg.id);
                 return (
-                  <div
+                  <ChatBubble
                     key={msg.id}
-                    className={`flex min-w-0 ${msg.role === "user" ? "justify-end" : "justify-start"}`}
-                  >
-                    <div
-                      className={`min-w-0 max-w-[85%] overflow-hidden rounded-2xl px-4 py-3 text-sm leading-relaxed ${
-                        msg.role === "user"
-                          ? "bg-slate-900 text-white"
-                          : isTurnSelected
-                            ? "border border-violet-200 bg-violet-50 text-slate-700"
-                            : "border border-slate-100 bg-slate-50 text-slate-700"
-                      }`}
-                    >
-                      {msg.role === "user" ? (
-                        <div className="space-y-1.5">
-                          {msg.citedElement && (
-                            <div className="flex justify-end">
-                              <span className="flex items-center gap-1.5 rounded-full bg-white/20 px-2.5 py-0.5 text-xs text-white/80">
-                                <span className="h-1.5 w-1.5 rounded-full bg-indigo-300" />
-                                {msg.citedElement.selector}
-                              </span>
-                            </div>
-                          )}
-                          {msg.citedReferences &&
-                            msg.citedReferences.length > 0 && (
-                              <div className="flex flex-wrap justify-end gap-1">
-                                {msg.citedReferences.map((r) => (
-                                  <span
-                                    key={r.id}
-                                    className="flex items-center gap-1 rounded-full bg-white/20 px-2 py-0.5 text-xs text-white/80"
-                                  >
-                                    {r.imageUrl && (
-                                      <img
-                                        src={r.imageUrl}
-                                        alt=""
-                                        className="h-3.5 w-5 rounded object-cover opacity-80"
-                                      />
-                                    )}
-                                    <span className="max-w-32 truncate">
-                                      {r.title}
-                                    </span>
-                                  </span>
-                                ))}
-                              </div>
-                            )}
-                          {msg.citedTexts && msg.citedTexts.length > 0 && (
-                            <div className="flex flex-wrap justify-end gap-1">
-                              {msg.citedTexts.map((t, i) => (
-                                <span
-                                  key={i}
-                                  className="max-w-48 truncate rounded-full bg-white/20 px-2 py-0.5 text-xs text-white/80"
-                                >
-                                  &quot;{t}&quot;
-                                </span>
-                              ))}
-                            </div>
-                          )}
-                          <div>{msg.content}</div>
-                        </div>
-                      ) : msg.content || visibleChatPhases.length > 0 ? (
-                        (() => {
-                          const parts = processMessageContent(msg.content);
-                          const isStreamingThis =
-                            isLoading && isLastMessage;
-                          const isChatPhaseExpanded =
-                            isStreamingThis
-                              ? !collapsedChatPhaseIds.has(msg.id)
-                              : expandedChatPhaseIds.has(msg.id);
-                          return (
-                            <div className="space-y-2">
-                              {visibleChatPhases.length > 0 && (
-                                <div className="border-b border-slate-200 pb-2 text-xs">
-                                  <button
-                                    type="button"
-                                    onClick={() =>
-                                      isStreamingThis
-                                        ? setCollapsedChatPhaseIds((prev) => {
-                                            const next = new Set(prev);
-                                            if (next.has(msg.id))
-                                              next.delete(msg.id);
-                                            else next.add(msg.id);
-                                            return next;
-                                          })
-                                        : setExpandedChatPhaseIds((prev) => {
-                                            const next = new Set(prev);
-                                            if (next.has(msg.id))
-                                              next.delete(msg.id);
-                                            else next.add(msg.id);
-                                            return next;
-                                          })
-                                    }
-                                    className="flex items-center gap-1.5 font-medium text-slate-400 transition hover:text-slate-600"
-                                  >
-                                    {isChatPhaseExpanded ? (
-                                      <CaretUpIcon size={12} />
-                                    ) : (
-                                      <CaretDownIcon size={12} />
-                                    )}
-                                    처리 과정 {visibleChatPhases.length}개
-                                  </button>
-                                  {isChatPhaseExpanded && (
-                                    <div className="mt-2 space-y-1">
-                                      {visibleChatPhases.map(
-                                        (phase, phaseIndex, phases) => {
-                                          const isActive =
-                                            isStreamingThis &&
-                                            phaseIndex === phases.length - 1;
-                                          return (
-                                            <div
-                                              key={`${msg.id}-${phase}`}
-                                              className={`flex items-center gap-1.5 ${
-                                                isActive
-                                                  ? "font-medium text-slate-500"
-                                                  : "text-slate-400"
-                                              }`}
-                                            >
-                                              <span
-                                                className={`flex h-3 w-3 shrink-0 items-center justify-center rounded-full ${
-                                                  isActive
-                                                    ? "bg-slate-300"
-                                                    : "bg-slate-200"
-                                                }`}
-                                              >
-                                                {isActive ? (
-                                                  <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-slate-600" />
-                                                ) : (
-                                                  <span className="text-[8px] leading-none text-slate-500">
-                                                    ✓
-                                                  </span>
-                                                )}
-                                              </span>
-                                              {phase}
-                                            </div>
-                                          );
-                                        },
-                                      )}
-                                    </div>
-                                  )}
-                                </div>
-                              )}
-                              {parts.map((part, i) =>
-                                part.type === "text" ? (
-                                  <ReactMarkdown
-                                    key={i}
-                                    remarkPlugins={CHAT_REMARK_PLUGINS}
-                                    components={CHAT_MARKDOWN_COMPONENTS}
-                                  >
-                                    {part.content}
-                                  </ReactMarkdown>
-                                ) : (
-                                  <ToolActionChip
-                                    key={i}
-                                    chipKey={`${msg.id}-${i}`}
-                                    chip={part.chip}
-                                    expanded={expandedChips.has(
-                                      `${msg.id}-${i}`,
-                                    )}
-                                    onToggle={(k: string) =>
-                                      setExpandedChips((prev) => {
-                                        const next = new Set(prev);
-                                        next.has(k)
-                                          ? next.delete(k)
-                                          : next.add(k);
-                                        return next;
-                                      })
-                                    }
-                                  />
-                                ),
-                              )}
-                              {isStreamingThis && (
-                                <span className="inline-flex items-center gap-0.5 ml-0.5">
-                                  <span
-                                    className="h-1.5 w-1.5 animate-bounce rounded-full bg-slate-400"
-                                    style={{ animationDelay: "0ms" }}
-                                  />
-                                  <span
-                                    className="h-1.5 w-1.5 animate-bounce rounded-full bg-slate-400"
-                                    style={{ animationDelay: "150ms" }}
-                                  />
-                                  <span
-                                    className="h-1.5 w-1.5 animate-bounce rounded-full bg-slate-400"
-                                    style={{ animationDelay: "300ms" }}
-                                  />
-                                </span>
-                              )}
-                            </div>
-                          );
-                        })()
-                      ) : (
-                        <span className="flex items-center gap-1.5 text-slate-400">
-                          <span
-                            className="h-1.5 w-1.5 animate-bounce rounded-full bg-slate-400"
-                            style={{ animationDelay: "0ms" }}
-                          />
-                          <span
-                            className="h-1.5 w-1.5 animate-bounce rounded-full bg-slate-400"
-                            style={{ animationDelay: "150ms" }}
-                          />
-                          <span
-                            className="h-1.5 w-1.5 animate-bounce rounded-full bg-slate-400"
-                            style={{ animationDelay: "300ms" }}
-                          />
-                        </span>
-                      )}
-                      {msg.role === "assistant" &&
-                        isViewingAsAdmin &&
-                        retrievedReviewMemories.length > 0 &&
-                        reviewTurn && (
-                          <div className="mt-3 flex flex-wrap gap-2 border-t border-slate-200 pt-3">
-                            <button
-                              type="button"
-                              onClick={() =>
-                                setReviewDetailModal({
-                                  mode: "memory",
-                                  turnId: reviewTurnId,
-                                  reviewTurn,
-                                  memories: retrievedReviewMemories,
-                                })
-                              }
-                              className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-500 transition hover:border-slate-300 hover:text-slate-800"
-                            >
-                              참고 메모리 {retrievedReviewMemories.length}개
-                            </button>
-                          </div>
-                        )}
-                      {msg.role === "assistant" &&
+                    message={msg}
+                    contentParts={contentParts}
+                    visibleChatPhases={visibleChatPhases}
+                    isStreaming={isStreamingThis}
+                    isTurnSelected={isTurnSelected}
+                    isChatPhaseExpanded={isChatPhaseExpanded}
+                    expandedChipKeys={expandedChips}
+                    markdownComponents={CHAT_MARKDOWN_COMPONENTS}
+                    remarkPlugins={CHAT_REMARK_PLUGINS}
+                    adminMemoryCount={
+                      msg.role === "assistant" &&
+                      isViewingAsAdmin &&
+                      reviewTurn
+                        ? retrievedReviewMemories.length
+                        : 0
+                    }
+                    hasTurnMemory={Boolean(
+                      msg.role === "assistant" &&
                         turnMemoryDraft &&
                         (turnMemoryDraft.episodic ||
-                          turnMemoryDraft.semantic) && (
-                          <button
-                            type="button"
-                            onClick={() =>
-                              setReviewDetailModal(
-                                isTurnSelected
-                                  ? null
-                                  : {
-                                      mode: "turn-memory",
-                                      turnId: reviewTurnId,
-                                      reviewTurn: reviewTurn ?? ({} as ReviewTurn),
-                                      memories: [],
-                                      turnDraft: turnMemoryDraft,
-                                    },
-                              )
-                            }
-                            className={`mt-2 flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium transition ${
-                              isTurnSelected
-                                ? "border-violet-300 bg-violet-100 text-violet-600"
-                                : "border-slate-200 text-slate-400 hover:border-slate-300 hover:bg-slate-100 hover:text-slate-600"
-                            }`}
-                            title="이 인터랙션에서 생성된 기억"
-                          >
-                            <BrainIcon size={12} />
-                            기억 보기
-                          </button>
-                        )}
-                      {msg.role === "assistant" &&
+                          turnMemoryDraft.semantic),
+                    )}
+                    hasRawPrompt={Boolean(
+                      msg.role === "assistant" &&
                         isViewingAsAdmin &&
-                        reviewTurn?.rawPrompt != null && (
-                          <button
-                            type="button"
-                            onClick={() =>
-                              setRawPromptModal({
-                                turnId: reviewTurnId,
-                                rawPrompt: reviewTurn.rawPrompt,
-                                rawPromptSanitization:
-                                  reviewTurn.rawPromptSanitization,
-                                rawResponseMeta: reviewTurn.rawResponseMeta,
-                              })
-                            }
-                            className="mt-3 w-full rounded-xl border border-indigo-100 bg-indigo-50 px-3 py-2 text-left text-xs font-semibold text-indigo-600 transition hover:border-indigo-200 hover:bg-indigo-100"
-                          >
-                            Raw prompt 보기
-                          </button>
-                        )}
-                    </div>
-                  </div>
+                        reviewTurn?.rawPrompt != null,
+                    )}
+                    onToggleChatPhases={() =>
+                      isStreamingThis
+                        ? setCollapsedChatPhaseIds((prev) => {
+                            const next = new Set(prev);
+                            if (next.has(msg.id)) next.delete(msg.id);
+                            else next.add(msg.id);
+                            return next;
+                          })
+                        : setExpandedChatPhaseIds((prev) => {
+                            const next = new Set(prev);
+                            if (next.has(msg.id)) next.delete(msg.id);
+                            else next.add(msg.id);
+                            return next;
+                          })
+                    }
+                    onToggleChip={(key) =>
+                      setExpandedChips((prev) => {
+                        const next = new Set(prev);
+                        if (next.has(key)) next.delete(key);
+                        else next.add(key);
+                        return next;
+                      })
+                    }
+                    onShowRetrievedMemory={() => {
+                      if (!reviewTurn) return;
+                      setReviewDetailModal({
+                        mode: "memory",
+                        turnId: reviewTurnId,
+                        reviewTurn,
+                        memories: retrievedReviewMemories,
+                      });
+                    }}
+                    onToggleTurnMemory={() =>
+                      setReviewDetailModal(
+                        isTurnSelected || !turnMemoryDraft
+                          ? null
+                          : {
+                              mode: "turn-memory",
+                              turnId: reviewTurnId,
+                              reviewTurn: reviewTurn ?? ({} as ReviewTurn),
+                              memories: [],
+                              turnDraft: turnMemoryDraft,
+                            },
+                      )
+                    }
+                    onShowRawPrompt={() => {
+                      if (!reviewTurn?.rawPrompt) return;
+                      setRawPromptModal({
+                        turnId: reviewTurnId,
+                        rawPrompt: reviewTurn.rawPrompt,
+                        rawPromptSanitization:
+                          reviewTurn.rawPromptSanitization,
+                        rawResponseMeta: reviewTurn.rawResponseMeta,
+                      });
+                    }}
+                  />
                 );
               })}
             </div>
 
-            {/* Input */}
-            <div className="border-t border-slate-200 bg-white/95 p-4">
-              {isReadOnly && (
-                <div className="flex h-12 items-center justify-center rounded-2xl bg-amber-50 text-xs text-amber-600">
-                  읽기 전용 모드 — 채팅을 사용할 수 없습니다
-                </div>
-              )}
-              {!isReadOnly && selectedElement && (
-                <div className="mb-2 flex items-center justify-between rounded-xl bg-indigo-50 px-3 py-2 text-xs">
-                  <span className="font-medium text-indigo-600">
-                    선택된 요소:{" "}
-                    <code className="font-mono">
-                      {selectedElement.selector}
-                    </code>
-                  </span>
-                  <button
-                    onClick={clearSelectedElement}
-                    className="text-indigo-400 hover:text-indigo-600"
-                  >
-                    <XIcon size={12} />
-                  </button>
-                </div>
-              )}
-              {!isReadOnly && citedTexts.length > 0 && (
-                <div className="mb-2 rounded-xl bg-slate-50 px-3 py-2 text-xs">
-                  <div className="flex items-center justify-between mb-1.5">
-                    <span className="font-medium text-slate-600">
-                      텍스트 인용 ({citedTexts.length})
-                    </span>
-                    <button
-                      onClick={() => setCitedTexts([])}
-                      className="text-slate-400 hover:text-slate-600"
-                    >
-                      전체 해제
-                    </button>
-                  </div>
-                  <div className="flex flex-col gap-1">
-                    {citedTexts.map((t, i) => (
-                      <span
-                        key={i}
-                        className="flex items-start gap-1 rounded-lg bg-white border border-slate-200 px-2 py-1 text-slate-600"
-                      >
-                        <span className="mt-0.5 shrink-0 text-slate-300">
-                          &quot;
-                        </span>
-                        <span className="line-clamp-1 flex-1">{t}</span>
-                        <button
-                          onClick={() =>
-                            setCitedTexts((prev) =>
-                              prev.filter((_, j) => j !== i),
-                            )
-                          }
-                          className="shrink-0 text-slate-300 hover:text-slate-500"
-                        >
-                          <XIcon size={10} />
-                        </button>
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              )}
-              {!isReadOnly && selectedReferences.length > 0 && (
-                <div className="mb-2 rounded-xl bg-violet-50 px-3 py-2 text-xs">
-                  <div className="flex items-center justify-between mb-1.5">
-                    <span className="font-medium text-violet-600">
-                      레퍼런스 인용 ({selectedReferences.length})
-                    </span>
-                    <button
-                      onClick={() => setSelectedReferences([])}
-                      className="text-violet-400 hover:text-violet-600"
-                    >
-                      전체 해제
-                    </button>
-                  </div>
-                  <div className="flex flex-wrap gap-1.5">
-                    {selectedReferences.map((r) => (
-                      <span
-                        key={r.id}
-                        className="flex items-center gap-1 rounded-full bg-violet-100 px-2 py-0.5 text-violet-700"
-                      >
-                        {r.imageUrl && (
-                          <img
-                            src={r.imageUrl}
-                            alt=""
-                            className="h-3.5 w-5 rounded object-cover"
-                          />
-                        )}
-                        <span className="max-w-32 truncate">{r.title}</span>
-                        <button
-                          onClick={() =>
-                            setSelectedReferences((prev) =>
-                              prev.filter((x) => x.id !== r.id),
-                            )
-                          }
-                          className="ml-0.5 text-violet-400 hover:text-violet-600"
-                        >
-                          <XIcon size={12} />
-                        </button>
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              )}
-              {!isReadOnly && (
-                <div className="flex items-start gap-3 rounded-3xl border border-slate-200 bg-white px-4 py-3">
-                  <textarea
-                    ref={textareaRef}
-                    rows={1}
-                    value={inputText}
-                    onChange={handleTextareaChange}
-                    onKeyDown={handleKeyDown}
-                    disabled={!isMissionContextReady}
-                    placeholder={
-                      isMissionContextReady
-                        ? "에이전트에게 메시지를 입력하세요..."
-                        : "미션 정보를 불러오는 중입니다..."
-                    }
-                    className="max-h-24 flex-1 resize-none bg-transparent text-sm text-slate-700 outline-none placeholder:text-slate-400"
-                  />
-                  {isGeneratingMockup ? (
-                    <button
-                      onClick={cancelMockupGeneration}
-                      className="flex items-center gap-1.5 rounded-full bg-red-500 px-4 py-2 text-xs font-semibold text-white transition hover:bg-red-600"
-                    >
-                      <span className="h-2 w-2 animate-spin rounded-full border border-white/60 border-t-transparent" />
-                      {generatingMockupIdeaId === activeIdeaId
-                        ? `${mockupOperation === "edit" ? "수정" : "생성"} 취소`
-                        : "작업 취소"}
-                    </button>
-                  ) : isLoading ? (
-                    <button
-                      onClick={cancelMessage}
-                      className="rounded-full bg-red-500 px-4 py-2 text-xs font-semibold text-white transition hover:bg-red-600"
-                    >
-                      중단
-                    </button>
-                  ) : (
-                    <button
-                      onClick={sendMessage}
-                      disabled={!inputText.trim() || !isMissionContextReady}
-                      className="rounded-full bg-slate-900 px-4 py-2 text-xs font-semibold text-white transition disabled:cursor-not-allowed disabled:opacity-40"
-                    >
-                      Send
-                    </button>
-                  )}
-                </div>
-              )}
-            </div>
-            {showScrollToBottom && (
-              <button
-                onClick={() => {
-                  const el = chatScrollRef.current;
-                  if (el) el.scrollTop = el.scrollHeight;
-                }}
-                className="absolute bottom-20 left-1/2 -translate-x-1/2 flex items-center gap-1 rounded-full bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white shadow-lg transition hover:bg-slate-700"
-              >
-                ↓
-              </button>
-            )}
-          </aside>
+            <ChatInput
+              readOnly={isReadOnly}
+              selectedElement={selectedElement}
+              citedTexts={citedTexts}
+              selectedReferences={selectedReferences}
+              textareaRef={textareaRef}
+              inputText={inputText}
+              missionContextReady={isMissionContextReady}
+              generatingMockup={isGeneratingMockup}
+              loading={isLoading}
+              generatingCurrentIdeaMockup={generatingMockupIdeaId === activeIdeaId}
+              mockupOperation={mockupOperation}
+              onClearSelectedElement={clearSelectedElement}
+              onClearCitedTexts={() => setCitedTexts([])}
+              onRemoveCitedText={(index) =>
+                setCitedTexts((prev) => prev.filter((_, j) => j !== index))
+              }
+              onClearSelectedReferences={() => setSelectedReferences([])}
+              onRemoveSelectedReference={(id) =>
+                setSelectedReferences((prev) =>
+                  prev.filter((reference) => reference.id !== id),
+                )
+              }
+              onInputChange={handleTextareaChange}
+              onKeyDown={handleKeyDown}
+              onCancelMockupGeneration={cancelMockupGeneration}
+              onCancelMessage={cancelMessage}
+              onSendMessage={sendMessage}
+            />
+          </ChatPanel>
         </main>
       )}
 

@@ -69,6 +69,7 @@ type GraphCommunityDiagnostics = {
 
 type StoredClusterDocument = {
   graphClusters?: unknown;
+  graphEdges?: unknown;
   graphDiagnostics?: unknown;
   itemSignature?: unknown;
   sourceItemCount?: unknown;
@@ -86,6 +87,12 @@ type ClusterLabel = {
 type SimilarityEdge = {
   source: number;
   target: number;
+  weight: number;
+};
+
+type ClusterGraphEdge = {
+  sourceId: string;
+  targetId: string;
   weight: number;
 };
 
@@ -131,6 +138,26 @@ function isMemoryCluster(value: unknown): value is MemoryCluster {
 
 function parseStoredClusters(value: unknown) {
   return Array.isArray(value) ? value.filter(isMemoryCluster) : [];
+}
+
+function parseStoredGraphEdges(value: unknown): ClusterGraphEdge[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((edge) => {
+      const data = edge as Partial<ClusterGraphEdge>;
+      return {
+        sourceId: typeof data.sourceId === "string" ? data.sourceId : "",
+        targetId: typeof data.targetId === "string" ? data.targetId : "",
+        weight: Number(data.weight),
+      };
+    })
+    .filter(
+      (edge) =>
+        edge.sourceId &&
+        edge.targetId &&
+        edge.sourceId !== edge.targetId &&
+        Number.isFinite(edge.weight),
+    );
 }
 
 function parseGraphCommunityDiagnostics(
@@ -491,6 +518,13 @@ function buildGraphCommunityClusters(
   vectors: number[][],
 ) {
   const edges = similarityEdges(vectors);
+  const graphEdges: ClusterGraphEdge[] = edges
+    .map((edge) => ({
+      sourceId: items[edge.source]?.id ?? "",
+      targetId: items[edge.target]?.id ?? "",
+      weight: Number(edge.weight.toFixed(6)),
+    }))
+    .filter((edge) => edge.sourceId && edge.targetId);
   const labels = labelPropagationCommunities(items.length, edges);
   const byLabel = new Map<number, number[]>();
 
@@ -507,6 +541,7 @@ function buildGraphCommunityClusters(
   const singletonCount = rawGroups.filter((group) => group.length === 1).length;
 
   return {
+    edges: graphEdges,
     clusters: groups
       .sort((a, b) => b.length - a.length)
       .map((itemIndexes, index) => {
@@ -563,7 +598,7 @@ export async function GET(
     url.searchParams.get("version") ?? DEFAULT_MEMORY_VERSION;
 
   if (!itemSignature) {
-    return Response.json({ graphClusters: [], cacheHit: false });
+    return Response.json({ graphClusters: [], graphEdges: [], cacheHit: false });
   }
 
   const token = await getFirebaseAccessToken();
@@ -573,11 +608,12 @@ export async function GET(
   )) as StoredClusterDocument | null;
 
   if (!stored || stored.itemSignature !== itemSignature) {
-    return Response.json({ graphClusters: [], cacheHit: false });
+    return Response.json({ graphClusters: [], graphEdges: [], cacheHit: false });
   }
 
   return Response.json({
     graphClusters: parseStoredClusters(stored.graphClusters),
+    graphEdges: parseStoredGraphEdges(stored.graphEdges),
     graphDiagnostics: parseGraphCommunityDiagnostics(stored.graphDiagnostics),
     sourceItemCount: Number(stored.sourceItemCount ?? 0),
     generatedAt: stored.generatedAt ?? null,
@@ -626,6 +662,7 @@ export async function POST(
   if (items.length === 0) {
     return Response.json({
       graphClusters: [],
+      graphEdges: [],
       graphDiagnostics: parseGraphCommunityDiagnostics({
         duplicateItemIds: [],
         recoveredUnassignedItemIds: [],
@@ -660,6 +697,7 @@ export async function POST(
         memoryVersion,
         sourceItemCount: items.length,
         graphClusters,
+        graphEdges: graphCommunity.edges,
         graphDiagnostics,
         generatedAt: new Date(),
         generatedBy: admin.email ?? admin.localId,
@@ -668,5 +706,9 @@ export async function POST(
     );
   }
 
-  return Response.json({ graphClusters, graphDiagnostics });
+  return Response.json({
+    graphClusters,
+    graphEdges: graphCommunity.edges,
+    graphDiagnostics,
+  });
 }

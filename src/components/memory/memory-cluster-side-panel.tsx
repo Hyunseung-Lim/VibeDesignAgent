@@ -62,6 +62,30 @@ function MemoryField({
   );
 }
 
+function eventTarget(item: ClusterGraphItem) {
+  return item.output || item.input || item.episodic || item.semantic || item.id;
+}
+
+function actionSummary(item: ClusterGraphItem) {
+  const target = eventTarget(item);
+  switch (item.action) {
+    case "reference_delete":
+      return `Deleted reference: ${target}`;
+    case "reference_cite":
+      return `Cited reference: ${target}`;
+    case "references_fetch":
+      return `Reference search context: ${target}`;
+    case "note_delete":
+      return `Deleted note: ${target}`;
+    case "mockup_delete":
+      return `Deleted mockup: ${target}`;
+    case "final_design_select":
+      return `Selected final design: ${target}`;
+    default:
+      return target;
+  }
+}
+
 export function MemoryClusterSidePanel({
   cluster,
   items,
@@ -174,7 +198,7 @@ export function MemoryClusterSidePanel({
                                     : "line-clamp-2 text-foreground"
                                 }`}
                               >
-                                {item.episodic || item.input || item.semantic}
+                                {actionSummary(item)}
                               </p>
                             </div>
                             {selected ? (
@@ -222,11 +246,15 @@ export function MemoryClusterSidePanel({
                       </div>
                       {selected ? (
                         <div className="mt-3 space-y-3">
+                          <MemoryField label="Event summary" value={actionSummary(item)} />
                           {item.semantic ? (
                             <MemoryField label="Semantic summary" value={item.semantic} />
                           ) : null}
                           {item.input ? (
                             <MemoryField label="Original input" value={item.input} />
+                          ) : null}
+                          {item.output ? (
+                            <MemoryField label="Original output" value={item.output} />
                           ) : null}
                           {weightLabel ? (
                             <div className="rounded-lg border border-border bg-background px-3 py-2">

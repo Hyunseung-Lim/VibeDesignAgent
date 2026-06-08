@@ -44,6 +44,12 @@ export type SimilarityEdge = {
   weight: number;
 };
 
+export type ClusterGraphEdge = {
+  sourceId: string;
+  targetId: string;
+  weight: number;
+};
+
 export type GraphCommunityDiagnostics = {
   duplicateItemIds: string[];
   recoveredUnassignedItemIds: string[];
@@ -114,6 +120,26 @@ export function isMemoryCluster(value: unknown): value is MemoryCluster {
 
 export function parseStoredClusters(value: unknown) {
   return Array.isArray(value) ? value.filter(isMemoryCluster) : [];
+}
+
+export function parseStoredGraphEdges(value: unknown): ClusterGraphEdge[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((edge) => {
+      const data = edge as Partial<ClusterGraphEdge>;
+      return {
+        sourceId: typeof data.sourceId === "string" ? data.sourceId : "",
+        targetId: typeof data.targetId === "string" ? data.targetId : "",
+        weight: Number(data.weight),
+      };
+    })
+    .filter(
+      (edge) =>
+        edge.sourceId &&
+        edge.targetId &&
+        edge.sourceId !== edge.targetId &&
+        Number.isFinite(edge.weight),
+    );
 }
 
 function embeddingText(item: ClusterInputItem) {
@@ -373,6 +399,11 @@ function mergeCommunities(groups: number[][], vectors: number[][], maxCount: num
 
 export function buildGraphCommunityClusters(items: ClusterInputItem[], vectors: number[][]) {
   const edges = similarityEdges(vectors);
+  const graphEdges: ClusterGraphEdge[] = edges.map((edge) => ({
+    sourceId: items[edge.source]?.id ?? "",
+    targetId: items[edge.target]?.id ?? "",
+    weight: Number(edge.weight.toFixed(6)),
+  })).filter((edge) => edge.sourceId && edge.targetId);
   const labels = labelPropagationCommunities(items.length, edges);
   const byLabel = new Map<number, number[]>();
   labels.forEach((label, itemIndex) => {
@@ -386,6 +417,7 @@ export function buildGraphCommunityClusters(items: ClusterInputItem[], vectors: 
   const singletonCount = rawGroups.filter((g) => g.length === 1).length;
 
   return {
+    edges: graphEdges,
     clusters: groups
       .sort((a, b) => b.length - a.length)
       .map((itemIndexes, index) => {
@@ -436,6 +468,7 @@ export async function generateAndStoreClusters(
   const itemsById = new Map(items.map((item) => [item.id, item]));
   const graphClusters = await labelClusters(graphCommunity.clusters, itemsById);
   const graphDiagnostics = graphCommunity.diagnostics;
+  const graphEdges = graphCommunity.edges;
   const completedAt = Date.now();
 
   const itemSignature = memoryClusterItemSignature(items);
@@ -447,6 +480,7 @@ export async function generateAndStoreClusters(
       memoryVersion: MEMORY_VERSION,
       sourceItemCount: items.length,
       graphClusters,
+      graphEdges,
       graphDiagnostics,
       generatedAt: completedAt,
       generatedBy,
@@ -454,5 +488,5 @@ export async function generateAndStoreClusters(
     token,
   );
 
-  return { graphClusters, itemSignature };
+  return { graphClusters, graphEdges, itemSignature };
 }

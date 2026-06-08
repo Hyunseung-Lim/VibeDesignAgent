@@ -91,6 +91,24 @@ function graphClusterArray(value: unknown) {
     : [];
 }
 
+function graphEdgeArray(value: unknown) {
+  return Array.isArray(value)
+    ? value
+        .map((item) => {
+          if (!item || typeof item !== "object") return null;
+          const edge = item as Record<string, unknown>;
+          const sourceId = stringOrNull(edge.sourceId);
+          const targetId = stringOrNull(edge.targetId);
+          const weight = numberOrNull(edge.weight);
+          if (!sourceId || !targetId || sourceId === targetId || weight == null) {
+            return null;
+          }
+          return { sourceId, targetId, weight };
+        })
+        .filter((item): item is NonNullable<typeof item> => Boolean(item))
+    : [];
+}
+
 function memoryWeight(doc: Record<string, unknown>) {
   if (typeof doc.weight === "number" && Number.isFinite(doc.weight)) {
     return doc.weight;
@@ -355,10 +373,11 @@ export async function POST(request: Request) {
         generatedAt: timestampMs(doc.generatedAt),
         sourceItemCount: numberOrNull(doc.sourceItemCount) ?? 0,
         graphClusters: graphClusterArray(doc.graphClusters),
+        graphEdges: graphEdgeArray(doc.graphEdges),
       };
     }),
   );
-  const graphClusters =
+  const selectedClusterDoc =
     clusterDocs
       .filter((doc) => doc.graphClusters.length > 0)
       .sort((a, b) => {
@@ -367,13 +386,14 @@ export async function POST(request: Request) {
           Math.abs(graphMemories.length - b.sourceItemCount);
         if (countDiff !== 0) return countDiff;
         return b.generatedAt - a.generatedAt;
-      })[0]?.graphClusters ?? [];
+      })[0] ?? null;
 
   return Response.json({
     drafts,
     promoted,
     referenced,
     graphMemories,
-    graphClusters,
+    graphClusters: selectedClusterDoc?.graphClusters ?? [],
+    graphEdges: selectedClusterDoc?.graphEdges ?? [],
   });
 }

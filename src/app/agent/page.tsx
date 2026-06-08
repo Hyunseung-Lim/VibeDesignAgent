@@ -14,6 +14,7 @@ import { MemoryClusterEmptyState } from "@/components/memory/memory-cluster-empt
 import { MemoryClusterList } from "@/components/memory/memory-cluster-list";
 import { MemoryClusterSidePanel } from "@/components/memory/memory-cluster-side-panel";
 import type {
+  ClusterGraphEdge,
   MemoryCluster,
   MemoryItem,
 } from "@/components/memory/memory-cluster-types";
@@ -52,6 +53,7 @@ export default function AgentMemoryPage() {
   >(null);
   const [memories, setMemories] = useState<MemoryItem[]>([]);
   const [clusters, setClusters] = useState<MemoryCluster[]>([]);
+  const [clusterEdges, setClusterEdges] = useState<ClusterGraphEdge[]>([]);
   const [loading, setLoading] = useState(true);
   const [isRegenerating, setIsRegenerating] = useState(false);
   const [selectedClusterId, setSelectedClusterId] = useState<string | null>(
@@ -86,7 +88,11 @@ export default function AgentMemoryPage() {
         const cls: MemoryCluster[] = Array.isArray(clusterData?.clusters)
           ? clusterData.clusters
           : [];
+        const edges: ClusterGraphEdge[] = Array.isArray(clusterData?.edges)
+          ? clusterData.edges
+          : [];
         setClusters(cls);
+        setClusterEdges(edges);
         setSelectedClusterId(cls[0]?.id ?? null);
         setSelectedMemoryId(null);
         setSelectedSessionKey(null);
@@ -108,7 +114,11 @@ export default function AgentMemoryPage() {
       const cls: MemoryCluster[] = Array.isArray(data?.clusters)
         ? data.clusters
         : [];
+      const edges: ClusterGraphEdge[] = Array.isArray(data?.edges)
+        ? data.edges
+        : [];
       setClusters(cls);
+      setClusterEdges(edges);
       setSelectedClusterId(cls[0]?.id ?? null);
       setSelectedMemoryId(null);
       setClustersGeneratedAt(data?.generatedAt ?? null);
@@ -350,6 +360,7 @@ export default function AgentMemoryPage() {
                 <MemoryClusterGraph
                   clusters={clusters}
                   items={filteredClusterItems}
+                  edges={clusterEdges}
                   selectedClusterId={selectedClusterId}
                   selectedMemoryId={selectedMemoryId}
                   onSelectCluster={setSelectedClusterId}

@@ -11,6 +11,7 @@ import {
   generateAndStoreClusters,
   clusterDocumentPath,
   memoryClusterItemSignature,
+  parseStoredGraphEdges,
   type ClusterInputItem,
 } from "@/lib/server/memoryClustering";
 
@@ -62,6 +63,7 @@ export async function GET(request: Request) {
     if (items.length < 3) {
       return Response.json({
         clusters: [],
+        edges: [],
         found: false,
         memoryVersion: MEMORY_VERSION,
         itemSignature: null,
@@ -78,6 +80,7 @@ export async function GET(request: Request) {
     if (!data || data.itemSignature !== itemSignature) {
       return Response.json({
         clusters: [],
+        edges: [],
         found: false,
         memoryVersion: MEMORY_VERSION,
         itemSignature,
@@ -91,6 +94,7 @@ export async function GET(request: Request) {
 
     return Response.json({
       clusters,
+      edges: parseStoredGraphEdges(data.graphEdges),
       found: clusters.length > 0,
       memoryVersion: typeof data.memoryVersion === "string"
         ? data.memoryVersion
@@ -121,7 +125,7 @@ export async function POST(request: Request) {
       );
     }
 
-    const { graphClusters } = await generateAndStoreClusters(
+    const { graphClusters, graphEdges } = await generateAndStoreClusters(
       user.localId,
       items,
       token,
@@ -130,6 +134,7 @@ export async function POST(request: Request) {
 
     return Response.json({
       clusters: graphClusters,
+      edges: graphEdges,
       found: graphClusters.length > 0,
       memoryVersion: MEMORY_VERSION,
       generatedAt: Date.now(),

@@ -25,6 +25,12 @@ export type MemoryCluster = {
   representativeItems: string[];
 };
 
+export type ClusterGraphEdge = {
+  sourceId: string;
+  targetId: string;
+  weight: number;
+};
+
 export type ClusterGraphItem = {
   id: string;
   memoryId: string;

@@ -11,6 +11,7 @@ import {
 import { MagnifyingGlassMinusIcon, MagnifyingGlassPlusIcon, CornersOutIcon } from "@phosphor-icons/react";
 import { Button } from "@/components/ui/button";
 import { memoryClusterColor } from "@/components/memory/memory-cluster-colors";
+import type { ClusterGraphEdge } from "@/components/memory/memory-cluster-types";
 
 type MemoryCluster = {
   id: string;
@@ -47,6 +48,7 @@ type ClusterableMemoryItem = {
 type Props = {
   clusters: MemoryCluster[];
   items: ClusterableMemoryItem[];
+  edges?: ClusterGraphEdge[];
   selectedClusterId: string | null;
   onSelectCluster: (clusterId: string) => void;
   onSelectMemory?: (memoryId: string) => void;
@@ -71,9 +73,11 @@ type ProjectedPoint = {
 };
 
 type HullPoint = { x: number; y: number };
+type ProjectionPoint = { x: number; y: number; hasEmbedding: boolean };
 
 const MIN_ZOOM = 0.55;
 const MAX_ZOOM = 5;
+const GRAPH_LAYOUT_ITERATIONS = 260;
 
 function truncate(value: string, maxLength: number) {
   return value.length > maxLength ? `${value.slice(0, maxLength - 1)}...` : value;
@@ -195,6 +199,142 @@ function projectEmbeddings(items: ClusterableMemoryItem[]) {
   return projected;
 }
 
+function normalizeProjection(
+  projection: Map<string, ProjectionPoint>,
+  items: ClusterableMemoryItem[],
+) {
+  const xs = items.map((item) => projection.get(item.id)?.x ?? 0);
+  const ys = items.map((item) => projection.get(item.id)?.y ?? 0);
+  const minX = Math.min(...xs, -1);
+  const maxX = Math.max(...xs, 1);
+  const minY = Math.min(...ys, -1);
+  const maxY = Math.max(...ys, 1);
+  const rangeX = maxX === minX ? 1 : maxX - minX;
+  const rangeY = maxY === minY ? 1 : maxY - minY;
+
+  return items.map((item) => {
+    const point = projection.get(item.id) ?? {
+      x: hashNumber(`${item.id}:${item.semantic}`, 11),
+      y: hashNumber(`${item.id}:${item.episodic}:${item.input}`, 29),
+      hasEmbedding: false,
+    };
+    return {
+      x: ((point.x - minX) / rangeX) * 2 - 1,
+      y: ((point.y - minY) / rangeY) * 2 - 1,
+      hasEmbedding: point.hasEmbedding,
+    };
+  });
+}
+
+function projectSimilarityGraph(
+  items: ClusterableMemoryItem[],
+  clusters: MemoryCluster[],
+  edges: ClusterGraphEdge[],
+) {
+  const baseProjection = projectEmbeddings(items);
+  const validEdges = edges.filter(
+    (edge) =>
+      edge.sourceId &&
+      edge.targetId &&
+      edge.sourceId !== edge.targetId &&
+      Number.isFinite(edge.weight),
+  );
+  if (items.length < 2 || validEdges.length === 0) return baseProjection;
+
+  const indexById = new Map(items.map((item, index) => [item.id, index] as const));
+  const clusterByItemId = new Map<string, string>();
+  clusters.forEach((cluster) => {
+    cluster.itemIds.forEach((itemId) => clusterByItemId.set(itemId, cluster.id));
+  });
+  const nodes = normalizeProjection(baseProjection, items).map((point, index) => ({
+    ...point,
+    vx: 0,
+    vy: 0,
+    clusterId: clusterByItemId.get(items[index].id) ?? "unclustered",
+  }));
+  const layoutEdges = validEdges
+    .map((edge) => ({
+      source: indexById.get(edge.sourceId),
+      target: indexById.get(edge.targetId),
+      weight: clamp(edge.weight, 0, 1),
+    }))
+    .filter(
+      (edge): edge is { source: number; target: number; weight: number } =>
+        edge.source != null && edge.target != null,
+    );
+
+  for (let iteration = 0; iteration < GRAPH_LAYOUT_ITERATIONS; iteration += 1) {
+    const progress = iteration / GRAPH_LAYOUT_ITERATIONS;
+    const cooling = 1 - progress * 0.72;
+
+    for (let a = 0; a < nodes.length; a += 1) {
+      for (let b = a + 1; b < nodes.length; b += 1) {
+        const dx = nodes[b].x - nodes[a].x;
+        const dy = nodes[b].y - nodes[a].y;
+        const distanceSquared = Math.max(dx * dx + dy * dy, 0.008);
+        const distance = Math.sqrt(distanceSquared);
+        const force = Math.min(0.018, 0.0048 / distanceSquared) * cooling;
+        const fx = (dx / distance) * force;
+        const fy = (dy / distance) * force;
+        nodes[a].vx -= fx;
+        nodes[a].vy -= fy;
+        nodes[b].vx += fx;
+        nodes[b].vy += fy;
+      }
+    }
+
+    layoutEdges.forEach((edge) => {
+      const source = nodes[edge.source];
+      const target = nodes[edge.target];
+      const dx = target.x - source.x;
+      const dy = target.y - source.y;
+      const distance = Math.max(Math.sqrt(dx * dx + dy * dy), 0.001);
+      const normalizedWeight = clamp((edge.weight - 0.58) / 0.28, 0, 1);
+      const targetDistance = 0.22 + (1 - normalizedWeight) * 0.58;
+      const force = (distance - targetDistance) * (0.026 + normalizedWeight * 0.028) * cooling;
+      const fx = (dx / distance) * force;
+      const fy = (dy / distance) * force;
+      source.vx += fx;
+      source.vy += fy;
+      target.vx -= fx;
+      target.vy -= fy;
+    });
+
+    const clusterSums = new Map<string, { x: number; y: number; count: number }>();
+    nodes.forEach((node) => {
+      const current = clusterSums.get(node.clusterId) ?? { x: 0, y: 0, count: 0 };
+      current.x += node.x;
+      current.y += node.y;
+      current.count += 1;
+      clusterSums.set(node.clusterId, current);
+    });
+    nodes.forEach((node) => {
+      const cluster = clusterSums.get(node.clusterId);
+      if (cluster && cluster.count > 1) {
+        node.vx += ((cluster.x / cluster.count) - node.x) * 0.0025 * cooling;
+        node.vy += ((cluster.y / cluster.count) - node.y) * 0.0025 * cooling;
+      }
+      node.vx += -node.x * 0.0012 * cooling;
+      node.vy += -node.y * 0.0012 * cooling;
+      node.x = clamp(node.x + node.vx, -2.2, 2.2);
+      node.y = clamp(node.y + node.vy, -2.2, 2.2);
+      node.vx *= 0.82;
+      node.vy *= 0.82;
+    });
+  }
+
+  return new Map(
+    items.map((item, index) => [
+      item.id,
+      {
+        x: nodes[index].x,
+        y: nodes[index].y,
+        hasEmbedding: nodes[index].hasEmbedding,
+      },
+    ]),
+  );
+}
+
 function cross(origin: HullPoint, a: HullPoint, b: HullPoint) {
   return (a.x - origin.x) * (b.y - origin.y) - (a.y - origin.y) * (b.x - origin.x);
 }
@@ -282,9 +422,62 @@ function drawClusterArea(
   ctx.restore();
 }
 
+function drawGraphEdges(
+  ctx: CanvasRenderingContext2D,
+  edges: ClusterGraphEdge[],
+  pointById: Map<string, ProjectedPoint>,
+  selectedClusterId: string | null,
+  selectedPointId: string | null,
+  transformPoint: (point: HullPoint) => HullPoint,
+) {
+  if (edges.length === 0) return;
+  const sortedEdges = [...edges].sort((a, b) => a.weight - b.weight);
+  ctx.save();
+  ctx.lineCap = "round";
+
+  sortedEdges.forEach((edge) => {
+    const source = pointById.get(edge.sourceId);
+    const target = pointById.get(edge.targetId);
+    if (!source || !target) return;
+    const sourceScreen = transformPoint(source);
+    const targetScreen = transformPoint(target);
+    const sameSelectedCluster =
+      Boolean(selectedClusterId) &&
+      source.clusterId === selectedClusterId &&
+      target.clusterId === selectedClusterId;
+    const touchesSelectedPoint =
+      Boolean(selectedPointId) &&
+      (source.id === selectedPointId || target.id === selectedPointId);
+    const crossCluster = source.clusterId !== target.clusterId;
+    const normalized = clamp((edge.weight - 0.58) / 0.28, 0, 1);
+    const alpha = touchesSelectedPoint
+      ? 0.48
+      : sameSelectedCluster
+        ? 0.34
+        : selectedClusterId
+          ? 0.08
+          : 0.14 + normalized * 0.08;
+
+    ctx.globalAlpha = alpha;
+    ctx.lineWidth = touchesSelectedPoint
+      ? 2.2
+      : sameSelectedCluster
+        ? 1.7
+        : 0.8 + normalized * 1.1;
+    ctx.strokeStyle = crossCluster ? "#94a3b8" : source.color;
+    ctx.beginPath();
+    ctx.moveTo(sourceScreen.x, sourceScreen.y);
+    ctx.lineTo(targetScreen.x, targetScreen.y);
+    ctx.stroke();
+  });
+
+  ctx.restore();
+}
+
 export default function MemoryClusterGraph({
   clusters,
   items,
+  edges = [],
   selectedClusterId,
   onSelectCluster,
   onSelectMemory,
@@ -312,7 +505,10 @@ export default function MemoryClusterGraph({
       cluster.itemIds.forEach((itemId) => clusterByItemId.set(itemId, cluster));
     });
     const clusterIndexById = new Map(clusters.map((cluster, index) => [cluster.id, index] as const));
-    const projection = projectEmbeddings(items);
+    const projection = projectSimilarityGraph(items, clusters, edges);
+    const layoutLabel = edges.length > 0
+      ? "Similarity graph layout"
+      : "PCA 2D projection";
     const weights = items
       .map((item) => item.weight)
       .filter((weight): weight is number => weight != null && Number.isFinite(weight));
@@ -371,8 +567,9 @@ export default function MemoryClusterGraph({
     return {
       points,
       hasEmbedding: points.some((point) => point.hasEmbedding),
+      layoutLabel,
     };
-  }, [clusters, items, size.height, size.width]);
+  }, [clusters, edges, items, size.height, size.width]);
 
   const clusterPointGroups = useMemo(() => {
     const groups = new Map<string, ProjectedPoint[]>();
@@ -383,6 +580,11 @@ export default function MemoryClusterGraph({
     });
     return groups;
   }, [pointData.points]);
+
+  const pointById = useMemo(
+    () => new Map(pointData.points.map((point) => [point.id, point] as const)),
+    [pointData.points],
+  );
 
   const toScreen = useCallback((point: HullPoint) => ({
     x: size.width / 2 + (point.x - size.width / 2) * view.zoom + view.offsetX,
@@ -465,6 +667,8 @@ export default function MemoryClusterGraph({
     });
 
     const selectedPointId = selectedMemoryId ?? selectedPoint?.id ?? null;
+    drawGraphEdges(ctx, edges, pointById, selectedClusterId, selectedPointId, toScreen);
+
     pointData.points.forEach((point) => {
       const screenPoint = toScreen(point);
       const selectedCluster = selectedClusterId && point.clusterId === selectedClusterId;
@@ -502,7 +706,9 @@ export default function MemoryClusterGraph({
   }, [
     clusterPointGroups,
     clusters,
+    edges,
     hoveredPointId,
+    pointById,
     pointData.points,
     selectedClusterId,
     selectedMemoryId,
@@ -546,7 +752,10 @@ export default function MemoryClusterGraph({
           {embeddedCount}/{items.length} embedded points
         </span>
         <span className="rounded-full bg-white/90 px-2.5 py-1 text-[11px] font-semibold text-slate-500 shadow-sm ring-1 ring-slate-100">
-          PCA 2D projection
+          {edges.length} similarity edges
+        </span>
+        <span className="rounded-full bg-white/90 px-2.5 py-1 text-[11px] font-semibold text-slate-500 shadow-sm ring-1 ring-slate-100">
+          {pointData.layoutLabel}
         </span>
       </div>
 
