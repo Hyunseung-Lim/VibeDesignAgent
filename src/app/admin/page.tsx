@@ -27,6 +27,7 @@ import {
 } from "firebase/firestore";
 import { firebaseAuth, db } from "@/lib/firebase";
 import { isAdminEmail } from "@/lib/admin";
+import { cn } from "@/lib/utils";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -37,11 +38,15 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 
 const MemoryClusterGraph = dynamic(() => import("./MemoryClusterGraph"), {
   ssr: false,
   loading: () => (
-    <div className="flex h-112 min-h-96 items-center justify-center rounded-2xl border border-slate-100 bg-white text-sm text-slate-400 shadow-sm">
+    <div className="flex h-112 min-h-96 items-center justify-center rounded-2xl border border-border bg-card text-sm text-muted-foreground shadow-sm">
       Graph view loading...
     </div>
   ),
@@ -640,14 +645,16 @@ export default function AdminPage() {
     );
   };
 
-  const onboardingBadge = (status?: Participant["onboardingStatus"]) => {
+  const onboardingBadge = (
+    status?: Participant["onboardingStatus"],
+  ): { label: string; variant: "success" | "warning" | "secondary" } => {
     if (status === "completed") {
-      return { label: "온보딩 완료", style: "bg-emerald-50 text-emerald-700" };
+      return { label: "온보딩 완료", variant: "success" };
     }
     if (status === "required") {
-      return { label: "온보딩 필요", style: "bg-amber-50 text-amber-700" };
+      return { label: "온보딩 필요", variant: "warning" };
     }
-    return { label: "온보딩 확인 불가", style: "bg-slate-100 text-slate-500" };
+    return { label: "온보딩 확인 불가", variant: "secondary" };
   };
 
   const missionTitle = (missionId: string) =>
@@ -1463,7 +1470,7 @@ export default function AdminPage() {
   if (!ready) return null;
 
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-900">
+    <div className="min-h-screen bg-muted text-foreground">
       <AlertDialog
         open={Boolean(destructiveAction)}
         onOpenChange={(open) => {
@@ -1500,56 +1507,53 @@ export default function AdminPage() {
           onClick={() => setMemoryModal(null)}
         >
           <div
-            className="flex h-[calc(100vh-2rem)] w-full max-w-[95vw] flex-col overflow-hidden rounded-3xl bg-white shadow-2xl"
+            className="flex h-[calc(100vh-2rem)] w-full max-w-[95vw] flex-col overflow-hidden rounded-3xl bg-card shadow-2xl"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="flex shrink-0 items-center justify-between border-b border-slate-100 px-6 py-4">
+            <div className="flex shrink-0 items-center justify-between border-b border-border px-6 py-4">
               <div>
-                <p className="text-sm font-semibold text-slate-900">
+                <p className="text-sm font-semibold text-foreground">
                   유저 메모리
                 </p>
-                <p className="text-xs text-slate-400">{memoryModal.userName}</p>
-                <p className="mt-1 text-xs text-slate-400">
+                <p className="text-xs text-muted-foreground">{memoryModal.userName}</p>
+                <p className="mt-1 text-xs text-muted-foreground">
                   v0.1.2 {memoryModal.counts["0.1.2"] ?? 0}개 · v0.1.1{" "}
                   {memoryModal.counts["0.1.1"] ?? 0}개 · v0.1.0{" "}
                   {memoryModal.counts["0.1.0"] ?? 0}개
                 </p>
               </div>
-              <button
+              <Button
                 type="button"
+                variant="ghost"
+                size="icon"
                 onClick={() => setMemoryModal(null)}
-                className="rounded-full p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+                className="rounded-full text-muted-foreground"
+                aria-label="닫기"
               >
-                <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-                  <path
-                    d="M3 3l10 10M13 3L3 13"
-                    stroke="currentColor"
-                    strokeWidth="1.5"
-                    strokeLinecap="round"
-                  />
-                </svg>
-              </button>
+                <XIcon size={16} />
+              </Button>
             </div>
-            <div className="shrink-0 border-b border-slate-100 px-6 py-3">
+            <div className="shrink-0 border-b border-border px-6 py-3">
               <div className="flex flex-wrap items-end gap-3">
-                <div className="inline-flex rounded-lg border border-slate-200 bg-slate-50 p-1">
-                  <span className="rounded-md bg-white px-3 py-1.5 text-xs font-semibold text-slate-900 shadow-sm">
+                <div className="inline-flex rounded-lg border border-border bg-muted p-1">
+                  <span className="rounded-md bg-card px-3 py-1.5 text-xs font-semibold text-foreground shadow-sm">
                     Clusters
                   </span>
                 </div>
                 {(memoryViewTab === "table" ||
                   memoryViewTab === "clusters") && (
-                  <div className="inline-flex rounded-lg border border-slate-200 bg-slate-50 p-1">
+                  <div className="inline-flex rounded-lg border border-border bg-muted p-1">
                     {(["0.1.2", "0.1.1", "0.1.0"] as const).map((version) => (
                       <button
                         key={version}
                         type="button"
                         onClick={() => setMemoryVersionTab(version)}
-                        className={`rounded-md px-3 py-1.5 text-xs font-semibold transition ${
+                        className={cn(
+                          "rounded-md px-3 py-1.5 text-xs font-semibold transition",
                           memoryVersionTab === version
-                            ? "bg-white text-slate-900 shadow-sm"
-                            : "text-slate-500 hover:text-slate-900"
-                        }`}
+                            ? "bg-card text-foreground shadow-sm"
+                            : "text-muted-foreground hover:text-foreground",
+                        )}
                       >
                         v{version} ({memoryModal.counts[version] ?? 0})
                       </button>
@@ -1559,9 +1563,9 @@ export default function AdminPage() {
                 {(memoryViewTab === "table" ||
                   memoryViewTab === "clusters") && (
                   <>
-                    <label className="flex flex-col gap-1 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+                    <label className="flex flex-col gap-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
                       Start
-                      <input
+                      <Input
                         type="date"
                         value={memoryStartDate}
                         min={dateInputValue(
@@ -1572,12 +1576,12 @@ export default function AdminPage() {
                           dateInputValue(versionMemoryRows[0]?.timestamp)
                         }
                         onChange={(e) => setMemoryStartDate(e.target.value)}
-                        className="rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-normal normal-case tracking-normal text-slate-700 outline-none focus:border-slate-400"
+                        className="h-auto py-1.5 text-xs font-normal normal-case tracking-normal"
                       />
                     </label>
-                    <label className="flex flex-col gap-1 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+                    <label className="flex flex-col gap-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
                       End
-                      <input
+                      <Input
                         type="date"
                         value={memoryEndDate}
                         min={
@@ -1586,15 +1590,15 @@ export default function AdminPage() {
                         }
                         max={dateInputValue(versionMemoryRows[0]?.timestamp)}
                         onChange={(e) => setMemoryEndDate(e.target.value)}
-                        className="rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-normal normal-case tracking-normal text-slate-700 outline-none focus:border-slate-400"
+                        className="h-auto py-1.5 text-xs font-normal normal-case tracking-normal"
                       />
                     </label>
-                    <label className="flex flex-col gap-1 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+                    <label className="flex flex-col gap-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
                       Action
                       <select
                         value={memoryActionFilter}
                         onChange={(e) => setMemoryActionFilter(e.target.value)}
-                        className="min-w-40 rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-normal normal-case tracking-normal text-slate-700 outline-none focus:border-slate-400"
+                        className="min-w-40 rounded-lg border border-input bg-transparent px-2.5 py-1.5 text-xs font-normal normal-case tracking-normal text-foreground outline-none focus-visible:border-ring"
                       >
                         <option value="all">All actions</option>
                         {memoryActionOptions.map((action) => (
@@ -1604,7 +1608,7 @@ export default function AdminPage() {
                         ))}
                       </select>
                     </label>
-                    <label className="flex flex-col gap-1 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+                    <label className="flex flex-col gap-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
                       Semantic
                       <select
                         value={memorySemanticFilter}
@@ -1613,38 +1617,39 @@ export default function AdminPage() {
                             e.target.value as SemanticFilter,
                           )
                         }
-                        className="rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-normal normal-case tracking-normal text-slate-700 outline-none focus:border-slate-400"
+                        className="rounded-lg border border-input bg-transparent px-2.5 py-1.5 text-xs font-normal normal-case tracking-normal text-foreground outline-none focus-visible:border-ring"
                       >
                         <option value="all">All</option>
                         <option value="with">With semantic</option>
                         <option value="without">No semantic</option>
                       </select>
                     </label>
-                    <button
+                    <Button
                       type="button"
+                      variant="secondary"
+                      size="sm"
                       onClick={resetMemoryFilters}
-                      className="rounded-lg bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-500 transition hover:bg-slate-200"
                     >
                       Reset
-                    </button>
-                    <span className="ml-auto text-xs text-slate-400">
+                    </Button>
+                    <span className="ml-auto text-xs text-muted-foreground">
                       {visibleMemoryRows.length} / {versionMemoryRows.length}{" "}
                       semantic nodes
                     </span>
                   </>
                 )}
                 {memoryViewTab === "retrievals" && (
-                  <span className="ml-auto text-xs text-slate-400">
+                  <span className="ml-auto text-xs text-muted-foreground">
                     {memoryRetrievalLogs.length} retrieval logs
                   </span>
                 )}
                 {memoryViewTab === "forgetting" && (
-                  <span className="ml-auto text-xs text-slate-400">
+                  <span className="ml-auto text-xs text-muted-foreground">
                     {memoryForgettingCandidates.length} auto archived
                   </span>
                 )}
                 {memoryViewTab === "archived" && (
-                  <span className="ml-auto text-xs text-slate-400">
+                  <span className="ml-auto text-xs text-muted-foreground">
                     {memoryArchivedItems.length} archived memories
                   </span>
                 )}
@@ -1654,12 +1659,12 @@ export default function AdminPage() {
               {memoryViewTab === "table" ? (
                 <div className="h-full overflow-y-auto overscroll-contain">
                   {visibleMemoryRows.length === 0 ? (
-                    <p className="px-6 py-4 text-sm text-slate-400">
+                    <p className="px-6 py-4 text-sm text-muted-foreground">
                       v{memoryVersionTab} 메모리 없음
                     </p>
                   ) : (
-                    <table className="w-full min-w-240 border-separate border-spacing-0 text-left text-xs text-slate-600">
-                      <thead className="sticky top-0 z-10 bg-white text-slate-400 shadow-[0_1px_0_0_rgba(226,232,240,1)]">
+                    <table className="w-full min-w-240 border-separate border-spacing-0 text-left text-xs text-muted-foreground">
+                      <thead className="sticky top-0 z-10 bg-card text-muted-foreground shadow-[0_1px_0_0_rgba(226,232,240,1)]">
                         <tr>
                           {[
                             "Timestamp",
@@ -1673,7 +1678,7 @@ export default function AdminPage() {
                           ].map((label) => (
                             <th
                               key={label}
-                              className="border-b border-slate-100 px-3 py-2 font-semibold"
+                              className="border-b border-border px-3 py-2 font-semibold"
                             >
                               {label}
                             </th>
@@ -1687,9 +1692,9 @@ export default function AdminPage() {
                           return (
                             <tr
                               key={`${row.version ?? "unknown"}-${row.type}-${row.id}`}
-                              className="align-top hover:bg-slate-50/60"
+                              className="align-top hover:bg-muted/60"
                             >
-                              <td className="whitespace-nowrap border-b border-slate-100 px-3 py-3 text-slate-400">
+                              <td className="whitespace-nowrap border-b border-border px-3 py-3 text-muted-foreground">
                                 {row.timestamp
                                   ? new Date(
                                       row.timestamp as number,
@@ -1701,66 +1706,69 @@ export default function AdminPage() {
                                     })
                                   : "—"}
                               </td>
-                              <td className="whitespace-nowrap border-b border-slate-100 px-3 py-3 text-xs text-slate-500">
+                              <td className="whitespace-nowrap border-b border-border px-3 py-3 text-xs text-muted-foreground">
                                 {row.source?.missionId ?? "—"}
                               </td>
-                              <td className="whitespace-nowrap border-b border-slate-100 px-3 py-3">
+                              <td className="whitespace-nowrap border-b border-border px-3 py-3">
                                 {row.agentActionCategory ? (
-                                  <span className="rounded-full bg-amber-50 px-2.5 py-1 text-xs font-medium text-amber-700">
+                                  <Badge variant="warning" className="rounded-full">
                                     {row.agentActionCategory}
-                                  </span>
+                                  </Badge>
                                 ) : (
-                                  <span className="text-slate-300">—</span>
+                                  <span className="text-muted-foreground">—</span>
                                 )}
                               </td>
-                              <td className="max-w-64 wrap-anywhere border-b border-slate-100 px-3 py-3 text-slate-700">
+                              <td className="max-w-64 wrap-anywhere border-b border-border px-3 py-3 text-foreground">
                                 {row.input ?? ""}
                               </td>
-                              <td className="max-w-72 wrap-anywhere border-b border-slate-100 px-3 py-3 text-slate-600 italic">
+                              <td className="max-w-72 wrap-anywhere border-b border-border px-3 py-3 text-muted-foreground italic">
                                 {row.episode ?? ""}
                               </td>
-                              <td className="max-w-80 wrap-anywhere border-b border-slate-100 px-3 py-3">
+                              <td className="max-w-80 wrap-anywhere border-b border-border px-3 py-3">
                                 {semantics.length === 0 ? (
-                                  <span className="text-slate-300">—</span>
+                                  <span className="text-muted-foreground">—</span>
                                 ) : (
                                   <div className="flex flex-col gap-1">
                                     {semantics.map((s: string, i: number) => (
-                                      <span
+                                      <Badge
                                         key={i}
-                                        className="inline-block max-w-full wrap-anywhere rounded-lg bg-indigo-50 px-2.5 py-1 text-xs leading-snug text-indigo-700"
+                                        variant="outline"
+                                        className="inline-block h-auto max-w-full wrap-anywhere rounded-lg whitespace-normal border-transparent bg-indigo-50 px-2.5 py-1 text-xs leading-snug text-indigo-700"
                                       >
                                         {s}
-                                      </span>
+                                      </Badge>
                                     ))}
                                   </div>
                                 )}
                               </td>
-                              <td className="whitespace-nowrap border-b border-slate-100 px-3 py-3">
+                              <td className="whitespace-nowrap border-b border-border px-3 py-3">
                                 {weights.length === 0 ? (
-                                  <span className="text-slate-300">—</span>
+                                  <span className="text-muted-foreground">—</span>
                                 ) : (
                                   <div className="flex flex-col gap-1">
                                     {weights.map((weight, index) => (
-                                      <span
+                                      <Badge
                                         key={index}
-                                        className="inline-block rounded-lg bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-600"
+                                        variant="secondary"
+                                        className="inline-block h-auto rounded-lg"
                                       >
                                         {formatScore(weight)}
-                                      </span>
+                                      </Badge>
                                     ))}
                                   </div>
                                 )}
                               </td>
-                              <td className="max-w-48 wrap-anywhere border-b border-slate-100 px-3 py-3">
+                              <td className="max-w-48 wrap-anywhere border-b border-border px-3 py-3">
                                 <div className="flex flex-wrap gap-1">
                                   {(row.keywords ?? []).map(
                                     (kw: string, i: number) => (
-                                      <span
+                                      <Badge
                                         key={i}
-                                        className="max-w-full wrap-anywhere rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-500"
+                                        variant="secondary"
+                                        className="h-auto max-w-full wrap-anywhere rounded-full whitespace-normal"
                                       >
                                         {kw}
-                                      </span>
+                                      </Badge>
                                     ),
                                   )}
                                 </div>
@@ -1774,18 +1782,18 @@ export default function AdminPage() {
                 </div>
               ) : memoryViewTab === "retrievals" ? (
                 <div className="grid h-full grid-cols-[minmax(260px,360px)_1fr] overflow-hidden">
-                  <div className="h-full overflow-y-auto overscroll-contain border-r border-slate-100 bg-slate-50/60 p-3">
+                  <div className="h-full overflow-y-auto overscroll-contain border-r border-border bg-muted/60 p-3">
                     {memoryRetrievalError && (
                       <p className="mb-3 rounded-xl bg-red-50 px-3 py-2 text-xs text-red-500">
                         {memoryRetrievalError}
                       </p>
                     )}
                     {isLoadingMemoryRetrievals ? (
-                      <p className="px-2 py-3 text-xs text-slate-400">
+                      <p className="px-2 py-3 text-xs text-muted-foreground">
                         Retrieval logs를 불러오는 중입니다.
                       </p>
                     ) : memoryRetrievalLogs.length === 0 ? (
-                      <p className="px-2 py-3 text-xs leading-relaxed text-slate-400">
+                      <p className="px-2 py-3 text-xs leading-relaxed text-muted-foreground">
                         아직 retrieval log가 없습니다. 사용자가 채팅을 보내면
                         query와 검색된 memory가 여기에 기록됩니다.
                       </p>
@@ -1798,19 +1806,19 @@ export default function AdminPage() {
                             onClick={() => setSelectedMemoryRetrievalId(log.id)}
                             className={`w-full rounded-xl border px-3 py-3 text-left transition ${
                               selectedMemoryRetrieval?.id === log.id
-                                ? "border-slate-300 bg-white shadow-sm"
-                                : "border-transparent bg-white/60 hover:border-slate-200 hover:bg-white"
+                                ? "border-border bg-card shadow-sm"
+                                : "border-transparent bg-card/60 hover:border-border hover:bg-card"
                             }`}
                           >
                             <div className="flex items-start justify-between gap-2">
-                              <p className="line-clamp-2 text-xs font-semibold leading-relaxed text-slate-800">
+                              <p className="line-clamp-2 text-xs font-semibold leading-relaxed text-foreground">
                                 {log.query || "(empty query)"}
                               </p>
-                              <span className="shrink-0 rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-500">
+                              <Badge variant="secondary" className="shrink-0 rounded-full">
                                 {log.retrieved.length} used
-                              </span>
+                              </Badge>
                             </div>
-                            <div className="mt-2 flex flex-wrap gap-1.5 text-[11px] text-slate-400">
+                            <div className="mt-2 flex flex-wrap gap-1.5 text-[11px] text-muted-foreground">
                               <span>
                                 {log.createdAt
                                   ? new Date(log.createdAt).toLocaleString(
@@ -1826,7 +1834,7 @@ export default function AdminPage() {
                               </span>
                               {log.missionId && <span>{log.missionId}</span>}
                             </div>
-                            <p className="mt-2 line-clamp-1 text-[11px] text-slate-400">
+                            <p className="mt-2 line-clamp-1 text-[11px] text-muted-foreground">
                               Top memory: {log.retrieved[0]?.semantic || "—"}
                             </p>
                           </button>
@@ -1836,11 +1844,11 @@ export default function AdminPage() {
                   </div>
                   <div className="h-full overflow-y-auto overscroll-contain p-5">
                     {isLoadingMemoryRetrievals ? (
-                      <div className="flex h-full min-h-80 items-center justify-center text-sm text-slate-400">
+                      <div className="flex h-full min-h-80 items-center justify-center text-sm text-muted-foreground">
                         Retrieval logs를 불러오는 중입니다.
                       </div>
                     ) : !selectedMemoryRetrieval ? (
-                      <div className="flex h-full min-h-80 items-center justify-center text-sm text-slate-400">
+                      <div className="flex h-full min-h-80 items-center justify-center text-sm text-muted-foreground">
                         선택된 retrieval log가 없습니다.
                       </div>
                     ) : (
@@ -1848,55 +1856,55 @@ export default function AdminPage() {
                         <section className="space-y-3">
                           <div className="flex flex-wrap items-start justify-between gap-3">
                             <div>
-                              <h3 className="text-lg font-semibold text-slate-900">
+                              <h3 className="text-lg font-semibold text-foreground">
                                 Memory used for this turn
                               </h3>
-                              <p className="mt-1 text-sm text-slate-500">
+                              <p className="mt-1 text-sm text-muted-foreground">
                                 The user message was embedded, compared with
                                 saved semantic memories, and the closest matches
                                 were sent to the agent.
                               </p>
                             </div>
                             <div className="flex flex-wrap gap-2">
-                              <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700">
+                              <Badge variant="success" className="rounded-full">
                                 {selectedMemoryRetrieval.retrieved.length} used
-                              </span>
+                              </Badge>
                               {selectedMemoryRetrieval.missionId && (
-                                <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-500">
+                                <Badge variant="secondary" className="rounded-full">
                                   {selectedMemoryRetrieval.missionId}
-                                </span>
+                                </Badge>
                               )}
                             </div>
                           </div>
                           <div className="grid gap-2 md:grid-cols-3">
-                            <div className="rounded-xl bg-slate-50 px-3 py-3">
-                              <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+                            <div className="rounded-xl bg-muted px-3 py-3">
+                              <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
                                 1. Query
                               </p>
-                              <p className="mt-1 line-clamp-3 text-xs leading-relaxed text-slate-700">
+                              <p className="mt-1 line-clamp-3 text-xs leading-relaxed text-foreground">
                                 {selectedMemoryRetrieval.query || "—"}
                               </p>
                             </div>
-                            <div className="rounded-xl bg-slate-50 px-3 py-3">
-                              <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+                            <div className="rounded-xl bg-muted px-3 py-3">
+                              <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
                                 2. Search
                               </p>
-                              <p className="mt-1 text-xs leading-relaxed text-slate-700">
+                              <p className="mt-1 text-xs leading-relaxed text-foreground">
                                 Vector similarity over semantic memory, no LLM
                                 ranking.
                               </p>
                             </div>
-                            <div className="rounded-xl bg-slate-50 px-3 py-3">
-                              <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+                            <div className="rounded-xl bg-muted px-3 py-3">
+                              <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
                                 3. Learning
                               </p>
-                              <p className="mt-1 text-xs leading-relaxed text-slate-700">
+                              <p className="mt-1 text-xs leading-relaxed text-foreground">
                                 Used memories are reinforced; nearby unused
                                 candidates decay slightly.
                               </p>
                             </div>
                           </div>
-                          <div className="flex flex-wrap gap-2 text-xs text-slate-400">
+                          <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
                             <span>
                               {selectedMemoryRetrieval.createdAt
                                 ? new Date(
@@ -1916,7 +1924,7 @@ export default function AdminPage() {
                         </section>
 
                         <section>
-                          <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">
+                          <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                             retrieved[]
                           </p>
                           <div className="space-y-3">
@@ -1932,26 +1940,32 @@ export default function AdminPage() {
                                 return (
                                   <div
                                     key={item.id}
-                                    className="rounded-2xl border border-slate-100 bg-white p-4 text-xs shadow-sm"
+                                    className="rounded-2xl border border-border bg-card p-4 text-xs shadow-sm"
                                   >
                                     <div className="flex flex-wrap items-start justify-between gap-3">
-                                      <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-400">
-                                        <span className="rounded-full bg-slate-900 px-2 py-0.5 font-semibold text-white">
+                                      <div className="flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
+                                        <Badge className="rounded-full">
                                           #{index + 1}
-                                        </span>
-                                        <span className="rounded-full bg-emerald-50 px-2 py-0.5 font-semibold text-emerald-700">
+                                        </Badge>
+                                        <Badge variant="success" className="rounded-full">
                                           similarity{" "}
                                           {formatScore(item.similarity)}
-                                        </span>
+                                        </Badge>
                                         {item.semantic && (
-                                          <span className="rounded-full bg-violet-50 px-2 py-0.5 font-semibold text-violet-600">
+                                          <Badge
+                                            variant="outline"
+                                            className="rounded-full border-transparent bg-violet-50 text-violet-600"
+                                          >
                                             semantic
-                                          </span>
+                                          </Badge>
                                         )}
                                         {item.episode && (
-                                          <span className="rounded-full bg-sky-50 px-2 py-0.5 font-semibold text-sky-600">
+                                          <Badge
+                                            variant="outline"
+                                            className="rounded-full border-transparent bg-sky-50 text-sky-600"
+                                          >
                                             episode
-                                          </span>
+                                          </Badge>
                                         )}
                                         <span>
                                           weight{" "}
@@ -1968,15 +1982,15 @@ export default function AdminPage() {
                                         )}
                                       </div>
                                     </div>
-                                    <p className="mt-3 wrap-anywhere text-sm leading-relaxed text-slate-800">
+                                    <p className="mt-3 wrap-anywhere text-sm leading-relaxed text-foreground">
                                       {item.semantic ||
                                         "(semantic item not found)"}
                                     </p>
-                                    <details className="mt-3 rounded-xl bg-slate-50 px-3 py-2">
-                                      <summary className="cursor-pointer text-[11px] font-semibold text-slate-500">
+                                    <details className="mt-3 rounded-xl bg-muted px-3 py-2">
+                                      <summary className="cursor-pointer text-[11px] font-semibold text-muted-foreground">
                                         Fields
                                       </summary>
-                                      <div className="mt-2 grid gap-2 text-[11px] text-slate-500 sm:grid-cols-2 lg:grid-cols-4">
+                                      <div className="mt-2 grid gap-2 text-[11px] text-muted-foreground sm:grid-cols-2 lg:grid-cols-4">
                                         <span>
                                           scoreDeltas[].weight{" "}
                                           {formatScore(delta?.weight)}
@@ -1986,7 +2000,7 @@ export default function AdminPage() {
                                           {formatScore(delta?.weightDelta)}
                                         </span>
                                       </div>
-                                      <p className="mt-2 wrap-anywhere text-[11px] text-slate-400">
+                                      <p className="mt-2 wrap-anywhere text-[11px] text-muted-foreground">
                                         memoryId {item.memoryId} ·
                                         semanticItemId {item.semanticItemId}
                                       </p>
@@ -2003,18 +2017,18 @@ export default function AdminPage() {
                 </div>
               ) : memoryViewTab === "forgetting" ? (
                 <div className="grid h-full grid-cols-[minmax(260px,360px)_1fr] overflow-hidden">
-                  <div className="h-full overflow-y-auto overscroll-contain border-r border-slate-100 bg-slate-50/60 p-3">
+                  <div className="h-full overflow-y-auto overscroll-contain border-r border-border bg-muted/60 p-3">
                     {memoryForgettingError && (
                       <p className="mb-3 rounded-xl bg-red-50 px-3 py-2 text-xs text-red-500">
                         {memoryForgettingError}
                       </p>
                     )}
                     {isLoadingMemoryForgetting ? (
-                      <p className="px-2 py-3 text-xs text-slate-400">
+                      <p className="px-2 py-3 text-xs text-muted-foreground">
                         Forgetting 후보를 자동 archive하는 중입니다.
                       </p>
                     ) : memoryForgettingCandidates.length === 0 ? (
-                      <p className="px-2 py-3 text-xs leading-relaxed text-slate-400">
+                      <p className="px-2 py-3 text-xs leading-relaxed text-muted-foreground">
                         새로 자동 archive된 후보가 없습니다. 전체 archive
                         기록은 Archived 탭에서 확인할 수 있습니다.
                       </p>
@@ -2029,19 +2043,22 @@ export default function AdminPage() {
                             }
                             className={`w-full rounded-xl border px-3 py-3 text-left transition ${
                               selectedMemoryForgetting?.id === candidate.id
-                                ? "border-slate-300 bg-white shadow-sm"
-                                : "border-transparent bg-white/60 hover:border-slate-200 hover:bg-white"
+                                ? "border-border bg-card shadow-sm"
+                                : "border-transparent bg-card/60 hover:border-border hover:bg-card"
                             }`}
                           >
                             <div className="flex items-start justify-between gap-2">
-                              <p className="line-clamp-2 text-xs font-semibold leading-relaxed text-slate-800">
+                              <p className="line-clamp-2 text-xs font-semibold leading-relaxed text-foreground">
                                 {candidate.semantic}
                               </p>
-                              <span className="shrink-0 rounded-full bg-rose-50 px-2 py-0.5 text-[11px] font-semibold text-rose-600">
+                              <Badge
+                                variant="outline"
+                                className="shrink-0 rounded-full border-transparent bg-rose-50 text-rose-600"
+                              >
                                 {candidate.reason}
-                              </span>
+                              </Badge>
                             </div>
-                            <div className="mt-2 flex flex-wrap gap-1.5 text-[11px] text-slate-400">
+                            <div className="mt-2 flex flex-wrap gap-1.5 text-[11px] text-muted-foreground">
                               <span>
                                 weight{" "}
                                 {formatScore(candidate.weight)}
@@ -2068,11 +2085,11 @@ export default function AdminPage() {
                   </div>
                   <div className="h-full overflow-y-auto overscroll-contain p-5">
                     {isLoadingMemoryForgetting ? (
-                      <div className="flex h-full min-h-80 items-center justify-center text-sm text-slate-400">
+                      <div className="flex h-full min-h-80 items-center justify-center text-sm text-muted-foreground">
                         Forgetting 후보를 자동 archive하는 중입니다.
                       </div>
                     ) : !selectedMemoryForgetting ? (
-                      <div className="flex h-full min-h-80 items-center justify-center text-sm text-slate-400">
+                      <div className="flex h-full min-h-80 items-center justify-center text-sm text-muted-foreground">
                         새로 자동 archive된 후보가 없습니다.
                       </div>
                     ) : (
@@ -2080,48 +2097,51 @@ export default function AdminPage() {
                         <section className="space-y-3">
                           <div className="flex flex-wrap items-start justify-between gap-3">
                             <div>
-                              <h3 className="text-lg font-semibold text-slate-900">
+                              <h3 className="text-lg font-semibold text-foreground">
                                 Auto archived memory
                               </h3>
-                              <p className="mt-1 max-w-2xl text-sm text-slate-500">
+                              <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
                                 Forgetting 기준에 걸린 semantic item을 자동
                                 soft archive했습니다.
                               </p>
                             </div>
                           </div>
                           <div className="flex flex-wrap gap-2">
-                            <span className="rounded-full bg-rose-50 px-2.5 py-1 text-xs font-semibold text-rose-600">
+                            <Badge
+                              variant="outline"
+                              className="rounded-full border-transparent bg-rose-50 text-rose-600"
+                            >
                               {selectedMemoryForgetting.reason}
-                            </span>
-                            <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-500">
+                            </Badge>
+                            <Badge variant="secondary" className="rounded-full">
                               weight{" "}
                               {formatScore(
                                 selectedMemoryForgetting.weight,
                               )}
-                            </span>
-                            <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-500">
+                            </Badge>
+                            <Badge variant="secondary" className="rounded-full">
                               retrievedCount{" "}
                               {selectedMemoryForgetting.retrievedCount}
-                            </span>
+                            </Badge>
                             {selectedMemoryForgetting.archivedAt && (
-                              <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-500">
+                              <Badge variant="secondary" className="rounded-full">
                                 archivedAt{" "}
                                 {new Date(
                                   selectedMemoryForgetting.archivedAt,
                                 ).toLocaleString("ko-KR")}
-                              </span>
+                              </Badge>
                             )}
                           </div>
-                          <p className="rounded-xl bg-slate-50 px-3 py-3 text-xs leading-relaxed text-slate-600">
+                          <p className="rounded-xl bg-muted px-3 py-3 text-xs leading-relaxed text-muted-foreground">
                             {selectedMemoryForgetting.reasonLabel}
                           </p>
                         </section>
 
                         <section>
-                          <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">
+                          <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                             Semantic
                           </p>
-                          <p className="wrap-anywhere rounded-2xl border border-slate-100 bg-white p-4 text-sm leading-relaxed text-slate-800 shadow-sm">
+                          <p className="wrap-anywhere rounded-2xl border border-border bg-card p-4 text-sm leading-relaxed text-foreground shadow-sm">
                             {selectedMemoryForgetting.semantic}
                           </p>
                           {selectedMemoryForgetting.keywords &&
@@ -2129,12 +2149,13 @@ export default function AdminPage() {
                               <div className="mt-3 flex flex-wrap gap-1">
                                 {selectedMemoryForgetting.keywords.map(
                                   (keyword) => (
-                                    <span
+                                    <Badge
                                       key={keyword}
-                                      className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-500"
+                                      variant="secondary"
+                                      className="rounded-full"
                                     >
                                       {keyword}
-                                    </span>
+                                    </Badge>
                                   ),
                                 )}
                               </div>
@@ -2143,7 +2164,7 @@ export default function AdminPage() {
 
                         {selectedMemoryForgetting.duplicate && (
                           <section>
-                            <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">
+                            <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                               Similar semantic kept
                             </p>
                             <div className="rounded-2xl border border-emerald-100 bg-emerald-50 p-4 text-xs">
@@ -2170,11 +2191,11 @@ export default function AdminPage() {
                           </section>
                         )}
 
-                        <details className="rounded-xl bg-slate-50 px-3 py-2">
-                          <summary className="cursor-pointer text-[11px] font-semibold text-slate-500">
+                        <details className="rounded-xl bg-muted px-3 py-2">
+                          <summary className="cursor-pointer text-[11px] font-semibold text-muted-foreground">
                             Technical details
                           </summary>
-                          <div className="mt-2 grid gap-2 text-[11px] text-slate-500 sm:grid-cols-2 lg:grid-cols-4">
+                          <div className="mt-2 grid gap-2 text-[11px] text-muted-foreground sm:grid-cols-2 lg:grid-cols-4">
                             <span>
                               archiveReason{" "}
                               {selectedMemoryForgetting.archiveReason ?? "—"}
@@ -2188,7 +2209,7 @@ export default function AdminPage() {
                                 : "—"}
                             </span>
                           </div>
-                          <p className="mt-2 wrap-anywhere text-[11px] text-slate-400">
+                          <p className="mt-2 wrap-anywhere text-[11px] text-muted-foreground">
                             {selectedMemoryForgetting.memoryId}:
                             {selectedMemoryForgetting.semanticItemId}
                           </p>
@@ -2199,18 +2220,18 @@ export default function AdminPage() {
                 </div>
               ) : memoryViewTab === "archived" ? (
                 <div className="grid h-full grid-cols-[minmax(260px,360px)_1fr] overflow-hidden">
-                  <div className="h-full overflow-y-auto overscroll-contain border-r border-slate-100 bg-slate-50/60 p-3">
+                  <div className="h-full overflow-y-auto overscroll-contain border-r border-border bg-muted/60 p-3">
                     {memoryForgettingError && (
                       <p className="mb-3 rounded-xl bg-red-50 px-3 py-2 text-xs text-red-500">
                         {memoryForgettingError}
                       </p>
                     )}
                     {isLoadingMemoryForgetting ? (
-                      <p className="px-2 py-3 text-xs text-slate-400">
+                      <p className="px-2 py-3 text-xs text-muted-foreground">
                         Archived memory를 불러오는 중입니다.
                       </p>
                     ) : memoryArchivedItems.length === 0 ? (
-                      <p className="px-2 py-3 text-xs leading-relaxed text-slate-400">
+                      <p className="px-2 py-3 text-xs leading-relaxed text-muted-foreground">
                         archivedAt이 기록된 semantic item이 없습니다.
                       </p>
                     ) : (
@@ -2222,19 +2243,19 @@ export default function AdminPage() {
                             onClick={() => setSelectedMemoryArchivedId(item.id)}
                             className={`w-full rounded-xl border px-3 py-3 text-left transition ${
                               selectedMemoryArchived?.id === item.id
-                                ? "border-slate-300 bg-white shadow-sm"
-                                : "border-transparent bg-white/60 hover:border-slate-200 hover:bg-white"
+                                ? "border-border bg-card shadow-sm"
+                                : "border-transparent bg-card/60 hover:border-border hover:bg-card"
                             }`}
                           >
                             <div className="flex items-start justify-between gap-2">
-                              <p className="line-clamp-2 text-xs font-semibold leading-relaxed text-slate-800">
+                              <p className="line-clamp-2 text-xs font-semibold leading-relaxed text-foreground">
                                 {item.semantic}
                               </p>
-                              <span className="shrink-0 rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-500">
+                              <Badge variant="secondary" className="shrink-0 rounded-full">
                                 {item.archiveReason ?? item.reason}
-                              </span>
+                              </Badge>
                             </div>
-                            <div className="mt-2 flex flex-wrap gap-1.5 text-[11px] text-slate-400">
+                            <div className="mt-2 flex flex-wrap gap-1.5 text-[11px] text-muted-foreground">
                               <span>
                                 archivedAt{" "}
                                 {item.archivedAt
@@ -2261,59 +2282,59 @@ export default function AdminPage() {
                   </div>
                   <div className="h-full overflow-y-auto overscroll-contain p-5">
                     {isLoadingMemoryForgetting ? (
-                      <div className="flex h-full min-h-80 items-center justify-center text-sm text-slate-400">
+                      <div className="flex h-full min-h-80 items-center justify-center text-sm text-muted-foreground">
                         Archived memory를 불러오는 중입니다.
                       </div>
                     ) : !selectedMemoryArchived ? (
-                      <div className="flex h-full min-h-80 items-center justify-center text-sm text-slate-400">
+                      <div className="flex h-full min-h-80 items-center justify-center text-sm text-muted-foreground">
                         선택된 archived memory가 없습니다.
                       </div>
                     ) : (
                       <div className="space-y-5">
                         <section className="space-y-3">
                           <div>
-                            <h3 className="text-lg font-semibold text-slate-900">
+                            <h3 className="text-lg font-semibold text-foreground">
                               Archived memory
                             </h3>
-                            <p className="mt-1 max-w-2xl text-sm text-slate-500">
+                            <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
                               archivedAt이 있는 semantic item입니다. Retrieval
                               대상에서는 제외됩니다.
                             </p>
                           </div>
                           <div className="flex flex-wrap gap-2">
-                            <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-500">
+                            <Badge variant="secondary" className="rounded-full">
                               archiveReason{" "}
                               {selectedMemoryArchived.archiveReason ?? "—"}
-                            </span>
-                            <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-500">
+                            </Badge>
+                            <Badge variant="secondary" className="rounded-full">
                               archivedAt{" "}
                               {selectedMemoryArchived.archivedAt
                                 ? new Date(
                                     selectedMemoryArchived.archivedAt,
                                   ).toLocaleString("ko-KR")
                                 : "—"}
-                            </span>
-                            <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-500">
+                            </Badge>
+                            <Badge variant="secondary" className="rounded-full">
                               weight{" "}
                               {formatScore(
                                 selectedMemoryArchived.weight,
                               )}
-                            </span>
+                            </Badge>
                           </div>
                         </section>
 
                         <section>
-                          <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">
+                          <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                             Semantic
                           </p>
-                          <p className="wrap-anywhere rounded-2xl border border-slate-100 bg-white p-4 text-sm leading-relaxed text-slate-800 shadow-sm">
+                          <p className="wrap-anywhere rounded-2xl border border-border bg-card p-4 text-sm leading-relaxed text-foreground shadow-sm">
                             {selectedMemoryArchived.semantic}
                           </p>
                         </section>
 
                         {selectedMemoryArchived.duplicate && (
                           <section>
-                            <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">
+                            <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                               Similar memory kept
                             </p>
                             <div className="rounded-2xl border border-emerald-100 bg-emerald-50 p-4 text-xs">
@@ -2347,11 +2368,11 @@ export default function AdminPage() {
                           </section>
                         )}
 
-                        <details className="rounded-xl bg-slate-50 px-3 py-2">
-                          <summary className="cursor-pointer text-[11px] font-semibold text-slate-500">
+                        <details className="rounded-xl bg-muted px-3 py-2">
+                          <summary className="cursor-pointer text-[11px] font-semibold text-muted-foreground">
                             Fields
                           </summary>
-                          <div className="mt-2 grid gap-2 text-[11px] text-slate-500 sm:grid-cols-2 lg:grid-cols-4">
+                          <div className="mt-2 grid gap-2 text-[11px] text-muted-foreground sm:grid-cols-2 lg:grid-cols-4">
                             <span>
                               retrievedCount{" "}
                               {selectedMemoryArchived.retrievedCount}
@@ -2361,7 +2382,7 @@ export default function AdminPage() {
                               {selectedMemoryArchived.duplicateOf ?? "—"}
                             </span>
                           </div>
-                          <p className="mt-2 wrap-anywhere text-[11px] text-slate-400">
+                          <p className="mt-2 wrap-anywhere text-[11px] text-muted-foreground">
                             memoryId {selectedMemoryArchived.memoryId} ·
                             semanticItemId{" "}
                             {selectedMemoryArchived.semanticItemId}
@@ -2373,10 +2394,10 @@ export default function AdminPage() {
                 </div>
               ) : (
                 <div className="grid h-full grid-cols-[minmax(220px,320px)_1fr] overflow-hidden">
-                  <div className="h-full overflow-y-auto overscroll-contain border-r border-slate-100 bg-slate-50/60">
-                    <div className="border-b border-slate-100 bg-slate-50/95 p-4">
+                  <div className="h-full overflow-y-auto overscroll-contain border-r border-border bg-muted/60">
+                    <div className="border-b border-border bg-muted/95 p-4">
                       <div className="space-y-2">
-                        <button
+                        <Button
                           type="button"
                           onClick={generateMemoryClusters}
                           disabled={
@@ -2384,22 +2405,25 @@ export default function AdminPage() {
                             isClusteringMemory ||
                             clusterableMemoryItems.length === 0
                           }
-                          className="w-full rounded-xl bg-slate-900 px-3 py-2 text-xs font-semibold text-white transition hover:bg-slate-700 disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-500"
+                          size="sm"
+                          className="w-full"
                         >
                           {isClusteringMemory
                             ? "Generating..."
                             : `Regenerate all (${clusterableMemoryItems.length})`}
-                        </button>
+                        </Button>
                       </div>
-                      <div className="mt-4 space-y-2 border-t border-slate-200 pt-3">
-                        <button
+                      <div className="mt-4 space-y-2 border-t border-border pt-3">
+                        <Button
                           type="button"
+                          variant="outline"
                           onClick={copyMemoryClustersJson}
                           disabled={activeMemoryClusters.length === 0}
-                          className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+                          size="sm"
+                          className="w-full"
                         >
                           Copy current JSON
-                        </button>
+                        </Button>
                       </div>
                       {memoryClusterError && (
                         <p className="mt-2 text-xs text-red-500">
@@ -2407,19 +2431,19 @@ export default function AdminPage() {
                         </p>
                       )}
                       {memoryGraphClusterDiagnostics?.graph && (
-                        <div className="mt-3 rounded-xl border border-slate-200 bg-white p-3">
+                        <div className="mt-3 rounded-xl border border-border bg-card p-3">
                           <div className="flex items-center justify-between gap-3">
-                            <p className="text-xs font-semibold text-slate-600">
+                            <p className="text-xs font-semibold text-muted-foreground">
                               Similarity Graph
                             </p>
-                            <p className="text-[11px] text-slate-400">
+                            <p className="text-[11px] text-muted-foreground">
                               {memoryGraphClusterDiagnostics.actualClusterCount ??
                                 memoryGraphClusterDiagnostics.graph
                                   .cappedCommunityCount}{" "}
                               communities
                             </p>
                           </div>
-                          <div className="mt-3 grid grid-cols-2 gap-2 text-[11px] text-slate-500">
+                          <div className="mt-3 grid grid-cols-2 gap-2 text-[11px] text-muted-foreground">
                             <span>
                               edges{" "}
                               {memoryGraphClusterDiagnostics.graph.edgeCount}
@@ -2463,15 +2487,15 @@ export default function AdminPage() {
                     </div>
                     <div className="p-3">
                       {isLoadingMemoryClusters ? (
-                        <p className="px-2 py-3 text-xs text-slate-400">
+                        <p className="px-2 py-3 text-xs text-muted-foreground">
                           저장된 클러스터를 불러오는 중입니다.
                         </p>
                       ) : clusterableMemoryItems.length === 0 ? (
-                        <p className="px-2 py-3 text-xs text-slate-400">
+                        <p className="px-2 py-3 text-xs text-muted-foreground">
                           현재 필터에 semantic memory가 없습니다.
                         </p>
                       ) : activeMemoryClusters.length === 0 ? (
-                        <p className="px-2 py-3 text-xs leading-relaxed text-slate-400">
+                        <p className="px-2 py-3 text-xs leading-relaxed text-muted-foreground">
                           저장된 클러스터가 없습니다.
                         </p>
                       ) : (
@@ -2485,19 +2509,19 @@ export default function AdminPage() {
                               }
                               className={`w-full rounded-xl border px-3 py-3 text-left transition ${
                                 selectedMemoryCluster?.id === cluster.id
-                                  ? "border-slate-300 bg-white shadow-sm"
-                                  : "border-transparent bg-white/60 hover:border-slate-200 hover:bg-white"
+                                  ? "border-border bg-card shadow-sm"
+                                  : "border-transparent bg-card/60 hover:border-border hover:bg-card"
                               }`}
                             >
                               <div className="flex items-start justify-between gap-2">
-                                <p className="text-sm font-semibold text-slate-800">
+                                <p className="text-sm font-semibold text-foreground">
                                   {cluster.label}
                                 </p>
-                                <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-500">
+                                <Badge variant="secondary" className="rounded-full">
                                   {cluster.count}
-                                </span>
+                                </Badge>
                               </div>
-                              <p className="mt-1 line-clamp-2 text-xs leading-relaxed text-slate-500">
+                              <p className="mt-1 line-clamp-2 text-xs leading-relaxed text-muted-foreground">
                                 {cluster.summary}
                               </p>
                             </button>
@@ -2507,8 +2531,8 @@ export default function AdminPage() {
                     </div>
                   </div>
                   <div className="flex h-full min-h-0 flex-col overflow-hidden">
-                    <div className="flex shrink-0 items-center justify-between gap-3 border-b border-slate-100 bg-white px-5 py-3">
-                      <div className="inline-flex rounded-lg border border-slate-200 bg-slate-50 p-1">
+                    <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border bg-card px-5 py-3">
+                      <div className="inline-flex rounded-lg border border-border bg-muted p-1">
                         {(["graph", "detail"] as const).map((tab) => (
                           <button
                             key={tab}
@@ -2516,15 +2540,15 @@ export default function AdminPage() {
                             onClick={() => setMemoryClusterViewTab(tab)}
                             className={`rounded-md px-3 py-1.5 text-xs font-semibold transition ${
                               memoryClusterViewTab === tab
-                                ? "bg-white text-slate-900 shadow-sm"
-                                : "text-slate-500 hover:text-slate-900"
+                                ? "bg-card text-foreground shadow-sm"
+                                : "text-muted-foreground hover:text-foreground"
                             }`}
                           >
                             {tab === "graph" ? "Graph" : "Detail"}
                           </button>
                         ))}
                       </div>
-                      <span className="text-xs text-slate-400">
+                      <span className="text-xs text-muted-foreground">
                         Similarity Graph · {activeMemoryClusters.length}{" "}
                         clusters · {clusterableMemoryItems.length} semantic
                         nodes
@@ -2532,16 +2556,16 @@ export default function AdminPage() {
                     </div>
                     <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-5">
                       {isLoadingMemoryClusters ? (
-                        <div className="flex h-full min-h-80 items-center justify-center text-sm text-slate-400">
+                        <div className="flex h-full min-h-80 items-center justify-center text-sm text-muted-foreground">
                           저장된 클러스터를 불러오는 중입니다.
                         </div>
                       ) : !selectedMemoryCluster ? (
-                        <div className="flex h-full min-h-80 items-center justify-center text-sm text-slate-400">
+                        <div className="flex h-full min-h-80 items-center justify-center text-sm text-muted-foreground">
                           저장된 클러스터가 없으면 Regenerate를 눌러 새로 생성할
                           수 있습니다.
                         </div>
                       ) : memoryClusterViewTab === "graph" ? (
-                        <div className="h-full min-h-128 overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm">
+                        <div className="h-full min-h-128 overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
                           <MemoryClusterGraph
                             clusters={activeMemoryClusters}
                             items={clusterableMemoryItems}
@@ -2554,14 +2578,14 @@ export default function AdminPage() {
                         <div className="space-y-5">
                           <div>
                             <div className="flex flex-wrap items-center gap-2">
-                              <h3 className="text-lg font-semibold text-slate-900">
+                              <h3 className="text-lg font-semibold text-foreground">
                                 {selectedMemoryCluster.label}
                               </h3>
-                              <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-500">
+                              <Badge variant="secondary" className="rounded-full">
                                 {selectedClusterItems.length} items
-                              </span>
+                              </Badge>
                             </div>
-                            <p className="mt-2 max-w-3xl text-sm leading-relaxed text-slate-500">
+                            <p className="mt-2 max-w-3xl text-sm leading-relaxed text-muted-foreground">
                               {selectedMemoryCluster.summary}
                             </p>
                             {selectedMemoryCluster.relatedActions.length >
@@ -2583,7 +2607,7 @@ export default function AdminPage() {
                           {selectedMemoryCluster.representativeItems.length >
                             0 && (
                             <section>
-                              <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">
+                              <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                                 Representative semantics
                               </p>
                               <div className="space-y-2">
@@ -2601,19 +2625,19 @@ export default function AdminPage() {
                             </section>
                           )}
                           <section>
-                            <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">
+                            <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                               Included memory items
                             </p>
                             <div className="space-y-3">
                               {selectedClusterItems.map((item) => (
                                 <div
                                   key={item.id}
-                                  className="rounded-2xl border border-slate-100 bg-white p-4 text-xs shadow-sm"
+                                  className="rounded-2xl border border-border bg-card p-4 text-xs shadow-sm"
                                 >
-                                  <p className="wrap-anywhere text-sm leading-relaxed text-slate-800">
+                                  <p className="wrap-anywhere text-sm leading-relaxed text-foreground">
                                     {item.semantic}
                                   </p>
-                                  <div className="mt-3 flex flex-wrap items-center gap-2 text-[11px] text-slate-400">
+                                  <div className="mt-3 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
                                     {item.timestamp ? (
                                       <span>
                                         {new Date(
@@ -2627,21 +2651,21 @@ export default function AdminPage() {
                                       </span>
                                     ) : null}
                                     {item.action ? (
-                                      <span className="rounded-full bg-amber-50 px-2 py-0.5 font-medium text-amber-700">
+                                      <Badge variant="warning" className="rounded-full">
                                         {item.action}
-                                      </span>
+                                      </Badge>
                                     ) : null}
                                     <span>
                                       {item.row.source?.missionId ?? "—"}
                                     </span>
                                   </div>
                                   {item.episodic && (
-                                    <p className="mt-3 wrap-anywhere text-slate-500">
+                                    <p className="mt-3 wrap-anywhere text-muted-foreground">
                                       {item.episodic}
                                     </p>
                                   )}
                                   {item.input && (
-                                    <p className="mt-2 wrap-anywhere text-slate-400">
+                                    <p className="mt-2 wrap-anywhere text-muted-foreground">
                                       Input: {item.input}
                                     </p>
                                   )}
@@ -2656,36 +2680,37 @@ export default function AdminPage() {
                 </div>
               )}
             </div>
-            <div className="flex shrink-0 items-center justify-end border-t border-slate-100 px-6 py-4">
-              <button
+            <div className="flex shrink-0 items-center justify-end border-t border-border px-6 py-4">
+              <Button
                 type="button"
+                variant="secondary"
                 onClick={() => setMemoryModal(null)}
-                className="rounded-2xl bg-slate-100 px-4 py-2 text-xs font-semibold text-slate-600 transition hover:bg-slate-200"
+                className="rounded-2xl px-4 text-xs"
               >
                 닫기
-              </button>
+              </Button>
             </div>
           </div>
         </div>
       )}
 
       {/* Header */}
-      <div className="sticky top-0 z-10 border-b border-slate-200 bg-white">
+      <div className="sticky top-0 z-10 border-b border-border bg-card">
         <div className="flex items-center justify-between px-6 py-4 lg:px-10">
           <div className="flex items-center gap-4">
             <Link
               href="/lobby"
-              className="text-sm text-slate-500 transition hover:text-slate-900"
+              className="text-sm text-muted-foreground transition hover:text-foreground"
             >
               <ArrowLeftIcon size={14} className="inline" /> 로비
             </Link>
-            <h1 className="text-lg font-semibold text-slate-900">
+            <h1 className="text-lg font-semibold text-foreground">
               관리자 페이지
             </h1>
           </div>
           <Link
             href="/admin/new"
-            className="rounded-2xl bg-slate-900 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-slate-700"
+            className="rounded-2xl bg-primary px-5 py-2.5 text-sm font-semibold text-primary-foreground transition hover:bg-primary/90"
           >
             + 새 미션
           </Link>
@@ -2696,25 +2721,26 @@ export default function AdminPage() {
         <section className="space-y-4">
           <div className="flex items-center justify-between">
             <div>
-              <h2 className="text-lg font-semibold text-slate-900">
+              <h2 className="text-lg font-semibold text-foreground">
                 유저 목록
               </h2>
-              <p className="text-sm text-slate-400">
+              <p className="text-sm text-muted-foreground">
                 미션 참여 기록과 세션 데이터를 유저별로 모아봅니다.
               </p>
             </div>
-            <button
+            <Button
               type="button"
+              variant="outline"
               onClick={loadUsers}
               disabled={isLoadingUsers}
-              className="rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-600 transition hover:bg-slate-50 disabled:opacity-50"
+              className="rounded-2xl px-4 text-sm"
             >
               {isLoadingUsers ? "불러오는 중..." : "새로고침"}
-            </button>
+            </Button>
           </div>
 
           {adminUsers.length === 0 ? (
-            <div className="flex h-32 items-center justify-center rounded-3xl border border-dashed border-slate-200 bg-white text-sm text-slate-400">
+            <div className="flex h-32 items-center justify-center rounded-3xl border border-dashed border-border bg-card text-sm text-muted-foreground">
               {isLoadingUsers
                 ? "유저 데이터를 불러오는 중입니다."
                 : "아직 유저 데이터가 없습니다."}
@@ -2727,7 +2753,7 @@ export default function AdminPage() {
                 return (
                   <div
                     key={user.id}
-                    className="rounded-3xl border border-slate-100 bg-white p-5 shadow-sm"
+                    className="rounded-3xl border border-border bg-card p-5 shadow-sm"
                   >
                     <div className="flex items-start gap-3">
                       {user.photoURL ? (
@@ -2737,7 +2763,7 @@ export default function AdminPage() {
                           className="h-10 w-10 rounded-full object-cover"
                         />
                       ) : (
-                        <div className="flex h-10 w-10 items-center justify-center rounded-full bg-slate-900 text-sm font-semibold text-white">
+                        <div className="flex h-10 w-10 items-center justify-center rounded-full bg-primary text-sm font-semibold text-primary-foreground">
                           {(user.displayName ?? user.email ?? "?")
                             .charAt(0)
                             .toUpperCase()}
@@ -2745,26 +2771,27 @@ export default function AdminPage() {
                       )}
                       <div className="min-w-0 flex-1">
                         <div className="flex flex-wrap items-center gap-2">
-                          <p className="truncate text-sm font-semibold text-slate-900">
+                          <p className="truncate text-sm font-semibold text-foreground">
                             {user.displayName ?? user.email ?? user.id}
                           </p>
-                          <span
-                            className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${badge.style}`}
-                          >
+                          <Badge variant={badge.variant} className="rounded-full">
                             {badge.label}
-                          </span>
+                          </Badge>
                           {user.isAdmin && (
-                            <span className="rounded-full bg-indigo-50 px-2 py-0.5 text-[11px] font-semibold text-indigo-700">
+                            <Badge
+                              variant="outline"
+                              className="rounded-full border-transparent bg-indigo-50 text-indigo-700"
+                            >
                               관리자
-                            </span>
+                            </Badge>
                           )}
                         </div>
                         {user.displayName && user.email && (
-                          <p className="truncate text-xs text-slate-400">
+                          <p className="truncate text-xs text-muted-foreground">
                             {user.email}
                           </p>
                         )}
-                        <p className="mt-1 text-[11px] text-slate-300">
+                        <p className="mt-1 text-[11px] text-muted-foreground">
                           {user.id}
                         </p>
                       </div>
@@ -2772,24 +2799,24 @@ export default function AdminPage() {
 
                     <div className="mt-4 flex flex-wrap gap-2">
                       {missionIds.length === 0 ? (
-                        <span className="text-xs text-slate-400">
+                        <span className="text-xs text-muted-foreground">
                           연결된 미션 없음
                         </span>
                       ) : (
                         missionIds.map((missionId) => (
                           <span
                             key={missionId}
-                            className="inline-flex overflow-hidden rounded-full border border-slate-200 text-xs font-semibold"
+                            className="inline-flex overflow-hidden rounded-full border border-border text-xs font-semibold"
                           >
                             <Link
                               href={`/main/${missionId}?viewAs=${user.id}`}
-                              className="px-3 py-1 text-slate-500 transition hover:bg-slate-50 hover:text-slate-900"
+                              className="px-3 py-1 text-muted-foreground transition hover:bg-muted hover:text-foreground"
                             >
                               {missionTitle(missionId)}
                             </Link>
                             <Link
                               href={`/main/${missionId}?viewAs=${user.id}&review=1`}
-                              className="border-l border-slate-200 px-2.5 py-1 text-indigo-500 transition hover:bg-indigo-50 hover:text-indigo-700"
+                              className="border-l border-border px-2.5 py-1 text-indigo-500 transition hover:bg-indigo-50 hover:text-indigo-700"
                             >
                               리뷰
                             </Link>
@@ -2799,24 +2826,26 @@ export default function AdminPage() {
                     </div>
 
                     <div className="mt-3 flex flex-wrap items-center gap-3">
-                      <button
+                      <Button
                         type="button"
+                        variant="link"
                         onClick={() => openMemoryTable(user)}
                         disabled={isLoadingMemory}
-                        className="text-[11px] font-semibold text-indigo-500 hover:text-indigo-700 disabled:text-slate-300"
+                        className="h-auto p-0 text-[11px] font-semibold text-indigo-500 hover:text-indigo-700 hover:no-underline disabled:text-muted-foreground"
                       >
                         메모리 테이블 보기 →
-                      </button>
-                      <button
+                      </Button>
+                      <Button
                         type="button"
+                        variant="link"
                         onClick={() => requestBackupAndDeleteSessions(user)}
                         disabled={deletingSessionsUserId === user.id}
-                        className="text-[11px] font-semibold text-red-400 hover:text-red-600 disabled:text-slate-300"
+                        className="h-auto p-0 text-[11px] font-semibold text-red-400 hover:text-red-600 hover:no-underline disabled:text-muted-foreground"
                       >
                         {deletingSessionsUserId === user.id
                           ? "백업/삭제 중..."
                           : "세션 백업 후 삭제"}
-                      </button>
+                      </Button>
                     </div>
                   </div>
                 );
@@ -2827,34 +2856,36 @@ export default function AdminPage() {
 
         <section className="space-y-4">
           <div className="flex items-center justify-between">
-            <h2 className="text-lg font-semibold text-slate-900">미션 목록</h2>
-            <span className="text-sm text-slate-400">{missions.length}개</span>
+            <h2 className="text-lg font-semibold text-foreground">미션 목록</h2>
+            <span className="text-sm text-muted-foreground">{missions.length}개</span>
           </div>
 
-          <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
+          <div className="rounded-2xl border border-border bg-card p-4 shadow-sm">
             <div className="mb-3 flex items-center justify-between gap-3">
               <div>
-                <p className="text-xs font-semibold text-slate-500">
+                <p className="text-xs font-semibold text-muted-foreground">
                   온보딩 설정
                 </p>
-                <p className="mt-1 text-xs text-slate-400">
+                <p className="mt-1 text-xs text-muted-foreground">
                   유저 {adminUsers.length}명
                 </p>
               </div>
-              <button
+              <Button
                 type="button"
+                variant="ghost"
+                size="icon"
                 onClick={openOnboardingParticipants}
-                className="rounded-full p-1.5 text-slate-300 transition hover:bg-slate-50 hover:text-slate-600"
+                className="rounded-full text-muted-foreground"
                 title="온보딩 유저 보기"
               >
                 <UsersThreeIcon size={16} />
-              </button>
+              </Button>
             </div>
             <div className="flex flex-wrap items-end gap-3">
-              <label className="space-y-1 text-xs font-semibold text-slate-500">
+              <label className="space-y-1 text-xs font-semibold text-muted-foreground">
                 제한 시간
                 <div className="flex items-center gap-2">
-                  <input
+                  <Input
                     type="number"
                     min={1}
                     value={onboardingSettings.durationMinutes}
@@ -2864,24 +2895,24 @@ export default function AdminPage() {
                         durationMinutes: Number(e.target.value) || 20,
                       }))
                     }
-                    className="block w-24 rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-700 outline-none focus:border-slate-400"
+                    className="w-24"
                   />
-                  <span className="text-sm font-normal text-slate-400">분</span>
+                  <span className="text-sm font-normal text-muted-foreground">분</span>
                 </div>
               </label>
-              <button
+              <Button
                 type="button"
                 onClick={saveOnboardingSettings}
                 disabled={isSavingOnboardingSettings}
-                className="rounded-2xl bg-slate-900 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-slate-700 disabled:opacity-50"
+                className="rounded-2xl px-5"
               >
                 {isSavingOnboardingSettings ? "저장 중..." : "저장"}
-              </button>
+              </Button>
             </div>
           </div>
 
           {missions.length === 0 ? (
-            <div className="flex h-40 items-center justify-center rounded-3xl border border-dashed border-slate-200 bg-white text-sm text-slate-400">
+            <div className="flex h-40 items-center justify-center rounded-3xl border border-dashed border-border bg-card text-sm text-muted-foreground">
               아직 미션이 없습니다. 첫 미션을 만들어보세요.
             </div>
           ) : (
@@ -2892,13 +2923,13 @@ export default function AdminPage() {
                 return (
                   <div
                     key={mission.id}
-                    className="rounded-3xl border border-slate-100 bg-white px-6 py-5 shadow-sm"
+                    className="rounded-3xl border border-border bg-card px-6 py-5 shadow-sm"
                   >
                     <div className="flex items-start gap-3">
                       <div className="flex-1 min-w-0 space-y-3">
                         {isEditing ? (
                           <>
-                            <input
+                            <Input
                               autoFocus
                               value={editFields.title ?? ""}
                               onChange={(e) =>
@@ -2911,9 +2942,9 @@ export default function AdminPage() {
                                 if (e.key === "Escape") setEditingId(null);
                               }}
                               placeholder="미션 제목"
-                              className="w-full rounded-xl border border-slate-200 px-3 py-1.5 text-sm font-semibold outline-none focus:border-slate-400"
+                              className="text-sm font-semibold"
                             />
-                            <textarea
+                            <Textarea
                               value={editFields.description ?? ""}
                               onChange={(e) =>
                                 setEditFields((p) => ({
@@ -2923,9 +2954,9 @@ export default function AdminPage() {
                               }
                               placeholder="미션 설명 (선택)"
                               rows={2}
-                              className="w-full resize-none rounded-xl border border-slate-200 px-3 py-1.5 text-sm text-slate-600 outline-none focus:border-slate-400"
+                              className="resize-none text-sm text-muted-foreground"
                             />
-                            <div className="flex items-center gap-2 text-xs text-slate-500">
+                            <div className="flex items-center gap-2 text-xs text-muted-foreground">
                               <span>디바이스</span>
                               {(["desktop", "mobile"] as Device[]).map((d) => (
                                 <button
@@ -2936,17 +2967,17 @@ export default function AdminPage() {
                                   }
                                   className={`rounded-lg border px-3 py-1 text-xs font-semibold transition ${
                                     (editFields.device ?? "desktop") === d
-                                      ? "border-slate-900 bg-slate-900 text-white"
-                                      : "border-slate-200 text-slate-500 hover:bg-slate-50"
+                                      ? "border-primary bg-primary text-primary-foreground"
+                                      : "border-border text-muted-foreground hover:bg-muted"
                                   }`}
                                 >
                                   {d === "desktop" ? "PC" : "모바일"}
                                 </button>
                               ))}
                             </div>
-                            <div className="flex items-center gap-2 text-xs text-slate-500">
+                            <div className="flex items-center gap-2 text-xs text-muted-foreground">
                               <span>제한 시간 (분)</span>
-                              <input
+                              <Input
                                 type="number"
                                 min={0}
                                 value={
@@ -2958,47 +2989,50 @@ export default function AdminPage() {
                                     durationMinutes: Number(e.target.value),
                                   }))
                                 }
-                                className="w-20 rounded-lg border border-slate-200 px-2 py-1 text-xs outline-none focus:border-slate-400"
+                                className="w-20 text-xs"
                               />
-                              <span className="text-slate-400">
+                              <span className="text-muted-foreground">
                                 (0 = 제한 없음)
                               </span>
                             </div>
-                            <div className="space-y-3 rounded-2xl border border-slate-100 bg-slate-50 p-3">
+                            <div className="space-y-3 rounded-2xl border border-border bg-muted p-3">
                               <div className="flex items-center justify-between">
-                                <p className="text-xs font-semibold text-slate-500">
+                                <p className="text-xs font-semibold text-muted-foreground">
                                   옵션
                                 </p>
-                                <button
+                                <Button
                                   type="button"
+                                  variant="outline"
+                                  size="sm"
                                   onClick={addEditOption}
-                                  className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-500 hover:bg-slate-50"
+                                  className="text-xs"
                                 >
                                   + 옵션 추가
-                                </button>
+                                </Button>
                               </div>
                               {normalizeOptions(
                                 editFields.options as MissionOption[],
                               ).map((option, index) => (
                                 <div
                                   key={option.id}
-                                  className="space-y-2 rounded-xl border border-slate-100 bg-white p-3"
+                                  className="space-y-2 rounded-xl border border-border bg-card p-3"
                                 >
                                   <div className="flex items-center justify-between">
-                                    <p className="text-xs font-semibold text-slate-400">
+                                    <p className="text-xs font-semibold text-muted-foreground">
                                       옵션 {index + 1}
                                     </p>
-                                    <button
+                                    <Button
                                       type="button"
+                                      variant="link"
                                       onClick={() =>
                                         removeEditOption(option.id)
                                       }
-                                      className="text-xs text-red-400 hover:text-red-500"
+                                      className="h-auto p-0 text-xs text-red-400 hover:text-red-500 hover:no-underline"
                                     >
                                       삭제
-                                    </button>
+                                    </Button>
                                   </div>
-                                  <input
+                                  <Input
                                     value={option.title}
                                     onChange={(e) =>
                                       updateEditOption(option.id, {
@@ -3006,9 +3040,9 @@ export default function AdminPage() {
                                       })
                                     }
                                     placeholder="옵션 제목"
-                                    className="w-full rounded-lg border border-slate-200 px-3 py-1.5 text-xs outline-none focus:border-slate-400"
+                                    className="text-xs"
                                   />
-                                  <textarea
+                                  <Textarea
                                     value={option.description}
                                     onChange={(e) =>
                                       updateEditOption(option.id, {
@@ -3017,14 +3051,14 @@ export default function AdminPage() {
                                     }
                                     placeholder="옵션 설명"
                                     rows={2}
-                                    className="w-full resize-none rounded-lg border border-slate-200 px-3 py-1.5 text-xs outline-none focus:border-slate-400"
+                                    className="resize-none text-xs"
                                   />
                                   {/* Content — markdown */}
                                   <div className="space-y-1.5">
-                                    <p className="text-xs font-semibold text-slate-400">
+                                    <p className="text-xs font-semibold text-muted-foreground">
                                       콘텐츠 (마크다운)
                                     </p>
-                                    <textarea
+                                    <Textarea
                                       value={option.content}
                                       onChange={(e) =>
                                         updateEditOption(option.id, {
@@ -3033,34 +3067,39 @@ export default function AdminPage() {
                                       }
                                       placeholder={"## 서비스 개요\n- ..."}
                                       rows={4}
-                                      className="w-full resize-y rounded-lg border border-slate-200 px-3 py-1.5 font-mono text-xs outline-none focus:border-slate-400"
+                                      className="resize-y font-mono text-xs"
                                     />
                                   </div>
                                 </div>
                               ))}
                             </div>
                             <div className="flex gap-2">
-                              <button
+                              <Button
+                                type="button"
+                                size="sm"
                                 onClick={() => saveEdit(mission.id)}
-                                className="rounded-xl bg-slate-900 px-4 py-1.5 text-xs font-semibold text-white transition hover:bg-slate-700"
+                                className="rounded-xl px-4 text-xs"
                               >
                                 저장
-                              </button>
-                              <button
+                              </Button>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
                                 onClick={() => setEditingId(null)}
-                                className="rounded-xl border border-slate-200 px-4 py-1.5 text-xs font-semibold text-slate-600 transition hover:bg-slate-50"
+                                className="rounded-xl px-4 text-xs"
                               >
                                 취소
-                              </button>
+                              </Button>
                             </div>
                           </>
                         ) : (
                           <>
                             <div className="flex items-center gap-3">
-                              <p className="text-sm font-semibold text-slate-900 truncate">
+                              <p className="text-sm font-semibold text-foreground truncate">
                                 {mission.title}
                               </p>
-                              <span className="shrink-0 rounded-full bg-slate-100 px-2.5 py-0.5 text-xs text-slate-500">
+                              <Badge variant="secondary" className="shrink-0 rounded-full">
                                 {(mission.device ?? "desktop") === "desktop" ? (
                                   <>
                                     <MonitorIcon size={12} className="inline" />{" "}
@@ -3075,14 +3114,14 @@ export default function AdminPage() {
                                     모바일
                                   </>
                                 )}
-                              </span>
+                              </Badge>
                             </div>
                             {mission.description && (
-                              <p className="text-xs text-slate-500 leading-relaxed">
+                              <p className="text-xs text-muted-foreground leading-relaxed">
                                 {mission.description}
                               </p>
                             )}
-                            <p className="text-xs text-slate-400">
+                            <p className="text-xs text-muted-foreground">
                               옵션 {mission.options?.length ?? 0}개
                             </p>
                           </>
@@ -3091,27 +3130,36 @@ export default function AdminPage() {
 
                       {!isEditing && (
                         <div className="flex shrink-0 items-center gap-1">
-                          <button
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
                             onClick={() => openParticipants(mission.id)}
-                            className="rounded-full p-1.5 text-slate-300 transition hover:bg-slate-50 hover:text-slate-600"
+                            className="rounded-full text-muted-foreground"
                             title="참여자 보기"
                           >
                             <UsersThreeIcon size={16} />
-                          </button>
-                          <button
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
                             onClick={() => startEdit(mission)}
-                            className="rounded-full p-1.5 text-slate-300 transition hover:bg-slate-50 hover:text-slate-600"
+                            className="rounded-full text-muted-foreground"
                             title="수정"
                           >
                             <PencilSimpleIcon size={16} />
-                          </button>
-                          <button
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
                             onClick={() => requestDeleteMission(mission)}
-                            className="rounded-full p-1.5 text-slate-300 transition hover:bg-red-50 hover:text-red-400"
+                            className="rounded-full text-muted-foreground hover:bg-red-50 hover:text-red-400"
                             title="삭제"
                           >
                             <XIcon size={16} />
-                          </button>
+                          </Button>
                         </div>
                       )}
                     </div>
@@ -3130,23 +3178,26 @@ export default function AdminPage() {
           onClick={closeParticipants}
         >
           <div
-            className="w-full max-w-sm rounded-3xl bg-white p-8 shadow-2xl"
+            className="w-full max-w-sm rounded-3xl bg-card p-8 shadow-2xl"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between">
-              <h3 className="text-lg font-semibold text-slate-900">
+              <h3 className="text-lg font-semibold text-foreground">
                 {missionTitle(participantsMissionId)} 참여자
               </h3>
-              <button
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
                 onClick={closeParticipants}
-                className="text-slate-400 hover:text-slate-600"
+                className="rounded-full text-muted-foreground"
               >
                 ✕
-              </button>
+              </Button>
             </div>
             <div className="mt-4 space-y-2">
               {participants.length === 0 ? (
-                <p className="text-sm text-slate-400">
+                <p className="text-sm text-muted-foreground">
                   아직 유저 데이터가 없습니다.
                 </p>
               ) : (
@@ -3155,7 +3206,7 @@ export default function AdminPage() {
                   return (
                     <div
                       key={p.id}
-                      className="flex items-center gap-3 rounded-2xl border border-slate-100 px-4 py-3"
+                      className="flex items-center gap-3 rounded-2xl border border-border px-4 py-3"
                     >
                       {p.photoURL ? (
                         <img
@@ -3164,36 +3215,37 @@ export default function AdminPage() {
                           className="h-8 w-8 rounded-full object-cover"
                         />
                       ) : (
-                        <div className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-900 text-xs font-semibold text-white">
+                        <div className="flex h-8 w-8 items-center justify-center rounded-full bg-primary text-xs font-semibold text-primary-foreground">
                           {(p.displayName ?? p.email ?? "?")
                             .charAt(0)
                             .toUpperCase()}
                         </div>
                       )}
                       <div className="min-w-0 flex-1">
-                        <p className="truncate text-sm font-semibold text-slate-900">
+                        <p className="truncate text-sm font-semibold text-foreground">
                           {p.displayName ?? p.email ?? p.id}
                         </p>
                         {p.displayName && p.email && (
-                          <p className="truncate text-xs text-slate-400">
+                          <p className="truncate text-xs text-muted-foreground">
                             {p.email}
                           </p>
                         )}
-                        <span
-                          className={`mt-1 inline-flex rounded-full px-2 py-0.5 text-[11px] font-semibold ${badge.style}`}
-                        >
+                        <Badge variant={badge.variant} className="mt-1 rounded-full">
                           {badge.label}
-                        </span>
+                        </Badge>
                         {p.isAdmin && (
-                          <span className="ml-1 mt-1 inline-flex rounded-full bg-indigo-50 px-2 py-0.5 text-[11px] font-semibold text-indigo-700">
+                          <Badge
+                            variant="outline"
+                            className="ml-1 mt-1 rounded-full border-transparent bg-indigo-50 text-indigo-700"
+                          >
                             관리자
-                          </span>
+                          </Badge>
                         )}
                       </div>
                       <div className="ml-auto flex items-center gap-1">
                         <Link
                           href={`/main/${participantsMissionId}?viewAs=${p.id}`}
-                          className="rounded-full p-1.5 text-slate-400 transition hover:bg-slate-50 hover:text-slate-700"
+                          className="rounded-full p-1.5 text-muted-foreground transition hover:bg-muted hover:text-foreground"
                           onClick={closeParticipants}
                           title="세션 보기"
                         >
@@ -3207,16 +3259,18 @@ export default function AdminPage() {
                         >
                           리뷰
                         </Link>
-                        <button
+                        <Button
                           type="button"
+                          variant="ghost"
+                          size="icon"
                           onClick={() => requestDeleteUserData(p)}
-                          className="rounded-full p-1.5 text-slate-300 transition hover:bg-red-50 hover:text-red-500"
+                          className="rounded-full text-muted-foreground hover:bg-red-50 hover:text-red-500"
                           title={
                             p.isAdmin ? "관리자 미션 기록 삭제" : "미션 기록 삭제"
                           }
                         >
                           <XIcon size={14} />
-                        </button>
+                        </Button>
                       </div>
                     </div>
                   );
