@@ -1261,16 +1261,20 @@ type ChatPlan = {
 
 #### `/agent`
 
-- [ ] 사용자용 메모리 뷰와 admin/debug 뷰의 정보 수준을 분리 `[deferred]`
-- [ ] cluster list/detail/graph의 선택 상태와 empty state 정리 `[deferred]`
-- [ ] graph loading/nonblank/resize 상태 확인 `[deferred]`
-- [ ] "재생성" action의 권한/위험/로딩 피드백 강화 `[deferred]`
+- [x] 사용자용 메모리 뷰와 admin/debug 뷰의 정보 수준을 분리
+- [x] cluster list/detail/graph의 선택 상태와 empty state 정리
+- [x] graph를 embedding 2D map + cluster color/area 방식으로 변경
+- [x] graph zoom/pan/fit control 추가
+- [x] graph node 선택과 오른쪽 detail panel memory row 확장 동기화
+- [x] cluster cache signature mismatch로 stale 안내가 반복되는 문제 수정
+- [x] "재생성" action의 로딩/성공/실패 피드백 강화
+- [ ] graph loading/nonblank/resize 상태를 실제 screenshot으로 확인 `[blocked: existing Next dev lock/PID]`
 
 #### `/admin`
 
 - [ ] 미션 CRUD, 참여자, 세션, 메모리, retrieval/forgetting debug를 task group별로 재구성 `[deferred]`
 - [ ] 고밀도 table + detail sheet 패턴 도입 `[deferred]`
-- [ ] destructive action은 Alert Dialog와 명확한 scope text 사용 `[deferred]`
+- [x] destructive action은 Alert Dialog와 명확한 scope text 사용
 - [ ] admin-only debug 정보는 기본 화면에서 숨기고 필요 시 drawer/sheet로 노출 `[deferred]`
 - [ ] 긴 메모리/프롬프트/raw JSON은 code viewer 또는 collapsible 영역으로 분리 `[deferred]`
 
@@ -1313,15 +1317,25 @@ type ChatPlan = {
    - [x] `UserMenu`
    - [x] `MissionCard`
    - [x] `StatusBadge`
-   - [ ] `ReferenceCard`
+   - [x] `LobbySummary`
+   - [x] `OnboardingSteps`
+   - [x] `ReferenceCard`
    - [ ] `IdeaTabs`
    - [ ] `IdeaEditor`
-   - [ ] `MockupCanvasToolbar`
+   - [x] `MockupCanvasToolbar`
    - [ ] `ChatPanel`
    - [ ] `ChatBubble`
    - [x] `ToolActionChip`
-   - [ ] `MemoryEventCard`
-   - [ ] `MemoryClusterPanel`
+   - [x] `TimelineActivityEventCard`
+   - [x] `TimelineMemoryEventCard`
+   - [x] `MemoryScoreBar`
+   - [x] `MemoryClusterList`
+   - [x] `MemoryClusterEmptyState`
+   - [x] `MemoryClusterSidePanel`
+   - [x] `MemoryClusterGraph`
+   - [ ] `MemoryCard`
+   - [ ] `RetrievedMemoryBadge`
+   - [ ] `SessionMemoryDiff`
    - [ ] `AdminDataTable`
    - [ ] `PromptViewer`
 
@@ -1399,8 +1413,8 @@ type ChatPlan = {
    - [x] `/onboarding`
    - [x] `/lobby`
    - [ ] `/main/[missionId]` `[partially implemented]`
-   - [ ] `/agent` `[deferred]`
-   - [ ] `/admin` `[deferred]`
+   - [x] `/agent`
+   - [ ] `/admin` `[partially implemented: feedback/destructive flows done, layout redesign pending]`
 6. Polish Pass
    - [x] jakubkrehel checklist 적용
    - [x] emilkowalski 관점으로 주요 화면 리뷰
@@ -1725,10 +1739,12 @@ type ChatPlan = {
   - review timeline의 activity/memory event card를 분리하고 token 기반 border/card/text 규칙으로 정리.
 - `/agent` product component 추출:
   - `src/components/memory/memory-cluster-types.ts`
+  - `src/components/memory/memory-cluster-colors.ts`
   - `src/components/memory/memory-cluster-list.tsx`
   - `src/components/memory/memory-cluster-empty-state.tsx`
   - `src/components/memory/memory-cluster-detail.tsx`
-  - cluster tab을 shadcn `Tabs`로 교체.
+  - `src/components/memory/memory-cluster-side-panel.tsx`
+  - `MemoryClusterGraph`를 embedding map canvas로 개편.
   - regenerate 성공/실패 피드백을 Sonner toast로 교체.
 - `/admin` 피드백 정리:
   - mission delete, user mission record delete, onboarding settings save, memory delete/load, session backup/delete 결과를 Sonner toast로 통일.
@@ -1752,7 +1768,7 @@ type ChatPlan = {
 
 - `/agent`
   - cluster list/detail/empty state를 product component로 분리.
-  - graph/detail 전환을 shadcn `Tabs`로 정리.
+  - graph/detail tab 구조는 15.25에서 graph + persistent right detail panel로 대체.
   - 재생성 액션에 success/error toast를 추가.
   - page/card/border/text 색을 라이트 토큰 기반으로 변경.
 - `/main/[missionId]`
@@ -1874,7 +1890,6 @@ type ChatPlan = {
   - `MemoryClusterSidePanel` 추가:
     - 선택 cluster summary
     - related actions
-    - representative semantics
     - included memory list
     - graph point 선택 시 selected memory detail 표시
   - `MemoryClusterGraph`에 `selectedMemoryId`, `showInlineDetail` 옵션 추가.
@@ -1893,3 +1908,98 @@ type ChatPlan = {
 - 검증:
   - `npm run lint` 통과. warning 18개 유지.
   - `npm run build` 통과. 기존 Turbopack NFT tracing warning 1개 유지.
+
+### 15.27 15절 Current Status / Next Work `[updated 2026-06-08]`
+
+#### 완료된 축
+
+- Foundation:
+  - shadcn/ui 기반 primitive 도입.
+  - 라이트 모드 고정.
+  - 전역 toast, tooltip, dialog/alert-dialog 기반 정리.
+- `/`, `/onboarding`, `/lobby`:
+  - light token 기반 UI로 통일.
+  - onboarding stepper, mission cards, lobby summary, loading/error/empty state 정리.
+  - 세션 시작 전 draft 상태가 시간 초과로 표시되는 문제 수정.
+- `/agent`:
+  - cluster list + embedding map + right detail panel 구조로 재설계.
+  - PCA 기반 2D embedding map, cluster color/area, zoom/pan/fit 지원.
+  - cluster cache signature 정확화.
+  - profile/interaction source, semantic summary 유무, weight, selected row expansion 표시.
+- Feedback/destructive actions:
+  - 앱 범위 `alert()` 제거.
+  - `/admin`과 `/main/[missionId]` destructive `confirm()`을 shadcn `AlertDialog`로 전환.
+
+#### 아직 남은 핵심 작업
+
+1. `/main/[missionId]` route redesign
+   - 세션 시작 전 / active / complete-review layout state 분리.
+   - 좌측 Mission/Reference/Idea/Mockup과 우측 Chat 정보 위계 재정의.
+   - 모바일 panel tabs 또는 sheet 구조 설계.
+   - canvas toolbar를 icon button + tooltip 기준으로 재구성.
+
+2. `/main/[missionId]` product component extraction
+   - `ReferenceCard` `[done 2026-06-08]`
+   - `IdeaTabs`
+   - `IdeaEditor`
+   - `MockupCanvasToolbar` `[done 2026-06-08]`
+   - `ChatPanel`
+   - `ChatBubble`
+   - 공통 `RetrievedMemoryBadge`
+   - 공통 `SessionMemoryDiff`
+
+3. `/admin` layout redesign
+   - task group별 재구성: mission CRUD, users/participants, sessions, memory, debug.
+   - table + detail sheet 패턴 도입.
+   - 긴 memory/prompt/raw JSON은 `PromptViewer` 또는 collapsible/code viewer로 분리.
+   - admin-only retrieval/forgetting/archive debug는 drawer/sheet로 격리.
+
+4. 공통 memory UI consolidation
+   - `/agent`, `/main` review, `/admin` memory modal에서 source/weight/semantic summary/archived 표시 규칙 통일.
+   - `MemoryCard`와 `RetrievedMemoryBadge` 추출.
+
+5. Verification pass
+   - desktop/mobile screenshot 확인.
+   - 360px, 390px, 430px, 768px, desktop viewport 점검.
+   - keyboard focus, aria-label, tooltip, Dialog/Sheet focus trap 확인.
+   - loading/empty/error/disabled/saving/streaming/completed 상태 점검.
+
+#### 다음 실행 추천
+
+- 1순위: active session 화면의 panel layout state를 작게 분리.
+- 2순위: `IdeaTabs`, `IdeaEditor`, `ChatPanel`, `ChatBubble` 순서로 추가 추출.
+- 3순위: `/admin`의 mission/user/session 섹션에 `AdminSectionHeader` + `AdminDataTable` 패턴 도입.
+
+### 15.28 Main Session Product Component Extraction Pass 1 `[implemented 2026-06-08]`
+
+- 목적:
+  - `/main/[missionId]`의 큰 client route를 전체 재설계 전에 작은 product component 단위로 안정적으로 분리한다.
+- 구현:
+  - `src/components/session/reference-card.tsx` 추가.
+    - reference thumbnail/title/rationale/tag/source/link/delete/selected state를 카드 컴포넌트로 분리.
+    - selected state는 보라색 계열 대신 slate ring/badge로 표시해 다른 의미 색상과 겹치지 않게 조정.
+  - `src/components/session/mockup-canvas-toolbar.tsx` 추가.
+    - edit/fit/zoom/export/expand control을 icon button + tooltip 구조로 정리.
+    - selected element pill을 toolbar 내부로 이동.
+  - `/main/[missionId]/page.tsx`의 기존 reference card loop와 mockup toolbar JSX를 새 컴포넌트로 교체.
+- 검증:
+  - `PATH=/usr/local/bin:$PATH ./node_modules/.bin/tsc --noEmit` 통과.
+  - `PATH=/usr/local/bin:$PATH ./node_modules/.bin/eslint 'src/app/main/[missionId]/page.tsx' src/components/session/reference-card.tsx src/components/session/mockup-canvas-toolbar.tsx` 통과. 기존 warning 계열 유지.
+  - `PATH=/usr/local/bin:$PATH npm run lint` 통과. warning 18개 유지.
+  - `PATH=/usr/local/bin:$PATH npm run build`는 Turbopack의 local process/port binding sandbox 제한으로 실패. escalated 재실행은 사용량 제한으로 승인되지 않음.
+
+### 15.29 Main Session Product Component Extraction Pass 2 — IdeaTabs `[implemented 2026-06-08]`
+
+- 목적:
+  - 15.27의 2순위 추출 순서(`IdeaTabs` → `IdeaEditor` → `ChatPanel` → `ChatBubble`)에 따라 시안 탭 바를 분리한다.
+- 구현:
+  - `src/components/session/idea-tabs.tsx` 추가.
+    - 시안 목록을 active/hover/delete state가 있는 탭 리스트로 분리.
+    - 기존 인라인 SVG X 아이콘을 lucide `X`로 교체.
+  - `/main/[missionId]/page.tsx`의 note tab 목록 JSX(시안 전환/삭제)를 `IdeaTabs`로 교체. `switchIdea`/`requestDeleteIdea` 로직은 그대로 유지.
+- 검증:
+  - `PATH=/usr/local/bin:$PATH ./node_modules/.bin/tsc --noEmit` 통과.
+  - `PATH=/usr/local/bin:$PATH ./node_modules/.bin/eslint 'src/app/main/[missionId]/page.tsx' src/components/session/idea-tabs.tsx` 통과. 기존 warning 계열 유지.
+  - `PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin /opt/homebrew/bin/npm run lint` 통과. warning 18개 유지.
+- 다음 작업:
+  - `IdeaEditor` (Note/Style/Mockup sub-tab 콘텐츠) 추출.

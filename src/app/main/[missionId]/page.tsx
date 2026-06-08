@@ -23,7 +23,6 @@ import {
 } from "firebase/firestore";
 import {
   ArrowLeftIcon,
-  ArrowSquareOutIcon,
   ArrowsOutIcon,
   ArrowsInIcon,
   BrainIcon,
@@ -52,6 +51,9 @@ import {
   TimelineActivityEventCard,
   TimelineMemoryEventCard,
 } from "@/components/session/timeline-event-card";
+import { MockupCanvasToolbar } from "@/components/session/mockup-canvas-toolbar";
+import { ReferenceCard } from "@/components/session/reference-card";
+import { IdeaTabs } from "@/components/session/idea-tabs";
 import { MemoryScoreBar } from "@/components/memory/memory-score-bar";
 const ONBOARDING_MISSION_ID = "onboarding";
 const MemoryClusterGraph = dynamic(() => import("@/app/admin/MemoryClusterGraph"), {
@@ -6744,92 +6746,20 @@ export default function MainScreenPage() {
                       (r) => r.id === card.id,
                     );
                     return (
-                      <div
+                      <ReferenceCard
                         key={card.id}
-                        onClick={() => {
+                        reference={card}
+                        selected={isSelected}
+                        readOnly={isReadOnly}
+                        onToggle={(reference) => {
                           setSelectedReferences((prev) =>
                             isSelected
-                              ? prev.filter((r) => r.id !== card.id)
-                              : [...prev, card],
+                              ? prev.filter((r) => r.id !== reference.id)
+                              : [...prev, reference],
                           );
                         }}
-                        className={`group relative flex flex-col rounded-2xl border overflow-hidden transition cursor-pointer ${
-                          isSelected
-                            ? "border-indigo-400 bg-indigo-50 ring-2 ring-indigo-300"
-                            : "border-slate-100 bg-slate-50 hover:border-slate-300 hover:bg-white hover:shadow-sm"
-                        }`}
-                      >
-                        {card.imageUrl && (
-                          <div className="w-full h-36 overflow-hidden bg-slate-100">
-                            <img
-                              src={card.imageUrl}
-                              alt={card.title}
-                              className="w-full h-full object-cover"
-                              onError={(e) => {
-                                (
-                                  e.currentTarget as HTMLImageElement
-                                ).style.display = "none";
-                              }}
-                            />
-                          </div>
-                        )}
-                        <div className="flex flex-col gap-1 p-3">
-                          <p
-                            className={`text-sm font-semibold leading-snug line-clamp-2 ${isSelected ? "text-indigo-700" : "text-slate-900"}`}
-                          >
-                            {card.title}
-                          </p>
-                          <div className="flex items-center justify-between mt-1">
-                            <div className="flex min-w-0 flex-wrap items-center gap-1">
-                              <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-500">
-                                {card.tag}
-                              </span>
-                              {card.searchProvider && (
-                                <span className="rounded-full bg-indigo-50 px-2 py-0.5 text-xs font-medium text-indigo-600">
-                                  {card.searchProvider === "openai-web"
-                                    ? "OpenAI web"
-                                    : "Serper image"}
-                                </span>
-                              )}
-                              {card.referenceMode && (
-                                <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-500">
-                                  {card.referenceMode}
-                                </span>
-                              )}
-                            </div>
-                            <div className="flex items-center gap-1">
-                              {card.url && (
-                                <a
-                                  href={card.url}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  onClick={(e) => e.stopPropagation()}
-                                  className="flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-600 hover:bg-slate-200 hover:text-slate-900 transition"
-                                  title="새 탭에서 열기"
-                                >
-                                  <ArrowSquareOutIcon size={12} />
-                                  링크
-                                </a>
-                              )}
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  requestDeleteReference(card);
-                                }}
-                                className="rounded-full p-1 text-slate-400 hover:bg-red-50 hover:text-red-400 transition"
-                                title="삭제"
-                              >
-                                <XIcon size={12} />
-                              </button>
-                            </div>
-                          </div>
-                        </div>
-                        {isSelected && (
-                          <div className="absolute top-2 right-2 rounded-full bg-indigo-500 text-white text-xs px-2 py-0.5">
-                            인용됨
-                          </div>
-                        )}
-                      </div>
+                        onDelete={requestDeleteReference}
+                      />
                     );
                   })}
                 </div>
@@ -6845,50 +6775,13 @@ export default function MainScreenPage() {
               ) : (
                 <>
                   {/* Top: note tabs */}
-                  <div className="flex gap-2 overflow-x-auto pb-4 mb-6 border-b border-slate-100">
-                    {ideas.map((idea) => (
-                      <div
-                        key={idea.id}
-                        className={`group shrink-0 flex items-center gap-1 rounded-xl border px-3 py-2 text-sm transition ${
-                          activeIdeaId === idea.id
-                            ? "border-slate-900 bg-slate-900 text-white"
-                            : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
-                        }`}
-                      >
-                        <button onClick={() => switchIdea(idea.id)}>
-                          {idea.title}
-                        </button>
-                        {!isReadOnly && (
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              requestDeleteIdea(idea.id);
-                            }}
-                            className={`ml-1 rounded-md p-0.5 opacity-0 group-hover:opacity-100 transition-opacity ${
-                              activeIdeaId === idea.id
-                                ? "hover:bg-white/20"
-                                : "hover:bg-slate-200"
-                            }`}
-                            title="시안 삭제"
-                          >
-                            <svg
-                              width="12"
-                              height="12"
-                              viewBox="0 0 12 12"
-                              fill="currentColor"
-                            >
-                              <path
-                                d="M1 1l10 10M11 1L1 11"
-                                stroke="currentColor"
-                                strokeWidth="1.5"
-                                strokeLinecap="round"
-                              />
-                            </svg>
-                          </button>
-                        )}
-                      </div>
-                    ))}
-                  </div>
+                  <IdeaTabs
+                    ideas={ideas}
+                    activeIdeaId={activeIdeaId}
+                    readOnly={isReadOnly}
+                    onSwitch={switchIdea}
+                    onDelete={requestDeleteIdea}
+                  />
 
                   <div className="flex gap-4">
                     {/* Sub-tab sidebar */}
@@ -7235,85 +7128,44 @@ export default function MainScreenPage() {
                             Mockup
                           </p>
                           {ideaArtboards.length > 0 && (
-                            <div className="flex items-center gap-2">
-                              {editMode && selectedElement && (
-                                <span className="flex items-center gap-1.5 rounded-full bg-indigo-50 px-3 py-1 text-xs font-medium text-indigo-600">
-                                  <span className="h-1.5 w-1.5 rounded-full bg-indigo-500" />
-                                  {selectedElement.selector} 선택됨
-                                  <button
-                                    onClick={clearSelectedElement}
-                                    className="ml-1 text-indigo-400 hover:text-indigo-600"
-                                  >
-                                    <XIcon size={12} />
-                                  </button>
-                                </span>
-                              )}
-                              <button
-                                onClick={() => {
-                                  setEditMode((p) => {
-                                    if (p) setSelectedElement(null);
-                                    return !p;
-                                  });
-                                }}
-                                className={`rounded border px-2 py-1 text-xs font-semibold transition ${editMode ? "border-indigo-400 bg-indigo-50 text-indigo-600" : "border-slate-200 text-slate-500 hover:bg-slate-50"}`}
-                              >
-                                {editMode ? "편집 중" : "편집"}
-                              </button>
-                              <button
-                                onClick={fitToCanvas}
-                                className="rounded border border-slate-200 px-2 py-1 text-xs text-slate-500 hover:bg-slate-50"
-                              >
-                                Fit
-                              </button>
-                              <button
-                                onClick={() =>
-                                  setCanvasScale((s) =>
-                                    Math.min(s * 1.2, MAX_CANVAS_SCALE),
-                                  )
-                                }
-                                className="rounded border border-slate-200 px-2 py-1 text-xs text-slate-600 hover:bg-slate-50"
-                              >
-                                +
-                              </button>
-                              <button
-                                onClick={() =>
-                                  setCanvasScale((s) =>
-                                    Math.max(s * 0.8, MIN_CANVAS_SCALE),
-                                  )
-                                }
-                                className="rounded border border-slate-200 px-2 py-1 text-xs text-slate-600 hover:bg-slate-50"
-                              >
-                                −
-                              </button>
-                              <span className="w-10 text-center text-xs text-slate-400">
-                                {Math.round(canvasScale * 100)}%
-                              </span>
-                              <button
-                                onClick={() => {
-                                  const html = activeArtboard?.html;
-                                  if (!html) return;
-                                  const blob = new Blob([html], {
-                                    type: "text/html",
-                                  });
-                                  const url = URL.createObjectURL(blob);
-                                  const a = document.createElement("a");
-                                  a.href = url;
-                                  a.download = `${activeArtboard?.label ?? "mockup"}.html`;
-                                  a.click();
-                                  URL.revokeObjectURL(url);
-                                }}
-                                className="text-xs font-semibold text-slate-600 hover:text-slate-900"
-                              >
-                                Export
-                              </button>
-                              <button
-                                onClick={() => setIsMockupExpanded(true)}
-                                className="rounded border border-slate-200 p-1 text-slate-500 hover:bg-slate-50"
-                                title="확대"
-                              >
-                                <ArrowsOutIcon size={14} />
-                              </button>
-                            </div>
+                            <MockupCanvasToolbar
+                              editMode={editMode}
+                              selectedElement={selectedElement}
+                              canvasScale={canvasScale}
+                              activeArtboard={activeArtboard}
+                              onToggleEditMode={() => {
+                                setEditMode((p) => {
+                                  if (p) setSelectedElement(null);
+                                  return !p;
+                                });
+                              }}
+                              onClearSelectedElement={clearSelectedElement}
+                              onFit={fitToCanvas}
+                              onZoomIn={() =>
+                                setCanvasScale((s) =>
+                                  Math.min(s * 1.2, MAX_CANVAS_SCALE),
+                                )
+                              }
+                              onZoomOut={() =>
+                                setCanvasScale((s) =>
+                                  Math.max(s * 0.8, MIN_CANVAS_SCALE),
+                                )
+                              }
+                              onExport={() => {
+                                const html = activeArtboard?.html;
+                                if (!html) return;
+                                const blob = new Blob([html], {
+                                  type: "text/html",
+                                });
+                                const url = URL.createObjectURL(blob);
+                                const a = document.createElement("a");
+                                a.href = url;
+                                a.download = `${activeArtboard?.label ?? "mockup"}.html`;
+                                a.click();
+                                URL.revokeObjectURL(url);
+                              }}
+                              onExpand={() => setIsMockupExpanded(true)}
+                            />
                           )}
                         </div>
                         {shouldRenderMockupCanvas ? (
