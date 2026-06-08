@@ -91,6 +91,13 @@ export function clusterDocumentPath(
   return `users/${uid}/${CLUSTER_COLLECTION}/${clusterCacheId(memoryVersion, itemSignature)}`;
 }
 
+export function memoryClusterItemSignature(items: ClusterInputItem[]) {
+  return createHash("sha256")
+    .update(items.map((item) => item.id).sort().join(","))
+    .digest("hex")
+    .slice(0, 32);
+}
+
 export function isMemoryCluster(value: unknown): value is MemoryCluster {
   const c = value as Partial<MemoryCluster>;
   return (
@@ -431,10 +438,7 @@ export async function generateAndStoreClusters(
   const graphDiagnostics = graphCommunity.diagnostics;
   const completedAt = Date.now();
 
-  const itemSignature = createHash("sha256")
-    .update(items.map((item) => item.id).sort().join(","))
-    .digest("hex")
-    .slice(0, 32);
+  const itemSignature = memoryClusterItemSignature(items);
 
   await patchFirestoreDocument(
     clusterDocumentPath(uid, MEMORY_VERSION, itemSignature),

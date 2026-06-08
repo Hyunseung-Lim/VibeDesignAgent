@@ -78,6 +78,7 @@ type AdminMemoryRow = {
   subcategory?: string[];
   keyword?: string[];
   keywords?: string[];
+  embedding?: number[];
   episode?: string;
   semantic?: string;
   weight?: number;
@@ -1093,6 +1094,8 @@ export default function AdminPage() {
           output: row.output ?? "",
           link: row.link ?? "",
           action: row.agentActionCategory ?? "",
+          weight: row.weight ?? null,
+          embedding: row.embedding,
           timestamp: row.timestamp ?? 0,
           keyword: row.keyword ?? row.keywords ?? [],
           keywords: row.keyword ?? row.keywords ?? [],

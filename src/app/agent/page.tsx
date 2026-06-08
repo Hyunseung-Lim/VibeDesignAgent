@@ -8,10 +8,9 @@ import { firebaseAuth } from "@/lib/firebase";
 import { ArrowLeftIcon, BrainIcon } from "@phosphor-icons/react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { MemoryClusterDetail } from "@/components/memory/memory-cluster-detail";
 import { MemoryClusterEmptyState } from "@/components/memory/memory-cluster-empty-state";
 import { MemoryClusterList } from "@/components/memory/memory-cluster-list";
+import { MemoryClusterSidePanel } from "@/components/memory/memory-cluster-side-panel";
 import type {
   MemoryCluster,
   MemoryItem,
@@ -26,8 +25,6 @@ const MemoryClusterGraph = dynamic(() => import("@/app/admin/MemoryClusterGraph"
   ),
 });
 
-type ClusterPanelTab = "graph" | "detail";
-
 export default function AgentMemoryPage() {
   const router = useRouter();
   const [currentUser, setCurrentUser] = useState<import("firebase/auth").User | null>(null);
@@ -35,8 +32,8 @@ export default function AgentMemoryPage() {
   const [clusters, setClusters] = useState<MemoryCluster[]>([]);
   const [loading, setLoading] = useState(true);
   const [isRegenerating, setIsRegenerating] = useState(false);
-  const [clusterPanelTab, setClusterPanelTab] = useState<ClusterPanelTab>("graph");
   const [selectedClusterId, setSelectedClusterId] = useState<string | null>(null);
+  const [selectedMemoryId, setSelectedMemoryId] = useState<string | null>(null);
   const [clustersGeneratedAt, setClustersGeneratedAt] = useState<number | null>(null);
 
   const loadData = (user: import("firebase/auth").User) =>
@@ -51,6 +48,7 @@ export default function AgentMemoryPage() {
         const cls: MemoryCluster[] = Array.isArray(clusterData?.clusters) ? clusterData.clusters : [];
         setClusters(cls);
         setSelectedClusterId(cls[0]?.id ?? null);
+        setSelectedMemoryId(null);
         setClustersGeneratedAt(clusterData?.generatedAt ?? null);
       });
     });
@@ -69,6 +67,7 @@ export default function AgentMemoryPage() {
       const cls: MemoryCluster[] = Array.isArray(data?.clusters) ? data.clusters : [];
       setClusters(cls);
       setSelectedClusterId(cls[0]?.id ?? null);
+      setSelectedMemoryId(null);
       setClustersGeneratedAt(data?.generatedAt ?? null);
       toast.success("기억 클러스터를 다시 생성했어요.");
     } catch (err) {
@@ -103,6 +102,8 @@ export default function AgentMemoryPage() {
     input: m.input ?? "",
     output: m.output ?? "",
     action: m.action ?? "",
+    weight: m.weight,
+    embedding: m.embedding,
     timestamp: m.timestamp ?? 0,
     keyword: m.keywords,
     keywords: m.keywords,
@@ -159,41 +160,33 @@ export default function AgentMemoryPage() {
               generatedAt={clustersGeneratedAt}
               hasStaleCache={hasStaleCache}
               isRegenerating={isRegenerating}
-              onSelectCluster={setSelectedClusterId}
+              onSelectCluster={(clusterId) => {
+                setSelectedClusterId(clusterId);
+                setSelectedMemoryId(null);
+              }}
               onRegenerate={handleRegenerate}
             />
 
-            {/* Right: graph / detail */}
-            <div className="flex flex-1 flex-col overflow-hidden">
-              <div className="shrink-0 border-b border-border bg-card px-4 py-2">
-                <Tabs
-                  value={clusterPanelTab}
-                  onValueChange={(value) => setClusterPanelTab(value as ClusterPanelTab)}
-                >
-                  <TabsList className="grid w-full grid-cols-2">
-                    <TabsTrigger value="graph">그래프</TabsTrigger>
-                    <TabsTrigger value="detail">상세</TabsTrigger>
-                  </TabsList>
-                </Tabs>
-              </div>
-
-              {clusterPanelTab === "graph" ? (
-                <div className="flex-1 overflow-hidden">
-                  <MemoryClusterGraph
-                    clusters={clusters}
-                    items={clusterItems}
-                    selectedClusterId={selectedClusterId}
-                    onSelectCluster={setSelectedClusterId}
-                    fill
-                  />
-                </div>
-              ) : selectedCluster ? (
-                <MemoryClusterDetail
-                  cluster={selectedCluster}
-                  items={selectedClusterItems}
-                  memories={memories}
+            <div className="flex min-w-0 flex-1 overflow-hidden">
+              <div className="min-w-0 flex-1 overflow-hidden">
+                <MemoryClusterGraph
+                  clusters={clusters}
+                  items={clusterItems}
+                  selectedClusterId={selectedClusterId}
+                  selectedMemoryId={selectedMemoryId}
+                  onSelectCluster={setSelectedClusterId}
+                  onSelectMemory={setSelectedMemoryId}
+                  showInlineDetail={false}
+                  fill
                 />
-              ) : null}
+              </div>
+              <MemoryClusterSidePanel
+                cluster={selectedCluster}
+                items={selectedClusterItems}
+                memories={memories}
+                selectedMemoryId={selectedMemoryId}
+                onSelectMemory={setSelectedMemoryId}
+              />
             </div>
           </div>
         )

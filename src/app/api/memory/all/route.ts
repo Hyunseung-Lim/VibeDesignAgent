@@ -17,6 +17,12 @@ function num(v: unknown): number | null {
   return typeof v === "number" && Number.isFinite(v) ? v : null;
 }
 
+function numArray(v: unknown): number[] {
+  return Array.isArray(v)
+    ? v.filter((item): item is number => typeof item === "number" && Number.isFinite(item))
+    : [];
+}
+
 export async function GET(request: Request) {
   const user = await verifyFirebaseIdToken(request);
   if (!user) return Response.json({ error: "unauthorized" }, { status: 401 });
@@ -49,6 +55,7 @@ export async function GET(request: Request) {
               ? (data.keyword as unknown[]).map(String)
               : [],
           weight: num(data.weight),
+          embedding: numArray(data.embedding),
           timestamp: num(data.timestamp ?? data.createdAt),
           archivedAt: num(data.archivedAt),
           archiveReason: str(data.archiveReason),

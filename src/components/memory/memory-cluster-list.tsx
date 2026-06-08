@@ -1,6 +1,7 @@
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import type { MemoryCluster } from "./memory-cluster-types";
+import { memoryClusterColor } from "./memory-cluster-colors";
 
 function formatDate(ts: number | null) {
   if (!ts) return "";
@@ -60,8 +61,9 @@ export function MemoryClusterList({
           클러스터 캐시가 현재 기억과 일치하지 않습니다. 재생성을 실행해주세요.
         </p>
       ) : null}
-      {clusters.map((cluster) => {
+      {clusters.map((cluster, index) => {
         const selected = selectedClusterId === cluster.id;
+        const color = memoryClusterColor(index);
         return (
           <button
             key={cluster.id}
@@ -69,17 +71,34 @@ export function MemoryClusterList({
             onClick={() => onSelectCluster(cluster.id)}
             className={`w-full rounded-lg border px-3 py-3 text-left transition ${
               selected
-                ? "border-border bg-background shadow-sm"
+                ? "border-slate-400 bg-slate-100 shadow-sm ring-2 ring-slate-200"
                 : "border-transparent bg-muted/40 hover:border-border hover:bg-background"
             }`}
           >
             <div className="flex items-start justify-between gap-2">
-              <p className="text-sm font-semibold text-foreground">
-                {cluster.label}
-              </p>
-              <Badge variant="secondary" className="shrink-0 rounded-full">
-                {cluster.count}
-              </Badge>
+              <div className="flex min-w-0 flex-1 items-start gap-2">
+                <span
+                  className="mt-1.5 size-2.5 shrink-0 rounded-full ring-2 ring-white"
+                  style={{ backgroundColor: color }}
+                  aria-hidden="true"
+                />
+                <p className="min-w-0 text-sm font-semibold text-foreground">
+                  {cluster.label}
+                </p>
+              </div>
+              <div className="flex shrink-0 items-center gap-1.5">
+                {selected ? (
+                  <Badge
+                    variant="secondary"
+                    className="rounded-full border-slate-300 bg-slate-200 text-slate-700"
+                  >
+                    선택됨
+                  </Badge>
+                ) : null}
+                <Badge variant="secondary" className="rounded-full">
+                  {cluster.count}
+                </Badge>
+              </div>
             </div>
             <p className="mt-1 line-clamp-2 text-xs leading-relaxed text-muted-foreground">
               {cluster.summary}

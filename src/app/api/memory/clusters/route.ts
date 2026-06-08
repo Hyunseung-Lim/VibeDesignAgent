@@ -5,11 +5,12 @@ import {
   verifyFirebaseIdToken,
 } from "@/lib/server/firebaseAdminRest";
 import {
-  CLUSTER_COLLECTION,
   MEMORY_VERSION,
   MAX_ITEMS,
   isMemoryCluster,
   generateAndStoreClusters,
+  clusterDocumentPath,
+  memoryClusterItemSignature,
   type ClusterInputItem,
 } from "@/lib/server/memoryClustering";
 
@@ -57,44 +58,46 @@ export async function GET(request: Request) {
 
   try {
     const token = await getFirebaseAccessToken();
-    const ids = await listFirestoreDocumentIds(
-      `users/${user.localId}/${CLUSTER_COLLECTION}`,
+    const items = await loadMemoryItems(user.localId, token);
+    if (items.length < 3) {
+      return Response.json({
+        clusters: [],
+        found: false,
+        memoryVersion: MEMORY_VERSION,
+        itemSignature: null,
+        generatedAt: null,
+      });
+    }
+
+    const itemSignature = memoryClusterItemSignature(items);
+    const data = (await getFirestoreDocument(
+      clusterDocumentPath(user.localId, MEMORY_VERSION, itemSignature),
       token,
-    );
-    if (ids.length === 0) return Response.json({ clusters: [], found: false });
+    )) as Record<string, unknown> | null;
 
-    const docs = await Promise.all(
-      ids.map(async (id) => {
-        const data = (await getFirestoreDocument(
-          `users/${user.localId}/${CLUSTER_COLLECTION}/${encodeURIComponent(id)}`,
-          token,
-        )) as Record<string, unknown> | null;
-        return { id, data };
-      }),
-    );
+    if (!data || data.itemSignature !== itemSignature) {
+      return Response.json({
+        clusters: [],
+        found: false,
+        memoryVersion: MEMORY_VERSION,
+        itemSignature,
+        generatedAt: null,
+      });
+    }
 
-    const latest = docs
-      .filter((d) => d.data)
-      .sort((a, b) => {
-        const ta = Number((a.data as Record<string, unknown>).generatedAt ?? 0);
-        const tb = Number((b.data as Record<string, unknown>).generatedAt ?? 0);
-        return tb - ta;
-      })[0];
-
-    if (!latest?.data) return Response.json({ clusters: [], found: false });
-
-    const clusters = Array.isArray(latest.data.graphClusters)
-      ? latest.data.graphClusters.filter(isMemoryCluster)
+    const clusters = Array.isArray(data.graphClusters)
+      ? data.graphClusters.filter(isMemoryCluster)
       : [];
 
     return Response.json({
       clusters,
       found: clusters.length > 0,
-      memoryVersion: typeof latest.data.memoryVersion === "string"
-        ? latest.data.memoryVersion
+      memoryVersion: typeof data.memoryVersion === "string"
+        ? data.memoryVersion
         : MEMORY_VERSION,
-      generatedAt: typeof latest.data.generatedAt === "number"
-        ? latest.data.generatedAt
+      itemSignature,
+      generatedAt: typeof data.generatedAt === "number"
+        ? data.generatedAt
         : null,
     });
   } catch (err) {

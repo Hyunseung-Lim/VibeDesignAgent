@@ -1818,3 +1818,78 @@ type ChatPlan = {
 - 검증:
   - `npm run lint` 통과. warning 18개 유지.
   - `npm run build` 통과. 기존 Turbopack NFT tracing warning 1개 유지.
+
+### 15.22 Agent Memory Embedding Map `[implemented 2026-06-08]`
+
+- 목적:
+  - `/agent`의 memory graph를 cluster center + force link 구조가 아니라, embedding vector를 2D로 projection한 semantic map으로 보여준다.
+- 구현:
+  - `/api/memory/all` 응답에 `embedding` 배열을 포함.
+  - `MemoryClusterGraph`를 `react-force-graph-2d` 기반 force graph에서 canvas 기반 scatter map으로 교체.
+  - embedding vector는 클라이언트에서 PCA 2D projection으로 좌표화.
+  - embedding이 없는 항목은 텍스트 hash 기반 fallback 좌표로 표시.
+  - 각 memory item을 점으로 표시하고, cluster별 색을 다르게 적용.
+  - cluster별 point group에는 반투명 convex hull/halo 영역을 표시.
+  - selected cluster는 다른 cluster보다 더 강조하고, hover/click 시 semantic memory detail panel을 표시.
+  - `/agent`뿐 아니라 admin memory cluster graph에서도 같은 컴포넌트가 동작하도록 `embedding`, `weight` 필드 호환 추가.
+- 검증:
+  - `npm run build` 통과. 기존 Turbopack NFT tracing warning 1개 유지.
+  - `npm run lint` 통과. warning 18개 유지.
+
+### 15.23 Agent Memory Map Zoom Controls `[implemented 2026-06-08]`
+
+- 구현:
+  - embedding map canvas에 zoom/pan transform state 추가.
+  - mouse wheel로 cursor 기준 zoom in/out 지원.
+  - 빈 canvas 영역 drag로 pan 지원.
+  - 우측 상단에 zoom in, zoom out, fit/reset icon button 추가.
+  - 현재 zoom percentage 표시.
+  - hover/click hit-test를 zoom/pan 좌표 변환에 맞게 보정.
+- 검증:
+  - `npm run lint` 통과. warning 18개 유지.
+  - `npm run build` 통과. 기존 Turbopack NFT tracing warning 1개 유지.
+
+### 15.24 Agent Cluster Cache Signature Fix `[implemented 2026-06-08]`
+
+- 증상:
+  - `/agent` 새로고침 때마다 `클러스터 캐시가 현재 기억과 일치하지 않습니다. 재생성을 실행해주세요.` 안내가 반복될 수 있었다.
+- 원인:
+  - `/api/memory/clusters` GET이 현재 memory item signature와 일치하는 cache document를 읽지 않고, `memoryClusters` 컬렉션에서 `generatedAt`이 가장 최신인 문서를 반환했다.
+  - admin memory modal 등에서 다른 memory version/filter/subset으로 생성한 최신 cluster cache가 있으면 `/agent`의 현재 `memories_0_1_2` item ids와 매칭되지 않아 stale로 판정됐다.
+- 수정:
+  - `memoryClusterItemSignature(items)` 공통 함수 추가.
+  - `/api/memory/clusters` GET에서 현재 `/agent` memory items를 로드하고 signature를 계산한 뒤, 정확한 `clusterDocumentPath(uid, MEMORY_VERSION, itemSignature)`만 조회하도록 변경.
+  - matching cache가 없으면 오래된/latest cache를 반환하지 않고 `clusters: []`, `found: false`를 반환한다.
+- 검증:
+  - `npm run lint` 통과. warning 18개 유지.
+  - `npm run build` 통과. 기존 Turbopack NFT tracing warning 1개 유지.
+
+### 15.25 Agent Graph Persistent Detail Panel `[implemented 2026-06-08]`
+
+- 목적:
+  - `/agent`에서 graph와 detail을 탭으로 전환하지 않고, embedding map을 계속 보면서 선택 상세를 오른쪽 패널에서 확인한다.
+- 구현:
+  - `/agent`의 graph/detail `Tabs` 제거.
+  - 레이아웃을 `cluster list + graph canvas + right detail panel` 구조로 변경.
+  - `MemoryClusterSidePanel` 추가:
+    - 선택 cluster summary
+    - related actions
+    - representative semantics
+    - included memory list
+    - graph point 선택 시 selected memory detail 표시
+  - `MemoryClusterGraph`에 `selectedMemoryId`, `showInlineDetail` 옵션 추가.
+  - `/agent`에서는 graph 내부 floating detail을 끄고, 오른쪽 side panel만 사용.
+- 검증:
+  - `npm run lint` 통과. warning 18개 유지.
+  - `npm run build` 통과. 기존 Turbopack NFT tracing warning 1개 유지.
+
+### 15.26 Agent Memory Selection Sync `[implemented 2026-06-08]`
+
+- 구현:
+  - 오른쪽 detail panel의 memory list를 항상 유지하도록 변경.
+  - graph node 선택 시 list가 사라지지 않고 해당 memory item만 확장 표시.
+  - detail panel의 memory item 클릭 시 `selectedMemoryId`를 업데이트해 graph node highlight와 동기화.
+  - expanded memory row에 episodic/input/keywords/source metadata 표시.
+- 검증:
+  - `npm run lint` 통과. warning 18개 유지.
+  - `npm run build` 통과. 기존 Turbopack NFT tracing warning 1개 유지.
