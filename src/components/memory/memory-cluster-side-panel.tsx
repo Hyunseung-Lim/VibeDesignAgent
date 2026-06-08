@@ -28,8 +28,8 @@ function formatWeight(weight: number | null | undefined) {
 }
 
 function sourceLabel(sourceType: string | null | undefined) {
-  if (sourceType === "profile") return "Profile";
-  if (sourceType === "interaction") return "Interaction";
+  if (sourceType === "profile") return "Before session";
+  if (sourceType === "interaction") return "During session";
   return "Unknown source";
 }
 

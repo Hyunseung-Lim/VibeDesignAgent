@@ -41,6 +41,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 
 const MemoryClusterGraph = dynamic(() => import("./MemoryClusterGraph"), {
@@ -373,6 +374,9 @@ const EMPTY_FORM = {
 export default function AdminPage() {
   const router = useRouter();
   const [ready, setReady] = useState(false);
+  const [adminSection, setAdminSection] = useState<"users" | "missions">(
+    "users",
+  );
   const [missions, setMissions] = useState<Mission[]>([]);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editFields, setEditFields] = useState<Partial<Mission>>({});
@@ -2717,7 +2721,19 @@ export default function AdminPage() {
         </div>
       </div>
 
-      <div className="mx-auto max-w-5xl space-y-8 px-4 py-10 lg:px-10">
+      <div className="mx-auto max-w-5xl px-4 py-10 lg:px-10">
+        <Tabs
+          value={adminSection}
+          onValueChange={(value) =>
+            setAdminSection(value === "missions" ? "missions" : "users")
+          }
+        >
+          <TabsList variant="line">
+            <TabsTrigger value="users">유저</TabsTrigger>
+            <TabsTrigger value="missions">미션</TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="users" className="space-y-8">
         <section className="space-y-4">
           <div className="flex items-center justify-between">
             <div>
@@ -2825,13 +2841,13 @@ export default function AdminPage() {
                       )}
                     </div>
 
-                    <div className="mt-3 flex flex-wrap items-center gap-3">
+                    <div className="mt-4 flex flex-wrap items-center gap-2">
                       <Button
                         type="button"
                         variant="link"
                         onClick={() => openMemoryTable(user)}
                         disabled={isLoadingMemory}
-                        className="h-auto p-0 text-[11px] font-semibold text-indigo-500 hover:text-indigo-700 hover:no-underline disabled:text-muted-foreground"
+                        className="h-auto rounded-md px-3 py-1.5 text-[11px] font-semibold text-indigo-500 hover:bg-indigo-50 hover:text-indigo-700 hover:no-underline disabled:text-muted-foreground"
                       >
                         메모리 테이블 보기 →
                       </Button>
@@ -2840,7 +2856,7 @@ export default function AdminPage() {
                         variant="link"
                         onClick={() => requestBackupAndDeleteSessions(user)}
                         disabled={deletingSessionsUserId === user.id}
-                        className="h-auto p-0 text-[11px] font-semibold text-red-400 hover:text-red-600 hover:no-underline disabled:text-muted-foreground"
+                        className="h-auto rounded-md px-3 py-1.5 text-[11px] font-semibold text-red-400 hover:bg-red-50 hover:text-red-600 hover:no-underline disabled:text-muted-foreground"
                       >
                         {deletingSessionsUserId === user.id
                           ? "백업/삭제 중..."
@@ -2853,7 +2869,9 @@ export default function AdminPage() {
             </div>
           )}
         </section>
+          </TabsContent>
 
+          <TabsContent value="missions" className="space-y-8">
         <section className="space-y-4">
           <div className="flex items-center justify-between">
             <h2 className="text-lg font-semibold text-foreground">미션 목록</h2>
@@ -3169,6 +3187,8 @@ export default function AdminPage() {
             </div>
           )}
         </section>
+          </TabsContent>
+        </Tabs>
       </div>
 
       {/* Participants modal */}
