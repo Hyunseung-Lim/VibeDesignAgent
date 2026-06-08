@@ -1,11 +1,13 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 import { getIdToken, onAuthStateChanged } from "firebase/auth";
-import { firebaseAuth } from "@/lib/firebase";
+import { collection, getDocs } from "firebase/firestore";
+import { firebaseAuth, db } from "@/lib/firebase";
 import { ArrowLeftIcon, BrainIcon } from "@phosphor-icons/react";
+import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { MemoryClusterEmptyState } from "@/components/memory/memory-cluster-empty-state";
@@ -15,6 +17,21 @@ import type {
   MemoryCluster,
   MemoryItem,
 } from "@/components/memory/memory-cluster-types";
+
+const NO_SESSION_KEY = "__no_session__";
+
+function sessionFilterLabel(missionId: string | null, missionTitle?: string) {
+  if (!missionId) return "세션 외";
+  return missionTitle ?? `${missionId.slice(0, 10)}…`;
+}
+
+function sessionFilterDate(timestamp: number) {
+  if (!timestamp) return "";
+  return new Date(timestamp).toLocaleDateString("ko-KR", {
+    month: "numeric",
+    day: "numeric",
+  });
+}
 
 const MemoryClusterGraph = dynamic(() => import("@/app/admin/MemoryClusterGraph"), {
   ssr: false,
@@ -34,6 +51,8 @@ export default function AgentMemoryPage() {
   const [isRegenerating, setIsRegenerating] = useState(false);
   const [selectedClusterId, setSelectedClusterId] = useState<string | null>(null);
   const [selectedMemoryId, setSelectedMemoryId] = useState<string | null>(null);
+  const [selectedSessionKey, setSelectedSessionKey] = useState<string | null>(null);
+  const [missionTitleById, setMissionTitleById] = useState<Record<string, string>>({});
   const [clustersGeneratedAt, setClustersGeneratedAt] = useState<number | null>(null);
 
   const loadData = (user: import("firebase/auth").User) =>
@@ -49,6 +68,7 @@ export default function AgentMemoryPage() {
         setClusters(cls);
         setSelectedClusterId(cls[0]?.id ?? null);
         setSelectedMemoryId(null);
+        setSelectedSessionKey(null);
         setClustersGeneratedAt(clusterData?.generatedAt ?? null);
       });
     });
@@ -93,6 +113,21 @@ export default function AgentMemoryPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Mission titles for the session filter labels (global `missions` collection).
+  useEffect(() => {
+    getDocs(collection(db, "missions"))
+      .then((snap) => {
+        setMissionTitleById(
+          Object.fromEntries(
+            snap.docs.map((d) => [d.id, String(d.data()?.title ?? d.id)]),
+          ),
+        );
+      })
+      .catch((err) => {
+        console.error("[agent] failed to load mission titles", err);
+      });
+  }, []);
+
   // MemoryClusterGraph expects ClusterableMemoryItem shape
   const clusterItems = memories.map((m) => ({
     id: m.id,
@@ -118,9 +153,44 @@ export default function AgentMemoryPage() {
   const matchedCount = totalClusterItemIds.filter((id) => clusterItemIdSet.has(id)).length;
   const hasStaleCache = totalClusterItemIds.length > 0 && matchedCount === 0;
 
+  // Group memories by the session (mission) they were generated in, so the
+  // graph/list/detail views can be narrowed down to a single session's nodes.
+  const sessionFilterOptions = useMemo(() => {
+    const groups = new Map<
+      string,
+      { missionId: string | null; count: number; latestTimestamp: number }
+    >();
+    memories.forEach((memory) => {
+      const missionId = memory.source?.missionId ?? null;
+      const key = missionId ?? NO_SESSION_KEY;
+      const existing = groups.get(key);
+      const timestamp = memory.timestamp ?? 0;
+      if (existing) {
+        existing.count += 1;
+        existing.latestTimestamp = Math.max(existing.latestTimestamp, timestamp);
+      } else {
+        groups.set(key, { missionId, count: 1, latestTimestamp: timestamp });
+      }
+    });
+    return Array.from(groups.entries())
+      .map(([key, value]) => ({ key, ...value }))
+      .sort((a, b) => b.latestTimestamp - a.latestTimestamp);
+  }, [memories]);
+
+  const filteredClusterItems = selectedSessionKey
+    ? clusterItems.filter(
+        (item) => (item.row.source?.missionId ?? NO_SESSION_KEY) === selectedSessionKey,
+      )
+    : clusterItems;
+
+  const handleSelectSession = (key: string | null) => {
+    setSelectedSessionKey(key);
+    setSelectedMemoryId(null);
+  };
+
   const selectedCluster = clusters.find((c) => c.id === selectedClusterId) ?? null;
   const selectedClusterItems = selectedCluster
-    ? clusterItems.filter((item) => selectedCluster.itemIds.includes(item.id))
+    ? filteredClusterItems.filter((item) => selectedCluster.itemIds.includes(item.id))
     : [];
 
   return (
@@ -154,40 +224,87 @@ export default function AgentMemoryPage() {
             onGenerate={handleRegenerate}
           />
         ) : (
-          <div className="flex h-[calc(100vh-57px)] overflow-hidden">
-            <MemoryClusterList
-              clusters={clusters}
-              selectedClusterId={selectedClusterId}
-              generatedAt={clustersGeneratedAt}
-              hasStaleCache={hasStaleCache}
-              isRegenerating={isRegenerating}
-              onSelectCluster={(clusterId) => {
-                setSelectedClusterId(clusterId);
-                setSelectedMemoryId(null);
-              }}
-              onRegenerate={handleRegenerate}
-            />
+          <div className="flex h-[calc(100vh-57px)] flex-col overflow-hidden">
+            {sessionFilterOptions.length > 1 ? (
+              <div className="flex shrink-0 items-center gap-2 overflow-x-auto border-b border-border bg-card px-4 py-2.5">
+                <span className="shrink-0 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                  세션
+                </span>
+                <button
+                  type="button"
+                  onClick={() => handleSelectSession(null)}
+                  className={cn(
+                    "shrink-0 rounded-full border px-3 py-1 text-xs transition",
+                    selectedSessionKey === null
+                      ? "border-slate-900 bg-slate-900 text-white"
+                      : "border-border bg-white text-muted-foreground hover:bg-muted",
+                  )}
+                >
+                  전체
+                  <span className="ml-1.5 opacity-70">{memories.length}</span>
+                </button>
+                {sessionFilterOptions.map((option) => {
+                  const title = option.missionId
+                    ? missionTitleById[option.missionId]
+                    : undefined;
+                  const date = sessionFilterDate(option.latestTimestamp);
+                  return (
+                    <button
+                      key={option.key}
+                      type="button"
+                      onClick={() => handleSelectSession(option.key)}
+                      title={option.missionId ?? "세션 정보가 없는 기억"}
+                      className={cn(
+                        "shrink-0 rounded-full border px-3 py-1 text-xs transition",
+                        selectedSessionKey === option.key
+                          ? "border-slate-900 bg-slate-900 text-white"
+                          : "border-border bg-white text-muted-foreground hover:bg-muted",
+                      )}
+                    >
+                      {sessionFilterLabel(option.missionId, title)}
+                      {date && <span className="ml-1.5 opacity-70">{date}</span>}
+                      <span className="ml-1.5 opacity-70">{option.count}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            ) : null}
 
-            <div className="flex min-w-0 flex-1 overflow-hidden">
-              <div className="min-w-0 flex-1 overflow-hidden">
-                <MemoryClusterGraph
-                  clusters={clusters}
-                  items={clusterItems}
-                  selectedClusterId={selectedClusterId}
+            <div className="flex min-h-0 flex-1 overflow-hidden">
+              <MemoryClusterList
+                clusters={clusters}
+                selectedClusterId={selectedClusterId}
+                generatedAt={clustersGeneratedAt}
+                hasStaleCache={hasStaleCache}
+                isRegenerating={isRegenerating}
+                onSelectCluster={(clusterId) => {
+                  setSelectedClusterId(clusterId);
+                  setSelectedMemoryId(null);
+                }}
+                onRegenerate={handleRegenerate}
+              />
+
+              <div className="flex min-w-0 flex-1 overflow-hidden">
+                <div className="min-w-0 flex-1 overflow-hidden">
+                  <MemoryClusterGraph
+                    clusters={clusters}
+                    items={filteredClusterItems}
+                    selectedClusterId={selectedClusterId}
+                    selectedMemoryId={selectedMemoryId}
+                    onSelectCluster={setSelectedClusterId}
+                    onSelectMemory={setSelectedMemoryId}
+                    showInlineDetail={false}
+                    fill
+                  />
+                </div>
+                <MemoryClusterSidePanel
+                  cluster={selectedCluster}
+                  items={selectedClusterItems}
+                  memories={memories}
                   selectedMemoryId={selectedMemoryId}
-                  onSelectCluster={setSelectedClusterId}
                   onSelectMemory={setSelectedMemoryId}
-                  showInlineDetail={false}
-                  fill
                 />
               </div>
-              <MemoryClusterSidePanel
-                cluster={selectedCluster}
-                items={selectedClusterItems}
-                memories={memories}
-                selectedMemoryId={selectedMemoryId}
-                onSelectMemory={setSelectedMemoryId}
-              />
             </div>
           </div>
         )
