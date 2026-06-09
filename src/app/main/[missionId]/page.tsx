@@ -41,6 +41,13 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { ChatBubble } from "@/components/session/chat-bubble";
 import { ChatInput } from "@/components/session/chat-input";
 import { ChatPanel } from "@/components/session/chat-panel";
@@ -164,6 +171,7 @@ type SessionMemoryItem = {
   semantic?: string | null;
   input?: string | null;
   output?: string | null;
+  originalInteractionContent?: string | null;
   agentActionCategory?: string | null;
   status?: string | null;
   promotedAt?: number | null;
@@ -256,6 +264,7 @@ type MemoryRecord = {
   semantic?: string | null;
   input?: string;
   output?: string;
+  originalInteractionContent?: string;
   link?: string | null;
   weight?: number;
   retentionScore?: number;
@@ -623,7 +632,7 @@ function normalizeMissionOptions(
   if (mission?.title || mission?.description) {
     return [
       {
-        id: "legacy-option",
+        id: "fallback-option",
         title: mission.title || "미션 옵션",
         description: mission.description || "",
         content: mission.description || "",
@@ -2480,7 +2489,7 @@ export default function MainScreenPage() {
       sessionMemorySummary.promoted.map((item) => [item.id, item] as const),
     );
     const beforeSessionMemories = sessionMemorySummary.graphMemories
-      .filter((item) => item.sourceType === "profile")
+      .filter((item) => item.sourceType === "before_session")
       .map((memory) => ({
         memory,
         referenced: referencedByMemoryId.get(memory.id) ?? null,
@@ -2902,18 +2911,18 @@ export default function MainScreenPage() {
 
       if (session?.messages) setMessages(session.messages);
       // Load ideas first so we can reference their IDs
-      const legacyDesignStyles = Array.isArray(session?.designSpecs)
+      const storedDesignStyles = Array.isArray(session?.designSpecs)
         ? (session.designSpecs as DesignStyle[])
         : [];
       const loadedIdeas: Idea[] = (session?.ideas ?? []).map(
         (idea: Idea, index: number) => {
-          const legacyIdea = idea as Idea & {
+          const ideaWithStoredDesignStyles = idea as Idea & {
             designStyles?: DesignStyle[];
           };
           const migratedStyle =
             idea.designStyle ??
-            legacyIdea.designStyles?.[0] ??
-            (index === 0 ? legacyDesignStyles[0] : undefined);
+            ideaWithStoredDesignStyles.designStyles?.[0] ??
+            (index === 0 ? storedDesignStyles[0] : undefined);
           return {
             ...idea,
             designStyle: migratedStyle,
@@ -5387,6 +5396,7 @@ export default function MainScreenPage() {
         episodic: memory.episodic ?? "",
         input: memory.input ?? "",
         output: memory.output ?? "",
+        originalInteractionContent: memory.originalInteractionContent ?? "",
         action: [
           referenced ? "referenced" : "",
           promotedIds.has(memory.id) ? "promoted" : "",
@@ -5570,14 +5580,17 @@ export default function MainScreenPage() {
               ("archivedAt" in item ? item.archivedAt : null),
             );
 
-          const isProfileInput =
+          const isBeforeSessionMemory =
             kind === "retrieved" &&
             "type" in item &&
-            (item as Record<string, unknown>).type === "profile_input";
+            ((item as Record<string, unknown>).type ===
+              "before_session_memory" ||
+              (item as Record<string, unknown>).sourceType ===
+                "before_session");
 
           const dotClass = isArchived
             ? "bg-rose-300"
-            : isProfileInput
+            : isBeforeSessionMemory
               ? "bg-violet-400"
               : kind === "retrieved"
                 ? "bg-blue-400"
@@ -5932,20 +5945,28 @@ export default function MainScreenPage() {
           {isAdmin && !isReadOnly && (
             <label className="flex items-center gap-2 text-xs font-semibold text-slate-500">
               <span>LLM</span>
-              <select
+              <Select
                 value={chatResponseProvider}
-                onChange={(event) =>
+                onValueChange={(value) =>
                   setChatResponseProvider(
-                    event.target.value === "anthropic" ? "anthropic" : "openai",
+                    value === "anthropic" ? "anthropic" : "openai",
                   )
                 }
                 disabled={isLoading}
-                className="h-8 rounded-full border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-700 shadow-sm transition hover:border-slate-400 disabled:cursor-not-allowed disabled:opacity-50"
-                title="Chat response provider"
               >
-                <option value="openai">OpenAI</option>
-                <option value="anthropic">Claude</option>
-              </select>
+                <SelectTrigger
+                  size="sm"
+                  className="h-8 rounded-full border-slate-300 bg-white px-3 text-xs font-semibold text-slate-700 shadow-sm hover:border-slate-400"
+                  aria-label="Chat response provider"
+                  title="Chat response provider"
+                >
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent align="end">
+                  <SelectItem value="openai">OpenAI</SelectItem>
+                  <SelectItem value="anthropic">Claude</SelectItem>
+                </SelectContent>
+              </Select>
             </label>
           )}
           {timerDisplay && (

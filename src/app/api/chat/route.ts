@@ -560,8 +560,8 @@ function promptPhaseLabels(
     ["selectedElement", "Reading selected element..."],
     ["citedReferences", "Reading cited references..."],
     ["citedTexts", "Reading cited text..."],
-    ["profileMemory", "Reading profile memory..."],
-    ["interactionMemory", "Reading interaction memory..."],
+    ["profileMemory", "Reading before-session memory..."],
+    ["interactionMemory", "Reading during-session memory..."],
   ];
   for (const [key, label] of contextLabels) {
     if (selectedContextKeys.includes(key)) phases.push(label);
@@ -684,11 +684,16 @@ export async function POST(request: Request) {
       ? latestUserMessage.content.trim()
       : "";
   const memoryItems = memoryContextItems(memoryContext);
-  const profileMemoryCount = memoryItems.filter(
-    (item: unknown) =>
+  const isBeforeSessionMemoryItem = (item: unknown) =>
+    Boolean(
       item &&
-      typeof item === "object" &&
-      (item as Record<string, unknown>).type === "profile_input",
+        typeof item === "object" &&
+        (String((item as Record<string, unknown>).type ?? "") ===
+          "before_session_memory" ||
+          (item as Record<string, unknown>).sourceType === "before_session"),
+    );
+  const profileMemoryCount = memoryItems.filter(
+    (item: unknown) => isBeforeSessionMemoryItem(item),
   ).length;
   const interactionMemoryCount = memoryItems.length - profileMemoryCount;
   const plannerInput = {
@@ -778,15 +783,10 @@ export async function POST(request: Request) {
 
   if (memoryContext) {
     const profileItems = memoryItems.filter(
-      (item) =>
-        item && typeof item === "object" &&
-        (item as Record<string, unknown>).type === "profile_input",
+      (item) => isBeforeSessionMemoryItem(item),
     );
     const interactionItems = memoryItems.filter(
-      (item) =>
-        !item ||
-        typeof item !== "object" ||
-        (item as Record<string, unknown>).type !== "profile_input",
+      (item) => !isBeforeSessionMemoryItem(item),
     );
 
     if (profileItems.length > 0) {
@@ -990,7 +990,6 @@ export async function POST(request: Request) {
       const token = await getFirebaseAccessToken();
       const retrieved = memoryContextItems(memoryContext).map((item: unknown) => {
             const record = item as Record<string, unknown>;
-            const isProfileInput = record.type === "profile_input";
             return {
               memoryId: String(record.memoryId ?? record.id ?? ""),
               type: typeof record.type === "string" ? record.type : "memory",
@@ -1018,11 +1017,11 @@ export async function POST(request: Request) {
                   ? record.schemaVersion
                   : null,
               weight:
-                !isProfileInput && typeof record.weight === "number"
+                typeof record.weight === "number"
                   ? record.weight
                   : null,
               weightDelta:
-                !isProfileInput && typeof record.weightDelta === "number"
+                typeof record.weightDelta === "number"
                   ? record.weightDelta
                   : null,
               similarity:

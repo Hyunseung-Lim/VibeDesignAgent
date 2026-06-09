@@ -14,7 +14,7 @@ const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const MEMORY_SCHEMA_VERSION = "0.1.2";
 const MEMORY_COLLECTION = "memories_0_1_2";
 const EMBEDDING_MODEL = "text-embedding-3-large";
-const EMBEDDING_SOURCE = "interaction_record_text";
+const EMBEDDING_SOURCE = "during_session_record_text";
 
 function jsonArray(value: unknown) {
   if (Array.isArray(value)) return value.map(String).filter(Boolean);
@@ -70,29 +70,33 @@ export async function POST(request: Request) {
         const semantic =
           String(draft.semantic ?? "").trim() || jsonArray(draft.semanticJson)[0] || "";
         const episodic = String(draft.episode ?? "").trim();
-        const action = String(draft.agentActionCategory ?? "agent_response");
         const input = String(draft.input ?? "").trim();
         const output = String(draft.output ?? "").trim();
+        const originalInteractionContent =
+          String(draft.originalInteractionContent ?? "").trim() ||
+          [`User input:\n${input}`, `Agent output:\n${output}`]
+            .filter((section) => !section.endsWith("\n"))
+            .join("\n\n");
         // Keep timestamp as metadata only; vector similarity should stay semantic.
         const embeddingText = [
-          action ? `Action: ${action}` : "",
           keywords.length ? `Keywords: ${keywords.join(", ")}` : "",
           episodic ? `Episodic: ${episodic}` : "",
           semantic ? `Semantic: ${semantic}` : "",
-          input ? `Input: ${input}` : "",
-          output ? `Output: ${output}` : "",
+          originalInteractionContent
+            ? `Original interaction content:\n${originalInteractionContent}`
+            : "",
         ].filter(Boolean).join("\n");
         const [embedding] = await embedMemoryTexts(embeddingText ? [embeddingText] : []);
         let memoryId: string | null = null;
         if (episodic) {
-          memoryId = `interaction-${sourceId}-${draft.id}`;
+          memoryId = `during-session-${sourceId}-${draft.id}`;
           await patchFirestoreDocument(
             `users/${user.localId}/${MEMORY_COLLECTION}/${encodeURIComponent(memoryId)}`,
             {
               schemaVersion: String(draft.schemaVersion ?? MEMORY_SCHEMA_VERSION),
-              type: "interaction",
-              sourceType: "interaction",
-              memorySource: "interaction",
+              type: "during_session",
+              sourceType: "during_session",
+              memorySource: "during_session",
               action: String(draft.agentActionCategory ?? "agent_response"),
               keyword: keywords,
               keywords,
@@ -102,6 +106,7 @@ export async function POST(request: Request) {
               semantic: semantic || null,
               input: draft.input ?? "",
               output: draft.output ?? "",
+              originalInteractionContent,
               link: null,
               embedding: embedding ?? [],
               embeddingSource: EMBEDDING_SOURCE,

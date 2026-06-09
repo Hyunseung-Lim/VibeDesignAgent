@@ -7,7 +7,7 @@ import {
 
 export const runtime = "nodejs";
 
-const MEMORY_COLLECTIONS = ["memories_0_1_2", "memories_0_1_1"];
+const MEMORY_COLLECTION = "memories_0_1_2";
 const MAX_MEMORY_IDS = 80;
 
 type ArchiveStatus = {
@@ -51,27 +51,24 @@ export async function POST(request: Request) {
   const token = await getFirebaseAccessToken();
   const entries = await Promise.all(
     memoryIds.map(async (memoryId): Promise<[string, ArchiveStatus | null]> => {
-      for (const collection of MEMORY_COLLECTIONS) {
-        const doc = (await getFirestoreDocument(
-          `users/${targetUid}/${collection}/${encodeURIComponent(memoryId)}`,
-          token,
-        )) as Record<string, unknown> | null;
-        if (!doc) continue;
-        const duplicate = doc.duplicate && typeof doc.duplicate === "object"
-          ? doc.duplicate
-          : null;
-        return [
+      const doc = (await getFirestoreDocument(
+        `users/${targetUid}/${MEMORY_COLLECTION}/${encodeURIComponent(memoryId)}`,
+        token,
+      )) as Record<string, unknown> | null;
+      if (!doc) return [memoryId, null];
+      const duplicate = doc.duplicate && typeof doc.duplicate === "object"
+        ? doc.duplicate
+        : null;
+      return [
+        memoryId,
+        {
           memoryId,
-          {
-            memoryId,
-            archivedAt: numberOrNull(doc.archivedAt),
-            archiveReason: stringOrNull(doc.archiveReason),
-            duplicateOf: stringOrNull(doc.duplicateOf),
-            duplicate,
-          },
-        ];
-      }
-      return [memoryId, null];
+          archivedAt: numberOrNull(doc.archivedAt),
+          archiveReason: stringOrNull(doc.archiveReason),
+          duplicateOf: stringOrNull(doc.duplicateOf),
+          duplicate,
+        },
+      ];
     }),
   );
 

@@ -46,6 +46,8 @@ async function loadMemoryItems(uid: string, token: string): Promise<ClusterInput
         semantic: str(data.semantic) ?? undefined,
         input: str(data.input) ?? undefined,
         output: str(data.output) ?? undefined,
+        originalInteractionContent:
+          str(data.originalInteractionContent) ?? undefined,
         timestamp: typeof data.timestamp === "number" ? data.timestamp : 0,
       });
     }),

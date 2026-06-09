@@ -12,14 +12,11 @@ export const runtime = "nodejs";
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const MEMORY_COLLECTION = "memories_0_1_2";
-const LEGACY_MEMORY_COLLECTION = "memories_0_1_1";
 const RETRIEVAL_LOG_COLLECTION = "memoryRetrievalLogs";
 const EMBEDDING_MODEL = "text-embedding-3-large";
-const INTERACTION_EMBEDDING_SOURCE = "interaction_record_text";
-const PROFILE_EMBEDDING_SOURCE = "profile_unit_text";
+const INTERACTION_EMBEDDING_SOURCE = "during_session_record_text";
+const PROFILE_EMBEDDING_SOURCE = "before_session_unit_text";
 const ACCEPTED_EMBEDDING_SOURCES = new Set([
-  "combined",
-  "combined_no_timestamp",
   INTERACTION_EMBEDDING_SOURCE,
   PROFILE_EMBEDDING_SOURCE,
 ]);
@@ -34,7 +31,6 @@ const MIN_MEMORY_WEIGHT = 0.1;
 type MemoryDoc = Record<string, unknown> & {
   id: string;
   embedding?: unknown;
-  semanticItems?: Array<Record<string, unknown>>;
 };
 
 type Candidate = {
@@ -43,13 +39,13 @@ type Candidate = {
   semanticItemId: string | null;
   path: string;
   doc: MemoryDoc;
-  itemIndex: number | null;
   episodic: string;
   semantic: string | null;
   action: string;
   keyword: string[];
   input: string;
   output: string;
+  originalInteractionContent: string;
   link: string | null;
   embedding: number[];
   embeddingSource: string;
@@ -60,7 +56,6 @@ type Candidate = {
   source: unknown;
   schemaVersion: string;
   similarity: number;
-  legacy: boolean;
   weightDelta?: number;
 };
 
@@ -117,15 +112,23 @@ function stableHash(value: string) {
   return createHash("sha256").update(value).digest("hex").slice(0, 16);
 }
 
-function buildEmbeddingText(candidate: Pick<Candidate, "action" | "keyword" | "episodic" | "semantic" | "input" | "output" | "link">) {
+function buildEmbeddingText(candidate: Pick<Candidate, "keyword" | "episodic" | "semantic" | "input" | "output" | "originalInteractionContent" | "link">) {
   // Timestamp is retrieval metadata only; do not include it in vector text.
+  const originalInteractionContent =
+    candidate.originalInteractionContent ||
+    [
+      candidate.input ? `User input:\n${candidate.input}` : "",
+      candidate.output ? `Agent output:\n${candidate.output}` : "",
+    ]
+      .filter(Boolean)
+      .join("\n\n");
   return [
-    candidate.action ? `Action: ${candidate.action}` : "",
     candidate.keyword.length ? `Keywords: ${candidate.keyword.join(", ")}` : "",
     candidate.episodic ? `Episodic: ${candidate.episodic}` : "",
     candidate.semantic ? `Semantic: ${candidate.semantic}` : "",
-    candidate.input ? `Input: ${candidate.input}` : "",
-    candidate.output ? `Output: ${candidate.output}` : "",
+    originalInteractionContent
+      ? `Original interaction content:\n${originalInteractionContent}`
+      : "",
     candidate.link ? `Link: ${candidate.link}` : "",
   ]
     .filter(Boolean)
@@ -148,7 +151,14 @@ async function loadCollectionDocs(uid: string, collection: string, token: string
       return { id, ...data } as MemoryDoc;
     }),
   );
-  return docs.filter((doc) => doc.type === "interaction" || doc.type === "profile");
+  return docs.filter((doc) => {
+    const sourceType = String(doc.sourceType ?? doc.memorySource ?? doc.type ?? "");
+    return sourceType === "during_session" || sourceType === "before_session";
+  });
+}
+
+function isBeforeSessionDoc(doc: MemoryDoc) {
+  return String(doc.sourceType ?? doc.memorySource ?? doc.type ?? "") === "before_session";
 }
 
 function v2Candidate(uid: string, doc: MemoryDoc): Candidate | null {
@@ -165,7 +175,6 @@ function v2Candidate(uid: string, doc: MemoryDoc): Candidate | null {
     semanticItemId: null,
     path: `users/${uid}/${MEMORY_COLLECTION}/${encodeURIComponent(doc.id)}`,
     doc,
-    itemIndex: null,
     episodic,
     semantic,
     action: String(doc.action ?? doc.agentActionCategory ?? "agent_response"),
@@ -174,6 +183,7 @@ function v2Candidate(uid: string, doc: MemoryDoc): Candidate | null {
       : stringArray(doc.keywords),
     input: String(doc.input ?? ""),
     output: String(doc.output ?? ""),
+    originalInteractionContent: String(doc.originalInteractionContent ?? ""),
     link: doc.link ? String(doc.link) : null,
     embedding,
     embeddingSource: String(doc.embeddingSource ?? (semantic ? "semantic" : "episodic")),
@@ -184,54 +194,13 @@ function v2Candidate(uid: string, doc: MemoryDoc): Candidate | null {
     source: doc.source ?? null,
     schemaVersion: String(doc.schemaVersion ?? "0.1.2"),
     similarity: -Infinity,
-    legacy: false,
   };
 }
 
-function legacyCandidates(uid: string, doc: MemoryDoc): Candidate[] {
-  const semanticItems = Array.isArray(doc.semanticItems) ? doc.semanticItems : [];
-  const semantic = stringArray(doc.semantic);
-  return semanticItems
-    .map((item, index): Candidate | null => {
-      const semanticText = String(item.semantic ?? semantic[index] ?? "").trim();
-      const archivedAt = timestampValue(item.archivedAt);
-      if (!semanticText || archivedAt) return null;
-      const semanticItemId = String(item.id ?? `semantic-${index}`);
-      return {
-        id: `${doc.id}:${semanticItemId}`,
-        memoryId: doc.id,
-        semanticItemId,
-        path: `users/${uid}/${LEGACY_MEMORY_COLLECTION}/${encodeURIComponent(doc.id)}`,
-        doc,
-        itemIndex: index,
-        episodic: String(doc.content ?? doc.episode ?? "").trim(),
-        semantic: semanticText,
-        action: String(doc.agentActionCategory ?? "agent_response"),
-        keyword: stringArray(doc.keywords),
-        input: String(doc.input ?? ""),
-        output: String(doc.output ?? ""),
-        link: null,
-        embedding: numberArray(item.embedding),
-        embeddingSource: "semantic",
-        weight: numberValue(item.weight ?? item.retentionScore, 0.5),
-        retrievedCount: numberValue(item.retrievedCount),
-        lastRetrievedAt: timestampValue(item.lastRetrievedAt),
-        timestamp: doc.timestamp ?? doc.occurredAt ?? doc.createdAt,
-        source: doc.source ?? null,
-        schemaVersion: String(doc.schemaVersion ?? "0.1.1"),
-        similarity: -Infinity,
-        legacy: true,
-      };
-    })
-    .filter((item): item is Candidate => Boolean(item));
-}
-
 async function ensureV2Embeddings(candidates: Candidate[], token: string) {
-  // Regenerate: missing embedding OR built with old single-field method.
-  // Existing combined embeddings are accepted for backward compatibility.
+  // Regenerate: missing embedding OR built with an outdated text contract.
   const stale = candidates.filter(
     (candidate) =>
-      !candidate.legacy &&
       (candidate.embedding.length === 0 ||
         !ACCEPTED_EMBEDDING_SOURCES.has(candidate.embeddingSource)),
   );
@@ -243,7 +212,7 @@ async function ensureV2Embeddings(candidates: Candidate[], token: string) {
   await Promise.all(
     stale.map((candidate, index) => {
       const embeddingSource =
-        candidate.doc.type === "profile"
+        isBeforeSessionDoc(candidate.doc)
           ? PROFILE_EMBEDDING_SOURCE
           : INTERACTION_EMBEDDING_SOURCE;
       candidate.embedding = embeddings[index] ?? [];
@@ -271,15 +240,8 @@ async function loadCandidates(uid: string, token: string) {
   const v2 = v2Docs
     .map((doc) => v2Candidate(uid, doc))
     .filter((item): item is Candidate => Boolean(item));
-  if (v2.length > 0) {
-    await ensureV2Embeddings(v2, token);
-    if (v2.some((candidate) => candidate.doc.type === "interaction")) {
-      return v2;
-    }
-  }
-  const legacyDocs = await loadCollectionDocs(uid, LEGACY_MEMORY_COLLECTION, token);
-  const legacy = legacyDocs.flatMap((doc) => legacyCandidates(uid, doc));
-  return [...v2, ...legacy];
+  await ensureV2Embeddings(v2, token);
+  return v2;
 }
 
 function nextWeight(candidate: Candidate, wasRetrieved: boolean) {
@@ -315,29 +277,11 @@ async function updateRetrievedWeights(retrieved: Candidate[], token: string, now
       const previousWeight = candidate.weight;
       const weight = nextWeight(candidate, true);
       const retrievedCount = candidate.retrievedCount + 1;
-      if (candidate.legacy && candidate.itemIndex != null) {
-        const semanticItems = Array.isArray(candidate.doc.semanticItems)
-          ? [...candidate.doc.semanticItems]
-          : [];
-        semanticItems[candidate.itemIndex] = {
-          ...(semanticItems[candidate.itemIndex] ?? {}),
-          retentionScore: weight,
-          retrievedCount,
-          lastRetrievedAt: now,
-          updatedAt: now,
-        };
-        await patchFirestoreDocument(
-          candidate.path,
-          { semanticItems, updatedAt: now },
-          token,
-        );
-      } else {
-        await patchFirestoreDocument(
-          candidate.path,
-          { weight, retrievedCount, lastRetrievedAt: now, updatedAt: now },
-          token,
-        );
-      }
+      await patchFirestoreDocument(
+        candidate.path,
+        { weight, retrievedCount, lastRetrievedAt: now, updatedAt: now },
+        token,
+      );
       candidate.weight = weight;
       candidate.retrievedCount = retrievedCount;
       candidate.lastRetrievedAt = now;
@@ -376,27 +320,11 @@ async function updateNearMissWeights(
         };
       }
 
-      if (candidate.legacy && candidate.itemIndex != null) {
-        const semanticItems = Array.isArray(candidate.doc.semanticItems)
-          ? [...candidate.doc.semanticItems]
-          : [];
-        semanticItems[candidate.itemIndex] = {
-          ...(semanticItems[candidate.itemIndex] ?? {}),
-          retentionScore: weight,
-          updatedAt: now,
-        };
-        await patchFirestoreDocument(
-          candidate.path,
-          { semanticItems, updatedAt: now },
-          token,
-        );
-      } else {
-        await patchFirestoreDocument(
-          candidate.path,
-          { weight, updatedAt: now },
-          token,
-        );
-      }
+      await patchFirestoreDocument(
+        candidate.path,
+        { weight, updatedAt: now },
+        token,
+      );
 
       candidate.weight = weight;
       candidate.weightDelta = Number((weight - previousWeight).toFixed(4));
@@ -472,24 +400,22 @@ export async function POST(request: Request) {
         query: query.slice(0, 1000),
         queryEmbeddingModel: EMBEDDING_MODEL,
         missionId: missionId || null,
-        memoryVersion: retrieved.some((candidate) => candidate.legacy)
-          ? "0.1.1"
-          : "0.1.2",
+        memoryVersion: "0.1.2",
         retrievedMemoryIds: retrieved.map((candidate) => candidate.id),
         similarities: retrieved.map((candidate) =>
           Number(candidate.similarity.toFixed(4)),
         ),
         profileItemCount: retrieved.filter(
-          (candidate) => candidate.doc.type === "profile",
+          (candidate) => isBeforeSessionDoc(candidate.doc),
         ).length,
         profileCandidateCount: candidates.filter(
-          (candidate) => candidate.doc.type === "profile",
+          (candidate) => isBeforeSessionDoc(candidate.doc),
         ).length,
         profileItemIds: retrieved
-          .filter((candidate) => candidate.doc.type === "profile")
+          .filter((candidate) => isBeforeSessionDoc(candidate.doc))
           .map((candidate) => candidate.id),
         profileSimilarities: retrieved
-          .filter((candidate) => candidate.doc.type === "profile")
+          .filter((candidate) => isBeforeSessionDoc(candidate.doc))
           .map((candidate) => Number(candidate.similarity.toFixed(4))),
         memoryCount,
         nearMissDecayMultiplier: memoryCountDecayMultiplier(memoryCount),
@@ -511,7 +437,10 @@ export async function POST(request: Request) {
         id: candidate.id,
         memoryId: candidate.memoryId,
         semanticItemId: candidate.semanticItemId,
-        type: candidate.doc.type === "profile" ? "profile_memory" : "memory",
+        type:
+          isBeforeSessionDoc(candidate.doc)
+            ? "before_session_memory"
+            : "during_session_memory",
         sourceType: candidate.doc.sourceType ?? candidate.doc.memorySource ?? null,
         action: candidate.action,
         keyword: candidate.keyword,
@@ -520,6 +449,7 @@ export async function POST(request: Request) {
         semantic: candidate.semantic,
         input: candidate.input,
         output: candidate.output,
+        originalInteractionContent: candidate.originalInteractionContent,
         link: candidate.link,
         embeddingSource: candidate.embeddingSource,
         source: candidate.source,

@@ -180,6 +180,10 @@ export async function POST(request: Request) {
   );
   const agentActionCategory = inferAgentActionCategory(output, interactionId);
   const agentActions = extractAgentActions(output);
+  const originalInteractionContent = [
+    `User input:\n${input}`,
+    `Agent output:\n${output.slice(0, 10000)}`,
+  ].join("\n\n");
   const previousEpisodes = [
     String(previousDraft?.episode ?? "").trim(),
     String(olderDraft?.episode ?? "").trim(),
@@ -193,12 +197,7 @@ export async function POST(request: Request) {
       ? `older interaction timestamp: ${timestampContext(olderDraft.timestamp ?? olderDraft.createdAt) || "unknown"}`
       : "",
     `previous episodic memory: ${previousEpisodes.join(" / ") || FIRST_SESSION_TURN}`,
-    `user input: ${input}`,
-    `agent response: ${output.slice(0, 10000)}`,
-    `agent action category: ${agentActionCategory}${agentActions.length > 0 ? ` (${agentActions.map((a) => a.type).join(", ")})` : ""}`,
-    agentActions.length > 0
-      ? `agent action details: ${agentActions.map((action) => `${action.type}: ${action.content}`).join("\n")}`
-      : "",
+    `original interaction content:\n${originalInteractionContent}`,
   ]
     .filter(Boolean)
     .join("\n\n");
@@ -220,6 +219,7 @@ export async function POST(request: Request) {
       interactionId,
       input: input.slice(0, 8000),
       output: output.slice(0, 12000),
+      originalInteractionContent: originalInteractionContent.slice(0, 20000),
       timestamp,
       keywordsJson: JSON.stringify(encoded.keywords),
       episode: encoded.episode.slice(0, 2000),

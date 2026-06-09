@@ -8,7 +8,7 @@ import {
 
 export const runtime = "nodejs";
 
-const MEMORY_COLLECTIONS = ["memories_0_1_2", "memories_0_1_1"];
+const MEMORY_COLLECTION = "memories_0_1_2";
 const RETRIEVAL_LOG_COLLECTION = "memoryRetrievalLogs";
 const CLUSTER_COLLECTION = "memoryClusters";
 const MAX_MEMORY_DOCS = 300;
@@ -123,6 +123,7 @@ function compactMemory(id: string, doc: Record<string, unknown>) {
     semantic: stringOrNull(doc.semantic),
     input: stringOrNull(doc.input),
     output: stringOrNull(doc.output),
+    originalInteractionContent: stringOrNull(doc.originalInteractionContent),
     agentActionCategory: stringOrNull(doc.agentActionCategory ?? doc.action),
     weight: memoryWeight(doc),
     archivedAt: numberOrNull(doc.archivedAt),
@@ -243,6 +244,7 @@ export async function POST(request: Request) {
               : null),
           input: stringOrNull(doc.input),
           output: stringOrNull(doc.output),
+          originalInteractionContent: stringOrNull(doc.originalInteractionContent),
           agentActionCategory: stringOrNull(
             doc.agentActionCategory ?? doc.action,
           ),
@@ -256,24 +258,23 @@ export async function POST(request: Request) {
 
   const allMemories = (
     await Promise.all(
-      MEMORY_COLLECTIONS.map(async (collection) => {
-        const ids = await listFirestoreDocumentIds(
-          `users/${targetUid}/${collection}`,
+      (
+        await listFirestoreDocumentIds(
+          `users/${targetUid}/${MEMORY_COLLECTION}`,
           token,
-        );
-        return Promise.all(
-          ids.slice(-MAX_MEMORY_DOCS).map(async (id) => {
-            const doc =
-              ((await getFirestoreDocument(
-                `users/${targetUid}/${collection}/${encodeURIComponent(id)}`,
-                token,
-              )) ?? {}) as Record<string, unknown>;
-            return compactMemory(id, doc);
-          }),
-        );
-      }),
+        )
+      )
+        .slice(-MAX_MEMORY_DOCS)
+        .map(async (id) => {
+          const doc =
+            ((await getFirestoreDocument(
+              `users/${targetUid}/${MEMORY_COLLECTION}/${encodeURIComponent(id)}`,
+              token,
+            )) ?? {}) as Record<string, unknown>;
+          return compactMemory(id, doc);
+        }),
     )
-  ).flat();
+  );
   const memoryById = new Map(allMemories.map((item) => [item.id, item]));
 
   const promoted = allMemories
@@ -285,7 +286,7 @@ export async function POST(request: Request) {
           : null;
       const draftId = stringOrNull(src?.draftId);
       // Cross-check against the session's actual memoryDrafts to prevent memories
-      // from other sessions (e.g. legacy collection contamination) from leaking in.
+      // from other sessions from leaking in.
       if (draftId !== null && !draftIdSet.has(draftId)) return false;
       return true;
     })

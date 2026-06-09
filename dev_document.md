@@ -2377,3 +2377,82 @@ type ChatPlan = {
   - `PATH=/usr/local/bin:$PATH ./node_modules/.bin/tsc --noEmit` 통과.
   - `PATH=/usr/local/bin:$PATH ./node_modules/.bin/eslint 'src/app/main/[missionId]/page.tsx' src/components/session/mission-option-selection.tsx` 통과. 기존 warning 유지.
   - `PATH=/usr/local/bin:$PATH npm run lint` 통과. warning 17개 유지.
+
+### 15.48 Profile Derived Memory Append Semantics `[implemented 2026-06-09]`
+
+- 목적:
+  - 세션 시작 시 before-session profile input을 매번 새로운 memory snapshot으로 남긴다.
+  - 기존 profile-derived memory를 삭제하거나 같은 stable id로 덮어쓰지 않는다.
+- 구현:
+  - `src/app/api/memory/profile/route.ts`의 기존 `deleteProfileDerivedMemories()` 제거.
+  - profile-derived memory write 전에 기존 mission profile memory를 삭제하던 behavior 제거.
+  - derived memory id 생성에 `randomUUID()` 기반 `profileWriteBatchId`를 포함해, rawMarkdown이 수정되지 않아도 매 POST마다 새 memory document가 생성되도록 변경.
+  - memory `source.profileWriteBatchId`를 저장해 같은 session-start write batch에서 생성된 profile memories를 추적 가능하게 함.
+  - `profile_memories/{missionId}` rawMarkdown upsert와 revision 생성 조건은 유지.
+- 검증:
+  - `PATH=/usr/local/bin:$PATH ./node_modules/.bin/tsc --noEmit` 통과.
+  - `PATH=/usr/local/bin:$PATH ./node_modules/.bin/eslint src/app/api/memory/profile/route.ts` 통과.
+
+### 15.49 Memory Source Wording — Before/During Session `[implemented 2026-06-09]`
+
+- 목적:
+  - 내부/표시 wording에서 `profile`/`interaction` 출처 표현을 줄이고, UX에 맞는 `before_session`/`during_session`으로 정리한다.
+  - 사용자가 세션 전에 입력한 정보는 `Before session`, 세션 중 확정되는 memory는 `During session`으로 보이게 한다.
+- 구현:
+  - before-session derived memory 저장 시 `sourceType`/`memorySource`를 `before_session`으로 변경.
+  - before-session memory id prefix를 `before-session-...`로 변경.
+  - before-session embedding source를 `before_session_unit_text`로 변경.
+  - during-session memory 저장 시 `sourceType`/`memorySource`를 `during_session`으로 변경.
+  - during-session memory id prefix를 `during-session-...`로 변경.
+  - during-session embedding source를 `during_session_record_text`로 변경.
+  - retrieval 응답 type을 `before_session_memory` / `during_session_memory`로 변경.
+  - chat loading phrase를 `Reading before-session memory...` / `Reading during-session memory...`로 변경.
+  - memory cluster side panel badge label을 `Before session` / `During session`으로 변경.
+  - admin graph item mapping과 session review before-session filter를 새 sourceType 기준으로 변경.
+  - 기존 `profile`/`interaction` sourceType과 old embedding source는 읽기 호환만 유지.
+- 검증:
+  - `PATH=/usr/local/bin:$PATH ./node_modules/.bin/tsc --noEmit` 통과.
+  - `PATH=/usr/local/bin:$PATH ./node_modules/.bin/eslint src/app/api/memory/profile/route.ts src/app/api/memory/complete-session/route.ts src/app/api/memory/retrieve/route.ts src/app/api/chat/route.ts 'src/app/main/[missionId]/page.tsx' src/app/admin/page.tsx src/components/memory/memory-cluster-side-panel.tsx src/lib/prompts.ts` 통과. 기존 warning 유지.
+  - `PATH=/usr/local/bin:$PATH npm run lint` 통과. warning 17개 유지.
+
+### 15.50 Original Interaction Content Memory Embedding `[implemented 2026-06-09]`
+
+- 목적:
+  - during-session memory embedding이 user input, agent output, agent action category를 분리된 의미 축처럼 다루지 않도록 정리한다.
+  - 실제 상호작용 원문은 `originalInteractionContent` 단일 문자열로 저장하고, embedding/retrieval/clustering에서 같은 단위를 사용한다.
+- 구현:
+  - memory draft 생성 prompt에서 `user input`, `agent response`, `agent action category`, `agent action details` 분리 입력을 제거하고 `original interaction content` 단일 섹션으로 전달.
+  - `MEMORY_ENCODE_PROMPT`의 input field 설명도 `original interaction content` 기준으로 변경하고, 한쪽만 요약하지 말라는 규칙으로 정리.
+  - chat planner / during-session memory injection prompt에서 `interactionMemory`를 during-session memory로 해석하도록 설명을 정리.
+  - cluster label prompt에서 `input`/`action` 중심 설명을 제거하고 `original interaction content`와 semantic/episodic/keywords 기준으로 라벨링하도록 변경.
+  - memory draft document에 `originalInteractionContent` 저장.
+  - session complete 시 promoted during-session memory document에 `originalInteractionContent` 저장.
+  - during-session embedding text에서 `Action`, `Input`, `Output` 섹션을 제거하고 `Original interaction content`를 사용.
+  - retrieval stale re-embedding text도 `Original interaction content` 기준으로 변경.
+  - `/agent` memory clustering과 admin memory clustering 모두 `originalInteractionContent`를 우선 사용하고, 없을 때만 기존 input/output을 합쳐 fallback.
+  - clustering input text 변경을 반영하기 위해 cluster cache method version을 `similarity-graph-v2`로 bump.
+  - `/api/memory/all`, `/api/memory/session-summary`, admin cluster payload, session review graph item에 `originalInteractionContent` 전달 추가.
+  - `agentActionCategory`는 embedding/encoder input에서는 제외하고, 기존 UI/filter/debug metadata로만 유지.
+- 검증:
+  - `PATH=/usr/local/bin:$PATH ./node_modules/.bin/tsc --noEmit` 통과.
+  - `PATH=/usr/local/bin:$PATH ./node_modules/.bin/eslint src/lib/prompts.ts src/app/api/memory/drafts/route.ts src/app/api/memory/complete-session/route.ts src/app/api/memory/retrieve/route.ts src/app/api/memory/clusters/route.ts src/app/api/memory/all/route.ts src/app/api/memory/session-summary/route.ts 'src/app/api/admin/users/[uid]/memory/clusters/route.ts' src/lib/server/memoryClustering.ts src/app/admin/page.tsx 'src/app/main/[missionId]/page.tsx' src/components/memory/memory-cluster-types.ts` 통과.
+  - `PATH=/usr/local/bin:$PATH npm run lint` 통과. 기존 warning 유지.
+
+### 15.51 Memory Legacy Fallback Removal `[implemented 2026-06-09]`
+
+- 목적:
+  - 기존 memory data를 삭제한 상태에 맞춰 v0.1.0/v0.1.1 compatibility path를 제거한다.
+  - runtime/admin/review가 `memories_0_1_2`와 `before_session`/`during_session` source contract만 사용하도록 정리한다.
+- 구현:
+  - `/api/memory/retrieve`에서 `memories_0_1_1`, `semanticItems`, old embedding source fallback 제거.
+  - retrieval weight update / near-miss decay를 v0.1.2 document 단위로 단순화.
+  - `/api/memory/session-summary`, `/api/memory/archive-status`, admin memory/retrieval/session export API에서 구 memory collections 조회 제거.
+  - `/api/memory/bootstrap`은 legacy preload fallback을 제거하고 `/api/memory/retrieve`로 안내하는 410 removed stub으로 변경.
+  - admin memory modal의 v0.1.0/v0.1.1 tabs/counts 제거.
+  - memory document `type` 저장값을 `before_session` / `during_session`으로 변경.
+  - `sourceType === "profile"` / retrieved `profile_input` 호환 분기 제거.
+  - code search 기준 `memories_0_1_1`, `episodicMemories`, `semanticMemories`, `profile_input`, old embedding source compatibility는 src 경로에서 제거.
+- 검증:
+  - `PATH=/usr/local/bin:$PATH ./node_modules/.bin/tsc --noEmit` 통과.
+  - `PATH=/usr/local/bin:$PATH ./node_modules/.bin/eslint src/app/api/memory/retrieve/route.ts src/app/api/memory/session-summary/route.ts src/app/api/memory/archive-status/route.ts src/app/api/memory/bootstrap/route.ts 'src/app/api/admin/users/[uid]/memory/route.ts' 'src/app/api/admin/users/[uid]/memory/retrievals/route.ts' 'src/app/api/admin/users/[uid]/sessions/route.ts' 'src/app/api/admin/users/[uid]/memory/clusters/route.ts' src/app/api/chat/route.ts src/app/api/memory/profile/route.ts src/app/api/memory/complete-session/route.ts src/app/admin/page.tsx 'src/app/main/[missionId]/page.tsx' src/components/memory/memory-cluster-side-panel.tsx` 통과.
+  - `PATH=/usr/local/bin:$PATH npm run lint` 통과. 기존 warning 유지.

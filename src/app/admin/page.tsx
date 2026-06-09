@@ -79,8 +79,11 @@ type AdminMemoryRow = {
   id: string;
   version?: string;
   type: "episodic" | "semantic" | "interaction" | string;
+  sourceType?: string;
+  memorySource?: string;
   input?: string;
   output?: string;
+  originalInteractionContent?: string;
   link?: string | null;
   timestamp?: number;
   category?: string[];
@@ -102,7 +105,7 @@ type AdminMemoryRow = {
 };
 
 type MemoryCounts = Record<string, number>;
-type MemoryVersionTab = "0.1.0" | "0.1.1" | "0.1.2";
+type MemoryVersionTab = "0.1.2";
 type MemorySortKey =
   | "timestamp"
   | "action"
@@ -800,13 +803,7 @@ export default function AdminPage() {
       if (!res.ok) throw new Error("메모리 조회 실패");
       const data = await res.json();
       const counts = data.counts ?? {};
-      setMemoryVersionTab(
-        (counts["0.1.2"] ?? 0) > 0
-          ? "0.1.2"
-          : (counts["0.1.1"] ?? 0) > 0
-            ? "0.1.1"
-            : "0.1.0",
-      );
+      setMemoryVersionTab("0.1.2");
       resetMemoryFilters();
       setMemoryViewTab("clusters");
       setMemoryGraphClusters([]);
@@ -1026,7 +1023,7 @@ export default function AdminPage() {
   const versionMemoryRows = useMemo(
     () =>
       memoryModal?.rows.filter(
-        (row) => (row.version ?? "0.1.0") === memoryVersionTab,
+        (row) => (row.version ?? "0.1.2") === memoryVersionTab,
       ) ?? [],
     [memoryModal?.rows, memoryVersionTab],
   );
@@ -1116,9 +1113,11 @@ export default function AdminPage() {
           episodic: row.episode ?? "",
           input: row.input ?? "",
           output: row.output ?? "",
+          originalInteractionContent: row.originalInteractionContent ?? "",
           link: row.link ?? "",
           action: row.agentActionCategory ?? "",
-          sourceType: row.type === "profile" ? "profile" : "interaction",
+          sourceType:
+            row.sourceType ?? row.memorySource ?? row.type ?? "during_session",
           weight: row.weight ?? null,
           embedding: row.embedding,
           timestamp: row.timestamp ?? 0,
@@ -1141,8 +1140,9 @@ export default function AdminPage() {
         semantic: row.semantic ?? null,
         input: row.input ?? null,
         output: row.output ?? null,
+        originalInteractionContent: row.originalInteractionContent ?? null,
         action: row.agentActionCategory ?? null,
-        sourceType: row.type === "profile" ? "profile" : "interaction",
+        sourceType: row.sourceType ?? row.memorySource ?? row.type ?? "during_session",
         keywords: row.keyword ?? row.keywords ?? [],
         weight: row.weight ?? null,
         embedding: row.embedding,
@@ -1401,6 +1401,7 @@ export default function AdminPage() {
               semantic: item.semantic || undefined,
               input: item.input,
               output: item.output,
+              originalInteractionContent: item.originalInteractionContent,
               link: item.link,
               timestamp: item.timestamp,
             })),
@@ -1569,9 +1570,7 @@ export default function AdminPage() {
                 </p>
                 <p className="text-xs text-muted-foreground">{memoryModal.userName}</p>
                 <p className="mt-1 text-xs text-muted-foreground">
-                  v0.1.2 {memoryModal.counts["0.1.2"] ?? 0}개 · v0.1.1{" "}
-                  {memoryModal.counts["0.1.1"] ?? 0}개 · v0.1.0{" "}
-                  {memoryModal.counts["0.1.0"] ?? 0}개
+                  v0.1.2 {memoryModal.counts["0.1.2"] ?? 0}개
                 </p>
               </div>
               <Button
@@ -1595,7 +1594,7 @@ export default function AdminPage() {
                 {(memoryViewTab === "table" ||
                   memoryViewTab === "clusters") && (
                   <div className="inline-flex rounded-lg border border-border bg-muted p-1">
-                    {(["0.1.2", "0.1.1", "0.1.0"] as const).map((version) => (
+                    {(["0.1.2"] as const).map((version) => (
                       <button
                         key={version}
                         type="button"

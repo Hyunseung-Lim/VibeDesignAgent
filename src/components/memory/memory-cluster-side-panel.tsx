@@ -28,16 +28,20 @@ function formatWeight(weight: number | null | undefined) {
 }
 
 function sourceLabel(sourceType: string | null | undefined) {
-  if (sourceType === "profile") return "Before session";
-  if (sourceType === "interaction") return "During session";
+  if (sourceType === "before_session") {
+    return "Before session";
+  }
+  if (sourceType === "during_session") {
+    return "During session";
+  }
   return "Unknown source";
 }
 
 function sourceBadgeClass(sourceType: string | null | undefined) {
-  if (sourceType === "profile") {
+  if (sourceType === "before_session") {
     return "border-sky-200 bg-sky-50 text-sky-700";
   }
-  if (sourceType === "interaction") {
+  if (sourceType === "during_session") {
     return "border-slate-300 bg-slate-100 text-slate-700";
   }
   return "border-slate-200 bg-slate-50 text-slate-500";

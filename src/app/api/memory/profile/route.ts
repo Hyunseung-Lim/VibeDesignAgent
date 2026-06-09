@@ -1,8 +1,7 @@
 import OpenAI from "openai";
-import { createHash } from "crypto";
+import { createHash, randomUUID } from "crypto";
 import { isAdminEmail } from "@/lib/admin";
 import {
-  deleteFirestoreDocument,
   getFirebaseAccessToken,
   getFirestoreDocument,
   listFirestoreDocumentIds,
@@ -18,9 +17,9 @@ export const runtime = "nodejs";
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const MEMORY_COLLECTION = "memories_0_1_2";
-const PROFILE_MEMORY_SCHEMA_VERSION = "0.1.2-profile";
+const PROFILE_MEMORY_SCHEMA_VERSION = "0.1.2-before-session";
 const EMBEDDING_MODEL = "text-embedding-3-large";
-const EMBEDDING_SOURCE = "profile_unit_text";
+const EMBEDDING_SOURCE = "before_session_unit_text";
 const PROFILE_MEMORY_MAX_ITEMS = 5;
 const PROFILE_MEMORY_MAX_CHARS = 240;
 const PROFILE_MEMORY_MAX_RAW_CHARS = 6000;
@@ -211,31 +210,6 @@ async function deriveProfileMemories(rawMarkdown: string) {
   return encodeProfileMemoryUnits(segments);
 }
 
-async function deleteProfileDerivedMemories(
-  uid: string,
-  missionId: string,
-  token: string,
-) {
-  const ids = await listFirestoreDocumentIds(
-    `users/${uid}/${MEMORY_COLLECTION}`,
-    token,
-  );
-  await Promise.all(
-    ids.map(async (id) => {
-      const path = `users/${uid}/${MEMORY_COLLECTION}/${encodeURIComponent(id)}`;
-      const doc = (await getFirestoreDocument(path, token)) as Record<
-        string,
-        unknown
-      > | null;
-      const source = doc?.source as Record<string, unknown> | undefined;
-      const isProfileForMission =
-        (doc?.sourceType === "profile" || doc?.memorySource === "profile") &&
-        source?.missionId === missionId;
-      if (isProfileForMission) await deleteFirestoreDocument(path, token);
-    }),
-  );
-}
-
 async function writeProfileDerivedMemories(
   uid: string,
   missionId: string,
@@ -244,24 +218,24 @@ async function writeProfileDerivedMemories(
   token: string,
   now: number,
 ) {
-  await deleteProfileDerivedMemories(uid, missionId, token);
   const derived = await deriveProfileMemories(rawMarkdown);
   if (derived.length === 0) return { count: 0, ids: [] as string[] };
+  const writeBatchId = randomUUID();
   const embeddings = await embedTexts(
     derived.map((memory) => buildEmbeddingText(memory)),
   );
   const ids = await Promise.all(
     derived.map(async (memory, index) => {
-      const id = `profile-${missionId}-${stableHash(
-        `${index}:${memory.episodic}:${memory.semantic ?? ""}`,
+      const id = `before-session-${missionId}-${stableHash(
+        `${writeBatchId}:${index}:${memory.episodic}:${memory.semantic ?? ""}`,
       )}`;
       await patchFirestoreDocument(
         `users/${uid}/${MEMORY_COLLECTION}/${encodeURIComponent(id)}`,
         {
           schemaVersion: PROFILE_MEMORY_SCHEMA_VERSION,
-          type: "profile",
-          sourceType: "profile",
-          memorySource: "profile",
+          type: "before_session",
+          sourceType: "before_session",
+          memorySource: "before_session",
           action: "",
           agentActionCategory: "",
           keyword: memory.keywords,
@@ -284,9 +258,10 @@ async function writeProfileDerivedMemories(
           archiveReason: null,
           timestamp: now,
           source: {
-            kind: "user_profile",
+            kind: "before_session_user_input",
             missionId,
-            profileItemIds: items.map((item) => item.id),
+            beforeSessionWriteBatchId: writeBatchId,
+            beforeSessionItemIds: items.map((item) => item.id),
             sourceText: memory.sourceText,
           },
           createdAt: now,

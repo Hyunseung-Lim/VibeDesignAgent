@@ -4,6 +4,7 @@ export type MemoryItem = {
   semantic: string | null;
   input: string | null;
   output: string | null;
+  originalInteractionContent?: string | null;
   action: string | null;
   sourceType: string | null;
   keywords: string[];
@@ -38,6 +39,7 @@ export type ClusterGraphItem = {
   episodic: string;
   input: string;
   output: string;
+  originalInteractionContent?: string;
   action: string;
   sourceType?: string | null;
   weight?: number | null;

@@ -679,14 +679,13 @@ export default function MemoryClusterGraph({
       ctx.save();
       ctx.globalAlpha = dimmed ? 0.3 : 1;
       ctx.beginPath();
-      ctx.arc(screenPoint.x, screenPoint.y, radius + (selected || hovered ? 3 : 0), 0, Math.PI * 2);
-      ctx.fillStyle = "#ffffff";
-      ctx.fill();
-      ctx.lineWidth = selected || hovered ? 3 : selectedCluster ? 2.2 : 1.4;
-      ctx.strokeStyle = selected ? "#0f172a" : point.color;
-      ctx.stroke();
-      ctx.beginPath();
-      ctx.arc(screenPoint.x, screenPoint.y, Math.max(2.8, radius * 0.58), 0, Math.PI * 2);
+      ctx.arc(
+        screenPoint.x,
+        screenPoint.y,
+        Math.max(3.2, radius + (selected || hovered ? 2.5 : 0)),
+        0,
+        Math.PI * 2,
+      );
       ctx.fillStyle = point.color;
       ctx.fill();
 

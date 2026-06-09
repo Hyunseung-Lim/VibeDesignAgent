@@ -20,8 +20,8 @@ const GRAPH_STRONG_SIMILARITY = 0.74;
 const GRAPH_KNN_EDGES = 3;
 const GRAPH_COMMUNITY_ITERATIONS = 30;
 const CLUSTER_COLLECTION = "memoryClusters";
-const CLUSTERING_METHOD_VERSION = "similarity-graph-v1";
-const DEFAULT_MEMORY_VERSION = "0.1.1";
+const CLUSTERING_METHOD_VERSION = "similarity-graph-v2";
+const DEFAULT_MEMORY_VERSION = "0.1.2";
 
 type ClusterInputItem = {
   id: string;
@@ -31,6 +31,7 @@ type ClusterInputItem = {
   semantic?: string;
   input?: string;
   output?: string;
+  originalInteractionContent?: string;
   link?: string;
   timestamp?: number;
 };
@@ -205,13 +206,21 @@ function parseGraphCommunityDiagnostics(
 
 function embeddingText(item: ClusterInputItem) {
   // Cluster vectors are semantic only; timestamp stays available as metadata.
+  const originalInteractionContent =
+    item.originalInteractionContent ||
+    [
+      item.input ? `User input:\n${item.input}` : "",
+      item.output ? `Agent output:\n${item.output}` : "",
+    ]
+      .filter(Boolean)
+      .join("\n\n");
   return [
-    item.action ? `Action: ${item.action}` : "",
     item.keyword?.length ? `Keywords: ${item.keyword.join(", ")}` : "",
     item.episodic ? `Episodic: ${item.episodic}` : "",
     item.semantic ? `Semantic: ${item.semantic}` : "",
-    item.input ? `Input: ${item.input}` : "",
-    item.output ? `Output: ${item.output}` : "",
+    originalInteractionContent
+      ? `Original interaction content:\n${originalInteractionContent}`
+      : "",
     item.link ? `Link: ${item.link}` : "",
   ]
     .filter(Boolean)
@@ -328,7 +337,7 @@ Return valid JSON only:
   ]
 }
 
-Use natural researcher-friendly labels. Avoid awkward noun stacks and avoid inventing facts beyond the provided semantic, episode, input, action, and keywords.`,
+Use natural researcher-friendly labels. Avoid awkward noun stacks and avoid inventing facts beyond the provided semantic memory, episode, original interaction content, and keywords. Treat action labels as optional metadata only, not as the cluster meaning.`,
       },
       {
         role: "user",
@@ -348,6 +357,8 @@ Use natural researcher-friendly labels. Avoid awkward noun stacks and avoid inve
                 semantic: item?.semantic ?? "",
                 input: item?.input ?? "",
                 output: item?.output ?? "",
+                originalInteractionContent:
+                  item?.originalInteractionContent ?? "",
               };
             }),
           })),
@@ -649,6 +660,10 @@ export async function POST(
       semantic: String(item.semantic ?? "").trim() || undefined,
       input: String(item.input ?? "").trim().slice(0, 500),
       output: String(item.output ?? "").trim().slice(0, 500),
+      originalInteractionContent:
+        typeof item.originalInteractionContent === "string"
+          ? item.originalInteractionContent.trim().slice(0, 20000)
+          : undefined,
       link: String(item.link ?? "").trim().slice(0, 300) || undefined,
       timestamp: Number(item.timestamp ?? 0),
     }))

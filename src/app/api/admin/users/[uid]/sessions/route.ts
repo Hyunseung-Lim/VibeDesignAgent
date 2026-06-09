@@ -55,7 +55,7 @@ async function loadSessionSubcollections(sessionPath: string, token: string) {
 
 async function loadSessions(uid: string, token: string) {
   const missionIds = await listFirestoreDocumentIds(`sessions/${uid}/missions`, token);
-  const legacyEntries = await Promise.all(
+  const missionSessionEntries = await Promise.all(
     missionIds.map(async (missionId) => {
       const missionPath = `sessions/${uid}/missions/${missionId}`;
       const data =
@@ -93,19 +93,17 @@ async function loadSessions(uid: string, token: string) {
     }),
   );
   return {
-    legacyMissionSessions: Object.fromEntries(legacyEntries),
+    missionSessions: Object.fromEntries(missionSessionEntries),
     missionRuns: Object.fromEntries(runEntries),
   };
 }
 
 async function loadMemories(uid: string, token: string) {
-  const [episodicMemories, semanticMemories, memories_0_1_1, memories_0_1_2] = await Promise.all([
-    loadCollection(`users/${uid}/episodicMemories`, token),
-    loadCollection(`users/${uid}/semanticMemories`, token),
-    loadCollection(`users/${uid}/memories_0_1_1`, token),
-    loadCollection(`users/${uid}/memories_0_1_2`, token),
-  ]);
-  return { episodicMemories, semanticMemories, memories_0_1_1, memories_0_1_2 };
+  const memories_0_1_2 = await loadCollection(
+    `users/${uid}/memories_0_1_2`,
+    token,
+  );
+  return { memories_0_1_2 };
 }
 
 async function loadParticipantRecords(uid: string, token: string) {

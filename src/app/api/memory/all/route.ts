@@ -47,6 +47,7 @@ export async function GET(request: Request) {
           semantic: str(data.semantic),
           input: str(data.input),
           output: str(data.output),
+          originalInteractionContent: str(data.originalInteractionContent),
           action: str(data.action),
           sourceType: str(data.sourceType ?? data.memorySource),
           keywords: Array.isArray(data.keywords)

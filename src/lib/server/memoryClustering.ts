@@ -11,7 +11,7 @@ export const GRAPH_STRONG_SIMILARITY = 0.74;
 export const GRAPH_KNN_EDGES = 3;
 export const GRAPH_COMMUNITY_ITERATIONS = 30;
 export const CLUSTER_COLLECTION = "memoryClusters";
-export const CLUSTERING_METHOD_VERSION = "similarity-graph-v1";
+export const CLUSTERING_METHOD_VERSION = "similarity-graph-v2";
 export const MEMORY_VERSION = "0.1.2";
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
@@ -24,6 +24,7 @@ export type ClusterInputItem = {
   semantic?: string;
   input?: string;
   output?: string;
+  originalInteractionContent?: string;
   link?: string;
   timestamp?: number;
 };
@@ -144,13 +145,21 @@ export function parseStoredGraphEdges(value: unknown): ClusterGraphEdge[] {
 
 function embeddingText(item: ClusterInputItem) {
   // Cluster vectors are semantic only; timestamp stays available as metadata.
+  const originalInteractionContent =
+    item.originalInteractionContent ||
+    [
+      item.input ? `User input:\n${item.input}` : "",
+      item.output ? `Agent output:\n${item.output}` : "",
+    ]
+      .filter(Boolean)
+      .join("\n\n");
   return [
-    item.action ? `Action: ${item.action}` : "",
     item.keyword?.length ? `Keywords: ${item.keyword.join(", ")}` : "",
     item.episodic ? `Episodic: ${item.episodic}` : "",
     item.semantic ? `Semantic: ${item.semantic}` : "",
-    item.input ? `Input: ${item.input}` : "",
-    item.output ? `Output: ${item.output}` : "",
+    originalInteractionContent
+      ? `Original interaction content:\n${originalInteractionContent}`
+      : "",
     item.link ? `Link: ${item.link}` : "",
   ]
     .filter(Boolean)
@@ -258,7 +267,7 @@ Return valid JSON only:
   ]
 }
 
-Use natural researcher-friendly labels. Avoid awkward noun stacks and avoid inventing facts beyond the provided semantic, episode, input, action, and keywords.`,
+Use natural researcher-friendly labels. Avoid awkward noun stacks and avoid inventing facts beyond the provided semantic memory, episode, original interaction content, and keywords. Treat action labels as optional metadata only, not as the cluster meaning.`,
       },
       {
         role: "user",
@@ -278,6 +287,8 @@ Use natural researcher-friendly labels. Avoid awkward noun stacks and avoid inve
                 semantic: item?.semantic ?? "",
                 input: item?.input ?? "",
                 output: item?.output ?? "",
+                originalInteractionContent:
+                  item?.originalInteractionContent ?? "",
               };
             }),
           })),

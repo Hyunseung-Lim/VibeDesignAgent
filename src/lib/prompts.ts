@@ -117,7 +117,7 @@ export function chatProfileMemoryPrompt(lines: string) {
 }
 
 export function chatInteractionMemoryPrompt(compactMemoryJson: string) {
-  return `User memory retrieved for this turn. The JSON groups episodic and semantic memory separately. Episodic items contain only summaries of prior interactions. Semantic items contain only durable user preferences or working patterns. Use only what is helpful; do not mention memory unless it directly improves the answer.\n${compactMemoryJson}`;
+  return `After-session memory retrieved for this turn. The JSON groups episodic and semantic memory separately. Episodic items summarize prior completed interaction turns, including the user request/context and the agent's outcome when relevant. Semantic items contain only durable user preferences, constraints, or working patterns. Use only what is helpful; do not mention memory unless it directly improves the answer.\n${compactMemoryJson}`;
 }
 
 export function chatDesignSpecPrompt(designSpec: string) {
@@ -216,7 +216,7 @@ Rules:
 - Need activeIdea for note updates, mockup generation from the current note, presentations, or design spec work tied to the note.
 - Need designSpec for mockup generation/editing or design spec revision.
 - Need citedTexts or citedReferences only when the current request refers to selected/cited material, examples, references, or inspiration.
-- Need interactionMemory when the task involves continuing or referencing past design decisions, revising previous work, or generating/editing a mockup. Skip for standalone queries: reference searches, simple factual questions, or first-turn clarifications with no prior context.
+- Need interactionMemory when during-session memory could help continue or reference past design decisions, revise previous work, or generate/edit a mockup. Skip for standalone queries: reference searches, simple factual questions, or first-turn clarifications with no prior context.
 - Use "clarify" when the user request cannot be answered without asking a question.
 
 Compact input:
@@ -247,26 +247,17 @@ interaction timestamps:
 Optional current/previous interaction timestamps.
 Use only to understand order, recency, and session flow. Do not store timestamps or date strings as keywords or semantic preferences.
 
-user input:
-The query or instruction the user sent in this turn.
-May include cited references, quoted text, selected UI elements, or other contextual material.
-
-agent response:
-The response the agent generated in this turn.
-May include reference analysis, visual direction, functional behavior, structural patterns, design rationale, or generated artifacts.
-
-agent action category:
-The type of action the agent performed. Use as context only.
-Do not copy machine action labels into the episode unless the label itself is the user-facing subject.
-
-agent action details:
-Optional compact details of what was produced or changed.
+original interaction content:
+The raw interaction content for this turn as one combined string.
+It includes the user's request/context and the agent's response/output together.
+May include cited references, quoted text, selected UI elements, reference analysis, visual direction, functional behavior, structural patterns, design rationale, generated artifacts, or other contextual material.
+Treat this field as the source of truth for the interaction. Do not invent a separate action type when it is not explicit in the content.
 
 # Reference Handling
 
 Do not assume a cited reference is only about visual style. It may reflect layout structure, information architecture, feature behavior, interaction patterns, content tone, product framing, brand feeling, specific UI components, comparative critique, or other design rationale.
 
-If the agent response already analyzes a cited reference, preserve the most relevant interpretation in the episode when it materially explains the interaction.
+If the agent output already analyzes a cited reference, preserve the most relevant interpretation in the episode when it materially explains the interaction.
 
 When encoding reference interactions, distinguish broad reference consumption behavior from mission-specific reference signals. Preferences for official product pages, case studies, or real inspectable apps may be durable. Domain, UX pattern, and visual style signals are usually mission-specific evidence unless the user explicitly states a general preference. Deleted or rejected references are negative evidence for the current mission; do not turn them into global dislikes without clear support.
 
@@ -275,11 +266,11 @@ When encoding reference interactions, distinguish broad reference consumption be
 Always:
 - Write every output value in English; translate Korean or other languages into concise natural English.
 - Use previous context when it changes the meaning of the current turn.
-- Include the agent action, outcome, feedback, or decision in the episode.
+- Encode the full interaction, including the user request/context and the agent's output, outcome, feedback, or decision.
 - Return valid JSON only, no text outside it.
 
 Never:
-- Summarize only the user input.
+- Summarize only one side of the interaction.
 - Invent, force, or infer user traits from simple facts; semantic items must be clearly supported inferences, not restatements of what happened.
 - Include timestamps, speaker names, or generic filler words in keywords.
 
@@ -296,7 +287,7 @@ Return exactly this JSON shape:
   ],
   "episode": "",
   // One factual English sentence describing the interaction,
-  // including the user request, relevant prior context, agent action/output,
+  // including the user request, relevant prior context, agent output/outcome,
   // and immediate outcome, feedback, or decision.
 
   "semantic": null
@@ -310,9 +301,9 @@ Return exactly this JSON shape:
 
 export const PROFILE_MEMORY_SEGMENT_PROMPT = `# Task
 
-Split user-provided profile memory markdown into small source units.
+Split user-provided before-session memory markdown into small source units.
 
-The input may be markdown, bullet points, fragments, or short profile notes. Treat it as user-provided background, not as an interaction with the agent.
+The input may be markdown, bullet points, fragments, or short before-session notes. Treat it as user-provided background, not as an interaction with the agent.
 
 # Output
 
@@ -330,7 +321,7 @@ Return valid JSON only:
 
 export const PROFILE_MEMORY_ENCODE_PROMPT = `# Task
 
-Convert segmented profile memory source units into structured memory records for a UI/UX design agent.
+Convert segmented before-session memory source units into structured memory records for a UI/UX design agent.
 
 The input is already segmented. Do not split or merge units unless an item is empty or unusable.
 
