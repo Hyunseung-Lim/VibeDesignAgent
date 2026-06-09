@@ -73,6 +73,7 @@ type Participant = {
 type AdminUser = Participant & {
   missionIds: string[];
   sessionMissionIds: string[];
+  completedSessionMissionIds: string[];
 };
 
 type AdminMemoryRow = {
@@ -911,6 +912,10 @@ export default function AdminPage() {
         missionIds: changes.missionIds ?? prev?.missionIds ?? [],
         sessionMissionIds:
           changes.sessionMissionIds ?? prev?.sessionMissionIds ?? [],
+        completedSessionMissionIds:
+          changes.completedSessionMissionIds ??
+          prev?.completedSessionMissionIds ??
+          [],
       });
     };
 
@@ -959,6 +964,15 @@ export default function AdminPage() {
         ).catch(() => null);
         const sessionMissionIds =
           sessionMissionSnap?.docs.map((missionDoc) => missionDoc.id) ?? [];
+        const completedSessionMissionIds = (
+          sessionMissionSnap?.docs ?? []
+        )
+          .filter(
+            (missionDoc) =>
+              (missionDoc.data() as Record<string, unknown>).status ===
+              "completed",
+          )
+          .map((missionDoc) => missionDoc.id);
         upsertUser(userDoc.id, {
           missionIds: Array.from(
             new Set([...(existing?.missionIds ?? []), ...sessionMissionIds]),
@@ -967,6 +981,12 @@ export default function AdminPage() {
             new Set([
               ...(existing?.sessionMissionIds ?? []),
               ...sessionMissionIds,
+            ]),
+          ),
+          completedSessionMissionIds: Array.from(
+            new Set([
+              ...(existing?.completedSessionMissionIds ?? []),
+              ...completedSessionMissionIds,
             ]),
           ),
         });
@@ -2627,7 +2647,14 @@ export default function AdminPage() {
             <div className="grid gap-3 lg:grid-cols-2">
               {adminUsers.map((user) => {
                 const badge = onboardingBadge(user.onboardingStatus);
-                const missionIds = Array.from(new Set(user.missionIds));
+                const missionIds = Array.from(
+                  new Set([
+                    ...(user.onboardingStatus === "completed"
+                      ? [ONBOARDING_MISSION_ID]
+                      : []),
+                    ...user.missionIds,
+                  ]),
+                );
                 return (
                   <div
                     key={user.id}
@@ -2681,25 +2708,35 @@ export default function AdminPage() {
                           연결된 미션 없음
                         </span>
                       ) : (
-                        missionIds.map((missionId) => (
-                          <span
-                            key={missionId}
-                            className="inline-flex overflow-hidden rounded-full border border-border text-xs font-semibold"
-                          >
-                            <Link
-                              href={`/main/${missionId}?viewAs=${user.id}`}
-                              className="px-3 py-1 text-muted-foreground transition hover:bg-muted hover:text-foreground"
+                        missionIds.map((missionId) => {
+                          const isCompleted =
+                            missionId === ONBOARDING_MISSION_ID
+                              ? user.onboardingStatus === "completed"
+                              : user.completedSessionMissionIds.includes(
+                                  missionId,
+                                );
+                          return (
+                            <span
+                              key={missionId}
+                              className="inline-flex overflow-hidden rounded-full border border-border text-xs font-semibold"
                             >
-                              {missionTitle(missionId)}
-                            </Link>
-                            <Link
-                              href={`/main/${missionId}?viewAs=${user.id}&review=1`}
-                              className="border-l border-border px-2.5 py-1 text-indigo-500 transition hover:bg-indigo-50 hover:text-indigo-700"
-                            >
-                              리뷰
-                            </Link>
-                          </span>
-                        ))
+                              <Link
+                                href={`/main/${missionId}?viewAs=${user.id}`}
+                                className="px-3 py-1 text-muted-foreground transition hover:bg-muted hover:text-foreground"
+                              >
+                                {missionTitle(missionId)}
+                              </Link>
+                              {isCompleted && (
+                                <Link
+                                  href={`/main/${missionId}?viewAs=${user.id}&review=1`}
+                                  className="border-l border-border px-2.5 py-1 text-indigo-500 transition hover:bg-indigo-50 hover:text-indigo-700"
+                                >
+                                  리뷰
+                                </Link>
+                              )}
+                            </span>
+                          );
+                        })
                       )}
                     </div>
 

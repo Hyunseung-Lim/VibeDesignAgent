@@ -1336,18 +1336,26 @@ html, body { min-height: 0 !important; height: auto !important; }
   var reportCount = 0;
   var MAX_REPORTS = 6;
   var initialVh = window.innerHeight || 900;
+  var initialVw = window.innerWidth || 1512;
+  /* Freeze window.innerHeight/innerWidth so that resize handlers triggered by
+     parent iframe resizing cannot update --vh / --vw CSS custom properties,
+     which would cause a feedback loop where the artboard grows on every report. */
+  try {
+    Object.defineProperty(window, 'innerHeight', { get: function(){ return initialVh; }, configurable: true });
+    Object.defineProperty(window, 'innerWidth',  { get: function(){ return initialVw; }, configurable: true });
+  } catch(e) {}
   function freezeVhUnits() {
-    var vhRe = /(\d*\.?\d+)vh/g;
-    function replaceVh(s) { return s.replace(vhRe, function(_, n) { return (parseFloat(n) * initialVh / 100).toFixed(1) + 'px'; }); }
+    var unitRe = /(\d*\.?\d+)(svh|dvh|lvh|vh)/g;
+    function replaceVh(s) { return s.replace(unitRe, function(_, n) { return (parseFloat(n) * initialVh / 100).toFixed(1) + 'px'; }); }
     var els = document.querySelectorAll('*[style]');
     for (var i = 0; i < els.length; i++) {
       var s = els[i].getAttribute('style');
-      if (s && s.indexOf('vh') !== -1) els[i].setAttribute('style', replaceVh(s));
+      if (s && /vh/.test(s)) els[i].setAttribute('style', replaceVh(s));
     }
     var tags = document.querySelectorAll('style');
     for (var j = 0; j < tags.length; j++) {
       var c = tags[j].textContent;
-      if (c && c.indexOf('vh') !== -1) tags[j].textContent = replaceVh(c);
+      if (c && /vh/.test(c)) tags[j].textContent = replaceVh(c);
     }
   }
   freezeVhUnits();
