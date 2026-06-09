@@ -2359,7 +2359,9 @@ export default function MainScreenPage() {
   >({});
   const [sessionMemorySummary, setSessionMemorySummary] =
     useState<SessionMemorySummary>(EMPTY_SESSION_MEMORY_SUMMARY);
-  const [rightPanelTab, setRightPanelTab] = useState<"chat" | "memory">("chat");
+  const [rightPanelTab, setRightPanelTab] = useState<"before" | "chat" | "memory">(
+    isReviewMode ? "before" : "chat",
+  );
   const [memoryGraphPhase, setMemoryGraphPhase] = useState<"before" | "after">(
     "before",
   );
@@ -4834,6 +4836,7 @@ export default function MainScreenPage() {
       setSessionCompletionStep(SESSION_COMPLETION_STEPS.length);
       setSessionCompleted(true);
       setSessionCompletionReady(true);
+      setMemoryGraphPhase("after");
       completedSuccessfully = true;
     } catch (error) {
       console.warn("Unable to complete session", error);
@@ -6583,6 +6586,7 @@ export default function MainScreenPage() {
               sessionMemorySummary.referenced.length +
               sessionMemorySummary.promoted.length
             }
+            beforeMemoryCount={beforeSessionMemoryImpact.availableCount}
             showScrollToBottom={showScrollToBottom}
             onTabChange={setRightPanelTab}
             onScrollToBottom={() => {
@@ -6590,6 +6594,143 @@ export default function MainScreenPage() {
               if (element) element.scrollTop = element.scrollHeight;
             }}
           >
+            {/* Before-session memory panel */}
+            {showReviewAnnotations && rightPanelTab === "before" && (
+              <div className="flex-1 overflow-y-auto p-5">
+                {/* Original raw input — shown once at top */}
+                {(() => {
+                  const rawInput =
+                    beforeSessionMemoryImpact.items.find(
+                      ({ memory }) => memory.input,
+                    )?.memory.input ??
+                    reviewProfileItems.find((item) => item.input)?.input;
+                  return rawInput ? (
+                    <div className="mb-5 rounded-xl border border-slate-100 bg-slate-50 px-4 py-3">
+                      <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-slate-400">
+                        원래 입력한 내용
+                      </p>
+                      <p className="text-sm leading-relaxed text-slate-700">
+                        {rawInput}
+                      </p>
+                    </div>
+                  ) : null;
+                })()}
+
+                {/* Stats row */}
+                <div className="mb-5 grid grid-cols-2 gap-3">
+                  <div className="rounded-xl border border-sky-100 bg-sky-50 px-4 py-3">
+                    <p className="text-[10px] font-semibold uppercase tracking-wide text-sky-500">
+                      세션 이전 항목
+                    </p>
+                    <p className="mt-1.5 text-2xl font-bold text-sky-700">
+                      {beforeSessionMemoryImpact.availableCount}
+                    </p>
+                  </div>
+                  <div className="rounded-xl border border-blue-100 bg-blue-50 px-4 py-3">
+                    <p className="text-[10px] font-semibold uppercase tracking-wide text-blue-500">
+                      세션 중 참고됨
+                    </p>
+                    <p className="mt-1.5 text-2xl font-bold text-blue-700">
+                      {beforeSessionMemoryImpact.referencedCount}
+                    </p>
+                  </div>
+                </div>
+
+                {beforeSessionMemoryImpact.availableCount > 0 ? (
+                  <div className="space-y-3">
+                    {beforeSessionMemoryImpact.items.map(
+                      ({ memory, referenced }) => (
+                        <button
+                          key={memory.id}
+                          type="button"
+                          onClick={() => {
+                            setSelectedGraphMemoryId(memory.id);
+                            setIsMemoryDiffOpen(true);
+                            if (referenced) {
+                              setSelectedReferencedMemoryId(
+                                referenced.memoryId,
+                              );
+                            }
+                          }}
+                          className={`w-full rounded-xl border text-left transition ${
+                            referenced
+                              ? "border-blue-100 bg-blue-50 hover:border-blue-200 hover:bg-blue-100/60"
+                              : "border-slate-100 bg-white hover:border-slate-200 hover:bg-slate-50"
+                          }`}
+                        >
+                          {/* Status bar */}
+                          <div
+                            className={`flex items-center gap-1.5 rounded-t-xl border-b px-4 py-2 ${
+                              referenced
+                                ? "border-blue-100 bg-blue-100/50"
+                                : "border-slate-100 bg-slate-50"
+                            }`}
+                          >
+                            <span
+                              className={`h-1.5 w-1.5 shrink-0 rounded-full ${
+                                referenced ? "bg-blue-500" : "bg-sky-300"
+                              }`}
+                              aria-hidden="true"
+                            />
+                            <span
+                              className={`text-[10px] font-semibold ${
+                                referenced ? "text-blue-600" : "text-sky-600"
+                              }`}
+                            >
+                              {referenced ? "세션 중 참고됨" : "세션 전 정보로 유지"}
+                            </span>
+                            {memory.weight != null ? (
+                              <span className="ml-auto text-[10px] font-semibold text-slate-400">
+                                weight {formatReviewScore(memory.weight)}
+                                {referenced?.weightDelta != null &&
+                                referenced.weightDelta !== 0 ? (
+                                  <span
+                                    className={
+                                      referenced.weightDelta > 0
+                                        ? " text-blue-500"
+                                        : " text-slate-400"
+                                    }
+                                  >
+                                    {" "}
+                                    {formatReviewDelta(referenced.weightDelta)}
+                                  </span>
+                                ) : null}
+                              </span>
+                            ) : null}
+                          </div>
+
+                          {/* Card body */}
+                          <div className="px-4 py-3">
+                            <p className="text-sm leading-relaxed text-slate-800">
+                              {memorySummaryText(memory)}
+                            </p>
+                          </div>
+                        </button>
+                      ),
+                    )}
+                  </div>
+                ) : reviewProfileItems.length === 0 ? (
+                  <p className="text-xs text-slate-400">
+                    이 미션에 입력한 정보가 없습니다.
+                  </p>
+                ) : (
+                  <div className="space-y-2 rounded-xl border border-dashed border-slate-200 bg-slate-50 p-4">
+                    <p className="text-[11px] leading-relaxed text-slate-400">
+                      세션 전 입력은 있지만 아직 graph memory로 반영된 항목이
+                      없습니다.
+                    </p>
+                    {reviewProfileItems.map((item) => (
+                      <div key={item.id} className="flex gap-3">
+                        <div className="mt-1 h-2 w-2 shrink-0 rounded-full bg-sky-400" />
+                        <p className="text-xs leading-relaxed text-slate-700">
+                          {item.input}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
             {/* Memory panel */}
             {showReviewAnnotations && rightPanelTab === "memory" && (
               <div className="flex-1 space-y-5 overflow-y-auto p-5">
@@ -6650,131 +6791,6 @@ export default function MainScreenPage() {
                     전체 메모리 변화 보기
                   </button>
                 </section>
-                {/* Before session memory impact */}
-                <section>
-                  <div className="mb-2.5 flex items-center gap-2">
-                    <div className="h-2 w-2 shrink-0 rounded-full bg-sky-400" />
-                    <p className="text-xs font-semibold text-slate-600">
-                      세션 전 정보 반영
-                    </p>
-                    <span className="text-[11px] text-slate-300">
-                      {beforeSessionMemoryImpact.availableCount}
-                    </span>
-                  </div>
-                  {beforeSessionMemoryImpact.availableCount > 0 ? (
-                    <div className="space-y-2">
-                      <div className="grid grid-cols-2 gap-2">
-                        <div className="rounded-lg bg-sky-50 px-3 py-2">
-                          <p className="text-[10px] font-semibold uppercase text-sky-500">
-                            Before session
-                          </p>
-                          <p className="mt-1 text-lg font-semibold text-sky-700">
-                            {beforeSessionMemoryImpact.availableCount}
-                          </p>
-                        </div>
-                        <div className="rounded-lg bg-blue-50 px-3 py-2">
-                          <p className="text-[10px] font-semibold uppercase text-blue-500">
-                            Used in session
-                          </p>
-                          <p className="mt-1 text-lg font-semibold text-blue-700">
-                            {beforeSessionMemoryImpact.referencedCount}
-                          </p>
-                        </div>
-                      </div>
-                      <div className="space-y-2">
-                        {beforeSessionMemoryImpact.items.slice(0, 5).map(
-                          ({ memory, referenced }) => (
-                            <button
-                              key={memory.id}
-                              type="button"
-                              onClick={() => {
-                                setSelectedGraphMemoryId(memory.id);
-                                setIsMemoryDiffOpen(true);
-                                if (referenced) {
-                                  setSelectedReferencedMemoryId(
-                                    referenced.memoryId,
-                                  );
-                                }
-                              }}
-                              className={`w-full rounded-lg border px-3 py-2 text-left transition ${
-                                referenced
-                                  ? "border-blue-100 bg-blue-50 hover:border-blue-200"
-                                  : "border-slate-100 bg-slate-50 hover:border-slate-200"
-                              }`}
-                            >
-                              <div className="flex items-start gap-2">
-                                <span
-                                  className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${
-                                    referenced ? "bg-blue-400" : "bg-sky-300"
-                                  }`}
-                                  aria-hidden="true"
-                                />
-                                <div className="min-w-0 flex-1">
-                                  <p className="line-clamp-2 text-xs leading-relaxed text-slate-700">
-                                    {memorySummaryText(memory)}
-                                  </p>
-                                  <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[10px] font-semibold text-slate-400">
-                                    <span>
-                                      {referenced
-                                        ? "세션 중 참고됨"
-                                        : "세션 전 정보로 유지"}
-                                    </span>
-                                    {memory.weight != null ? (
-                                      <span>
-                                        weight {formatReviewScore(memory.weight)}
-                                      </span>
-                                    ) : null}
-                                    {referenced?.weightDelta != null &&
-                                    referenced.weightDelta !== 0 ? (
-                                      <span
-                                        className={
-                                          referenced.weightDelta > 0
-                                            ? "text-blue-500"
-                                            : "text-slate-400"
-                                        }
-                                      >
-                                        {formatReviewDelta(
-                                          referenced.weightDelta,
-                                        )}
-                                      </span>
-                                    ) : null}
-                                  </div>
-                                </div>
-                              </div>
-                            </button>
-                          ),
-                        )}
-                        {beforeSessionMemoryImpact.items.length > 5 ? (
-                          <p className="pl-5 text-[11px] text-slate-400">
-                            외 {beforeSessionMemoryImpact.items.length - 5}개 더
-                            있음
-                          </p>
-                        ) : null}
-                      </div>
-                    </div>
-                  ) : reviewProfileItems.length === 0 ? (
-                    <p className="pl-5 text-xs text-slate-400">
-                      이 미션에 입력한 정보가 없습니다.
-                    </p>
-                  ) : (
-                    <div className="space-y-1.5 rounded-lg border border-dashed border-slate-200 bg-slate-50 p-3">
-                      <p className="text-[11px] leading-relaxed text-slate-400">
-                        세션 전 입력은 있지만 아직 graph memory로 반영된 항목이
-                        없습니다.
-                      </p>
-                      {reviewProfileItems.map((item) => (
-                        <div key={item.id} className="flex gap-3">
-                          <div className="flex flex-col items-center">
-                            <div className="mt-1 h-2 w-2 shrink-0 rounded-full bg-sky-400" />
-                          </div>
-                          <p className="text-xs leading-relaxed text-slate-700">
-                            {item.input}
-                          </p>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </section>
                 {isViewingAsAdmin && (
                   <section>
                     <div className="mb-2.5 flex items-center gap-2">
@@ -6793,22 +6809,6 @@ export default function MainScreenPage() {
                     )}
                   </section>
                 )}
-                <section>
-                  <div className="mb-2.5 flex items-center gap-2">
-                    <div className="h-2 w-2 shrink-0 rounded-full bg-emerald-400" />
-                    <p className="text-xs font-semibold text-slate-600">
-                      세션에서 기억됨
-                    </p>
-                    <span className="text-[11px] text-slate-300">
-                      {sessionMemorySummary.promoted.length}
-                    </span>
-                  </div>
-                  {renderTimelineItems(
-                    sessionMemorySummary.promoted,
-                    "promoted",
-                    "이 세션에서 새로 기억된 내용이 없습니다.",
-                  )}
-                </section>
                 {sessionMemorySummary.drafts.length > 0 && (
                   <section>
                     <div className="mb-2.5 flex items-center gap-2">
@@ -6833,7 +6833,8 @@ export default function MainScreenPage() {
             <div
               ref={chatScrollRef}
               className={`flex-1 space-y-4 overflow-y-auto p-6 ${
-                showReviewAnnotations && rightPanelTab === "memory"
+                showReviewAnnotations &&
+                (rightPanelTab === "memory" || rightPanelTab === "before")
                   ? "hidden"
                   : ""
               }`}

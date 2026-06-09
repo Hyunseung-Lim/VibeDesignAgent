@@ -69,7 +69,17 @@ export async function DELETE(
     return Response.json({ error: "forbidden" }, { status: 403 });
   }
   const { uid } = await params;
+  const url = new URL(request.url);
+  const memoryId = url.searchParams.get("memoryId");
   const token = await getFirebaseAccessToken();
+
+  if (memoryId) {
+    await deleteFirestoreDocument(
+      `users/${uid}/${MEMORY_COLLECTION}/${encodeURIComponent(memoryId)}`,
+      token,
+    );
+    return Response.json({ ok: true, deleted: 1 });
+  }
 
   const ids = await listFirestoreDocumentIds(
     `users/${uid}/${MEMORY_COLLECTION}`,

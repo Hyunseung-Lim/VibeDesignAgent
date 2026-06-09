@@ -43,7 +43,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
-import { memoryClusterColor } from "@/components/memory/memory-cluster-colors";
+import { MemoryClusterList } from "@/components/memory/memory-cluster-list";
 import { MemoryClusterSidePanel } from "@/components/memory/memory-cluster-side-panel";
 import type { MemoryItem } from "@/components/memory/memory-cluster-types";
 
@@ -430,6 +430,7 @@ export default function AdminPage() {
   >(null);
   const [isLoadingMemoryClusters, setIsLoadingMemoryClusters] = useState(false);
   const [isClusteringMemory, setIsClusteringMemory] = useState(false);
+  const [memoryGraphGeneratedAt, setMemoryGraphGeneratedAt] = useState<number | null>(null);
   const [memoryClusterError, setMemoryClusterError] = useState<string | null>(
     null,
   );
@@ -789,6 +790,30 @@ export default function AdminPage() {
       toast.error("메모리 삭제에 실패했습니다.");
     } finally {
       setIsDeletingMemory(false);
+    }
+  };
+
+  const deleteAdminMemory = async (memoryId: string) => {
+    if (!memoryModal) return;
+    const token = await getAdminToken();
+    if (!token) return;
+    try {
+      const res = await fetch(
+        `/api/admin/users/${encodeURIComponent(memoryModal.userId)}/memory?memoryId=${encodeURIComponent(memoryId)}`,
+        { method: "DELETE", headers: { Authorization: `Bearer ${token}` } },
+      );
+      if (!res.ok) throw new Error("삭제 실패");
+      setMemoryModal((prev) =>
+        prev
+          ? {
+              ...prev,
+              rows: prev.rows.filter((r) => r.id !== memoryId),
+            }
+          : prev,
+      );
+      toast.success("메모리 항목을 삭제했어요.");
+    } catch {
+      toast.error("메모리 삭제에 실패했습니다.");
     }
   };
 
@@ -1224,6 +1249,7 @@ export default function AdminPage() {
         const params = new URLSearchParams({
           version: memoryVersionTab,
           signature: clusterInputSignature,
+          itemCount: String(clusterableMemoryItems.length),
         });
         const res = await fetch(
           `/api/admin/users/${encodeURIComponent(
@@ -1245,6 +1271,7 @@ export default function AdminPage() {
         setMemoryGraphClusterDiagnostics(
           parseMemoryGraphClusterDiagnostics(data.graphDiagnostics),
         );
+        setMemoryGraphGeneratedAt(typeof data.generatedAt === "number" ? data.generatedAt : null);
         setSelectedMemoryClusterId(graphClusters[0]?.id ?? null);
       } catch (error) {
         if (cancelled) return;
@@ -1421,6 +1448,7 @@ export default function AdminPage() {
       setMemoryGraphClusterDiagnostics(
         parseMemoryGraphClusterDiagnostics(data?.graphDiagnostics),
       );
+      setMemoryGraphGeneratedAt(Date.now());
       setSelectedMemoryClusterId(graphClusters[0]?.id ?? null);
       if (graphClusters.length === 0) {
         setMemoryClusterError("생성된 클러스터가 없습니다.");
@@ -2461,184 +2489,40 @@ export default function AdminPage() {
                   </div>
                 </div>
               ) : (
-                <div className="grid h-full grid-cols-[minmax(220px,320px)_minmax(0,1fr)_minmax(22rem,24rem)] overflow-hidden">
-                  <div className="h-full overflow-y-auto overscroll-contain border-r border-border bg-muted/60">
-                    <div className="border-b border-border bg-muted/95 p-4">
-                      <div className="space-y-2">
-                        <Button
-                          type="button"
-                          onClick={generateMemoryClusters}
-                          disabled={
-                            isLoadingMemoryClusters ||
-                            isClusteringMemory ||
-                            clusterableMemoryItems.length === 0
-                          }
-                          size="sm"
-                          className="w-full"
-                        >
-                          {isClusteringMemory
-                            ? "Generating..."
-                            : `Regenerate all (${clusterableMemoryItems.length})`}
-                        </Button>
-                      </div>
-                      <div className="mt-4 space-y-2 border-t border-border pt-3">
-                        <Button
-                          type="button"
-                          variant="outline"
-                          onClick={copyMemoryClustersJson}
-                          disabled={activeMemoryClusters.length === 0}
-                          size="sm"
-                          className="w-full"
-                        >
-                          Copy current JSON
-                        </Button>
-                      </div>
-                      {memoryClusterError && (
-                        <p className="mt-2 text-xs text-red-500">
-                          {memoryClusterError}
-                        </p>
-                      )}
-                      {memoryGraphClusterDiagnostics?.graph && (
-                        <div className="mt-3 rounded-xl border border-border bg-card p-3">
-                          <div className="flex items-center justify-between gap-3">
-                            <p className="text-xs font-semibold text-muted-foreground">
-                              Similarity Graph
-                            </p>
-                            <p className="text-[11px] text-muted-foreground">
-                              {memoryGraphClusterDiagnostics.actualClusterCount ??
-                                memoryGraphClusterDiagnostics.graph
-                                  .cappedCommunityCount}{" "}
-                              communities
-                            </p>
-                          </div>
-                          <div className="mt-3 grid grid-cols-2 gap-2 text-[11px] text-muted-foreground">
-                            <span>
-                              edges{" "}
-                              {memoryGraphClusterDiagnostics.graph.edgeCount}
-                            </span>
-                            <span>
-                              degree{" "}
-                              {memoryGraphClusterDiagnostics.graph.averageDegree.toFixed(
-                                2,
-                              )}
-                            </span>
-                            <span>
-                              raw{" "}
-                              {
-                                memoryGraphClusterDiagnostics.graph
-                                  .rawCommunityCount
-                              }{" "}
-                              groups
-                            </span>
-                            <span>
-                              singleton{" "}
-                              {
-                                memoryGraphClusterDiagnostics.graph
-                                  .singletonCount
-                              }
-                            </span>
-                            <span>
-                              min sim{" "}
-                              {memoryGraphClusterDiagnostics.graph.minSimilarity.toFixed(
-                                2,
-                              )}
-                            </span>
-                            <span>
-                              strong{" "}
-                              {memoryGraphClusterDiagnostics.graph.strongSimilarity.toFixed(
-                                2,
-                              )}
-                            </span>
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                    <div className="p-3">
+                <div className="flex h-full min-h-0 overflow-hidden">
+                  <MemoryClusterList
+                    clusters={activeMemoryClusters}
+                    selectedClusterId={selectedMemoryClusterId}
+                    generatedAt={memoryGraphGeneratedAt}
+                    hasStaleCache={
+                      activeMemoryClusters.flatMap((c) => c.itemIds).length > 0 &&
+                      activeMemoryClusters
+                        .flatMap((c) => c.itemIds)
+                        .every((id) => !clusterableItemById.has(id))
+                    }
+                    isRegenerating={isClusteringMemory}
+                    onSelectCluster={(id) => {
+                      setSelectedMemoryClusterId(id);
+                      setSelectedAdminGraphMemoryId(null);
+                    }}
+                    onRegenerate={generateMemoryClusters}
+                  />
+                  <div className="flex min-w-0 flex-1 overflow-hidden">
+                    <div className="min-w-0 flex-1 overflow-hidden">
                       {isLoadingMemoryClusters ? (
-                        <p className="px-2 py-3 text-xs text-muted-foreground">
-                          저장된 클러스터를 불러오는 중입니다.
-                        </p>
-                      ) : clusterableMemoryItems.length === 0 ? (
-                        <p className="px-2 py-3 text-xs text-muted-foreground">
-                          현재 필터에 semantic memory가 없습니다.
-                        </p>
+                        <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+                          클러스터를 불러오는 중입니다.
+                        </div>
                       ) : activeMemoryClusters.length === 0 ? (
-                        <p className="px-2 py-3 text-xs leading-relaxed text-muted-foreground">
-                          저장된 클러스터가 없습니다.
-                        </p>
-                      ) : (
-                        <div className="space-y-2">
-                          {activeMemoryClusters.map((cluster) => (
-                            <button
-                              key={cluster.id}
-                              type="button"
-                              onClick={() => {
-                                setSelectedMemoryClusterId(cluster.id);
-                                setSelectedAdminGraphMemoryId(null);
-                              }}
-                              className={`w-full rounded-xl border px-3 py-3 text-left transition ${
-                                selectedMemoryCluster?.id === cluster.id
-                                  ? "border-slate-400 bg-card shadow-sm ring-2 ring-slate-200"
-                                  : "border-transparent bg-card/60 hover:border-border hover:bg-card"
-                              }`}
-                            >
-                              <div className="flex items-start justify-between gap-2">
-                                <div className="flex min-w-0 flex-1 items-start gap-2">
-                                  <span
-                                    className="mt-1.5 size-2.5 shrink-0 rounded-full ring-2 ring-white"
-                                    style={{
-                                      backgroundColor: memoryClusterColor(
-                                        activeMemoryClusters.findIndex(
-                                          (item) => item.id === cluster.id,
-                                        ),
-                                      ),
-                                    }}
-                                    aria-hidden="true"
-                                  />
-                                  <p className="min-w-0 text-sm font-semibold text-foreground">
-                                    {cluster.label}
-                                  </p>
-                                </div>
-                                <Badge variant="secondary" className="rounded-full">
-                                  {cluster.count}
-                                </Badge>
-                              </div>
-                              <p className="mt-1 line-clamp-2 text-xs leading-relaxed text-muted-foreground">
-                                {cluster.summary}
-                              </p>
-                            </button>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                  <div className="flex h-full min-h-0 flex-col overflow-hidden">
-                    <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border bg-card px-5 py-3">
-                      <p className="text-xs font-semibold text-foreground">
-                        Similarity Graph
-                      </p>
-                      <span className="text-xs text-muted-foreground">
-                        {activeMemoryClusters.length} clusters ·{" "}
-                        {clusterableMemoryItems.length} semantic nodes ·{" "}
-                        {activeMemoryGraphEdges.length} edges
-                      </span>
-                    </div>
-                    <div className="min-h-0 flex-1 overflow-hidden">
-                      {isLoadingMemoryClusters ? (
-                        <div className="flex h-full min-h-80 items-center justify-center text-sm text-muted-foreground">
-                          저장된 클러스터를 불러오는 중입니다.
-                        </div>
-                      ) : !selectedMemoryCluster ? (
-                        <div className="flex h-full min-h-80 items-center justify-center text-sm text-muted-foreground">
-                          저장된 클러스터가 없으면 Regenerate를 눌러 새로 생성할
-                          수 있습니다.
+                        <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+                          재생성 버튼을 눌러 클러스터를 생성하세요.
                         </div>
                       ) : (
                         <MemoryClusterGraph
                           clusters={activeMemoryClusters}
                           items={clusterableMemoryItems}
                           edges={activeMemoryGraphEdges}
-                          selectedClusterId={selectedMemoryCluster.id}
+                          selectedClusterId={selectedMemoryClusterId}
                           selectedMemoryId={selectedAdminGraphMemoryId}
                           onSelectCluster={(clusterId) => {
                             setSelectedMemoryClusterId(clusterId);
@@ -2650,14 +2534,15 @@ export default function AdminPage() {
                         />
                       )}
                     </div>
+                    <MemoryClusterSidePanel
+                      cluster={selectedMemoryCluster}
+                      items={selectedClusterItems}
+                      memories={adminClusterMemories}
+                      selectedMemoryId={selectedAdminGraphMemoryId}
+                      onSelectMemory={setSelectedAdminGraphMemoryId}
+                      onDeleteMemory={deleteAdminMemory}
+                    />
                   </div>
-                  <MemoryClusterSidePanel
-                    cluster={selectedMemoryCluster}
-                    items={selectedClusterItems}
-                    memories={adminClusterMemories}
-                    selectedMemoryId={selectedAdminGraphMemoryId}
-                    onSelectMemory={setSelectedAdminGraphMemoryId}
-                  />
                 </div>
               )}
             </div>

@@ -1,12 +1,13 @@
 import type { ReactNode } from "react";
 
-type ChatPanelTab = "chat" | "memory";
+type ChatPanelTab = "before" | "chat" | "memory";
 
 type ChatPanelProps = {
   showReviewTabs: boolean;
   activeTab: ChatPanelTab;
   messageCount: number;
   memoryChangeCount: number;
+  beforeMemoryCount: number;
   showScrollToBottom: boolean;
   onTabChange: (tab: ChatPanelTab) => void;
   onScrollToBottom: () => void;
@@ -18,6 +19,7 @@ export function ChatPanel({
   activeTab,
   messageCount,
   memoryChangeCount,
+  beforeMemoryCount,
   showScrollToBottom,
   onTabChange,
   onScrollToBottom,
@@ -27,6 +29,18 @@ export function ChatPanel({
     <aside className="relative flex h-full w-full max-w-md flex-col overflow-hidden border-l border-slate-200 bg-white">
       {showReviewTabs && (
         <div className="flex shrink-0 border-b border-slate-200">
+          <button
+            type="button"
+            onClick={() => onTabChange("before")}
+            className={`flex flex-1 items-center justify-center gap-1.5 py-3 text-sm font-medium transition ${
+              activeTab === "before"
+                ? "border-b-2 border-sky-600 text-sky-700"
+                : "text-slate-400 hover:text-slate-600"
+            }`}
+          >
+            세션 이전
+            <span className="text-xs text-slate-300">{beforeMemoryCount}</span>
+          </button>
           <button
             type="button"
             onClick={() => onTabChange("chat")}

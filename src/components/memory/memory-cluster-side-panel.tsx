@@ -1,3 +1,4 @@
+import { TrashIcon } from "@phosphor-icons/react";
 import { Badge } from "@/components/ui/badge";
 import type {
   ClusterGraphItem,
@@ -11,6 +12,7 @@ type MemoryClusterSidePanelProps = {
   memories: MemoryItem[];
   selectedMemoryId: string | null;
   onSelectMemory: (memoryId: string) => void;
+  onDeleteMemory?: (memoryId: string) => void;
 };
 
 function formatDate(timestamp: number) {
@@ -96,6 +98,7 @@ export function MemoryClusterSidePanel({
   memories,
   selectedMemoryId,
   onSelectMemory,
+  onDeleteMemory,
 }: MemoryClusterSidePanelProps) {
   return (
     <aside className="flex w-88 shrink-0 flex-col border-l border-border bg-card xl:w-96">
@@ -158,8 +161,21 @@ export function MemoryClusterSidePanel({
                     null;
                   const weightLabel = formatWeight(item.weight);
                   return (
+                    <div key={item.id} className="group relative">
+                      {onDeleteMemory ? (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onDeleteMemory(item.id);
+                          }}
+                          className="absolute right-2 top-2 z-10 hidden rounded-full p-1 text-slate-400 transition hover:bg-red-50 hover:text-red-500 group-hover:flex"
+                          aria-label="메모리 삭제"
+                        >
+                          <TrashIcon size={12} />
+                        </button>
+                      ) : null}
                     <button
-                      key={item.id}
                       type="button"
                       onClick={() => onSelectMemory(item.id)}
                       className={`w-full rounded-lg border p-3 text-left text-xs transition ${
@@ -300,6 +316,7 @@ export function MemoryClusterSidePanel({
                         </div>
                       ) : null}
                     </button>
+                    </div>
                   );
                 })}
               </div>
