@@ -36,7 +36,8 @@ const CHAT_NOTE_ACTION_PROMPT = `Note action rules:
 - Do not put color tokens, typography, mood, visual style rules, UI style rules, or style "avoid" lists in notes. Those belong in 디자인 스타일.
 - Never include sections such as "Visual Style", "Visual Style Notes", "Colors", "Typography", "Mood", "UI Style", or "Avoid" inside [CREATE_NOTE] or [UPDATE_NOTE].
 - If the user asks for both a 시안/idea and visual direction, output the product/UX idea in [CREATE_NOTE] and output the visual direction separately with [CREATE_DESIGN_SPEC: {"content":"markdown content"}].
-- The app preserves 시안 N titles, so keep title empty or omit it unless the user explicitly asks for a title.`;
+- The app preserves 시안 N titles, so keep title empty or omit it unless the user explicitly asks for a title.
+- Output [UPDATE_NOTE] only. Do not combine it with [GENERATE_MOCKUP] or [EDIT_MOCKUP] in the same turn unless the user explicitly asks for both a note update and a mockup in the same message.`;
 
 const CHAT_MOCKUP_GENERATE_ACTION_PROMPT = `Mockup generation rules:
 - Use [GENERATE_MOCKUP: ...] when the user asks to generate/run/visualize a mockup or asks for a new design version.

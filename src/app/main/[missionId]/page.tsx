@@ -284,6 +284,7 @@ const SESSION_COMPLETION_STEPS = [
   "이번 세션의 내용을 정리하고 있어요",
   "다음 작업에 참고할 기억을 저장하고 있어요",
   "이미 저장된 내용과 겹치는 부분을 정돈하고 있어요",
+  "기억 묶음을 분석하고 있어요",
   "리뷰 화면에 필요한 기억을 불러오고 있어요",
   "세션이 저장되었어요",
 ] as const;
@@ -4178,7 +4179,6 @@ export default function MainScreenPage() {
             : [...ideas, turnIdeaOverride]
           : ideas;
         const effectiveActiveIdeaId = turnIdeaOverride?.id ?? activeIdeaId;
-        const isNew = true;
         const activeIdea =
           turnIdeaOverride ??
           ideas.find((i) => i.id === effectiveActiveIdeaId) ??
@@ -4192,13 +4192,13 @@ export default function MainScreenPage() {
             ? defaultMockupPromptForIdea(activeIdea, device)
             : "Refine the current mockup according to the latest user request while preserving the existing structure.");
         const mockupIdeaId = effectiveActiveIdeaId;
-        // Always use generate prompt — new artboard is always created
+        const isNew = Boolean(generateMatch);
         const stitchPrompt = buildMockupPrompt(
           prompt,
           activeIdea,
           activeDesignStyle(activeIdea),
           // Only inject mission brief for new mockups — edits don't need the full product context
-          generateMatch ? missionBrief : undefined,
+          isNew ? missionBrief : undefined,
         );
         appendActivityLog({
           section: "mockup",
@@ -4226,7 +4226,7 @@ export default function MainScreenPage() {
         }
 
         setIsGeneratingMockup(true);
-        setMockupOperation("generate");
+        setMockupOperation(isNew ? "generate" : "edit");
         setGeneratingMockupIdeaId(mockupIdeaId);
         setActiveIdeaTab("mockup");
         setMockupProgress({
@@ -4281,6 +4281,11 @@ export default function MainScreenPage() {
           );
           let res: Response;
           try {
+            const editScreenId = !isNew
+              ? (activeArtboardId
+                  ? artboards.find((a) => a.id === activeArtboardId)?.stitchScreenId
+                  : currentIdeaBoards.at(-1)?.stitchScreenId) ?? undefined
+              : undefined;
             res = await fetch("/api/stitch", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
@@ -4289,7 +4294,7 @@ export default function MainScreenPage() {
                 prompt: stitchPrompt,
                 device,
                 projectId: stitchProjectId || undefined,
-                screenId: undefined,
+                screenId: editScreenId,
               }),
             });
           } finally {
@@ -4800,6 +4805,15 @@ export default function MainScreenPage() {
       }
       setTimerEndedAt(completedAt);
       setSessionCompletionStep(3);
+      try {
+        await fetch("/api/memory/clusters", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        });
+      } catch {
+        // clustering failure is non-fatal
+      }
+      setSessionCompletionStep(4);
       const reviewTargetUid = userId ?? currentUser.uid;
       try {
         const summary = await fetchSessionMemorySummary(

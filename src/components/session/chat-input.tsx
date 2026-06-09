@@ -163,7 +163,7 @@ export function ChatInput({
       )}
 
       {!readOnly && (
-        <div className="flex items-start gap-3 rounded-3xl border border-slate-200 bg-white px-4 py-3">
+        <div className="flex items-start gap-3 rounded-3xl border border-slate-200 bg-white px-4 py-3 transition-colors focus-within:border-slate-400">
           <textarea
             ref={textareaRef}
             rows={1}
@@ -176,7 +176,7 @@ export function ChatInput({
                 ? "에이전트에게 메시지를 입력하세요..."
                 : "미션 정보를 불러오는 중입니다..."
             }
-            className="max-h-24 flex-1 resize-none bg-transparent text-sm text-slate-700 outline-none placeholder:text-slate-400"
+            className="max-h-24 flex-1 resize-none bg-transparent text-sm text-slate-700 outline-none focus-visible:outline-none placeholder:text-slate-400"
           />
           {generatingMockup ? (
             <button

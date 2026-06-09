@@ -67,7 +67,7 @@ function MemoryField({
 }
 
 function eventTarget(item: ClusterGraphItem) {
-  return item.output || item.input || item.episodic || item.semantic || item.id;
+  return item.input || item.episodic || item.semantic || item.id;
 }
 
 function actionSummary(item: ClusterGraphItem) {
@@ -250,15 +250,14 @@ export function MemoryClusterSidePanel({
                       </div>
                       {selected ? (
                         <div className="mt-3 space-y-3">
-                          <MemoryField label="Event summary" value={actionSummary(item)} />
+                          {item.episodic ? (
+                            <MemoryField label="Episodic" value={item.episodic} />
+                          ) : null}
                           {item.semantic ? (
-                            <MemoryField label="Semantic summary" value={item.semantic} />
+                            <MemoryField label="Semantic" value={item.semantic} />
                           ) : null}
                           {item.input ? (
                             <MemoryField label="Original input" value={item.input} />
-                          ) : null}
-                          {item.output ? (
-                            <MemoryField label="Original output" value={item.output} />
                           ) : null}
                           {weightLabel ? (
                             <div className="rounded-lg border border-border bg-background px-3 py-2">

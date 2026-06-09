@@ -1573,16 +1573,33 @@ export default function AdminPage() {
                   v0.1.2 {memoryModal.counts["0.1.2"] ?? 0}개
                 </p>
               </div>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                onClick={() => setMemoryModal(null)}
-                className="rounded-full text-muted-foreground"
-                aria-label="닫기"
-              >
-                <XIcon size={16} />
-              </Button>
+              <div className="flex items-center gap-2">
+                <Button
+                  type="button"
+                  variant="destructive"
+                  size="sm"
+                  disabled={isDeletingMemory}
+                  onClick={() =>
+                    setDestructiveAction({
+                      type: "all-memory",
+                      userId: memoryModal.userId,
+                      version: "0.1.2",
+                    })
+                  }
+                >
+                  전체 삭제
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => setMemoryModal(null)}
+                  className="rounded-full text-muted-foreground"
+                  aria-label="닫기"
+                >
+                  <XIcon size={16} />
+                </Button>
+              </div>
             </div>
             <div className="shrink-0 border-b border-border px-6 py-3">
               <div className="flex flex-wrap items-end gap-3">
