@@ -794,28 +794,79 @@ function extractPlainNoteContent(text: string, tag: "CREATE_NOTE" | "UPDATE_NOTE
   return text.slice(contentStart, i - 1).trim();
 }
 
-function parseCreateNoteBlock(text: string): CreateNoteData | null {
-  const jsonPayload = extractJsonActionPayload(text, "CREATE_NOTE");
-  if (jsonPayload) {
+// Models sometimes emit the note body under a non-standard key. Accept the
+// common aliases so a populated note doesn't get dropped as "empty".
+const NOTE_CONTENT_KEYS = [
+  "description",
+  "content",
+  "body",
+  "text",
+  "note",
+  "markdown",
+];
+
+function pickNoteContent(obj: Record<string, unknown>): string {
+  for (const key of NOTE_CONTENT_KEYS) {
+    const value = obj[key];
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return "";
+}
+
+// Best-effort recovery of a string field from a malformed JSON payload — most
+// commonly the model emits unescaped newlines inside the value, which makes
+// JSON.parse throw even though the content is intact.
+function extractStringFieldLoose(payload: string, keys: string[]): string {
+  for (const key of keys) {
+    const match = payload.match(
+      new RegExp(`"${key}"\\s*:\\s*"((?:[^"\\\\]|\\\\.)*)"`, "i"),
+    );
+    if (!match) continue;
     try {
-      return JSON.parse(jsonPayload) as CreateNoteData;
+      const decoded = JSON.parse(`"${match[1]}"`) as string;
+      if (decoded.trim()) return decoded.trim();
     } catch {
-      return { description: jsonPayload.trim() };
+      if (match[1].trim()) return match[1].trim();
     }
   }
-  const plain = extractPlainNoteContent(text, "CREATE_NOTE");
-  if (!plain) return null;
-  return { description: plain };
+  return "";
+}
+
+// Shared parser for [CREATE_NOTE:] / [UPDATE_NOTE:]. Always returns an object
+// when the tag is present (description may be "") so the caller can log and
+// guard the empty case instead of silently dropping the turn.
+function parseNoteBlock(
+  text: string,
+  tag: "CREATE_NOTE" | "UPDATE_NOTE",
+): { title?: string; description: string } | null {
+  if (!text.includes(`[${tag}:`)) return null;
+
+  const jsonPayload = extractJsonActionPayload(text, tag);
+  if (jsonPayload) {
+    try {
+      const parsed = JSON.parse(jsonPayload) as Record<string, unknown>;
+      const title =
+        typeof parsed.title === "string" ? parsed.title.trim() : undefined;
+      return { title, description: pickNoteContent(parsed) };
+    } catch {
+      const title = extractStringFieldLoose(jsonPayload, ["title"]);
+      return {
+        title: title || undefined,
+        description: extractStringFieldLoose(jsonPayload, NOTE_CONTENT_KEYS),
+      };
+    }
+  }
+
+  const plain = extractPlainNoteContent(text, tag);
+  return { description: plain && !plain.startsWith("{") ? plain : "" };
+}
+
+function parseCreateNoteBlock(text: string): CreateNoteData | null {
+  return parseNoteBlock(text, "CREATE_NOTE");
 }
 
 function parseUpdateNoteBlock(text: string): UpdateNoteData | null {
-  const payload = extractJsonActionPayload(text, "UPDATE_NOTE");
-  if (!payload) return null;
-  try {
-    return JSON.parse(payload) as UpdateNoteData;
-  } catch {
-    return { description: payload.trim() };
-  }
+  return parseNoteBlock(text, "UPDATE_NOTE");
 }
 
 function parseCreateDesignSpecBlock(
@@ -1847,20 +1898,14 @@ function activeDesignStyle(idea?: Idea | null) {
   return idea?.designStyle ?? null;
 }
 
+// Visual style is applied via the Stitch project-level design system (see
+// /api/stitch), not injected here. This prompt only carries product/UX intent.
 function buildMockupPrompt(
   basePrompt: string,
   idea?: Idea | null,
-  appliedStyle?: DesignStyle | null,
   missionBrief?: string,
 ) {
   const parts: string[] = [basePrompt];
-  if (appliedStyle?.content.trim()) {
-    parts.push(
-      "",
-      `Design style "${appliedStyle.title}" for this note (stable style reference — always follow these constraints):`,
-      appliedStyle.content.slice(0, 4000),
-    );
-  }
   if (idea?.description?.trim()) {
     parts.push(
       "",
@@ -2314,6 +2359,15 @@ export default function MainScreenPage() {
     useState<ChatResponseProvider>("openai");
   const [viewAsName, setViewAsName] = useState<string | null>(null);
   const [stitchProjectId, setStitchProjectId] = useState<string>("");
+  // Stitch project-level design system synced from the active 시안's design
+  // style. We track the applied style hash so /api/stitch only re-applies the
+  // design system when the style content actually changes.
+  const [stitchDesignSystemId, setStitchDesignSystemId] = useState<string | null>(
+    null,
+  );
+  const [appliedDesignStyleHash, setAppliedDesignStyleHash] = useState<
+    string | null
+  >(null);
   const [finalArtboardId, setFinalArtboardId] = useState<string | null>(null);
   const [isGeneratingMockup, setIsGeneratingMockup] = useState(false);
   const [mockupOperation, setMockupOperation] = useState<
@@ -3970,7 +4024,21 @@ export default function MainScreenPage() {
       let createdNote: Idea | null = null;
       let turnIdeaOverride: Idea | null = null;
       const createNoteBlock = parseCreateNoteBlock(fullText);
-      if (createNoteBlock) {
+      const createNoteDescription = createNoteBlock?.description?.trim() ?? "";
+      if (createNoteBlock && !createNoteDescription) {
+        const blockStart = fullText.indexOf("[CREATE_NOTE:");
+        console.warn(
+          "[create_note] CREATE_NOTE block parsed but description was empty; skipping empty note creation.",
+          {
+            parsed: createNoteBlock,
+            rawBlock:
+              blockStart === -1
+                ? null
+                : fullText.slice(blockStart, blockStart + 800),
+          },
+        );
+      }
+      if (createNoteBlock && createNoteDescription) {
         const activeIdea = ideas.find((idea) => idea.id === activeIdeaId);
         const shouldFillStyleShell =
           activeIdea &&
@@ -3979,7 +4047,7 @@ export default function MainScreenPage() {
         if (shouldFillStyleShell) {
           turnIdeaOverride = {
             ...activeIdea,
-            description: createNoteBlock.description?.trim() || "",
+            description: createNoteDescription,
             updatedAt: Date.now(),
           };
           appendActivityLog({
@@ -4000,7 +4068,7 @@ export default function MainScreenPage() {
           createdNote = {
             id: crypto.randomUUID(),
             title: nextDraftTitle(ideas),
-            description: createNoteBlock.description?.trim() || "",
+            description: createNoteDescription,
             createdAt: Date.now(),
           };
           turnIdeaOverride = createdNote;
@@ -4020,30 +4088,69 @@ export default function MainScreenPage() {
       }
 
       const updateNoteBlock = parseUpdateNoteBlock(fullText);
-      if (updateNoteBlock && (createdNote?.id ?? activeIdeaId)) {
+      if (updateNoteBlock) {
+        const updateNoteDescription = updateNoteBlock.description?.trim() ?? "";
         const targetNoteId = createdNote?.id ?? activeIdeaId;
-        setIdeas((prev) =>
-          prev.map((idea) =>
-            idea.id === targetNoteId
-              ? {
-                  ...idea,
-                  title: idea.title,
-                  description:
-                    updateNoteBlock.description?.trim() ?? idea.description,
-                  updatedAt: Date.now(),
-                }
-              : idea,
-          ),
-        );
-        appendActivityLog({
-          section: "note",
-          action: "update",
-          input: text,
-          output: updateNoteBlock.description?.trim() ?? "",
-          outputTitle:
-            (createdNote ?? ideas.find((idea) => idea.id === targetNoteId))
-              ?.title ?? "",
-        });
+        if (!updateNoteDescription) {
+          const blockStart = fullText.indexOf("[UPDATE_NOTE:");
+          console.warn(
+            "[update_note] UPDATE_NOTE block parsed but description was empty; leaving note unchanged.",
+            {
+              parsed: updateNoteBlock,
+              rawBlock:
+                blockStart === -1
+                  ? null
+                  : fullText.slice(blockStart, blockStart + 800),
+            },
+          );
+        } else if (!targetNoteId) {
+          // Model emitted UPDATE_NOTE but there is no active note to update
+          // (e.g. user asked for a new 시안). Materialize it as a new note
+          // instead of silently dropping the content.
+          console.warn(
+            "[update_note] UPDATE_NOTE with no active note; creating a new note from the content instead.",
+          );
+          const recoveredNote: Idea = {
+            id: crypto.randomUUID(),
+            title: updateNoteBlock.title?.trim() || nextDraftTitle(ideas),
+            description: updateNoteDescription,
+            createdAt: Date.now(),
+          };
+          turnIdeaOverride = turnIdeaOverride ?? recoveredNote;
+          appendActivityLog({
+            section: "note",
+            action: "create",
+            input: text,
+            output: updateNoteDescription,
+            outputTitle: recoveredNote.title,
+          });
+          setIdeas((prev) => [...prev, recoveredNote]);
+          setActiveIdeaId(recoveredNote.id);
+          setActiveArtboardId(null);
+          setIsIdeaExpanded(false);
+          setActiveIdeaTab("idea");
+        } else {
+          setIdeas((prev) =>
+            prev.map((idea) =>
+              idea.id === targetNoteId
+                ? {
+                    ...idea,
+                    description: updateNoteDescription,
+                    updatedAt: Date.now(),
+                  }
+                : idea,
+            ),
+          );
+          appendActivityLog({
+            section: "note",
+            action: "update",
+            input: text,
+            output: updateNoteDescription,
+            outputTitle:
+              (createdNote ?? ideas.find((idea) => idea.id === targetNoteId))
+                ?.title ?? "",
+          });
+        }
       }
 
       const designSpecBlock = parseCreateDesignSpecBlock(fullText);
@@ -4192,7 +4299,6 @@ export default function MainScreenPage() {
         const stitchPrompt = buildMockupPrompt(
           prompt,
           activeIdea,
-          activeDesignStyle(activeIdea),
           // Only inject mission brief for new mockups — edits don't need the full product context
           isNew ? missionBrief : undefined,
         );
@@ -4291,6 +4397,11 @@ export default function MainScreenPage() {
                 device,
                 projectId: stitchProjectId || undefined,
                 screenId: editScreenId,
+                designStyle: activeDesignStyle(activeIdea)
+                  ? { content: activeDesignStyle(activeIdea)?.content }
+                  : null,
+                designSystemId: stitchDesignSystemId,
+                appliedDesignStyleHash,
               }),
             });
           } finally {
@@ -4306,6 +4417,10 @@ export default function MainScreenPage() {
           if (data.error) throw new Error(data.error);
           setMockupProgress({ percent: 96, label: "아트보드 배치 중" });
           if (data.projectId) setStitchProjectId(data.projectId);
+          if (data.designSystemId !== undefined)
+            setStitchDesignSystemId(data.designSystemId);
+          if (data.appliedDesignStyleHash !== undefined)
+            setAppliedDesignStyleHash(data.appliedDesignStyleHash);
           if (isNew) {
             const primaryId = crypto.randomUUID();
             // Collect extra screens Stitch created (excluding the primary one)

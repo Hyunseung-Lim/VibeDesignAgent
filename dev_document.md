@@ -2456,3 +2456,41 @@ type ChatPlan = {
   - `PATH=/usr/local/bin:$PATH ./node_modules/.bin/tsc --noEmit` 통과.
   - `PATH=/usr/local/bin:$PATH ./node_modules/.bin/eslint src/app/api/memory/retrieve/route.ts src/app/api/memory/session-summary/route.ts src/app/api/memory/archive-status/route.ts src/app/api/memory/bootstrap/route.ts 'src/app/api/admin/users/[uid]/memory/route.ts' 'src/app/api/admin/users/[uid]/memory/retrievals/route.ts' 'src/app/api/admin/users/[uid]/sessions/route.ts' 'src/app/api/admin/users/[uid]/memory/clusters/route.ts' src/app/api/chat/route.ts src/app/api/memory/profile/route.ts src/app/api/memory/complete-session/route.ts src/app/admin/page.tsx 'src/app/main/[missionId]/page.tsx' src/components/memory/memory-cluster-side-panel.tsx` 통과.
   - `PATH=/usr/local/bin:$PATH npm run lint` 통과. 기존 warning 유지.
+
+### 15.52 Note / Design Style 역할 분리 프롬프트 정리 `[implemented 2026-06-10]`
+
+- 배경:
+  - 시안 노트가 "...분석 노트 작성"처럼 task 문장으로 퇴화하고, high-level 컨셉이 들어갈 곳이 없던 문제.
+  - 프롬프트에 "짧게"류 지침이 강해 노트가 한 줄로 압축되는 부작용.
+- 구현:
+  - `CHAT_NOTE_ACTION_PROMPT`: 노트는 task 재진술이 아니라 실제 브리프 내용(제품 아이디어 + high-level 디자인 컨셉/무드 방향 + 타깃 + 핵심 요구사항)을 쓰도록 변경. "디자이너가 노트만 보고 시작 가능"을 기준으로 길이 규칙 완화. 노트 금지 대상을 CSS-level 구체 토큰(컬러 토큰/타이포 스펙/스페이싱 값 등)으로 한정.
+  - `CHAT_DESIGN_SPEC_ACTION_PROMPT`: 디자인 스타일은 CSS/구체 UI 스타일링에 직접 매핑되는 제약(컬러, 타이포, 스페이싱/사이징, radius, 그림자, 레이아웃 밀도, 컴포넌트 스타일, avoid 리스트)만 담도록 제한. high-level 컨셉/포지셔닝/추상 무드 서술은 노트로 분리하고, 무드는 형용사 대신 구체 시각 제약으로 표현하도록 명시.
+- 역할 분리 요약: 노트(시안) = "무엇을 만들지 + 컨셉", 디자인 스타일 = "어떻게 보일지(CSS 매핑 가능한 제약)".
+- 검증:
+  - `./node_modules/.bin/tsc --noEmit` 통과.
+
+### 15.53 Stitch SDK Design System 통합 `[implemented 2026-06-10, 라이브 세션 검증 대기]`
+
+- 목적:
+  - 디자인 스타일을 매 생성마다 프롬프트 텍스트로 주입("always follow these constraints")하던 비결정적 방식을, Stitch 프로젝트 레벨 design system 토큰으로 강제 적용하도록 전환.
+  - 15.52의 "디자인 스타일 = CSS 매핑 가능한 제약" 방향과 맞물려, 추출 가능한 토큰은 design system으로, 나머지 마크다운은 `designMd`로 넘긴다.
+- 사전 검증 (라이브 Stitch API smoke test):
+  - `@google/stitch-sdk`를 0.1.0 → 0.3.5로 업데이트. 기존 사용 API(`createProject`/`project`/`screens`/`getScreen`/`callTool`) 호환 유지 확인.
+  - 실 API로 프로젝트 생성 → `createDesignSystem` → `update`(프로젝트 적용) → `listDesignSystems` 영속 확인까지 통과. 우리가 넘긴 토큰 shape를 Stitch가 수용하고 seed 컬러에서 `colorVariant`를 자동 파생함.
+  - 핵심 가정 확인: `generate_screen_from_text`는 design system을 인자로 받지 않지만, 스타일을 전혀 지정하지 않은 중립 프롬프트로 생성한 결과 HTML에 프로젝트 활성 DS(다크 배경/세리프 폰트/풀 라운드/액센트 컬러)가 반영됨. → 생성이 프로젝트 레벨 DS를 따른다는 가정이 사실로 확인됨.
+- 구현:
+  - `src/lib/prompts.ts`: `DESIGN_SYSTEM_EXTRACT_PROMPT` + `STITCH_DESIGN_FONTS`(28개 enum) / `STITCH_DESIGN_ROUNDNESS` 추가. 디자인 스타일 마크다운 → 필수 5토큰(`colorMode`/`customColor` hex/`headlineFont`/`bodyFont`/`roundness`) JSON 추출. spacing/typography 맵은 추출하지 않고 Stitch 기본값에 위임.
+  - `src/app/api/stitch/route.ts`:
+    - `extractDesignTokens()` — gpt-5.4-mini로 토큰 추출, enum/hex 검증 실패 시 안전한 기본값으로 폴백(추출 실패가 생성을 막지 않음).
+    - `applyDesignSystem()` — `designMd`에 마크다운 전체 + 토큰을 담아 create-or-update(create 직후 update로 프로젝트 적용).
+    - POST에 `designStyle`/`designSystemId`/`appliedDesignStyleHash` 입력 추가. 스타일 content 해시가 바뀌었을 때만 design system 적용(해시 게이트) → 같은 시안 연속 생성/수정 시 추가 호출 0. 응답에 `designSystemId`/`appliedDesignStyleHash` 반환.
+  - `src/app/main/[missionId]/page.tsx`:
+    - `stitchDesignSystemId`/`appliedDesignStyleHash` state 추가, stitch 요청 body에 활성 시안 design style + 캐시 값 전송, 응답으로 갱신.
+    - `buildMockupPrompt`에서 스타일 주입 블록 완전 제거(`appliedStyle` 파라미터 삭제). 비주얼은 design system이 담당하고 프롬프트는 제품/UX 의도만 전달.
+- 검증:
+  - `./node_modules/.bin/tsc --noEmit` 통과.
+  - 라이브 smoke test로 SDK design-system 경로 + 생성 반영 확인(위 사전 검증).
+  - **대기**: 앱 내 전체 흐름(실제 세션에서 CREATE_DESIGN_SPEC → 해시 게이트 → DS 적용 → 생성이 DS 반영, 시안 전환 시 갱신)은 라이브 세션에서 미검증.
+- 알려진 한계 / 후속:
+  - `stitchDesignSystemId`는 메모리 state로만 유지 → 세션 중 새로고침 시 다음 생성에서 design system이 한 번 더 생성됨(고아 DS 1개 + 정상 적용). 필요 시 route에서 `listDesignSystems` 재사용 또는 세션 스냅샷 영속화로 보완.
+  - 검증 완료 후 Current Snapshot(2장 SDK 버전, 4.4 목업 비주얼 적용 방식, 6장 `/api/stitch`, 7장 프롬프트 표)에 반영 필요.

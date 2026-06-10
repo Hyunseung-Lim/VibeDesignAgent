@@ -1,6 +1,15 @@
 import { Stitch, StitchToolClient } from "@google/stitch-sdk";
+import { createHash } from "node:crypto";
+import OpenAI from "openai";
+import {
+  DESIGN_SYSTEM_EXTRACT_PROMPT,
+  STITCH_DESIGN_FONTS,
+  STITCH_DESIGN_ROUNDNESS,
+} from "@/lib/prompts";
 
 export const maxDuration = 180;
+
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 function createStitchClient() {
   const apiKey = process.env.STITCH_API_KEY;
@@ -11,6 +20,105 @@ function createStitchClient() {
 
 type DeviceType = "MOBILE" | "DESKTOP";
 type StitchProject = ReturnType<Stitch["project"]>;
+
+type StitchFont = (typeof STITCH_DESIGN_FONTS)[number];
+type StitchRoundness = (typeof STITCH_DESIGN_ROUNDNESS)[number];
+
+type DesignThemeTokens = {
+  colorMode: "LIGHT" | "DARK";
+  customColor: string;
+  headlineFont: StitchFont;
+  bodyFont: StitchFont;
+  roundness: StitchRoundness;
+};
+
+function styleHash(content: string) {
+  return createHash("sha1").update(content).digest("hex");
+}
+
+// Convert the free-form 디자인 스타일 markdown into structured Stitch design
+// tokens. Falls back to safe defaults on any parsing/validation issue so a bad
+// extraction never blocks generation.
+async function extractDesignTokens(
+  content: string,
+): Promise<DesignThemeTokens> {
+  const fallback: DesignThemeTokens = {
+    colorMode: "LIGHT",
+    customColor: "#4F46E5",
+    headlineFont: "INTER",
+    bodyFont: "INTER",
+    roundness: "ROUND_EIGHT",
+  };
+  try {
+    const completion = await openai.chat.completions.create({
+      model: "gpt-5.4-mini",
+      response_format: { type: "json_object" },
+      messages: [
+        { role: "system", content: DESIGN_SYSTEM_EXTRACT_PROMPT },
+        { role: "user", content: content.slice(0, 8000) },
+      ],
+    });
+    const parsed = JSON.parse(
+      completion.choices[0]?.message?.content ?? "{}",
+    ) as Record<string, unknown>;
+    const asFont = (v: unknown): StitchFont | null =>
+      typeof v === "string" &&
+      (STITCH_DESIGN_FONTS as readonly string[]).includes(v)
+        ? (v as StitchFont)
+        : null;
+    const asRoundness = (v: unknown): StitchRoundness | null =>
+      typeof v === "string" &&
+      (STITCH_DESIGN_ROUNDNESS as readonly string[]).includes(v)
+        ? (v as StitchRoundness)
+        : null;
+    const hex = /^#[0-9a-fA-F]{6}$/;
+    return {
+      colorMode: parsed.colorMode === "DARK" ? "DARK" : "LIGHT",
+      customColor:
+        typeof parsed.customColor === "string" && hex.test(parsed.customColor)
+          ? parsed.customColor
+          : fallback.customColor,
+      headlineFont: asFont(parsed.headlineFont) ?? fallback.headlineFont,
+      bodyFont: asFont(parsed.bodyFont) ?? fallback.bodyFont,
+      roundness: asRoundness(parsed.roundness) ?? fallback.roundness,
+    };
+  } catch (err) {
+    console.warn("[stitch] design token extraction failed:", errorMessage(err));
+    return fallback;
+  }
+}
+
+// Ensure the project's design system reflects the active 시안's design style.
+// Hash-gated by the caller, so this only runs when the style actually changed.
+async function applyDesignSystem(
+  project: StitchProject,
+  content: string,
+  existingId: string | null,
+): Promise<string | null> {
+  const tokens = await extractDesignTokens(content);
+  const input = {
+    displayName: "Design style",
+    theme: { ...tokens, designMd: content.slice(0, 8000) },
+  };
+  try {
+    if (existingId) {
+      const ds = project.designSystem(existingId);
+      await ds.update(input);
+      return ds.id;
+    }
+    const ds = await project.createDesignSystem(input);
+    // create_design_system requires a follow-up update to apply it to the project.
+    try {
+      await ds.update(input);
+    } catch (err) {
+      console.warn("[stitch] design system apply (update) failed:", errorMessage(err));
+    }
+    return ds.id;
+  } catch (err) {
+    console.warn("[stitch] design system create/update failed:", errorMessage(err));
+    return existingId;
+  }
+}
 type StitchScreenHandle = {
   id: string;
   getHtml: () => Promise<string>;
@@ -323,7 +431,23 @@ async function choosePrimaryScreen(
 }
 
 export async function POST(request: Request) {
-  const { prompt, device, projectId, screenId } = await request.json();
+  const {
+    prompt,
+    device,
+    projectId,
+    screenId,
+    designStyle,
+    designSystemId,
+    appliedDesignStyleHash,
+  } = (await request.json()) as {
+    prompt?: string;
+    device?: string;
+    projectId?: string;
+    screenId?: string;
+    designStyle?: { content?: string } | null;
+    designSystemId?: string | null;
+    appliedDesignStyleHash?: string | null;
+  };
 
   if (!prompt) {
     return Response.json({ error: "prompt is required" }, { status: 400 });
@@ -333,7 +457,7 @@ export async function POST(request: Request) {
   try {
     const { client, sdk } = createStitchClient();
     let project;
-    let actualProjectId: string = projectId;
+    let actualProjectId: string = projectId ?? "";
 
     if (!projectId) {
       console.log("[stitch] creating project...");
@@ -342,6 +466,26 @@ export async function POST(request: Request) {
       console.log("[stitch] project created:", actualProjectId);
     } else {
       project = sdk.project(projectId);
+    }
+
+    // Sync the project-level design system with the active 시안's design style.
+    // Stitch generation honors the project's active design system, so we only
+    // touch it when the style content actually changed (hash gate) — keeping
+    // repeated generations within one style free of extra calls.
+    let resolvedDesignSystemId: string | null = designSystemId ?? null;
+    let resolvedStyleHash: string | null = appliedDesignStyleHash ?? null;
+    const styleContent = designStyle?.content?.trim() ?? "";
+    if (styleContent) {
+      const hash = styleHash(styleContent);
+      if (hash !== appliedDesignStyleHash || !designSystemId) {
+        console.log("[stitch] applying design system (style changed)...");
+        resolvedDesignSystemId = await applyDesignSystem(
+          project,
+          styleContent,
+          designSystemId ?? null,
+        );
+        resolvedStyleHash = hash;
+      }
     }
 
     const beforeScreens = await listScreens(project);
@@ -402,6 +546,8 @@ export async function POST(request: Request) {
           projectId: actualProjectId,
           screenId: screen.id,
           allScreenIds,
+          designSystemId: resolvedDesignSystemId,
+          appliedDesignStyleHash: resolvedStyleHash,
         },
         { status: 202 },
       );
@@ -416,6 +562,8 @@ export async function POST(request: Request) {
       projectId: actualProjectId,
       screenId: screen.id,
       allScreenIds,
+      designSystemId: resolvedDesignSystemId,
+      appliedDesignStyleHash: resolvedStyleHash,
     });
   } catch (err) {
     const message = errorMessage(err);

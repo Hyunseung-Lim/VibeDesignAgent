@@ -59,6 +59,7 @@ const CHAT_DESIGN_SPEC_ACTION_PROMPT = `Design spec rules:
 - The app stores exactly one 디자인 스타일 for the active 시안, so this replaces the previous style.
 - 디자인 스타일 must contain ONLY constraints that map directly to CSS or concrete UI styling: colors, typography, spacing/sizing, border radius, shadows, layout density, component styling rules, and explicit style "avoid" lists.
 - Do not put high-level concept, product positioning, target user, or abstract mood narration in 디자인 스타일. Those belong in the note (시안). Express mood only as concrete visual constraints (e.g. specific palette, contrast, type weight), not as adjectives alone.
+- The generator derives the entire palette from ONE seed color, so always declare a single explicit primary brand seed color as a hex (e.g. "Primary brand seed color: #2E3A59"). Pick the dominant brand/surface hue, not a small accent. If a color is reserved for limited use such as CTAs only, call it a secondary accent and never make it the seed.
 - Keep the content concise and immediately useful for this mission's mockup. Do not always enumerate main color, brand tone, typography, spacing, and components; include only the style constraints that materially guide the current design.
 - Prefer 2-5 focused lines for simple style direction. Use short bullets only when the mission needs multiple concrete constraints.`;
 
@@ -413,6 +414,89 @@ If same-mission reference preference context is provided, use it as mission-loca
 Descriptions must be short Korean phrases explaining what the reference is.
 Rationales must be short Korean phrases explaining the concrete design/UX value for the current mission.`;
 }
+
+// ────────────────────────────────────────────────────────────
+// Stitch — 디자인 스타일 마크다운을 design system 토큰으로 추출
+// 사용처: src/app/api/stitch/route.ts
+// ────────────────────────────────────────────────────────────
+
+// Allowed values mirror @google/stitch-sdk DesignTheme enums. Keep in sync if
+// the SDK changes. ROUND_TWO is deprecated, so the sharpest usable corner is
+// ROUND_FOUR.
+export const STITCH_DESIGN_FONTS = [
+  "BE_VIETNAM_PRO",
+  "EPILOGUE",
+  "INTER",
+  "LEXEND",
+  "MANROPE",
+  "NEWSREADER",
+  "NOTO_SERIF",
+  "PLUS_JAKARTA_SANS",
+  "PUBLIC_SANS",
+  "SPACE_GROTESK",
+  "SPLINE_SANS",
+  "WORK_SANS",
+  "DOMINE",
+  "LIBRE_CASLON_TEXT",
+  "EB_GARAMOND",
+  "LITERATA",
+  "SOURCE_SERIF_FOUR",
+  "MONTSERRAT",
+  "METROPOLIS",
+  "SOURCE_SANS_THREE",
+  "NUNITO_SANS",
+  "ARIMO",
+  "HANKEN_GROTESK",
+  "RUBIK",
+  "GEIST",
+  "DM_SANS",
+  "IBM_PLEX_SANS",
+  "SORA",
+] as const;
+
+export const STITCH_DESIGN_ROUNDNESS = [
+  "ROUND_FOUR",
+  "ROUND_EIGHT",
+  "ROUND_TWELVE",
+  "ROUND_FULL",
+] as const;
+
+export const DESIGN_SYSTEM_EXTRACT_PROMPT = `# Task
+
+Convert a free-form 디자인 스타일 (design style) markdown note into a small set of structured design-system tokens for the Stitch UI generator.
+
+Stitch derives a full color palette from a single seed color and uses fixed font and roundness options, so you only choose a few high-level tokens. Do NOT invent spacing scales or per-level typography.
+
+# Output
+
+Return valid JSON only, exactly this shape:
+{
+  "colorMode": "LIGHT" | "DARK",
+  "customColor": "#rrggbb",
+  "headlineFont": "<FONT>",
+  "bodyFont": "<FONT>",
+  "roundness": "ROUND_FOUR" | "ROUND_EIGHT" | "ROUND_TWELVE" | "ROUND_FULL"
+}
+
+# Allowed values
+
+FONT (choose the closest typeface; serif notes → a serif font like NOTO_SERIF / EB_GARAMOND / LITERATA, otherwise a sans like INTER / DM_SANS / SPACE_GROTESK):
+${STITCH_DESIGN_FONTS.join(", ")}
+
+ROUNDNESS:
+- ROUND_FOUR = sharp / minimal corners (use for "sharp", "square", "0 radius", "no rounding")
+- ROUND_EIGHT = subtle rounding (default when unspecified)
+- ROUND_TWELVE = noticeably rounded
+- ROUND_FULL = pill / fully rounded
+
+# Rules
+
+- customColor is the seed the generator expands into the whole palette, so it must be the dominant brand/surface color, not a small accent. If the note declares an explicit primary/brand/seed color, use that (its hex if given, else the closest hex). Never pick a color the note reserves for limited use such as CTA-only accents. If the note only names colors without a declared seed, choose the dominant brand/surface hue; if no color is stated, pick a tasteful hex that fits the described mood.
+- colorMode is DARK only when the note clearly describes a dark/black/night theme; otherwise LIGHT.
+- headlineFont and bodyFont may be the same. Match the described typography mood (serif vs sans, editorial vs technical, playful vs neutral).
+- roundness: map the described shape language; default to ROUND_EIGHT when unspecified.
+- Every field is required. Never return null, empty strings, or values outside the allowed lists.
+- Return JSON only, no commentary.`;
 
 // ────────────────────────────────────────────────────────────
 // Presentation — 슬라이드 이미지 생성
