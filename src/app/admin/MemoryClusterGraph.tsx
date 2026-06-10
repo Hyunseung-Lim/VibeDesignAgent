@@ -677,18 +677,34 @@ export default function MemoryClusterGraph({
       const hovered = hoveredPointId === point.id;
       const dimmed = selectedClusterId && !selectedCluster && !selected;
       const radius = point.radius * Math.sqrt(view.zoom);
+      const nodeRadius = Math.max(3.2, radius + (selected || hovered ? 2.5 : 0));
+      // Memories newly created in the selected mission/session are drawn as a
+      // diamond instead of a circle, so they read as "new" regardless of cluster
+      // color. The "promoted" token is only set in the session-diff / cumulative
+      // views; admin/agent action values never carry it.
+      const isNewNode =
+        point.item.action?.split(" / ").includes("promoted") ?? false;
       ctx.save();
       ctx.globalAlpha = dimmed ? 0.3 : 1;
       ctx.beginPath();
-      ctx.arc(
-        screenPoint.x,
-        screenPoint.y,
-        Math.max(3.2, radius + (selected || hovered ? 2.5 : 0)),
-        0,
-        Math.PI * 2,
-      );
+      if (isNewNode) {
+        const half = nodeRadius * 1.25;
+        ctx.moveTo(screenPoint.x, screenPoint.y - half);
+        ctx.lineTo(screenPoint.x + half, screenPoint.y);
+        ctx.lineTo(screenPoint.x, screenPoint.y + half);
+        ctx.lineTo(screenPoint.x - half, screenPoint.y);
+        ctx.closePath();
+      } else {
+        ctx.arc(screenPoint.x, screenPoint.y, nodeRadius, 0, Math.PI * 2);
+      }
       ctx.fillStyle = point.color;
       ctx.fill();
+      if (isNewNode) {
+        // Thin light edge so the diamond stays crisp over cluster fill areas.
+        ctx.lineWidth = 1.5;
+        ctx.strokeStyle = "rgba(255,255,255,0.9)";
+        ctx.stroke();
+      }
 
       if (selected || hovered) {
         const label = truncate(point.label, 42);
@@ -735,6 +751,11 @@ export default function MemoryClusterGraph({
   const selectedCluster =
     clusters.find((cluster) => cluster.id === selectedClusterId) ?? null;
   const embeddedCount = pointData.points.filter((point) => point.hasEmbedding).length;
+  // Only show the shape legend when diamond (new) nodes are actually present, so
+  // it never appears on views that don't distinguish new vs existing memories.
+  const hasNewNodes = items.some((item) =>
+    item.action?.split(" / ").includes("promoted"),
+  );
 
   return (
     <div
@@ -744,6 +765,16 @@ export default function MemoryClusterGraph({
           : "h-112 min-h-96 rounded-2xl border border-slate-100 shadow-sm"
       }`}
     >
+      {hasNewNodes && (
+        <div className="absolute bottom-4 left-4 z-10 flex items-center gap-3 rounded-full bg-white/90 px-3 py-1.5 text-[11px] font-medium text-slate-500 shadow-sm ring-1 ring-slate-100">
+          <span className="flex items-center gap-1.5">
+            <span className="text-slate-500">◆</span> 새로 생긴 기억
+          </span>
+          <span className="flex items-center gap-1.5">
+            <span className="text-slate-500">●</span> 기존 기억
+          </span>
+        </div>
+      )}
       <div className="absolute left-4 top-4 z-10 flex flex-wrap items-center gap-2">
         <span className="rounded-full bg-white/90 px-2.5 py-1 text-[11px] font-semibold text-slate-500 shadow-sm ring-1 ring-slate-100">
           {clusters.length} clusters

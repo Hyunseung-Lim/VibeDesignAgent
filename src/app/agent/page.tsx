@@ -20,6 +20,26 @@ import type {
 } from "@/components/memory/memory-cluster-types";
 
 const NO_SESSION_KEY = "__no_session__";
+const ONBOARDING_MISSION_ID = "onboarding";
+
+// Chronological rank for cumulative memory views. Mission ids are
+// `mission-YYYYMMDD-HHmmss`, so plain string compare = time order. Onboarding is
+// the base and always sorts first; unknown ids sort last.
+function missionOrderKey(missionId: string | null | undefined) {
+  if (missionId === ONBOARDING_MISSION_ID) return "";
+  return missionId ?? "￿";
+}
+
+// A memory belongs to the cumulative set for the selected mission when it is the
+// onboarding base, or was created in a mission at/before the selected one.
+function isWithinCumulative(
+  memoryMissionId: string | null | undefined,
+  selectedMissionId: string,
+) {
+  if (memoryMissionId === ONBOARDING_MISSION_ID) return true;
+  if (!memoryMissionId) return false;
+  return missionOrderKey(memoryMissionId) <= missionOrderKey(selectedMissionId);
+}
 
 function sessionFilterLabel(missionId: string | null, missionTitle?: string) {
   if (!missionId) return "세션 외";
@@ -165,6 +185,15 @@ export default function AgentMemoryPage() {
       });
   }, []);
 
+  // In cumulative view, "new" = memories created in the selected mission itself
+  // (not the carried-over onboarding/prior base). Tag those with a "promoted"
+  // token so the shared graph ring + side-panel badge highlight them. "전체"(null)
+  // and the no-session bucket have no single selected mission, so nothing is new.
+  const highlightMissionId =
+    selectedSessionKey && selectedSessionKey !== NO_SESSION_KEY
+      ? selectedSessionKey
+      : null;
+
   // MemoryClusterGraph expects ClusterableMemoryItem shape
   const clusterItems = memories.map((m) => ({
     id: m.id,
@@ -173,7 +202,10 @@ export default function AgentMemoryPage() {
     episodic: m.episodic ?? "",
     input: m.input ?? "",
     output: m.output ?? "",
-    action: m.action ?? "",
+    action:
+      highlightMissionId && m.source?.missionId === highlightMissionId
+        ? [m.action, "promoted"].filter(Boolean).join(" / ")
+        : (m.action ?? ""),
     sourceType: m.sourceType,
     weight: m.weight,
     embedding: m.embedding,
@@ -219,12 +251,16 @@ export default function AgentMemoryPage() {
       .sort((a, b) => b.latestTimestamp - a.latestTimestamp);
   }, [memories]);
 
-  const filteredClusterItems = selectedSessionKey
-    ? clusterItems.filter(
-        (item) =>
-          (item.row.source?.missionId ?? NO_SESSION_KEY) === selectedSessionKey,
-      )
-    : clusterItems;
+  // Cumulative: selecting a mission shows that mission plus every earlier one
+  // (onboarding base + prior missions). "전체"(null) shows all; the no-session
+  // bucket stays exact since those memories have no comparable mission.
+  const filteredClusterItems = !selectedSessionKey
+    ? clusterItems
+    : selectedSessionKey === NO_SESSION_KEY
+      ? clusterItems.filter((item) => !item.row.source?.missionId)
+      : clusterItems.filter((item) =>
+          isWithinCumulative(item.row.source?.missionId, selectedSessionKey),
+        );
 
   // Narrow the cluster list (left panel) to clusters that still have at least
   // one item within the selected session, with counts adjusted to match.
@@ -299,7 +335,7 @@ export default function AgentMemoryPage() {
           {sessionFilterOptions.length > 1 ? (
             <div className="flex shrink-0 items-center gap-2 overflow-x-auto border-b border-border bg-card px-4 py-2.5">
               <span className="shrink-0 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-                세션
+                세션<span className="ml-1 normal-case text-[10px] font-normal opacity-70">(이전까지 누적)</span>
               </span>
               <button
                 type="button"

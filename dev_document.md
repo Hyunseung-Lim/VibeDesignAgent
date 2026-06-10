@@ -2538,8 +2538,8 @@ type ChatPlan = {
   - [ ] 메모리가 내용 기준이 아니라 "세션 전 입력 / 세션별 / 최종시안"으로 갈리는 문제 — 어떤 축으로 묶을지(내용/주제 vs 시점) 결정 후 진행. 현재 그룹핑이 의도된 동작인지 버그인지부터 확인.
 
 - UX 폴리시 (작고 독립적)
-  - [ ] 메모리 뷰에서 노드 클릭 시 오른쪽 패널이 해당 메모리 위치로 스크롤.
-  - [ ] 이전-이후 변화 뷰에서 "이후 생성분"을 더 명확히 표시(최근 diff 뷰 작업의 연장).
+  - [x] 메모리 뷰에서 노드 클릭 시 오른쪽 패널이 해당 메모리 위치로 스크롤. (15.58)
+  - [x] 이전-이후 변화 뷰에서 "이후 생성분"을 더 명확히 표시(최근 diff 뷰 작업의 연장). (15.58)
 
 - 큰 기능
   - [ ] Stitch 목업 생성 시 이미지 파일 추가(업로드 UI + 이미지 전달 파이프라인). 위 버그 정리 후 집중 블록으로.
@@ -2565,9 +2565,31 @@ type ChatPlan = {
 
 - 검증: `./node_modules/.bin/tsc --noEmit` 통과. 라이브 세션에서 종료→승격, decay 누적, 리뷰 표시 재검증 권장.
 
-### 15.57 before-session 메모리 미션 오표기 수정 `[implemented 2026-06-10]`
+### 15.57 before-session 메모리 미션 오표기 수정 `[implemented 2026-06-10, 15.59에서 누적 모델로 대체]`
 
 - 배경(#3): 온보딩 미션에서 만든 before-session 메모리가 미션1 리뷰의 "세션 이전 항목"에 미션1 것처럼 표시됨.
 - 원인: 리뷰 before 패널(`beforeSessionMemoryImpact`)이 `sessionMemorySummary.graphMemories`(= 유저 전체 메모리)에서 `sourceType === "before_session"`만 거르고 **`source.missionId` 필터가 없어서** 다른 미션(온보딩 포함)의 before_session 메모리까지 섞임. before_session 문서는 `before-session-{missionId}-...`로 미션별 생성되고, "직접 입력한 정보"(reviewProfileItems)는 이미 `profile_memories/{missionId}`로 미션 스코프인데 이 패널만 누락.
 - 수정(`main/[missionId]/page.tsx`): before 패널 필터에 `item.source?.missionId === missionId` 추가, useMemo deps에 `missionId` 포함. referenced 목록은 session-summary에서 이미 `log.missionId === missionId`로 스코프되어 있어 변경 불필요.
 - 검증: `./node_modules/.bin/tsc --noEmit` 통과. 라이브에서 미션1 리뷰에 온보딩 before_session이 더 이상 안 뜨는지 재확인 권장.
+
+### 15.58 메모리 뷰 UX 폴리시 — 노드 클릭 스크롤 / 신규 강조 `[implemented 2026-06-10]`
+
+- 노드 클릭 시 사이드 패널 스크롤 (`components/memory/memory-cluster-side-panel.tsx`):
+  - 그래프 노드 클릭은 해당 클러스터 선택 + memory 선택을 동시에 함(`MemoryClusterGraph` onPointerUp). 사이드 패널이 그 클러스터의 item 목록을 보여주지만, 선택된 항목이 스크롤 밖이면 직접 찾아야 했음.
+  - `selectedMemoryId` 변경 시 선택 항목을 `scrollIntoView({block:"nearest"})`로 자동 스크롤. 선택 항목에 ref + `scroll-mt-2`.
+- "이후 생성분"(이번 세션 신규 생성) 강조:
+  - 그래프(`admin/MemoryClusterGraph.tsx`): 노드 `action`에 "promoted" 토큰이 있으면 신규 강조. (초기 emerald 링 → 이후 15.59에서 **다이아몬드(◆) 모양**으로 변경) 세션 diff/누적 뷰에서만 action에 promoted가 들어가므로 admin/agent 일반 액션엔 영향 없음.
+  - 사이드 패널: promoted 항목에 "이번 세션 신규" 초록 배지 + emerald 좌측 accent bar.
+- 검증: `./node_modules/.bin/tsc --noEmit` 통과. 공유 컴포넌트(admin/agent)는 action에 promoted 토큰이 없어 강조 미적용(안전).
+
+### 15.59 누적(cumulative) 메모리 뷰 `[implemented 2026-06-10]`
+
+- 요청: 메모리를 미션 단위로 누적해서 보기. 온보딩=온보딩만, 미션1=온보딩+미션1, 미션2=온보딩+미션1+미션2 … (15.57의 "현재 미션만" 스코프를 대체).
+- 누적 기준: 시간순 + 온보딩 베이스. mission id가 `mission-YYYYMMDD-HHmmss`라 문자열 비교 = 시간순. 온보딩은 항상 첫 베이스. 공용 헬퍼 `missionOrderKey`/`isWithinCumulative`(agent·main 각 파일에 정의): `memoryMissionId === onboarding || missionOrderKey(memoryMissionId) <= missionOrderKey(selectedMissionId)`.
+- /agent (`agent/page.tsx`): 세션 선택 필터를 단일 세션 → "선택 미션까지 누적"으로 변경(`filteredClusterItems`). "전체"는 전부, no-session 버킷은 그대로. 세션 헤더에 "(이전까지 누적)" 힌트.
+- /main 리뷰 (`main/[missionId]/page.tsx`): `cumulativeGraphMemories` memo 추가(graphMemories를 현재 미션 기준 누적 필터). before-session 패널/sessionArchived/diff 그래프(visibleMemoryItems)/사이드 패널/메모리 탭 카운트를 모두 누적 기준으로 교체. 후속 미션 메모리는 해당 미션 리뷰에서 제외됨.
+- 신규 표시 회귀 수정: 누적으로 "before" 집합(온보딩+이전 미션)이 거의 항상 채워지면서, diff 뷰가 "before" phase에 머물러 그 세션 신규(promoted)가 가려지던 문제. diff 오픈 시 신규가 있으면 "after" phase로 기본 전환하도록 변경(기존 "before가 빌 때만" 조건 제거). after = 누적 전체 + 신규(다이아몬드 ◆로 강조), before 토글은 이전 상태 비교용으로 유지.
+- /agent 신규 강조: /agent엔 "promoted" 개념이 없어, **선택한 미션에서 생성된** 메모리(누적 베이스가 아닌 것)에 action "promoted" 토큰을 붙여 그래프/패널 강조를 켬(`agent/page.tsx` clusterItems). "전체"/no-session 선택 시엔 강조 없음.
+- 신규 강조 표현: emerald 링 → **다이아몬드(◆)** 모양으로 변경(`admin/MemoryClusterGraph.tsx`). 색과 무관하게 모양으로 구분. 사이드 패널 배지도 "◆ 이번 세션 신규", raw action 칩에선 "promoted" 토큰 숨김(전용 배지로 표현).
+- 범례(legend): 그래프 좌하단에 "◆ 새로 생긴 기억 / ● 기존 기억" 작은 칩. **신규(◆) 노드가 있을 때만** 자동 표시(없으면 미표시 → admin 등 비대상 화면 혼란 방지). 공유 컴포넌트라 /agent·리뷰 양쪽 자동 적용.
+- 검증: `./node_modules/.bin/tsc --noEmit` 통과. 라이브에서 온보딩→미션1→미션2 순으로 누적 표시/제외 + 신규(다이아몬드) 노출 재확인 권장. source.missionId 없는 레거시 메모리는 누적에서 제외(안전).

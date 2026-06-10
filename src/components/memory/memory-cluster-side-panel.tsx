@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import { TrashIcon } from "@phosphor-icons/react";
 import { Badge } from "@/components/ui/badge";
 import type {
@@ -100,6 +101,15 @@ export function MemoryClusterSidePanel({
   onSelectMemory,
   onDeleteMemory,
 }: MemoryClusterSidePanelProps) {
+  // Scroll the detail list to the item selected from the graph/node click.
+  const selectedItemRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!selectedMemoryId) return;
+    selectedItemRef.current?.scrollIntoView({
+      block: "nearest",
+      behavior: "smooth",
+    });
+  }, [selectedMemoryId]);
   return (
     <aside className="flex w-88 shrink-0 flex-col border-l border-border bg-card xl:w-96">
       <div className="border-b border-border px-5 py-4">
@@ -160,8 +170,14 @@ export function MemoryClusterSidePanel({
                     memories.find((candidate) => candidate.id === item.id) ??
                     null;
                   const weightLabel = formatWeight(item.weight);
+                  const isNewThisSession =
+                    item.action?.split(" / ").includes("promoted") ?? false;
                   return (
-                    <div key={item.id} className="group relative">
+                    <div
+                      key={item.id}
+                      ref={selected ? selectedItemRef : null}
+                      className="group relative scroll-mt-2"
+                    >
                       {onDeleteMemory ? (
                         <button
                           type="button"
@@ -187,7 +203,11 @@ export function MemoryClusterSidePanel({
                       <div className="flex gap-2">
                         <span
                           className={`mt-0.5 w-1 shrink-0 rounded-full ${
-                            selected ? "bg-slate-700" : "bg-transparent"
+                            selected
+                              ? "bg-slate-700"
+                              : isNewThisSession
+                                ? "bg-emerald-400"
+                                : "bg-transparent"
                           }`}
                           aria-hidden="true"
                         />
@@ -195,6 +215,14 @@ export function MemoryClusterSidePanel({
                           <div className="flex items-start gap-2">
                             <div className="min-w-0 flex-1">
                               <div className="mb-1 flex flex-wrap items-center gap-1.5">
+                                {isNewThisSession ? (
+                                  <Badge
+                                    variant="secondary"
+                                    className="rounded-full border-emerald-300 bg-emerald-100 text-[10px] font-semibold text-emerald-700"
+                                  >
+                                    ◆ 이번 세션 신규
+                                  </Badge>
+                                ) : null}
                                 {item.semantic ? (
                                   <Badge
                                     variant="secondary"
@@ -240,14 +268,22 @@ export function MemoryClusterSidePanel({
                         >
                           {sourceLabel(item.sourceType)}
                         </Badge>
-                        {item.action ? (
-                          <Badge
-                            variant="warning"
-                            className="rounded-full border-amber-200 bg-amber-50"
-                          >
-                            {item.action}
-                          </Badge>
-                        ) : null}
+                        {(() => {
+                          // "promoted" is surfaced by the dedicated "이번 세션 신규"
+                          // badge above; drop it from the raw action chip.
+                          const displayAction = item.action
+                            ?.split(" / ")
+                            .filter((token) => token && token !== "promoted")
+                            .join(" / ");
+                          return displayAction ? (
+                            <Badge
+                              variant="warning"
+                              className="rounded-full border-amber-200 bg-amber-50"
+                            >
+                              {displayAction}
+                            </Badge>
+                          ) : null;
+                        })()}
                         {!item.embedding?.length ? (
                           <Badge variant="secondary" className="rounded-full">
                             Fallback position

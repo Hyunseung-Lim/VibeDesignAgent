@@ -73,6 +73,26 @@ import { MemoryScoreBar } from "@/components/memory/memory-score-bar";
 import { MemoryClusterList } from "@/components/memory/memory-cluster-list";
 import { MemoryClusterSidePanel } from "@/components/memory/memory-cluster-side-panel";
 const ONBOARDING_MISSION_ID = "onboarding";
+
+// Chronological rank for cumulative memory views. Mission ids are
+// `mission-YYYYMMDD-HHmmss`, so plain string compare = time order. Onboarding is
+// the base and always sorts first; unknown ids sort last.
+function missionOrderKey(missionId: string | null | undefined) {
+  if (missionId === ONBOARDING_MISSION_ID) return "";
+  return missionId ?? "￿";
+}
+
+// A memory belongs to the cumulative set for the selected mission when it is the
+// onboarding base, or was created in a mission at/before the selected one.
+function isWithinCumulative(
+  memoryMissionId: string | null | undefined,
+  selectedMissionId: string,
+) {
+  if (memoryMissionId === ONBOARDING_MISSION_ID) return true;
+  if (!memoryMissionId) return false;
+  return missionOrderKey(memoryMissionId) <= missionOrderKey(selectedMissionId);
+}
+
 const MemoryClusterGraph = dynamic(() => import("@/app/admin/MemoryClusterGraph"), {
   ssr: false,
   loading: () => (
@@ -2538,6 +2558,16 @@ export default function MainScreenPage() {
       })),
     ].sort(compareTimelineItems);
   }, [activityLog, messages, sessionMemorySummary, showReviewAnnotations]);
+  // Cumulative memory set for this mission: onboarding base + every mission up to
+  // and including the current one. Later missions' memories are excluded so a
+  // mission's review reflects what the agent knew through that mission.
+  const cumulativeGraphMemories = useMemo(
+    () =>
+      sessionMemorySummary.graphMemories.filter((memory) =>
+        isWithinCumulative(memory.source?.missionId, missionId),
+      ),
+    [sessionMemorySummary.graphMemories, missionId],
+  );
   const sessionArchivedMemories = useMemo(() => {
     const referencedIds = new Set(
       sessionMemorySummary.referenced.map((item) => item.memoryId),
@@ -2545,7 +2575,7 @@ export default function MainScreenPage() {
     const promotedIds = new Set(
       sessionMemorySummary.promoted.map((item) => item.id),
     );
-    return sessionMemorySummary.graphMemories.filter((item) => {
+    return cumulativeGraphMemories.filter((item) => {
       if (!item.archivedAt) return false;
       if (referencedIds.has(item.id) || promotedIds.has(item.id)) return true;
       const duplicateOf = item.duplicateOf ?? item.duplicate?.memoryId ?? null;
@@ -2554,7 +2584,7 @@ export default function MainScreenPage() {
           (referencedIds.has(duplicateOf) || promotedIds.has(duplicateOf)),
       );
     });
-  }, [sessionMemorySummary]);
+  }, [sessionMemorySummary, cumulativeGraphMemories]);
   const beforeSessionMemoryImpact = useMemo(() => {
     const referencedByMemoryId = new Map(
       sessionMemorySummary.referenced.map((item) => [item.memoryId, item] as const),
@@ -2562,16 +2592,11 @@ export default function MainScreenPage() {
     const promotedById = new Map(
       sessionMemorySummary.promoted.map((item) => [item.id, item] as const),
     );
-    const beforeSessionMemories = sessionMemorySummary.graphMemories
-      // Scope to THIS mission's before-session memories. before_session docs are
-      // created per-mission (before-session-{missionId}-...), so without this
-      // filter another mission's items (e.g. the onboarding session) leak in and
-      // get mislabeled as this mission's before-session memory.
-      .filter(
-        (item) =>
-          item.sourceType === "before_session" &&
-          item.source?.missionId === missionId,
-      )
+    const beforeSessionMemories = cumulativeGraphMemories
+      // Cumulative before-session context: onboarding base + prior missions +
+      // this mission's own before_session memories. cumulativeGraphMemories
+      // already excludes later missions, so origin stays correct.
+      .filter((item) => item.sourceType === "before_session")
       .map((memory) => ({
         memory,
         referenced: referencedByMemoryId.get(memory.id) ?? null,
@@ -2590,7 +2615,7 @@ export default function MainScreenPage() {
         .length,
       availableCount: beforeSessionMemories.length,
     };
-  }, [sessionMemorySummary, missionId]);
+  }, [sessionMemorySummary, cumulativeGraphMemories]);
   const activeOption =
     missionOptions.find((option) => option.id === selectedOptionId) ??
     (missionOptions.length === 1 ? missionOptions[0] : null);
@@ -3218,16 +3243,15 @@ export default function MainScreenPage() {
     };
   }, [showReviewAnnotations, targetSessionUserId, missionId]);
 
-  // When the memory diff overlay opens, if the "before" phase would be empty
-  // (all memories are newly promoted with no prior history), auto-switch to "after".
+  // When the memory diff overlay opens, default to "after" if this session created
+  // any new memories, so they are visible (highlighted) right away. With the
+  // cumulative model the "before" set is rarely empty (onboarding + prior
+  // missions), so gating on an empty before-set would hide the new memories.
+  // Users can still toggle to "before" to see the prior-only state.
   useEffect(() => {
     if (!isMemoryDiffOpen) return;
     if (memoryGraphPhase !== "before") return;
-    const promotedIdSet = new Set(sessionMemorySummary.promoted.map((item) => item.id));
-    const beforeCount = sessionMemorySummary.graphMemories.filter(
-      (m) => !promotedIdSet.has(m.id),
-    ).length;
-    if (beforeCount === 0 && sessionMemorySummary.promoted.length > 0) {
+    if (sessionMemorySummary.promoted.length > 0) {
       setMemoryGraphPhase("after");
     }
   }, [isMemoryDiffOpen]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -5565,7 +5589,7 @@ export default function MainScreenPage() {
     const sessionArchivedIds = new Set(
       sessionArchivedMemories.map((item) => item.id),
     );
-    const visibleMemoryItems = sessionMemorySummary.graphMemories.filter(
+    const visibleMemoryItems = cumulativeGraphMemories.filter(
       (memory) => {
         const referenced = referencedByMemoryId.get(memory.id);
         const isPromoted = promotedIds.has(memory.id);
@@ -5689,7 +5713,7 @@ export default function MainScreenPage() {
             selectedCluster.itemIds.includes(item.id),
           )
         : [];
-      const sidePanelMemories = sessionMemorySummary.graphMemories.map(
+      const sidePanelMemories = cumulativeGraphMemories.map(
         (memory) => ({
           id: memory.id,
           episodic: memory.episodic ?? null,
@@ -6981,7 +7005,7 @@ export default function MainScreenPage() {
                       </p>
                     </div>
                     <div className="flex shrink-0 gap-1.5 text-[10px] font-semibold text-slate-400">
-                      <span>전체 {sessionMemorySummary.graphMemories.length}</span>
+                      <span>전체 {cumulativeGraphMemories.length}</span>
                       <span>참고 {sessionMemorySummary.referenced.length}</span>
                       <span>기억 {sessionMemorySummary.promoted.length}</span>
                     </div>
@@ -6992,7 +7016,7 @@ export default function MainScreenPage() {
                         전체
                       </p>
                       <p className="mt-1 text-lg font-semibold text-slate-900">
-                        {sessionMemorySummary.graphMemories.length}
+                        {cumulativeGraphMemories.length}
                       </p>
                     </div>
                     <div className="rounded-lg bg-blue-50 px-3 py-2">
