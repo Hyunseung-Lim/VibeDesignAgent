@@ -31,10 +31,11 @@ const CHAT_ACTION_ROUTER_PROMPT = `Action routing:
 const CHAT_NOTE_ACTION_PROMPT = `Note action rules:
 - Create a note only when the user explicitly asks for a new 시안, draft, or idea.
 - Update a note when the user asks to revise, improve, expand, shorten, rewrite, or directly edit the selected note.
-- Notes are compact markdown briefs about WHAT to build. Keep only the product idea, target user, key screen/section direction, and must-have requirements that matter for the current mission.
-- Choose the length by mission complexity: simple drafts can be 2-4 focused sentences; complex flows may use short bullets, but avoid long background, decorative rationale, or exhaustive lists.
-- Do not put color tokens, typography, mood, visual style rules, UI style rules, or style "avoid" lists in notes. Those belong in 디자인 스타일.
-- Never include sections such as "Visual Style", "Visual Style Notes", "Colors", "Typography", "Mood", "UI Style", or "Avoid" inside [CREATE_NOTE] or [UPDATE_NOTE].
+- Notes are markdown briefs about WHAT to build: the product idea, high-level design concept and direction, target user, key screen/section direction, and must-have requirements for the current mission.
+- Write the actual brief content. Never output a meta description of the task itself (e.g. "X 기준으로 분석 노트 작성" is a task statement, not a note — write the analysis/brief content instead).
+- Keep notes focused but self-contained: a designer should be able to start working from the note alone. Simple drafts can be a few sentences; complex flows may use short bullets. Avoid long background or decorative rationale, but never compress the note into a single task-like sentence.
+- High-level concept, mood direction, and product positioning BELONG in notes. Only concrete CSS-level style constraints belong in 디자인 스타일: color tokens/palettes, typography specs, spacing/sizing values, border radius, shadows, component styling rules, and style "avoid" lists.
+- Never include sections such as "Colors", "Typography", "UI Style", or "Avoid" inside [CREATE_NOTE] or [UPDATE_NOTE].
 - If the user asks for both a 시안/idea and visual direction, output the product/UX idea in [CREATE_NOTE] and output the visual direction separately with [CREATE_DESIGN_SPEC: {"content":"markdown content"}].
 - The app preserves 시안 N titles, so keep title empty or omit it unless the user explicitly asks for a title.
 - Output [UPDATE_NOTE] only. Do not combine it with [GENERATE_MOCKUP] or [EDIT_MOCKUP] in the same turn unless the user explicitly asks for both a note update and a mockup in the same message.`;
@@ -56,6 +57,8 @@ const CHAT_MOCKUP_EDIT_ACTION_PROMPT = `Mockup edit rules:
 const CHAT_DESIGN_SPEC_ACTION_PROMPT = `Design spec rules:
 - Use [CREATE_DESIGN_SPEC: {"content":"markdown content"}] when the user asks to define or revise 디자인 스타일, design system, style rules, colors, typography, spacing, components, or brand tone.
 - The app stores exactly one 디자인 스타일 for the active 시안, so this replaces the previous style.
+- 디자인 스타일 must contain ONLY constraints that map directly to CSS or concrete UI styling: colors, typography, spacing/sizing, border radius, shadows, layout density, component styling rules, and explicit style "avoid" lists.
+- Do not put high-level concept, product positioning, target user, or abstract mood narration in 디자인 스타일. Those belong in the note (시안). Express mood only as concrete visual constraints (e.g. specific palette, contrast, type weight), not as adjectives alone.
 - Keep the content concise and immediately useful for this mission's mockup. Do not always enumerate main color, brand tone, typography, spacing, and components; include only the style constraints that materially guide the current design.
 - Prefer 2-5 focused lines for simple style direction. Use short bullets only when the mission needs multiple concrete constraints.`;
 
