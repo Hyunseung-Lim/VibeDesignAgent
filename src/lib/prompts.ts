@@ -38,12 +38,13 @@ const CHAT_NOTE_ACTION_PROMPT = `Note action rules:
 - Never include sections such as "Colors", "Typography", "UI Style", or "Avoid" inside [CREATE_NOTE] or [UPDATE_NOTE].
 - If the user asks for both a 시안/idea and visual direction, output the product/UX idea in [CREATE_NOTE] and output the visual direction separately with [CREATE_DESIGN_SPEC: {"content":"markdown content"}].
 - The app preserves 시안 N titles, so keep title empty or omit it unless the user explicitly asks for a title.
-- Output [UPDATE_NOTE] only. Do not combine it with [GENERATE_MOCKUP] or [EDIT_MOCKUP] in the same turn unless the user explicitly asks for both a note update and a mockup in the same message.`;
+- Output only the note action ([CREATE_NOTE] or [UPDATE_NOTE]) this turn. Do NOT also emit [GENERATE_MOCKUP] or [EDIT_MOCKUP] — including their Korean aliases such as [목업 생성 요청], [생성 요청], or [목업 수정 요청] — unless the user explicitly asked for both a note and a mockup in the same message.
+- After the note you may suggest a mockup as a possible next step, but write that suggestion as plain prose only (e.g. "원하시면 이 시안으로 목업을 만들어 드릴게요"). Never wrap such a suggestion in brackets or any action tag: any bracketed action phrase is executed immediately as a command. Wait for the user to confirm before generating a mockup.`;
 
 const CHAT_MOCKUP_GENERATE_ACTION_PROMPT = `Mockup generation rules:
 - Use [GENERATE_MOCKUP: ...] when the user asks to generate/run/visualize a mockup or asks for a new design version.
-- If there is no active note, no 디자인 스타일, and no concrete product/style description, ask a clarifying question before generating.
-- If no 디자인 스타일 is provided and the user has not specified visual style, ask about color palette, typography, and mood before generating unless they explicitly say to proceed.
+- A 디자인 스타일 is REQUIRED before any mockup. If the active 시안 has no 디자인 스타일 yet, do NOT emit [GENERATE_MOCKUP] — the app will block it. Instead define the visual direction first with [CREATE_DESIGN_SPEC: ...] when the user has given or implied a visual style, or ask the user about color palette, typography, and mood, then generate on a later turn once a 디자인 스타일 exists.
+- If there is also no active note and no concrete product description, ask a clarifying question before doing anything else.
 - The prompt inside [GENERATE_MOCKUP: ...] must be English, 900-1800 characters, and cover target device, layout, sections, components, visible copy, states, and relevant references.
 - Follow provided 디자인 스타일 exactly; do not invent style tokens when a style spec exists.`;
 

@@ -1481,6 +1481,8 @@ const BLOCK_RULES = [
     partial: /\[GENERATE_MOCKUP:[\s\S]*$/,
     doneLabel: "새 목업 생성 요청",
     pendingLabel: "목업 설명 작성 중...",
+    failedLabel: "목업 생성 불가",
+    failedMarker: "⚠️ 디자인 스타일이 없어 목업을",
   },
   {
     complete: /\[EDIT_MOCKUP(?::[^\]]*)?\]/,
@@ -4320,6 +4322,22 @@ export default function MainScreenPage() {
                     content:
                       m.content +
                       "\n\n⚠️ 노트를 먼저 저장해야 목업을 생성할 수 있습니다. 노트를 정리한 후 다시 시도해 주세요.",
+                  }
+                : m,
+            ),
+          );
+          return;
+        }
+
+        if (isNew && !activeIdea?.designStyle?.content?.trim()) {
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === assistantId
+                ? {
+                    ...m,
+                    content:
+                      m.content +
+                      "\n\n⚠️ 디자인 스타일이 없어 목업을 생성할 수 없습니다. 디자인 스타일을 먼저 만든 후 다시 시도해 주세요.",
                   }
                 : m,
             ),
