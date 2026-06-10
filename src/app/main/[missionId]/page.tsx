@@ -2563,7 +2563,15 @@ export default function MainScreenPage() {
       sessionMemorySummary.promoted.map((item) => [item.id, item] as const),
     );
     const beforeSessionMemories = sessionMemorySummary.graphMemories
-      .filter((item) => item.sourceType === "before_session")
+      // Scope to THIS mission's before-session memories. before_session docs are
+      // created per-mission (before-session-{missionId}-...), so without this
+      // filter another mission's items (e.g. the onboarding session) leak in and
+      // get mislabeled as this mission's before-session memory.
+      .filter(
+        (item) =>
+          item.sourceType === "before_session" &&
+          item.source?.missionId === missionId,
+      )
       .map((memory) => ({
         memory,
         referenced: referencedByMemoryId.get(memory.id) ?? null,
@@ -2582,7 +2590,7 @@ export default function MainScreenPage() {
         .length,
       availableCount: beforeSessionMemories.length,
     };
-  }, [sessionMemorySummary]);
+  }, [sessionMemorySummary, missionId]);
   const activeOption =
     missionOptions.find((option) => option.id === selectedOptionId) ??
     (missionOptions.length === 1 ? missionOptions[0] : null);

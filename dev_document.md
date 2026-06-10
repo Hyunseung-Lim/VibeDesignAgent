@@ -2532,7 +2532,7 @@ type ChatPlan = {
 - 먼저 — 메모리 정합성 (연구 데이터 신뢰도 직결)
   - [x] **(1순위)** 세션에선 보이는데 메모리 view에서 3개 메모리가 안 보임 → 원인: complete-session이 episodic 빈 draft를 승격 안 하면서 promoted로 마킹(유실). 15.56에서 수정. (가설이던 "버전 싱크"는 아니었음)
   - [x] **(2순위)** weight가 증가만 되고 감소는 안 되는 이슈 → 실측 확인(증가 +835 vs 감소 −61, 0.5 미만 0개). 사용 기반 idle decay로 교체. 15.56에서 수정.
-  - [ ] **(3순위)** 온보딩 미션에서 작성한 before-session 메모리가 미션1 before-session으로 표시되는 오표기 — 세션 귀속(attribution) 버그. 단독 처리 필요.
+  - [x] **(3순위)** 온보딩 미션에서 작성한 before-session 메모리가 미션1 before-session으로 표시되는 오표기 → 리뷰 before 패널이 미션 필터 없이 모든 before_session을 가져오던 문제. 15.57에서 수정.
 
 - 설계 결정 필요 (코딩 전 합의)
   - [ ] 메모리가 내용 기준이 아니라 "세션 전 입력 / 세션별 / 최종시안"으로 갈리는 문제 — 어떤 축으로 묶을지(내용/주제 vs 시점) 결정 후 진행. 현재 그룹핑이 의도된 동작인지 버그인지부터 확인.
@@ -2564,3 +2564,10 @@ type ChatPlan = {
   - 상세 per-memory 감소 수치는 admin/로그/분석 스크립트에만 유지, 참가자 화면은 깔끔하게.
 
 - 검증: `./node_modules/.bin/tsc --noEmit` 통과. 라이브 세션에서 종료→승격, decay 누적, 리뷰 표시 재검증 권장.
+
+### 15.57 before-session 메모리 미션 오표기 수정 `[implemented 2026-06-10]`
+
+- 배경(#3): 온보딩 미션에서 만든 before-session 메모리가 미션1 리뷰의 "세션 이전 항목"에 미션1 것처럼 표시됨.
+- 원인: 리뷰 before 패널(`beforeSessionMemoryImpact`)이 `sessionMemorySummary.graphMemories`(= 유저 전체 메모리)에서 `sourceType === "before_session"`만 거르고 **`source.missionId` 필터가 없어서** 다른 미션(온보딩 포함)의 before_session 메모리까지 섞임. before_session 문서는 `before-session-{missionId}-...`로 미션별 생성되고, "직접 입력한 정보"(reviewProfileItems)는 이미 `profile_memories/{missionId}`로 미션 스코프인데 이 패널만 누락.
+- 수정(`main/[missionId]/page.tsx`): before 패널 필터에 `item.source?.missionId === missionId` 추가, useMemo deps에 `missionId` 포함. referenced 목록은 session-summary에서 이미 `log.missionId === missionId`로 스코프되어 있어 변경 불필요.
+- 검증: `./node_modules/.bin/tsc --noEmit` 통과. 라이브에서 미션1 리뷰에 온보딩 before_session이 더 이상 안 뜨는지 재확인 권장.
