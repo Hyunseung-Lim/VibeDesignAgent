@@ -537,7 +537,8 @@ export default function MemoryClusterGraph({
         cluster,
         clusterId,
         color,
-        label: item.semantic || item.episodic || item.input || item.id,
+        label:
+          item.semantic || item.episode || item.episodic || item.input || item.id,
         rawX: projected.x,
         rawY: projected.y,
         x: 0,
@@ -876,7 +877,13 @@ export default function MemoryClusterGraph({
           <div className="flex items-start justify-between gap-3">
             <div>
               <p className="text-[11px] font-semibold uppercase text-slate-400">
-                Semantic memory
+                {selectedPoint.item.semantic
+                  ? "Semantic memory"
+                  : selectedPoint.item.episode || selectedPoint.item.episodic
+                    ? "Episodic memory"
+                    : selectedPoint.item.input
+                      ? "User input"
+                      : "Memory node"}
               </p>
               <h4 className="mt-1 text-sm font-semibold leading-snug text-slate-900">
                 {selectedPoint.label}

@@ -1,8 +1,12 @@
-'use client';
+"use client";
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { getAdditionalUserInfo, getIdToken, signInWithPopup } from "firebase/auth";
+import {
+  getAdditionalUserInfo,
+  getIdToken,
+  signInWithPopup,
+} from "firebase/auth";
 import { firebaseAuth, googleProvider } from "@/lib/firebase";
 import { GoogleLogoIcon } from "@phosphor-icons/react";
 import { Button } from "@/components/ui/button";
@@ -45,7 +49,9 @@ export default function Home() {
       router.push("/lobby");
     } catch (error) {
       console.error("Failed to sign in with Google", error);
-      setErrorMessage("Google 로그인에 실패했습니다. 잠시 후 다시 시도해주세요.");
+      setErrorMessage(
+        "Google 로그인에 실패했습니다. 잠시 후 다시 시도해주세요.",
+      );
     } finally {
       setIsLoading(false);
     }
@@ -62,7 +68,7 @@ export default function Home() {
             Google 계정으로 로그인
           </h1>
           <p className="mt-2 text-sm text-muted-foreground">
-            로그인 후 주차별 과제와 진행 상태를 로비에서 확인할 수 있습니다.
+            로그인 후 일별 과제와 진행 상태를 로비에서 확인할 수 있습니다.
           </p>
         </div>
         <Button
@@ -80,10 +86,7 @@ export default function Home() {
           {isLoading ? "로그인 중..." : "Google 계정으로 시작하기"}
         </Button>
         {errorMessage && (
-          <p
-            role="alert"
-            className="text-center text-sm text-destructive"
-          >
+          <p role="alert" className="text-center text-sm text-destructive">
             {errorMessage}
           </p>
         )}

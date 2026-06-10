@@ -1177,6 +1177,13 @@ export default function AdminPage() {
       new Map(clusterableMemoryItems.map((item) => [item.id, item] as const)),
     [clusterableMemoryItems],
   );
+  // Uses ALL rows across all schema versions — before_session profile memories use
+  // schemaVersion "0.1.2-before-session" and would be excluded from versionMemoryRows,
+  // but they ARE included in cluster itemIds (clustering routes don't version-filter).
+  const allMemoryIdSet = useMemo(
+    () => new Set((memoryModal?.rows ?? []).map((row) => row.id)),
+    [memoryModal?.rows],
+  );
   const adminClusterMemories = useMemo<MemoryItem[]>(
     () =>
       visibleMemoryRows.map((row) => ({
@@ -2518,7 +2525,7 @@ export default function AdminPage() {
                       activeMemoryClusters.flatMap((c) => c.itemIds).length > 0 &&
                       activeMemoryClusters
                         .flatMap((c) => c.itemIds)
-                        .every((id) => !clusterableItemById.has(id))
+                        .every((id) => !allMemoryIdSet.has(id))
                     }
                     isRegenerating={isClusteringMemory}
                     onSelectCluster={(id) => {

@@ -20,7 +20,7 @@ type MemoryClusterListProps = {
   hasStaleCache: boolean;
   isRegenerating: boolean;
   onSelectCluster: (id: string) => void;
-  onRegenerate: () => void;
+  onRegenerate?: () => void;
 };
 
 export function MemoryClusterList({
@@ -44,16 +44,18 @@ export function MemoryClusterList({
               {formatDate(generatedAt)}
             </p>
           ) : null}
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={onRegenerate}
-            disabled={isRegenerating}
-            className="h-7 rounded-full px-2.5 text-[11px]"
-          >
-            {isRegenerating ? "생성 중..." : "재생성"}
-          </Button>
+          {onRegenerate && (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={onRegenerate}
+              disabled={isRegenerating}
+              className="h-7 rounded-full px-2.5 text-[11px]"
+            >
+              {isRegenerating ? "생성 중..." : "재생성"}
+            </Button>
+          )}
         </div>
       </div>
       {hasStaleCache ? (

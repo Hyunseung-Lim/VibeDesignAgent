@@ -70,6 +70,8 @@ import {
 } from "@/components/session/session-setup-cards";
 import { SessionSetupStepper } from "@/components/session/session-setup-stepper";
 import { MemoryScoreBar } from "@/components/memory/memory-score-bar";
+import { MemoryClusterList } from "@/components/memory/memory-cluster-list";
+import { MemoryClusterSidePanel } from "@/components/memory/memory-cluster-side-panel";
 const ONBOARDING_MISSION_ID = "onboarding";
 const MemoryClusterGraph = dynamic(() => import("@/app/admin/MemoryClusterGraph"), {
   ssr: false,
@@ -2384,7 +2386,6 @@ export default function MainScreenPage() {
   const [selectedReferencedMemoryId, setSelectedReferencedMemoryId] = useState<
     string | null
   >(null);
-  const referencedMemoryRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const sessionMemorySummaryKeyRef = useRef<string | null>(null);
   const [reviewProfileItems, setReviewProfileItems] = useState<
     { id: string; input: string }[]
@@ -2454,27 +2455,6 @@ export default function MainScreenPage() {
       })),
     ].sort(compareTimelineItems);
   }, [activityLog, messages, sessionMemorySummary, showReviewAnnotations]);
-  const selectedGraphMemory = useMemo(() => {
-    if (!selectedGraphMemoryId) return null;
-    const memory =
-      sessionMemorySummary.graphMemories.find(
-        (item) => item.id === selectedGraphMemoryId,
-      ) ?? null;
-    if (!memory) return null;
-    const referenced =
-      sessionMemorySummary.referenced.find(
-        (item) => item.memoryId === selectedGraphMemoryId,
-      ) ?? null;
-    const promoted =
-      sessionMemorySummary.promoted.find(
-        (item) => item.id === selectedGraphMemoryId,
-      ) ?? null;
-    const cluster =
-      sessionMemorySummary.graphClusters.find((item) =>
-        item.itemIds.includes(selectedGraphMemoryId),
-      ) ?? null;
-    return { memory, referenced, promoted, cluster };
-  }, [selectedGraphMemoryId, sessionMemorySummary]);
   const sessionArchivedMemories = useMemo(() => {
     const referencedIds = new Set(
       sessionMemorySummary.referenced.map((item) => item.memoryId),
@@ -3147,13 +3127,19 @@ export default function MainScreenPage() {
     };
   }, [showReviewAnnotations, targetSessionUserId, missionId]);
 
+  // When the memory diff overlay opens, if the "before" phase would be empty
+  // (all memories are newly promoted with no prior history), auto-switch to "after".
   useEffect(() => {
-    if (!isMemoryDiffOpen || !selectedReferencedMemoryId) return;
-    referencedMemoryRefs.current[selectedReferencedMemoryId]?.scrollIntoView({
-      behavior: "smooth",
-      block: "center",
-    });
-  }, [isMemoryDiffOpen, selectedReferencedMemoryId]);
+    if (!isMemoryDiffOpen) return;
+    if (memoryGraphPhase !== "before") return;
+    const promotedIdSet = new Set(sessionMemorySummary.promoted.map((item) => item.id));
+    const beforeCount = sessionMemorySummary.graphMemories.filter(
+      (m) => !promotedIdSet.has(m.id),
+    ).length;
+    if (beforeCount === 0 && sessionMemorySummary.promoted.length > 0) {
+      setMemoryGraphPhase("after");
+    }
+  }, [isMemoryDiffOpen]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Load profile memories for review panel (review mode)
   useEffect(() => {
@@ -5373,6 +5359,33 @@ export default function MainScreenPage() {
   const contextMenuArtboard = designContextMenu
     ? artboards.find((artboard) => artboard.id === designContextMenu.artboardId)
     : null;
+  const memoryPhaseToggle = (
+    <div className="flex items-center gap-1 rounded-full bg-white/90 p-1 shadow-sm ring-1 ring-slate-100">
+      {(["before", "after"] as const).map((phase) => (
+        <button
+          key={phase}
+          type="button"
+          onClick={() => {
+            setMemoryGraphPhase(phase);
+            if (
+              phase === "before" &&
+              (memoryGraphFilter === "promoted" ||
+                memoryGraphFilter === "archived")
+            ) {
+              setMemoryGraphFilter("changed");
+            }
+          }}
+          className={`rounded-full px-2.5 py-1 text-[11px] font-semibold transition ${
+            memoryGraphPhase === phase
+              ? "bg-slate-900 text-white"
+              : "text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+          }`}
+        >
+          {phase === "before" ? "세션 이전" : "세션 이후"}
+        </button>
+      ))}
+    </div>
+  );
   const renderSessionImpactGraph = (variant: "panel" | "overlay" = "overlay") => {
     const isOverlay = variant === "overlay";
     const referencedByMemoryId = new Map(
@@ -5417,11 +5430,12 @@ export default function MainScreenPage() {
       return {
         id: memory.id,
         memoryId: memory.id,
-        semantic: memory.semantic ?? memory.episodic ?? memory.input ?? "",
+        semantic: memory.semantic ?? "",
         episodic: memory.episodic ?? "",
         input: memory.input ?? "",
         output: memory.output ?? "",
         originalInteractionContent: memory.originalInteractionContent ?? "",
+        sourceType: memory.sourceType ?? null,
         action: [
           referenced ? "referenced" : "",
           promotedIds.has(memory.id) ? "promoted" : "",
@@ -5485,98 +5499,121 @@ export default function MainScreenPage() {
         ? selectedSessionGraphClusterId
         : graphClusters[0]?.id ?? null;
 
-    if (graphItems.length === 0) {
-      return (
+    const emptyState = (
+      <div className="flex h-full items-center justify-center">
         <p className="rounded-lg bg-slate-50 px-3 py-5 text-center text-xs text-slate-400">
-          아직 node view로 표시할 세션 메모리 변화가 없습니다.
+          {memoryGraphPhase === "before"
+            ? "세션 이전에는 메모리가 없었습니다."
+            : "아직 node view로 표시할 세션 메모리 변화가 없습니다."}
         </p>
+      </div>
+    );
+
+    if (isOverlay) {
+      // Mirror the /agent page layout: cluster list (left) + graph (center) +
+      // detail side panel (right). The graph's inline detail card is disabled
+      // so node details only appear in the side panel.
+      const selectedCluster =
+        graphClusters.find((cluster) => cluster.id === selectedClusterId) ??
+        null;
+      const selectedClusterItems = selectedCluster
+        ? graphItems.filter((item) =>
+            selectedCluster.itemIds.includes(item.id),
+          )
+        : [];
+      const sidePanelMemories = sessionMemorySummary.graphMemories.map(
+        (memory) => ({
+          id: memory.id,
+          episodic: memory.episodic ?? null,
+          semantic: memory.semantic ?? null,
+          input: memory.input ?? null,
+          output: memory.output ?? null,
+          originalInteractionContent: memory.originalInteractionContent ?? null,
+          action: null,
+          sourceType: memory.sourceType ?? null,
+          keywords: [],
+          weight: memory.weight ?? null,
+          timestamp: memory.timestamp ?? null,
+          archivedAt: memory.archivedAt ?? null,
+          archiveReason: memory.archiveReason ?? null,
+          source: memory.source ?? null,
+        }),
+      );
+      return (
+        <div className="flex h-full w-full min-h-0 overflow-hidden">
+          <MemoryClusterList
+            clusters={graphClusters}
+            selectedClusterId={selectedClusterId}
+            generatedAt={null}
+            hasStaleCache={false}
+            isRegenerating={false}
+            onSelectCluster={(clusterId) => {
+              setSelectedSessionGraphClusterId(clusterId);
+              setSelectedGraphMemoryId(null);
+            }}
+          />
+          <div className="flex min-w-0 flex-1 overflow-hidden">
+            <div className="relative min-w-0 flex-1 overflow-hidden">
+              {graphItems.length === 0 ? (
+                emptyState
+              ) : (
+                <MemoryClusterGraph
+                  clusters={graphClusters}
+                  items={graphItems}
+                  edges={visibleGraphEdges}
+                  selectedClusterId={selectedClusterId}
+                  selectedMemoryId={selectedGraphMemoryId}
+                  onSelectCluster={setSelectedSessionGraphClusterId}
+                  onSelectMemory={setSelectedGraphMemoryId}
+                  showInlineDetail={false}
+                  fill
+                />
+              )}
+            </div>
+            <MemoryClusterSidePanel
+              cluster={selectedCluster}
+              items={selectedClusterItems}
+              memories={sidePanelMemories}
+              selectedMemoryId={selectedGraphMemoryId}
+              onSelectMemory={setSelectedGraphMemoryId}
+            />
+          </div>
+        </div>
       );
     }
 
     return (
-      <div
-        className={`relative overflow-hidden rounded-lg border border-slate-100 bg-white ${
-          isOverlay ? "h-[min(68vh,760px)]" : "h-96"
-        }`}
-      >
-        <div className="absolute left-3 top-3 z-10 flex items-center gap-1 rounded-full bg-white/90 p-1 shadow-sm ring-1 ring-slate-100">
-          {(["before", "after"] as const).map((phase) => (
-            <button
-              key={phase}
-              type="button"
-              onClick={() => {
-                setMemoryGraphPhase(phase);
-                if (
-                  phase === "before" &&
-                  (memoryGraphFilter === "promoted" ||
-                    memoryGraphFilter === "archived")
-                ) {
-                  setMemoryGraphFilter("changed");
-                }
-              }}
-              className={`rounded-full px-2.5 py-1 text-[11px] font-semibold transition ${
-                memoryGraphPhase === phase
-                  ? "bg-slate-900 text-white"
-                  : "text-slate-400 hover:bg-slate-100 hover:text-slate-700"
-              }`}
-            >
-              {phase === "before" ? "세션 이전" : "세션 이후"}
-            </button>
-          ))}
-        </div>
-        <div className="absolute left-3 top-14 z-10 flex flex-wrap items-center gap-1 rounded-2xl bg-white/90 p-1 shadow-sm ring-1 ring-slate-100">
-          {(
-            [
-              ["changed", "변화만"],
-              ["all", "전체"],
-              ["referenced", "참고"],
-              ["promoted", "기억됨"],
-              ["archived", "보관됨"],
-            ] as Array<[MemoryGraphFilter, string]>
-          ).map(([filter, label]) => (
-            <button
-              key={filter}
-              type="button"
-              onClick={() => {
-                setMemoryGraphFilter(filter);
-                if (filter === "promoted" || filter === "archived") {
-                  setMemoryGraphPhase("after");
-                }
-              }}
-              className={`rounded-full px-2.5 py-1 text-[11px] font-semibold transition ${
-                memoryGraphFilter === filter
-                  ? "bg-slate-900 text-white"
-                  : "text-slate-400 hover:bg-slate-100 hover:text-slate-700"
-              }`}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
-        <div className="absolute right-3 top-3 z-10 rounded-full bg-white/90 px-2.5 py-1 text-[10px] font-semibold text-slate-400 shadow-sm ring-1 ring-slate-100">
-          {graphClusters.length} clusters · {graphItems.length} nodes ·{" "}
-          {visibleGraphEdges.length} edges
-        </div>
-        {graphClusters.length === 0 && (
-          <div className="absolute right-3 top-10 z-10 max-w-64 rounded-lg border border-amber-100 bg-amber-50 px-3 py-2 text-[11px] leading-relaxed text-amber-700 shadow-sm">
-            클러스터 cache가 없습니다. Admin Memory의 cluster view에서 Regenerate를 실행하면 similarity 묶음으로 표시됩니다.
-          </div>
+      <div className="relative h-96 overflow-hidden rounded-lg border border-slate-100 bg-white">
+        <div className="absolute left-3 top-3 z-10">{memoryPhaseToggle}</div>
+        {graphItems.length === 0 && emptyState}
+        {graphItems.length > 0 && (
+          <>
+            <div className="absolute right-3 top-3 z-10 rounded-full bg-white/90 px-2.5 py-1 text-[10px] font-semibold text-slate-400 shadow-sm ring-1 ring-slate-100">
+              {graphClusters.length} clusters · {graphItems.length} nodes ·{" "}
+              {visibleGraphEdges.length} edges
+            </div>
+            {graphClusters.length === 0 && (
+              <div className="absolute right-3 top-10 z-10 max-w-64 rounded-lg border border-amber-100 bg-amber-50 px-3 py-2 text-[11px] leading-relaxed text-amber-700 shadow-sm">
+                클러스터 cache가 없습니다. Admin Memory의 cluster view에서 Regenerate를 실행하면 similarity 묶음으로 표시됩니다.
+              </div>
+            )}
+            <div className="h-full pt-14">
+              <MemoryClusterGraph
+                clusters={graphClusters}
+                items={graphItems}
+                edges={visibleGraphEdges}
+                selectedClusterId={selectedClusterId}
+                onSelectCluster={setSelectedSessionGraphClusterId}
+                onSelectMemory={(memoryId) => {
+                  setSelectedGraphMemoryId(memoryId);
+                  const referenced = referencedByMemoryId.get(memoryId);
+                  if (referenced) setSelectedReferencedMemoryId(referenced.memoryId);
+                }}
+                fill
+              />
+            </div>
+          </>
         )}
-        <div className="h-full pt-24">
-          <MemoryClusterGraph
-            clusters={graphClusters}
-            items={graphItems}
-            edges={visibleGraphEdges}
-            selectedClusterId={selectedClusterId}
-            onSelectCluster={setSelectedSessionGraphClusterId}
-            onSelectMemory={(memoryId) => {
-              setSelectedGraphMemoryId(memoryId);
-              const referenced = referencedByMemoryId.get(memoryId);
-              if (referenced) setSelectedReferencedMemoryId(referenced.memoryId);
-            }}
-            fill
-          />
-        </div>
       </div>
     );
   };
@@ -6181,10 +6218,12 @@ export default function MainScreenPage() {
           />
           <div className="flex-1 overflow-y-auto">
             <div className="mx-auto max-w-3xl space-y-6 px-8 py-8">
-              <ProfileInputCard
-                value={profileRawMarkdown}
-                onChange={setProfileRawMarkdown}
-              />
+              {!isOnboardingMission && (
+                <ProfileInputCard
+                  value={profileRawMarkdown}
+                  onChange={setProfileRawMarkdown}
+                />
+              )}
               <SetupMissionSummaryCard
                 missionTitle={missionTitle}
                 missionBrief={missionBrief}
@@ -7067,214 +7106,32 @@ export default function MainScreenPage() {
       )}
 
       {isMemoryDiffOpen && (
-        <div className="fixed inset-0 z-50 flex bg-slate-950/45 p-4 backdrop-blur-sm">
-          <div className="flex min-h-0 w-full overflow-hidden rounded-2xl bg-white shadow-2xl">
-            <div className="flex min-w-0 flex-1 flex-col">
-              <div className="flex shrink-0 items-center justify-between border-b border-slate-200 px-5 py-4">
-                <div>
-                  <p className="text-base font-semibold text-slate-900">
-                    메모리 변화 전체 보기
-                  </p>
-                  <p className="mt-0.5 text-xs text-slate-400">
-                    세션 이전과 이후의 전체 memory node 상태를 비교합니다.
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setIsMemoryDiffOpen(false)}
-                  className="rounded-full p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
-                  aria-label="메모리 변화 전체 보기 닫기"
-                >
-                  <XIcon size={18} />
-                </button>
-              </div>
-              <div className="min-h-0 flex-1 p-5">
-                {renderSessionImpactGraph("overlay")}
+        <div className="fixed inset-0 z-50 flex flex-col bg-white">
+          {/* Header — same structure as the agent page header */}
+          <header className="flex shrink-0 items-center justify-between border-b border-slate-200 bg-white px-6 py-4 lg:px-10">
+            <div className="flex items-center gap-4">
+              <button
+                type="button"
+                onClick={() => setIsMemoryDiffOpen(false)}
+                className="rounded-full p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
+                aria-label="메모리 변화 전체 보기 닫기"
+              >
+                <XIcon size={18} />
+              </button>
+              <div>
+                <p className="text-base font-semibold text-slate-900">
+                  메모리 변화 전체 보기
+                </p>
+                <p className="mt-0.5 text-xs text-slate-400">
+                  세션 이전과 이후의 전체 memory node 상태를 비교합니다.
+                </p>
               </div>
             </div>
-            <aside className="hidden min-h-0 w-80 shrink-0 flex-col border-l border-slate-200 bg-slate-50 p-5 lg:flex">
-              <div className="grid shrink-0 grid-cols-2 gap-2">
-                <div className="rounded-lg bg-white px-3 py-2 ring-1 ring-slate-100">
-                  <p className="text-[10px] font-semibold uppercase text-slate-400">
-                    Clusters
-                  </p>
-                  <p className="mt-1 text-xl font-semibold text-slate-900">
-                    {sessionMemorySummary.graphClusters.length}
-                  </p>
-                </div>
-                <div className="rounded-lg bg-blue-50 px-3 py-2 ring-1 ring-blue-100">
-                  <p className="text-[10px] font-semibold uppercase text-blue-400">
-                    참고
-                  </p>
-                  <p className="mt-1 text-xl font-semibold text-blue-700">
-                    {sessionMemorySummary.referenced.length}
-                  </p>
-                </div>
-                <div className="rounded-lg bg-emerald-50 px-3 py-2 ring-1 ring-emerald-100">
-                  <p className="text-[10px] font-semibold uppercase text-emerald-500">
-                    기억됨
-                  </p>
-                  <p className="mt-1 text-xl font-semibold text-emerald-700">
-                    {sessionMemorySummary.promoted.length}
-                  </p>
-                </div>
-                <div className="rounded-lg bg-rose-50 px-3 py-2 ring-1 ring-rose-100">
-                  <p className="text-[10px] font-semibold uppercase text-rose-400">
-                    보관됨
-                  </p>
-                      <p className="mt-1 text-xl font-semibold text-rose-700">
-                    {sessionArchivedMemories.length}
-                  </p>
-                </div>
-              </div>
-              {sessionMemorySummary.graphClusters.length === 0 && (
-                <div className="mt-3 shrink-0 rounded-lg border border-amber-100 bg-amber-50 px-3 py-2 text-[11px] leading-relaxed text-amber-700">
-                  클러스터 cache가 없어 similarity 묶음 대신 fallback 배치로 표시 중입니다.
-                </div>
-              )}
-              <div className="mt-5 shrink-0 rounded-xl bg-white p-3 ring-1 ring-slate-100">
-                <div className="flex items-center justify-between gap-3">
-                  <p className="text-xs font-semibold text-slate-600">
-                    선택한 노드
-                  </p>
-                  {selectedGraphMemory && (
-                    <button
-                      type="button"
-                      onClick={() => setSelectedGraphMemoryId(null)}
-                      className="text-[10px] font-semibold text-slate-300 hover:text-slate-500"
-                    >
-                      해제
-                    </button>
-                  )}
-                </div>
-                {!selectedGraphMemory ? (
-                  <p className="mt-2 text-xs leading-relaxed text-slate-400">
-                    그래프의 노드를 클릭하면 memory 상세와 세션 전후 변화를 볼 수
-                    있습니다.
-                  </p>
-                ) : (
-                  <div className="mt-2 space-y-2">
-                    <p className="line-clamp-4 text-xs leading-relaxed text-slate-700">
-                      {memorySummaryText(
-                        selectedGraphMemory.referenced ??
-                          selectedGraphMemory.promoted ??
-                          selectedGraphMemory.memory,
-                      )}
-                    </p>
-                    <div className="flex flex-wrap gap-1.5 text-[10px] font-semibold">
-                      {selectedGraphMemory.referenced && (
-                        <span className="rounded-full bg-blue-50 px-2 py-0.5 text-blue-600">
-                          referenced
-                        </span>
-                      )}
-                      {selectedGraphMemory.promoted && (
-                        <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-emerald-600">
-                          promoted
-                        </span>
-                      )}
-                      {selectedGraphMemory.memory.archivedAt && (
-                        <span className="rounded-full bg-rose-50 px-2 py-0.5 text-rose-600">
-                          archived
-                        </span>
-                      )}
-                      {selectedGraphMemory.cluster && (
-                        <span className="rounded-full bg-slate-100 px-2 py-0.5 text-slate-500">
-                          {selectedGraphMemory.cluster.label}
-                        </span>
-                      )}
-                    </div>
-                    <div className="grid grid-cols-3 gap-1.5 text-[10px]">
-                      <div className="rounded-lg bg-slate-50 px-2 py-1.5">
-                        <p className="font-semibold uppercase text-slate-400">
-                          Before
-                        </p>
-                        <p className="mt-0.5 font-semibold text-slate-700">
-                          {selectedGraphMemory.referenced?.weightBefore != null
-                            ? formatReviewScore(
-                                selectedGraphMemory.referenced.weightBefore,
-                              )
-                            : "-"}
-                        </p>
-                      </div>
-                      <div className="rounded-lg bg-slate-50 px-2 py-1.5">
-                        <p className="font-semibold uppercase text-slate-400">
-                          After
-                        </p>
-                        <p className="mt-0.5 font-semibold text-slate-700">
-                          {selectedGraphMemory.referenced?.weightAfter != null
-                            ? formatReviewScore(
-                                selectedGraphMemory.referenced.weightAfter,
-                              )
-                            : formatReviewScore(selectedGraphMemory.memory.weight)}
-                        </p>
-                      </div>
-                      <div className="rounded-lg bg-slate-50 px-2 py-1.5">
-                        <p className="font-semibold uppercase text-slate-400">
-                          Delta
-                        </p>
-                        <p
-                          className={`mt-0.5 font-semibold ${
-                            (selectedGraphMemory.referenced?.weightDelta ?? 0) > 0
-                              ? "text-blue-600"
-                              : "text-slate-500"
-                          }`}
-                        >
-                          {selectedGraphMemory.referenced?.weightDelta != null
-                            ? formatReviewDelta(
-                                selectedGraphMemory.referenced.weightDelta,
-                              )
-                            : "-"}
-                        </p>
-                      </div>
-                    </div>
-                    {selectedGraphMemory.memory.archiveReason && (
-                      <p className="rounded-lg bg-rose-50 px-2 py-1.5 text-[10px] font-semibold text-rose-600">
-                        {selectedGraphMemory.memory.archiveReason}
-                      </p>
-                    )}
-                  </div>
-                )}
-              </div>
-              <div className="mt-5 flex min-h-0 flex-1 flex-col">
-                <p className="shrink-0 text-xs font-semibold text-slate-600">
-                  세션 중 참고됨
-                </p>
-                <div className="mt-2 min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
-                  {sessionMemorySummary.referenced.map((item) => (
-                    <div
-                      key={item.id}
-                      ref={(node) => {
-                        referencedMemoryRefs.current[item.memoryId] = node;
-                      }}
-                      onClick={() => {
-                        setSelectedGraphMemoryId(item.memoryId);
-                        setSelectedReferencedMemoryId(item.memoryId);
-                      }}
-                      className={`rounded-lg bg-white px-3 py-2 ring-1 transition ${
-                        selectedReferencedMemoryId === item.memoryId
-                          ? "ring-2 ring-blue-300"
-                          : "ring-slate-100 hover:ring-slate-200"
-                      } cursor-pointer`}
-                    >
-                      <p className="line-clamp-3 text-xs leading-relaxed text-slate-700">
-                        {memorySummaryText(item)}
-                      </p>
-                      {item.weightBefore != null && item.weightAfter != null && (
-                        <p className="mt-1 text-[10px] font-semibold text-blue-500">
-                          {formatReviewScore(item.weightBefore)} →{" "}
-                          {formatReviewScore(item.weightAfter)}
-                        </p>
-                      )}
-                    </div>
-                  ))}
-                  {sessionMemorySummary.referenced.length === 0 && (
-                    <p className="rounded-lg bg-white px-3 py-2 text-xs text-slate-400 ring-1 ring-slate-100">
-                      이 세션에서 참고한 memory가 없습니다.
-                    </p>
-                  )}
-                </div>
-              </div>
-            </aside>
+            {memoryPhaseToggle}
+          </header>
+          {/* Body — cluster list + graph + detail panel, same as the agent page */}
+          <div className="flex min-h-0 flex-1 overflow-hidden">
+            {renderSessionImpactGraph("overlay")}
           </div>
         </div>
       )}
