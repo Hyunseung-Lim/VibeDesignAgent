@@ -6,6 +6,7 @@ import { cn } from "@/lib/utils";
 type SessionSetupStepperProps = {
   currentStep: 1 | 2 | 3;
   onBack?: () => void;
+  hideProfileStep?: boolean;
 };
 
 const STEPS = [
@@ -17,7 +18,11 @@ const STEPS = [
 export function SessionSetupStepper({
   currentStep,
   onBack,
+  hideProfileStep = false,
 }: SessionSetupStepperProps) {
+  const steps = hideProfileStep
+    ? STEPS.filter((step) => step.id !== 2)
+    : STEPS;
   return (
     <div className="border-b border-slate-100 bg-white px-8 py-4">
       <div className="mx-auto flex max-w-3xl items-center gap-3">
@@ -32,7 +37,7 @@ export function SessionSetupStepper({
           </button>
         )}
 
-        {STEPS.map((step, index) => {
+        {steps.map((step, index) => {
           const active = step.id === currentStep;
           const complete = step.id < currentStep;
           return (
@@ -56,7 +61,7 @@ export function SessionSetupStepper({
                         : "border-2 border-slate-200 text-slate-300",
                   )}
                 >
-                  {step.id}
+                  {index + 1}
                 </div>
                 <span
                   className={cn(

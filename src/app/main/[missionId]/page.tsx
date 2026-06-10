@@ -6209,8 +6209,8 @@ export default function MainScreenPage() {
           onPreviewChange={setActiveOptionPreviewId}
           onChooseOption={chooseMissionOption}
         />
-      ) : !isReadOnly && isMissionContextReady && sessionLoaded && !sessionCompleted && !profileModalConfirmed && profileStep === 2 ? (
-        /* Step 2: Profile input */
+      ) : !isReadOnly && isMissionContextReady && sessionLoaded && !sessionCompleted && !profileModalConfirmed && !isOnboardingMission && profileStep === 2 ? (
+        /* Step 2: Profile input (skipped for onboarding — no before-session memory) */
         <main className="flex flex-1 flex-col overflow-hidden">
           <SessionSetupStepper
             currentStep={2}
@@ -6218,12 +6218,10 @@ export default function MainScreenPage() {
           />
           <div className="flex-1 overflow-y-auto">
             <div className="mx-auto max-w-3xl space-y-6 px-8 py-8">
-              {!isOnboardingMission && (
-                <ProfileInputCard
-                  value={profileRawMarkdown}
-                  onChange={setProfileRawMarkdown}
-                />
-              )}
+              <ProfileInputCard
+                value={profileRawMarkdown}
+                onChange={setProfileRawMarkdown}
+              />
               <SetupMissionSummaryCard
                 missionTitle={missionTitle}
                 missionBrief={missionBrief}
@@ -6244,16 +6242,23 @@ export default function MainScreenPage() {
             </div>
           </div>
         </main>
-      ) : !isReadOnly && isMissionContextReady && sessionLoaded && !sessionCompleted && !profileModalConfirmed && profileStep === 3 ? (
+      ) : !isReadOnly && isMissionContextReady && sessionLoaded && !sessionCompleted && !profileModalConfirmed && (profileStep === 3 || isOnboardingMission) ? (
         /* Step 3: Review + start */
         <main className="flex flex-1 flex-col overflow-hidden">
           <SessionSetupStepper
             currentStep={3}
-            onBack={() => setProfileStep(2)}
+            hideProfileStep={isOnboardingMission}
+            onBack={() =>
+              isOnboardingMission
+                ? setSelectedOptionId(null)
+                : setProfileStep(2)
+            }
           />
           <div className="flex-1 overflow-y-auto">
             <div className="mx-auto max-w-3xl space-y-6 px-8 py-8">
-              <ProfileReviewCard value={profileRawMarkdown} />
+              {!isOnboardingMission && (
+                <ProfileReviewCard value={profileRawMarkdown} />
+              )}
               <SetupMissionSummaryCard
                 missionTitle={missionTitle}
                 missionBrief={missionBrief}
@@ -6273,19 +6278,21 @@ export default function MainScreenPage() {
                   if (!currentUser || !missionId) return;
                   setProfileSaving(true);
                   try {
-                    const token = await getIdToken(currentUser);
-                    await fetch("/api/memory/profile", {
-                      method: "POST",
-                      headers: {
-                        Authorization: `Bearer ${token}`,
-                        "Content-Type": "application/json",
-                      },
-                      body: JSON.stringify({
-                        missionId,
-                        items: [],
-                        rawMarkdown: profileRawMarkdown,
-                      }),
-                    });
+                    if (!isOnboardingMission) {
+                      const token = await getIdToken(currentUser);
+                      await fetch("/api/memory/profile", {
+                        method: "POST",
+                        headers: {
+                          Authorization: `Bearer ${token}`,
+                          "Content-Type": "application/json",
+                        },
+                        body: JSON.stringify({
+                          missionId,
+                          items: [],
+                          rawMarkdown: profileRawMarkdown,
+                        }),
+                      });
+                    }
                   } catch {
                     // non-blocking
                   } finally {

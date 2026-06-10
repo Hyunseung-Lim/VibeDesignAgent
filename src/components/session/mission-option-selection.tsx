@@ -118,7 +118,7 @@ export function MissionOptionSelection({
 
   return (
     <main className="flex flex-1 flex-col overflow-hidden">
-      <SessionSetupStepper currentStep={1} />
+      <SessionSetupStepper currentStep={1} hideProfileStep={onboarding} />
       <div className="flex-1 overflow-y-auto">
         <div className="mx-auto max-w-3xl space-y-6 px-8 py-8">
           {(parentMissionTitle || parentMissionBrief) && (
