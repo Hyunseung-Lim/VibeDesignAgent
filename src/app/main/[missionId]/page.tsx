@@ -208,10 +208,16 @@ type ReferencedSessionMemoryItem = SessionMemoryItem & {
   weightDelta?: number | null;
 };
 
+type IdleDecaySummary = {
+  memoryCount: number;
+  totalDelta: number;
+};
+
 type SessionMemorySummary = {
   drafts: SessionMemoryItem[];
   promoted: SessionMemoryItem[];
   referenced: ReferencedSessionMemoryItem[];
+  idleDecaySummary: IdleDecaySummary;
   graphMemories: SessionMemoryItem[];
   graphClusters: Array<{
     id: string;
@@ -235,6 +241,7 @@ const EMPTY_SESSION_MEMORY_SUMMARY: SessionMemorySummary = {
   drafts: [],
   promoted: [],
   referenced: [],
+  idleDecaySummary: { memoryCount: 0, totalDelta: 0 },
   graphMemories: [],
   graphClusters: [],
   graphEdges: [],
@@ -317,6 +324,17 @@ async function fetchSessionMemorySummary(
     drafts: Array.isArray(data?.drafts) ? data.drafts : [],
     promoted: Array.isArray(data?.promoted) ? data.promoted : [],
     referenced: Array.isArray(data?.referenced) ? data.referenced : [],
+    idleDecaySummary:
+      data?.idleDecaySummary &&
+      typeof data.idleDecaySummary.memoryCount === "number"
+        ? {
+            memoryCount: data.idleDecaySummary.memoryCount,
+            totalDelta:
+              typeof data.idleDecaySummary.totalDelta === "number"
+                ? data.idleDecaySummary.totalDelta
+                : 0,
+          }
+        : { memoryCount: 0, totalDelta: 0 },
     graphMemories: Array.isArray(data?.graphMemories)
       ? data.graphMemories
       : [],
@@ -2099,6 +2117,15 @@ function formatReviewDelta(value: number | null | undefined) {
   if (typeof value !== "number" || !Number.isFinite(value)) return "-";
   const sign = value > 0 ? "+" : "";
   return `${sign}${value.toFixed(3)}`;
+}
+
+// Human-readable memory strength for participants — raw 0..1 weight is jargon.
+function formatWeightStrength(value: number | null | undefined) {
+  if (typeof value !== "number" || !Number.isFinite(value)) return null;
+  if (value >= 0.75) return "강함";
+  if (value >= 0.5) return "보통";
+  if (value >= 0.25) return "약함";
+  return "희미함";
 }
 
 function formatReviewDate(value: number | null | undefined) {
@@ -6686,9 +6713,20 @@ export default function MainScreenPage() {
                           )}
                         </div>
                         <div className="mt-1.5 flex flex-wrap gap-1.5 text-[10px] font-semibold text-slate-400">
+                          {formatWeightStrength(memory.weight) && (
+                            <span className="text-slate-500">
+                              {formatWeightStrength(memory.weight)}
+                            </span>
+                          )}
                           <span>weight {formatReviewScore(memory.weight)}</span>
                           {memory.weightDelta != null && (
-                            <span className="text-emerald-500">
+                            <span
+                              className={
+                                memory.weightDelta >= 0
+                                  ? "text-emerald-500"
+                                  : "text-slate-400"
+                              }
+                            >
                               delta {formatReviewDelta(memory.weightDelta)}
                             </span>
                           )}
@@ -6868,6 +6906,11 @@ export default function MainScreenPage() {
                             </span>
                             {memory.weight != null ? (
                               <span className="ml-auto text-[10px] font-semibold text-slate-400">
+                                {formatWeightStrength(memory.weight) ? (
+                                  <span className="text-slate-500">
+                                    {formatWeightStrength(memory.weight)}{" "}
+                                  </span>
+                                ) : null}
                                 weight {formatReviewScore(memory.weight)}
                                 {referenced?.weightDelta != null &&
                                 referenced.weightDelta !== 0 ? (
@@ -6969,6 +7012,15 @@ export default function MainScreenPage() {
                       </p>
                     </div>
                   </div>
+                  {sessionMemorySummary.idleDecaySummary.memoryCount > 0 && (
+                    <p className="mt-3 rounded-lg bg-slate-50 px-3 py-2 text-[11px] leading-relaxed text-slate-500">
+                      이번 세션에서 자주 참고되지 않은 기억{" "}
+                      <span className="font-semibold text-slate-600">
+                        {sessionMemorySummary.idleDecaySummary.memoryCount}개
+                      </span>
+                      가 자연스럽게 약해졌어요.
+                    </p>
+                  )}
                   <button
                     type="button"
                     onClick={() => setIsMemoryDiffOpen(true)}

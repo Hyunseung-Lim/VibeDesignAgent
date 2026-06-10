@@ -22,10 +22,14 @@ const ACCEPTED_EMBEDDING_SOURCES = new Set([
 ]);
 const MAX_MEMORY_DOCS = 200;
 const DEFAULT_LIMIT = 5;
-const NEAR_MISS_LIMIT = 20;
-const NEAR_MISS_MIN_SIMILARITY = 0.55;
-const NEAR_MISS_WEIGHT_LOSS = 0.005;
-const NEAR_MISS_MAX_WEIGHT_LOSS = 0.0075;
+// Usage-based forgetting: every retrieval nudges down all memories that were
+// NOT retrieved this turn, so unused memories drift toward the floor while
+// repeatedly-used ones stay high. Wall-clock independent (safe for the 3-day
+// formative study). Replaces the old narrow near-miss decay which, in practice,
+// almost never fired — see scripts/analyze_memory_weights.py (weight only ever
+// rose: +835 vs -61 delta events across users, nothing below the 0.5 default).
+const IDLE_DECAY_WEIGHT_LOSS = 0.003;
+const IDLE_DECAY_MAX_WEIGHT_LOSS = 0.006;
 const MIN_MEMORY_WEIGHT = 0.1;
 
 type MemoryDoc = Record<string, unknown> & {
@@ -257,15 +261,15 @@ function memoryCountDecayMultiplier(memoryCount: number) {
   return 1;
 }
 
-function nearMissWeightLoss(memoryCount: number) {
+function idleDecayWeightLoss(memoryCount: number) {
   return Math.min(
-    NEAR_MISS_MAX_WEIGHT_LOSS,
-    NEAR_MISS_WEIGHT_LOSS * memoryCountDecayMultiplier(memoryCount),
+    IDLE_DECAY_MAX_WEIGHT_LOSS,
+    IDLE_DECAY_WEIGHT_LOSS * memoryCountDecayMultiplier(memoryCount),
   );
 }
 
-function nextNearMissWeight(candidate: Candidate, memoryCount: number) {
-  const loss = nearMissWeightLoss(memoryCount);
+function nextIdleWeight(candidate: Candidate, memoryCount: number) {
+  const loss = idleDecayWeightLoss(memoryCount);
   return Number(
     Math.max(MIN_MEMORY_WEIGHT, candidate.weight - loss).toFixed(4),
   );
@@ -298,27 +302,19 @@ async function updateRetrievedWeights(retrieved: Candidate[], token: string, now
   return deltas;
 }
 
-async function updateNearMissWeights(
-  nearMisses: Candidate[],
+async function updateIdleDecayWeights(
+  idleTargets: Candidate[],
   token: string,
   now: number,
   memoryCount: number,
 ) {
   const deltas = await Promise.all(
-    nearMisses.map(async (candidate) => {
+    idleTargets.map(async (candidate) => {
       const previousWeight = candidate.weight;
-      const weight = nextNearMissWeight(candidate, memoryCount);
-      if (weight === previousWeight) {
-        return {
-          memoryId: candidate.memoryId,
-          semanticItemId: candidate.semanticItemId,
-          similarity: Number(candidate.similarity.toFixed(4)),
-          previousWeight,
-          weight,
-          weightDelta: 0,
-          decayMultiplier: memoryCountDecayMultiplier(memoryCount),
-        };
-      }
+      const weight = nextIdleWeight(candidate, memoryCount);
+      // Already at the floor — nothing to write, and keep the log lean since we
+      // now decay every non-retrieved memory each turn.
+      if (weight === previousWeight) return null;
 
       await patchFirestoreDocument(
         candidate.path,
@@ -331,7 +327,9 @@ async function updateNearMissWeights(
       return {
         memoryId: candidate.memoryId,
         semanticItemId: candidate.semanticItemId,
-        similarity: Number(candidate.similarity.toFixed(4)),
+        similarity: Number.isFinite(candidate.similarity)
+          ? Number(candidate.similarity.toFixed(4))
+          : null,
         previousWeight,
         weight,
         weightDelta: candidate.weightDelta,
@@ -339,7 +337,7 @@ async function updateNearMissWeights(
       };
     }),
   );
-  return deltas;
+  return deltas.filter((d): d is NonNullable<typeof d> => d !== null);
 }
 
 export async function POST(request: Request) {
@@ -384,11 +382,10 @@ export async function POST(request: Request) {
 
     retrieved = ranked.slice(0, limit);
     const scoreDeltas = await updateRetrievedWeights(retrieved, token, now);
-    const nearMisses = ranked
-      .slice(limit, NEAR_MISS_LIMIT)
-      .filter((candidate) => candidate.similarity >= NEAR_MISS_MIN_SIMILARITY);
-    const nearMissDeltas = await updateNearMissWeights(
-      nearMisses,
+    // Decay every memory that was NOT retrieved this turn (usage-based forgetting).
+    const idleTargets = ranked.slice(limit);
+    const idleDecayDeltas = await updateIdleDecayWeights(
+      idleTargets,
       token,
       now,
       memoryCount,
@@ -418,10 +415,11 @@ export async function POST(request: Request) {
           .filter((candidate) => isBeforeSessionDoc(candidate.doc))
           .map((candidate) => Number(candidate.similarity.toFixed(4))),
         memoryCount,
-        nearMissDecayMultiplier: memoryCountDecayMultiplier(memoryCount),
-        nearMissWeightLoss: nearMissWeightLoss(memoryCount),
+        idleDecayMultiplier: memoryCountDecayMultiplier(memoryCount),
+        idleDecayWeightLoss: idleDecayWeightLoss(memoryCount),
+        idleDecayCount: idleDecayDeltas.length,
         scoreDeltas,
-        nearMissDeltas,
+        idleDecayDeltas,
         createdAt: now,
       },
       token,

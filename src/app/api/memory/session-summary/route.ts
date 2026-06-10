@@ -174,6 +174,16 @@ function referencedSummary(
     (sum, event) => sum + (event.weightDelta ?? 0),
     0,
   );
+  // weightAfter must reflect the memory's CURRENT weight, not the value at its
+  // last retrieval — otherwise idle decay applied after retrieval makes the
+  // review's number disagree with the live graph. weightDelta then captures the
+  // net session change (retrieval gains AND idle decay), so decreases show too.
+  const weightBefore = first?.previousWeight ?? null;
+  const weightAfter = doc?.weight ?? last?.weight ?? null;
+  const weightDelta =
+    weightBefore != null && weightAfter != null
+      ? Number((weightAfter - weightBefore).toFixed(4))
+      : Number(totalDelta.toFixed(4));
   return {
     id: key,
     memoryId: doc?.id ?? key.split(":")[0],
@@ -192,9 +202,9 @@ function referencedSummary(
     firstReferencedAt: first?.createdAt ?? null,
     lastReferencedAt: last?.createdAt ?? null,
     similarity: last?.similarity ?? null,
-    weightBefore: first?.previousWeight ?? null,
-    weightAfter: last?.weight ?? null,
-    weightDelta: Number(totalDelta.toFixed(4)),
+    weightBefore,
+    weightAfter,
+    weightDelta,
   };
 }
 
@@ -312,6 +322,7 @@ export async function POST(request: Request) {
           : [],
         similarities: numberArray(doc.similarities),
         scoreDeltas: scoreDeltaArray(doc.scoreDeltas),
+        idleDecayDeltas: scoreDeltaArray(doc.idleDecayDeltas),
       };
     }),
   );
@@ -354,6 +365,25 @@ export async function POST(request: Request) {
       (a, b) =>
         Number(b.lastReferencedAt ?? 0) - Number(a.lastReferencedAt ?? 0),
     );
+  // Aggregate idle decay (usage-based forgetting) for this session so the review
+  // can explain that unused memories weakened, without dumping per-memory deltas.
+  const idleDecayMemoryIds = new Set<string>();
+  let idleDecayTotal = 0;
+  logs
+    .filter((log) => log.missionId === missionId)
+    .forEach((log) => {
+      log.idleDecayDeltas.forEach((delta) => {
+        if (delta.weightDelta != null && delta.weightDelta < 0) {
+          idleDecayMemoryIds.add(delta.memoryId);
+          idleDecayTotal += delta.weightDelta;
+        }
+      });
+    });
+  const idleDecaySummary = {
+    memoryCount: idleDecayMemoryIds.size,
+    totalDelta: Number(idleDecayTotal.toFixed(4)),
+  };
+
   const graphMemories = allMemories
     .filter((item) => item.weight != null)
     .map(compactGraphMemory)
@@ -393,6 +423,7 @@ export async function POST(request: Request) {
     drafts,
     promoted,
     referenced,
+    idleDecaySummary,
     graphMemories,
     graphClusters: selectedClusterDoc?.graphClusters ?? [],
     graphEdges: selectedClusterDoc?.graphEdges ?? [],

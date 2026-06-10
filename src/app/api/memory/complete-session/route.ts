@@ -87,8 +87,16 @@ export async function POST(request: Request) {
             : "",
         ].filter(Boolean).join("\n");
         const [embedding] = await embedMemoryTexts(embeddingText ? [embeddingText] : []);
+        // Promote whenever the draft carries any usable content, not only when an
+        // episodic line exists. Episodic-empty drafts (UI events, final-design
+        // selections, semantic-only memories) were previously skipped here yet
+        // still marked "promoted" below — so they silently vanished from
+        // long-term memory and the agent view while remaining in the session.
+        const hasContent = Boolean(
+          episodic || semantic || input || output || keywords.length,
+        );
         let memoryId: string | null = null;
-        if (episodic) {
+        if (hasContent) {
           memoryId = `during-session-${sourceId}-${draft.id}`;
           await patchFirestoreDocument(
             `users/${user.localId}/${MEMORY_COLLECTION}/${encodeURIComponent(memoryId)}`,
@@ -132,7 +140,9 @@ export async function POST(request: Request) {
         }
         await patchFirestoreDocument(
           `${draftPath}/${draft.id}`,
-          { status: "promoted", promotedAt: completedAt },
+          hasContent
+            ? { status: "promoted", promotedAt: completedAt }
+            : { status: "skipped_empty", promotedAt: null },
           token,
         );
         return memoryId;

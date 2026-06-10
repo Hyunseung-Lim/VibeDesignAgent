@@ -2494,3 +2494,73 @@ type ChatPlan = {
 - 알려진 한계 / 후속:
   - `stitchDesignSystemId`는 메모리 state로만 유지 → 세션 중 새로고침 시 다음 생성에서 design system이 한 번 더 생성됨(고아 DS 1개 + 정상 적용). 필요 시 route에서 `listDesignSystems` 재사용 또는 세션 스냅샷 영속화로 보완.
   - 검증 완료 후 Current Snapshot(2장 SDK 버전, 4.4 목업 비주얼 적용 방식, 6장 `/api/stitch`, 7장 프롬프트 표)에 반영 필요.
+
+### 15.54 시안 노트 안정화 / 액션 가드 / 디자인 스타일 seed `[implemented 2026-06-10]`
+
+- 배경:
+  - "노트 생성됨" 칩은 떴는데 좌측 시안 노트가 "아직 작성 안 됨"으로 비는 문제 — 칩(정규식 기반)과 실제 노트 파싱이 분리되어 있어 `description`이 비면 빈 노트가 생성됨.
+  - "시안만 작성" 요청에도 모델이 같은 턴에 목업 액션까지 내보내 목업이 생성되는 문제.
+  - Stitch는 디자인 스타일을 seed 컬러 1개로 압축하는데, 노트에 다색 팔레트를 적어도 의도대로 재현되지 않는 문제(15.53 후속).
+
+- 노트 파서 (`page.tsx`):
+  - `parseCreateNoteBlock`/`parseUpdateNoteBlock`을 공통 `parseNoteBlock`으로 통합. `description` 외 대체 키(`content`/`body`/`text`/`note`/`markdown`)도 인식하고, JSON.parse 실패 시(값 안 escape 안 된 줄바꿈 등) 정규식으로 필드를 복구.
+  - 태그가 있으면 항상 객체를 반환(빈 경우 `description:""`)해 호출부 가드/로그가 반드시 동작.
+  - CREATE: 빈 description이면 phantom 빈 노트를 만들지 않고 `console.warn`으로 원문 블록을 로그.
+  - UPDATE: 활성 노트가 없으면 내용을 버리지 않고 새 시안으로 생성(폴백). 빈 description으로 기존 노트를 덮어쓰던 버그 수정(`?? ` → 비어있으면 기존 유지).
+
+- 액션 결합 규율 (`prompts.ts`):
+  - `CHAT_NOTE_ACTION_PROMPT`: "동시 출력 금지" 규칙을 CREATE/UPDATE 모두에 적용하고, 영어 태그뿐 아니라 한국어 alias(`[목업 생성 요청]` 등)도 금지. 목업은 평문 제안만 하고 대괄호 문구는 즉시 실행되니 쓰지 말 것, 사용자 확인 후 생성하도록 명시.
+  - 트리거 경로: 클라이언트 `normalizeActionBlockAliases`가 한국어 대괄호 문구를 실제 액션으로 변환 → 모델이 "제안"으로 쓴 대괄호가 실행됨.
+
+- 디자인 스타일 없이 목업 생성 차단:
+  - `page.tsx`: 새 목업 생성(`isNew`) 시 활성 시안에 `designStyle.content`가 없으면 Stitch 호출 전 차단 + 안내 메시지. 기존 "노트 먼저" 가드 다음에 배치(노트 우선).
+  - GENERATE_MOCKUP BLOCK_RULE에 `failedLabel`("목업 생성 불가")/`failedMarker` 추가 → 차단 시 칩이 실패로 표시.
+  - `prompts.ts` `CHAT_MOCKUP_GENERATE_ACTION_PROMPT`: 디자인 스타일이 없으면 GENERATE_MOCKUP 대신 CREATE_DESIGN_SPEC 먼저 쓰거나 사용자에게 물어보도록 정렬.
+
+- 디자인 스타일 seed 색상 (`prompts.ts`):
+  - `CHAT_DESIGN_SPEC_ACTION_PROMPT`: 단일 primary brand seed 색을 hex로 항상 명시하고, CTA 전용 accent는 secondary로 두고 seed로 쓰지 않도록 규칙 추가.
+  - `DESIGN_SYSTEM_EXTRACT_PROMPT`: `customColor`는 dominant brand/surface(=seed)를 고르고, declared seed가 있으면 그것을, CTA 전용 accent는 절대 seed로 잡지 않도록 강화.
+
+- 검증:
+  - `./node_modules/.bin/tsc --noEmit` 통과.
+  - 노트 생성/수정은 라이브에서 정상 동작 확인. 액션 가드/목업 차단/seed 반영은 라이브 재검증 권장.
+
+### 15.55 Next Work Backlog — 우선순위 `[active 2026-06-10]`
+
+진행 순서 원칙: **(1) 데이터 정합성 버그 → (2) 싸고 다른 걸 풀어주는 것 → (3) 설계 결정 필요 → (4) UX 폴리시 → (5) 큰 기능.**
+
+- 먼저 — 메모리 정합성 (연구 데이터 신뢰도 직결)
+  - [x] **(1순위)** 세션에선 보이는데 메모리 view에서 3개 메모리가 안 보임 → 원인: complete-session이 episodic 빈 draft를 승격 안 하면서 promoted로 마킹(유실). 15.56에서 수정. (가설이던 "버전 싱크"는 아니었음)
+  - [x] **(2순위)** weight가 증가만 되고 감소는 안 되는 이슈 → 실측 확인(증가 +835 vs 감소 −61, 0.5 미만 0개). 사용 기반 idle decay로 교체. 15.56에서 수정.
+  - [ ] **(3순위)** 온보딩 미션에서 작성한 before-session 메모리가 미션1 before-session으로 표시되는 오표기 — 세션 귀속(attribution) 버그. 단독 처리 필요.
+
+- 설계 결정 필요 (코딩 전 합의)
+  - [ ] 메모리가 내용 기준이 아니라 "세션 전 입력 / 세션별 / 최종시안"으로 갈리는 문제 — 어떤 축으로 묶을지(내용/주제 vs 시점) 결정 후 진행. 현재 그룹핑이 의도된 동작인지 버그인지부터 확인.
+
+- UX 폴리시 (작고 독립적)
+  - [ ] 메모리 뷰에서 노드 클릭 시 오른쪽 패널이 해당 메모리 위치로 스크롤.
+  - [ ] 이전-이후 변화 뷰에서 "이후 생성분"을 더 명확히 표시(최근 diff 뷰 작업의 연장).
+
+- 큰 기능
+  - [ ] Stitch 목업 생성 시 이미지 파일 추가(업로드 UI + 이미지 전달 파이프라인). 위 버그 정리 후 집중 블록으로.
+
+### 15.56 메모리 유실 수정 / weight 사용 기반 decay / 리뷰 감소 표시 `[implemented 2026-06-10]`
+
+- 배경: `/agent` 메모리 뷰에 일부 메모리가 안 보이고(#6), weight가 증가만 하는(#1) 문제. 둘 다 메모리 정합성 이슈.
+
+- #6 메모리 유실 (`memory/complete-session/route.ts`):
+  - 원인: 세션 종료 시 `episodic`(episode)가 빈 draft는 장기 메모리(`memories_0_1_2`)로 승격되지 않으면서도 draft는 `status:"promoted"`로 마킹돼 조용히 유실됨. episodic 빈 draft = UI 이벤트/최종시안 선택/semantic-only 메모리. 세션 뷰(draft 목록)엔 보이지만 /agent(장기 메모리)엔 안 나타남.
+  - 수정: 승격 조건을 `episodic` 단독 → `episodic || semantic || input || output || keywords`(내용이 조금이라도 있으면 승격). 진짜 빈 draft만 `status:"skipped_empty"`(promotedAt 없음)로 표시 → 거짓 promoted 마킹 제거, 디버깅/재시도 가능.
+  - 한계: 이미 종료돼 promoted로 마킹된 기존 draft는 자동 복구 안 됨(필요 시 backfill 스크립트 별도).
+
+- #1 weight 사용 기반 decay (`memory/retrieve/route.ts`):
+  - 실측(`scripts/analyze_memory_weights.py`): 5명/132개 중 weight 0.5 미만 0개, 60%가 0.5 동결, delta 이벤트 증가 +835 vs 감소 −61. 기존 near-miss decay(rank 6~20 & sim≥0.55)가 현실에선 거의 안 걸려 단조 증가만 함.
+  - 수정: near-miss decay 제거 → **idle decay** 도입. retrieve마다 그 턴에 retrieve 안 된 모든 메모리에 −0.003(메모리 많을수록 최대 −0.006), 하한 0.1. 벽시계 무관(사용 기반)이라 3일 formative 실험의 "시간 기반 archive 금지" 원칙과 충돌 없음. 로그 필드 `idleDecayDeltas`/`idleDecayCount`로 교체(외부 consumer 없음). 튜닝 상수 `IDLE_DECAY_WEIGHT_LOSS`.
+  - read-only 분석 스크립트 `scripts/analyze_memory_weights.py` 추가(weight 분포/증감 이벤트 집계).
+
+- 리뷰 화면 감소 표시 (`memory/session-summary/route.ts` + `main/[missionId]/page.tsx`):
+  - 일관성: `referenced.weightAfter`를 마지막 retrieve 시점 값 → **현재 live weight**로 변경, `weightDelta = 현재 − 세션 시작 전`(retrieve 증가 + idle 감소 합산). 그래프 수치와 일치하고 감소도 델타에 드러남.
+  - 참가자 친화: route에 `idleDecaySummary{memoryCount,totalDelta}` 집계 추가. 메모리 변화 탭에 "자주 참고되지 않은 기억 N개가 약해졌어요" 한 줄. `formatWeightStrength`(강함/보통/약함/희미함) 라벨을 weight 옆에 표시. 음수 delta가 초록(증가처럼) 표시되던 색상 버그 수정.
+  - 상세 per-memory 감소 수치는 admin/로그/분석 스크립트에만 유지, 참가자 화면은 깔끔하게.
+
+- 검증: `./node_modules/.bin/tsc --noEmit` 통과. 라이브 세션에서 종료→승격, decay 누적, 리뷰 표시 재검증 권장.
