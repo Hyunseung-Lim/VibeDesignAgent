@@ -2671,7 +2671,7 @@ type ChatPlan = {
 의존: **B는 C·D의 upstream**, **A·B는 다음 데이터 수집 전 필수**(실험 셋업·데이터 성격을 바꾸므로 수집 후 변경 시 데이터 오염).
 
 - **P0 — 다음 세션 수집 전 (둘 다 싸고 선행조건, 병렬 가능)**
-  - 요구 A (미션 9개): 데이터 수집 차단 해제. 콘텐츠 셋업 위주.
+  - [x] 요구 A (미션 9개): 15.64에서 구현. (옵션 선택 mechanic 제거, 유저별 랜덤 순서 + 어드민 표시로 확장됨.)
   - [x] 요구 B (semantic 적극 생성): 15.63에서 구현. (정정: `CLUSTERING_METHOD_VERSION` bump 불필요 — B는 clustering 입력/방법이 아니라 메모리 데이터만 바꾸고, cluster 캐시 키의 item signature가 데이터 변경 시 자동 재생성을 트리거함.)
 - **P1 — 사용자 이해 요약**
   - 요구 D: B의 payoff(재미/insight), 사용자 친화 기능. 중간 규모.
@@ -2702,3 +2702,54 @@ type ChatPlan = {
 - 정정: 15.62에 적었던 `CLUSTERING_METHOD_VERSION` bump은 불필요(데이터만 바뀌고 cluster 캐시 키 item signature가 자동 재생성 트리거).
 - 검증: `./node_modules/.bin/tsc --noEmit` 통과. 라이브에서 신규 interaction이 항상 semantic + confidence를 갖는지, 리뷰/agent 패널에 신뢰도 배지가 뜨는지 확인 권장. 기존(필드 없는) 메모리는 배지 미표시(graceful).
 - 후속: 과해석이 실제로 유용한 insight를 주는지 관찰 후, 필요하면 retrieval/clustering에서 저신뢰 semantic 가중 조정 검토(현재는 동일 취급).
+
+### 15.64 미션 옵션 선택 제거 + 9개 단독 미션 + 유저별 랜덤 순서 `[implemented 2026-06-11]`
+
+- 요구(15.62-A): "3옵션 중 1개 선택" 구조를 옵션별 단독 미션으로 쪼개 온보딩 제외 9개 세션. 옵션 선택 mechanic 제거. + (확장) 미션 순서를 유저별 랜덤으로, 어드민에서 유저별 순서 확인.
+- 데이터:
+  - `scripts/create_split_missions.py`: 기존 3미션×3옵션을 9개 단독 미션으로 생성. 제목 "과제 · 브랜드"(예: "스타트업 랜딩페이지 디자인 · 🌙 Zzzly"), description=상위 미션 brief, device/duration 상속, `options`는 원본 옵션 1개 유지(콘텐츠 플러밍 재사용). id는 순서 중립(`mission-20260611-GNN001`).
+  - 기존 3개 옵션 미션은 `exports/old-missions-backup/`에 백업 후 삭제. `missions` 컬렉션엔 9개만 남김.
+- 옵션 선택 화면 제거 (`main/[missionId]/page.tsx`):
+  - 선택 화면 게이트 `missionOptions.length > 0` → `> 1`. 옵션 1개 미션은 선택 화면 자동 스킵, `activeOption`은 옵션 1개면 자동 해석(line 2622)되어 콘텐츠 주입 그대로 동작.
+  - 단일 옵션 자동 선택 effect 추가(어떤 페르소나였는지 세션에 기록): 미션 컨텍스트 준비 + 세션 로드 완료 + 미시작 시 `chooseMissionOption(options[0])` 1회(ref 가드).
+- 유저별 랜덤 미션 순서:
+  - 저장: `users/{uid}.missionOrder: string[]`(9개 미션 id).
+  - 할당: `GET /api/users/me`의 `resolveMissionOrder` — 저장된 순서가 있으면 유지(현존 미션만 필터), 새 미션은 셔플 append, 변경 시에만 patch. 최초 1회 셔플로 고정 → 진행 중 재셔플 없음. 서버 측 할당.
+  - 로비(`lobby/page.tsx`): `/api/users/me`의 missionOrder로 미션 정렬(없으면 createdAt fallback). 온보딩은 항상 맨 앞.
+- 누적 메모리 뷰 수정(15.59 가정 변경):
+  - 순서가 유저별이라 mission-id 시간순 누적이 깨짐. `isWithinCumulative`를 missionOrder 배열 인덱스 비교로 변경(onboarding은 항상 base; 순서 미해석/선택 미션 부재 시 onboarding+동일 미션만 fallback). 기존 `missionOrderKey`(문자열 비교) 제거.
+  - missionOrder 전달 경로: `POST /api/memory/session-summary`가 `users/{targetUid}.missionOrder`를 응답에 포함(서버 admin 토큰으로 대상 유저 doc 읽음) → main page `SessionMemorySummary.missionOrder`로 수신 → `cumulativeGraphMemories`가 사용.
+- 어드민 표시:
+  - `GET /api/admin/users`가 각 유저 `missionOrder` 반환. `AdminUser` 타입 + `upsertUser`에 필드 추가.
+  - 유저 카드에 "미션 순서 (유저별 랜덤)" 번호 매긴 시퀀스 표시(`missionTitle(id)`로 제목 매핑).
+- 신규/수정 스크립트: `scripts/create_split_missions.py`(신규), `scripts/backup_users.py`(신규, 이전 단계), `scripts/wipe_users.py`(신규, 이전 단계), `scripts/export_stitch_html.mjs`(env 경로 오버라이드).
+- 검증: `./node_modules/.bin/tsc --noEmit` 통과. 라이브에서 ① 로비가 유저별 순서로 9개 표시, ② 미션 진입 시 선택 화면 없이 바로 시작, ③ 어드민 카드에 순서 노출, ④ 리뷰 누적 뷰가 유저 순서 기준 누적 재확인 권장.
+- 한계/후속: missionOrder 할당은 로비(`/api/users/me`) 최초 진입 시 — 로비를 거치지 않고 바로 세션 진입하면 미할당일 수 있음(현 플로우상 로비 경유). 온보딩은 `missions` 컬렉션 밖 합성 미션이라 순서에서 제외(항상 base).
+
+### 15.65 미션 선형 진행 게이팅 (순차 잠금) `[implemented 2026-06-11]`
+
+- 요구: 미션을 순서대로만 진행하도록 강제하되, 온보딩 미완료 시 배너 난사 대신 사용자 친화적으로. 결정: ① 완료 미션 재실행 차단(리뷰만), ② 엄격 선형(첫 미완료 1개만 해제).
+- 설계: 배너 제거 → 카드 상태가 유일한 정보원인 "선형 경로" 모델. 온보딩=0단계로 같은 경로에 포함.
+- 카드 상태 (`components/lobby/mission-card.tsx`):
+  - 완료: 체크 아이콘 + "리뷰 보기"만 노출(재실행 버튼 제거 → 선형 누적 데이터 오염 방지).
+  - 지금 진행(current): 첫 미완료 1개. accent 보더 + ring 강조 + "시작" CTA.
+  - 잠금: 자물쇠 아이콘 + opacity 낮춤 + 카드에 잠금 이유 상시 노출 + 클릭 시 토스트(내비게이션 X). 이유: 온보딩 미완료면 "온보딩 완료 후 진행 가능", 아니면 "이전 미션 완료 후 진행 가능".
+  - `isOnboardingRequired` per-card amber 배너 제거. `MissionCard` props 변경: `isCurrent`/`lockReason`/`onLockedClick` 추가, `isOnboardingRequired` 제거.
+- 선형 상태 계산 (`lobby/page.tsx`):
+  - 경로 = `[onboarding, ...유저순서 미션]`. 완료 판정: 온보딩 → `!isOnboardingRequired`, 일반 → `progress.status==="completed"`.
+  - `currentMissionIndex` = 첫 미완료 인덱스(온보딩 상태 확인 중이면 -1로 전부 잠금). `index > current` = 잠금. 완료 미션은 잠기지 않음(리뷰 가능).
+  - 헤더 amber 배너 제거. "미션 목록" 우측에 "완료 X / 전체 Y · 순서대로 진행" 진행도 표시.
+  - 잠긴 카드 클릭 → `toast.info(lockReason)` (sonner, 전역 Toaster 마운트됨).
+- 연구 타당성: 순차 강제는 UX뿐 아니라 15.64 누적 메모리 설계("유저 순서대로 수행" 전제)의 데이터 정합성도 보장(순서 건너뛰기 시 "N까지 누적" 왜곡 방지).
+- 검증: `./node_modules/.bin/tsc --noEmit` 통과. 라이브에서 온보딩 미완료 시 미션 전부 잠금+온보딩 강조, 미션 순차 해제, 완료 카드 리뷰 전용, 잠긴 카드 클릭 토스트 재확인 권장.
+- 한계: 완료 판정은 세션 `status==="completed"` 기준(미완료 중단 세션은 current 유지). status 배지는 잠긴 카드에도 표시됨(대기 등)으로 무해.
+
+### 15.66 로비 초기 미션 1개 플래시 수정 `[implemented 2026-06-11]`
+
+- 문제: `/lobby` 첫 진입 시 약 1초 동안 미션 카드가 1개만 보였다가 전체 목록으로 바뀌는 플래시가 발생. `missions` Firestore 스냅샷, `/api/users/me`의 `missionOrder`/온보딩 상태, Firestore 로컬 캐시 스냅샷이 서로 다른 타이밍에 도착하면서 불완전한 경로(`[onboarding, ...missions]`)가 먼저 렌더링될 수 있었음.
+- 수정 (`lobby/page.tsx`):
+  - `isLobbyLoading = isMissionsLoading || isCheckingOnboarding`으로 로비 목록 렌더링 게이트를 통합. 사용자 프로필/온보딩 상태가 확정되기 전에는 카드 그리드 대신 기존 skeleton 유지.
+  - `onSnapshot(q, { includeMetadataChanges: true }, ...)`로 missions 서버 스냅샷 여부를 확인하고, `snap.metadata.fromCache === false`일 때만 missions loading을 해제. 빈/부분 캐시가 먼저 들어와도 카드 1개짜리 중간 화면을 열지 않음.
+  - 로딩 중 summary도 0 기준으로 유지하고, 미션 목록 우측 문구는 "미션 불러오는 중"으로 표시.
+  - `missionOrder` 정렬에서 양쪽 모두 order에 없는 경우 `Infinity - Infinity`가 `NaN`이 되므로, 이때 `createdAt` fallback으로 안정 정렬.
+- 검증: `./node_modules/.bin/eslint src/app/lobby/page.tsx` 통과. 라이브에서 최초 진입/새로고침 시 skeleton 이후 전체 미션 목록이 한 번에 표시되는지 재확인 권장.

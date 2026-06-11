@@ -74,6 +74,7 @@ type AdminUser = Participant & {
   missionIds: string[];
   sessionMissionIds: string[];
   completedSessionMissionIds: string[];
+  missionOrder: string[];
 };
 
 type AdminMemoryRow = {
@@ -916,6 +917,7 @@ export default function AdminPage() {
           changes.completedSessionMissionIds ??
           prev?.completedSessionMissionIds ??
           [],
+        missionOrder: changes.missionOrder ?? prev?.missionOrder ?? [],
       });
     };
 
@@ -928,6 +930,7 @@ export default function AdminPage() {
         updatedAt: user.updatedAt,
         onboardingStatus: user.onboardingStatus,
         isAdmin: user.isAdmin,
+        missionOrder: user.missionOrder,
       });
     });
 
@@ -1042,28 +1045,6 @@ export default function AdminPage() {
     });
   };
 
-  const addEditOption = () => {
-    setEditFields((prev) => ({
-      ...prev,
-      options: [
-        ...normalizeOptions(prev.options as MissionOption[]),
-        createEmptyOption(),
-      ],
-    }));
-  };
-
-  const removeEditOption = (id: string) => {
-    setEditFields((prev) => {
-      const options = normalizeOptions(prev.options as MissionOption[]);
-      return {
-        ...prev,
-        options:
-          options.length <= 1
-            ? options
-            : options.filter((option) => option.id !== id),
-      };
-    });
-  };
 
   const versionMemoryRows = useMemo(
     () =>
@@ -2709,6 +2690,29 @@ export default function AdminPage() {
                       </div>
                     </div>
 
+                    {user.missionOrder?.length > 0 && (
+                      <div className="mt-3">
+                        <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                          미션 순서 (유저별 랜덤)
+                        </p>
+                        <ol className="flex flex-wrap gap-1.5">
+                          {user.missionOrder.map((mid, i) => (
+                            <li
+                              key={mid}
+                              className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-[11px] text-foreground"
+                            >
+                              <span className="font-semibold text-muted-foreground">
+                                {i + 1}
+                              </span>
+                              <span className="truncate max-w-40">
+                                {missionTitle(mid)}
+                              </span>
+                            </li>
+                          ))}
+                        </ol>
+                      </div>
+                    )}
+
                     <div className="mt-4 flex flex-wrap gap-2">
                       {missionIds.length === 0 ? (
                         <span className="text-xs text-muted-foreground">
@@ -2919,73 +2923,48 @@ export default function AdminPage() {
                                 (0 = 제한 없음)
                               </span>
                             </div>
-                            <div className="space-y-3 rounded-2xl border border-border bg-muted p-3">
-                              <div className="flex items-center justify-between">
-                                <p className="text-xs font-semibold text-muted-foreground">
-                                  옵션
-                                </p>
-                                <Button
-                                  type="button"
-                                  variant="outline"
-                                  size="sm"
-                                  onClick={addEditOption}
-                                  className="text-xs"
-                                >
-                                  + 옵션 추가
-                                </Button>
-                              </div>
-                              {normalizeOptions(
-                                editFields.options as MissionOption[],
-                              ).map((option, index) => (
-                                <div
-                                  key={option.id}
-                                  className="space-y-2 rounded-xl border border-border bg-card p-3"
-                                >
-                                  <div className="flex items-center justify-between">
-                                    <p className="text-xs font-semibold text-muted-foreground">
-                                      옵션 {index + 1}
-                                    </p>
-                                    <Button
-                                      type="button"
-                                      variant="link"
-                                      onClick={() =>
-                                        removeEditOption(option.id)
-                                      }
-                                      className="h-auto p-0 text-xs text-red-400 hover:text-red-500 hover:no-underline"
-                                    >
-                                      삭제
-                                    </Button>
-                                  </div>
+                            {/* Single standalone mission content (data stays as
+                                options[0]; the option-selection mechanic was
+                                removed, so there is exactly one content block). */}
+                            {(() => {
+                              const opt =
+                                normalizeOptions(
+                                  editFields.options as MissionOption[],
+                                )[0] ?? createEmptyOption();
+                              return (
+                                <div className="space-y-2 rounded-2xl border border-border bg-muted p-3">
+                                  <p className="text-xs font-semibold text-muted-foreground">
+                                    미션 콘텐츠
+                                  </p>
                                   <Input
-                                    value={option.title}
+                                    value={opt.title}
                                     onChange={(e) =>
-                                      updateEditOption(option.id, {
+                                      updateEditOption(opt.id, {
                                         title: e.target.value,
                                       })
                                     }
-                                    placeholder="옵션 제목"
+                                    placeholder="주제/브랜드 이름 (예: 🌙 Zzzly)"
                                     className="text-xs"
                                   />
                                   <Textarea
-                                    value={option.description}
+                                    value={opt.description}
                                     onChange={(e) =>
-                                      updateEditOption(option.id, {
+                                      updateEditOption(opt.id, {
                                         description: e.target.value,
                                       })
                                     }
-                                    placeholder="옵션 설명"
+                                    placeholder="한 줄 설명"
                                     rows={2}
                                     className="resize-none text-xs"
                                   />
-                                  {/* Content — markdown */}
                                   <div className="space-y-1.5">
                                     <p className="text-xs font-semibold text-muted-foreground">
                                       콘텐츠 (마크다운)
                                     </p>
                                     <Textarea
-                                      value={option.content}
+                                      value={opt.content}
                                       onChange={(e) =>
-                                        updateEditOption(option.id, {
+                                        updateEditOption(opt.id, {
                                           content: e.target.value,
                                         })
                                       }
@@ -2995,8 +2974,8 @@ export default function AdminPage() {
                                     />
                                   </div>
                                 </div>
-                              ))}
-                            </div>
+                              );
+                            })()}
                             <div className="flex gap-2">
                               <Button
                                 type="button"
@@ -3046,7 +3025,7 @@ export default function AdminPage() {
                               </p>
                             )}
                             <p className="text-xs text-muted-foreground">
-                              옵션 {mission.options?.length ?? 0}개
+                              {mission.options?.[0]?.title || "콘텐츠 미설정"}
                             </p>
                           </>
                         )}

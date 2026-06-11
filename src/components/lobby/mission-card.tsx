@@ -1,4 +1,9 @@
-import { DeviceMobileIcon, MonitorIcon } from "@phosphor-icons/react";
+import {
+  CheckCircleIcon,
+  DeviceMobileIcon,
+  LockSimpleIcon,
+  MonitorIcon,
+} from "@phosphor-icons/react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { StatusBadge, type MissionStatus } from "@/components/lobby/status-badge";
@@ -23,11 +28,13 @@ type MissionCardProps = {
   mission: LobbyMission;
   status: MissionStatus;
   isCompleted: boolean;
+  isCurrent: boolean;
   isLocked: boolean;
+  lockReason?: string;
   isOnboardingMission: boolean;
-  isOnboardingRequired: boolean;
   onOpen: () => void;
   onReview: () => void;
+  onLockedClick: () => void;
 };
 
 function DeviceBadge({ device }: { device?: "desktop" | "mobile" }) {
@@ -59,39 +66,71 @@ export function MissionCard({
   mission,
   status,
   isCompleted,
+  isCurrent,
   isLocked,
+  lockReason,
   isOnboardingMission,
-  isOnboardingRequired,
   onOpen,
   onReview,
+  onLockedClick,
 }: MissionCardProps) {
   return (
-    <article className="flex min-h-52 flex-col rounded-xl border border-border bg-card p-5 shadow-panel transition-colors hover:bg-muted/35">
+    <article
+      onClick={isLocked ? onLockedClick : undefined}
+      className={`flex min-h-52 flex-col rounded-xl border bg-card p-5 shadow-panel transition-colors ${
+        isLocked
+          ? "cursor-pointer border-border opacity-60 hover:opacity-80"
+          : isCurrent
+            ? "border-primary ring-2 ring-primary/20 hover:bg-muted/35"
+            : "border-border hover:bg-muted/35"
+      }`}
+    >
       <div className="flex flex-wrap items-start gap-3">
-        <p className="flex-1 text-base font-semibold leading-snug text-card-foreground text-wrap">
+        <p className="flex flex-1 items-center gap-1.5 text-base font-semibold leading-snug text-card-foreground text-wrap">
+          {isLocked && (
+            <LockSimpleIcon
+              size={15}
+              weight="fill"
+              className="shrink-0 text-muted-foreground"
+              aria-hidden
+            />
+          )}
+          {isCompleted && (
+            <CheckCircleIcon
+              size={16}
+              weight="fill"
+              className="shrink-0 text-emerald-500"
+              aria-hidden
+            />
+          )}
           {mission.title}
         </p>
         <StatusBadge status={status} />
       </div>
-      {mission.description && (
-        <p className="mt-2 line-clamp-2 text-sm leading-relaxed text-muted-foreground">
-          {mission.description}
-        </p>
-      )}
+      {(() => {
+        // Standalone missions show the per-mission content one-liner (brand/
+        // persona) rather than the shared task-type description, which repeats
+        // across same-type missions. Onboarding keeps its own description.
+        const cardDescription =
+          (!isOnboardingMission && mission.options?.[0]?.description) ||
+          mission.description;
+        return cardDescription ? (
+          <p className="mt-2 line-clamp-2 text-sm leading-relaxed text-muted-foreground">
+            {cardDescription}
+          </p>
+        ) : null;
+      })()}
       <p className="mt-3 text-xs text-muted-foreground">
         {isOnboardingMission
           ? `PC/모바일 중 선택 · 제한 시간 ${mission.durationMinutes ?? 20}분`
-          : `옵션 ${mission.options?.length ?? 0}개 중 선택${
-              mission.durationMinutes
-                ? ` · 제한 시간 ${mission.durationMinutes}분`
-                : " · 제한 시간 없음"
-            }`}
+          : mission.durationMinutes
+            ? `제한 시간 ${mission.durationMinutes}분`
+            : "제한 시간 없음"}
       </p>
-      {isOnboardingRequired && (
-        <p className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-xs font-medium leading-relaxed text-amber-700 ring-1 ring-amber-100">
-          {isOnboardingMission
-            ? "이 미션을 완료하면 본 미션에 접근할 수 있습니다."
-            : "온보딩 완료 후 시작할 수 있습니다."}
+      {isLocked && lockReason && (
+        <p className="mt-3 flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+          <LockSimpleIcon size={12} aria-hidden />
+          {lockReason}
         </p>
       )}
       <div className="mt-auto flex flex-wrap items-center justify-between gap-3 pt-5">
@@ -104,26 +143,26 @@ export function MissionCard({
           </Badge>
         </div>
         <div className="flex shrink-0 items-center gap-2">
-          {isCompleted && (
-            <Button
-              type="button"
-              onClick={onReview}
-              variant="ghost"
-              size="sm"
-              className="h-8 px-2 text-xs text-muted-foreground"
-            >
+          {isCompleted ? (
+            // Completed missions are review-only; re-running is blocked to keep
+            // the linear cumulative-memory data clean.
+            <Button type="button" onClick={onReview} variant="secondary" size="sm">
               리뷰 보기
             </Button>
+          ) : isLocked ? (
+            <Button
+              type="button"
+              onClick={onLockedClick}
+              variant="secondary"
+              size="sm"
+            >
+              잠김
+            </Button>
+          ) : (
+            <Button type="button" onClick={onOpen} variant="default" size="sm">
+              시작
+            </Button>
           )}
-          <Button
-            type="button"
-            onClick={onOpen}
-            disabled={isLocked}
-            variant={isLocked ? "secondary" : "default"}
-            size="sm"
-          >
-            {isLocked ? "잠김" : isCompleted ? "다시 열기" : "시작"}
-          </Button>
         </div>
       </div>
     </article>

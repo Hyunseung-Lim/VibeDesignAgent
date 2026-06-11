@@ -5,8 +5,12 @@ import path from "node:path";
 import { Stitch, StitchToolClient } from "@google/stitch-sdk";
 
 const ROOT_DIR = process.cwd();
-const SESSIONS_PATH = path.join(ROOT_DIR, "exports", "sessions.json");
-const OUTPUT_DIR = path.join(ROOT_DIR, "exports", "stitch-html");
+// Paths are overridable via env so a scoped backup can point at its own
+// sessions.json / output dir without clobbering the global export files.
+const SESSIONS_PATH =
+  process.env.STITCH_SESSIONS_PATH || path.join(ROOT_DIR, "exports", "sessions.json");
+const OUTPUT_DIR =
+  process.env.STITCH_HTML_OUT || path.join(ROOT_DIR, "exports", "stitch-html");
 const MANIFEST_PATH = path.join(OUTPUT_DIR, "manifest.json");
 
 function safeName(value, fallback) {

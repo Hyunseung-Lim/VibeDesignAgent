@@ -33,6 +33,9 @@ export async function GET(request: Request) {
             ? "completed"
             : "required"
           : "unknown",
+        missionOrder: Array.isArray(profile?.missionOrder)
+          ? profile.missionOrder.map(String)
+          : [],
         isAdmin: isAdminEmail(String(profile?.email ?? "")),
       };
     }),

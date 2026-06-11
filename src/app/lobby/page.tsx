@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { toast } from "sonner";
 import { getIdToken, onAuthStateChanged, signOut } from "firebase/auth";
 import { useEffect, useRef, useState } from "react";
 import { collection, onSnapshot, orderBy, query } from "firebase/firestore";
@@ -101,6 +102,9 @@ export default function LobbyPage() {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
   const [missions, setMissions] = useState<Mission[]>([]);
+  // Per-user randomized mission order (from /api/users/me). Lobby renders
+  // missions in this order; empty until the profile fetch resolves.
+  const [missionOrder, setMissionOrder] = useState<string[]>([]);
   const [isMissionsLoading, setIsMissionsLoading] = useState(true);
   const [missionError, setMissionError] = useState<string | null>(null);
   const [missionProgressById, setMissionProgressById] = useState<
@@ -110,6 +114,10 @@ export default function LobbyPage() {
     useState<OnboardingSettings>(defaultOnboardingSettings);
   const [isOnboardingRequired, setIsOnboardingRequired] = useState(false);
   const [isCheckingOnboarding, setIsCheckingOnboarding] = useState(true);
+  // Summary counts derive from client-only data (auth + Firestore). Render a
+  // stable zero summary on the server and the first client render, then the
+  // real counts after mount, so SSR HTML and hydration always match.
+  const [mounted, setMounted] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
   const handleLogout = async () => {
@@ -119,6 +127,10 @@ export default function LobbyPage() {
       router.push("/");
     }
   };
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   useEffect(() => {
     return onAuthStateChanged(firebaseAuth, (user) => {
@@ -140,6 +152,9 @@ export default function LobbyPage() {
         )
         .then((res) => (res.ok ? res.json() : null))
         .then((profile) => {
+          setMissionOrder(
+            Array.isArray(profile?.missionOrder) ? profile.missionOrder : [],
+          );
           const completed = profile?.onboardingCompleted === true;
           if (completed) {
             window.localStorage.setItem(
@@ -191,12 +206,15 @@ export default function LobbyPage() {
     setMissionError(null);
     return onSnapshot(
       q,
+      { includeMetadataChanges: true },
       (snap) => {
         setMissions(
           snap.docs.map((d) => ({ id: d.id, ...d.data() }) as Mission),
         );
         setMissionError(null);
-        setIsMissionsLoading(false);
+        if (!snap.metadata.fromCache) {
+          setIsMissionsLoading(false);
+        }
       },
       () => {
         setMissionError("미션 목록을 불러오지 못했습니다.");
@@ -254,26 +272,66 @@ export default function LobbyPage() {
     ],
     createdAt: -1,
   };
-  const visibleMissions: LobbyMission[] = [onboardingMission, ...missions];
+  // Order missions by the user's per-user mission order; any mission not yet in
+  // the order (or before the order resolves) falls back to createdAt order.
+  const orderedMissions =
+    missionOrder.length > 0
+      ? [...missions].sort((a, b) => {
+          const ia = missionOrder.indexOf(a.id);
+          const ib = missionOrder.indexOf(b.id);
+          const orderDelta =
+            (ia === -1 ? Infinity : ia) - (ib === -1 ? Infinity : ib);
+          return Number.isNaN(orderDelta)
+            ? (a.createdAt ?? 0) - (b.createdAt ?? 0)
+            : orderDelta;
+        })
+      : missions;
+  const visibleMissions: LobbyMission[] = [onboardingMission, ...orderedMissions];
   const missionSummaries = visibleMissions.map((mission) => {
     const isOnboardingMission = mission.id === ONBOARDING_MISSION_ID;
+    // Onboarding completion is only known after the profile fetch resolves.
+    // Until then (isCheckingOnboarding), treat it as not-completed so the card
+    // doesn't flash "완료" before reverting (isOnboardingRequired defaults false).
+    const onboardingCompleted =
+      isOnboardingMission && !isCheckingOnboarding && !isOnboardingRequired;
     const progress =
       missionProgressById[mission.id] ??
-      (isOnboardingMission && !isOnboardingRequired
+      (onboardingCompleted
         ? { hasActivity: true, timerStartedAt: null, status: "completed" }
         : null);
     const status = derivedStatus(progress, mission.durationMinutes);
-    return { mission, progress, status };
+    const isMissionCompleted = isOnboardingMission
+      ? onboardingCompleted
+      : progress?.status === "completed";
+    return { mission, progress, status, isOnboardingMission, isMissionCompleted };
   });
-  const summary = {
-    total: missionSummaries.length,
-    waiting: missionSummaries.filter((item) =>
-      item.status.label === "대기" || item.status.label === "준비중"
-    ).length,
-    active: missionSummaries.filter((item) => item.status.label === "진행중").length,
-    completed: missionSummaries.filter((item) => item.status.label === "완료").length,
-    timedOut: missionSummaries.filter((item) => item.status.label === "시간 초과").length,
-  };
+  // Strict linear path: onboarding first, then missions in the user's order.
+  // Exactly the first incomplete mission is "current"; everything after is locked.
+  // While onboarding status is still resolving, nothing is unlocked yet.
+  const currentMissionIndex = isCheckingOnboarding
+    ? -1
+    : missionSummaries.findIndex((item) => !item.isMissionCompleted);
+  const completedCount = missionSummaries.filter(
+    (item) => item.isMissionCompleted,
+  ).length;
+  const isLobbyLoading = isMissionsLoading || isCheckingOnboarding;
+  const summary = mounted && !isLobbyLoading
+    ? {
+        total: missionSummaries.length,
+        waiting: missionSummaries.filter(
+          (item) =>
+            item.status.label === "대기" || item.status.label === "준비중",
+        ).length,
+        active: missionSummaries.filter((item) => item.status.label === "진행중")
+          .length,
+        completed: missionSummaries.filter(
+          (item) => item.status.label === "완료",
+        ).length,
+        timedOut: missionSummaries.filter(
+          (item) => item.status.label === "시간 초과",
+        ).length,
+      }
+    : { total: 0, waiting: 0, active: 0, completed: 0, timedOut: 0 };
 
   return (
     <div className="min-h-screen bg-surface-page text-foreground">
@@ -311,11 +369,6 @@ export default function LobbyPage() {
               </Link>
             </div>
           </div>
-          {isOnboardingRequired && (
-            <p className="mt-4 rounded-lg bg-amber-50 px-4 py-3 text-sm font-medium text-amber-700 ring-1 ring-amber-100">
-              먼저 온보딩 미션을 완료하면 본 미션을 시작할 수 있습니다.
-            </p>
-          )}
         </header>
 
         <LobbySummary {...summary} />
@@ -324,11 +377,13 @@ export default function LobbyPage() {
           <div className="flex items-center justify-between">
             <h2 className="text-xl font-semibold text-foreground">미션 목록</h2>
             <span className="text-sm text-muted-foreground">
-              {visibleMissions.length}개의 미션
+              {isLobbyLoading
+                ? "미션 불러오는 중"
+                : `${completedCount} / ${visibleMissions.length} 완료 · 순서대로 진행`}
             </span>
           </div>
 
-          {isMissionsLoading ? (
+          {isLobbyLoading ? (
             <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
               {Array.from({ length: 3 }).map((_, index) => (
                 <div
@@ -356,35 +411,39 @@ export default function LobbyPage() {
             </div>
           ) : (
             <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-              {missionSummaries.map(({ mission, progress, status }) => {
-                const isOnboardingMission =
-                  mission.id === ONBOARDING_MISSION_ID;
-                const isCompleted = progress?.status === "completed";
-                const isLocked =
-                  (!isOnboardingMission && isOnboardingRequired) ||
-                  isCheckingOnboarding;
-                const openMission = () => {
-                  if (isCheckingOnboarding) return;
-                  if (isOnboardingRequired && !isOnboardingMission) {
-                    router.push(`/main/${ONBOARDING_MISSION_ID}`);
-                    return;
-                  }
-                  router.push(`/main/${mission.id}`);
-                };
-                return (
-                  <MissionCard
-                    key={mission.id}
-                    mission={mission}
-                    status={status}
-                    isCompleted={isCompleted}
-                    isLocked={isLocked}
-                    isOnboardingMission={isOnboardingMission}
-                    isOnboardingRequired={isOnboardingRequired}
-                    onOpen={openMission}
-                    onReview={() => router.push(`/main/${mission.id}?review=1`)}
-                  />
-                );
-              })}
+              {missionSummaries.map(
+                ({ mission, status, isOnboardingMission, isMissionCompleted }, index) => {
+                  const isCurrent = index === currentMissionIndex;
+                  const isLocked =
+                    !isMissionCompleted &&
+                    (currentMissionIndex === -1 || index > currentMissionIndex);
+                  // The blocking step is whatever is "current"; tailor the reason.
+                  const blockingIsOnboarding =
+                    currentMissionIndex >= 0 &&
+                    missionSummaries[currentMissionIndex]?.isOnboardingMission;
+                  const lockReason = blockingIsOnboarding
+                    ? "온보딩 완료 후 진행 가능"
+                    : "이전 미션 완료 후 진행 가능";
+                  const openMission = () => router.push(`/main/${mission.id}`);
+                  return (
+                    <MissionCard
+                      key={mission.id}
+                      mission={mission}
+                      status={status}
+                      isCompleted={isMissionCompleted}
+                      isCurrent={isCurrent}
+                      isLocked={isLocked}
+                      lockReason={lockReason}
+                      isOnboardingMission={isOnboardingMission}
+                      onOpen={openMission}
+                      onReview={() =>
+                        router.push(`/main/${mission.id}?review=1`)
+                      }
+                      onLockedClick={() => toast.info(lockReason)}
+                    />
+                  );
+                },
+              )}
             </div>
           )}
         </main>

@@ -421,6 +421,15 @@ export async function POST(request: Request) {
         return b.generatedAt - a.generatedAt;
       })[0] ?? null;
 
+  // The target user's per-user mission order, used by the review to compute the
+  // cumulative memory set (missions are ordered per user, not by id/time).
+  const userProfile = (await getFirestoreDocument(`users/${targetUid}`, token)) as
+    | Record<string, unknown>
+    | null;
+  const missionOrder = Array.isArray(userProfile?.missionOrder)
+    ? userProfile.missionOrder.map(String)
+    : [];
+
   return Response.json({
     drafts,
     promoted,
@@ -429,5 +438,6 @@ export async function POST(request: Request) {
     graphMemories,
     graphClusters: selectedClusterDoc?.graphClusters ?? [],
     graphEdges: selectedClusterDoc?.graphEdges ?? [],
+    missionOrder,
   });
 }

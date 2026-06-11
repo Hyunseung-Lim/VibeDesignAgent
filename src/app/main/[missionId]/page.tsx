@@ -74,23 +74,24 @@ import { MemoryClusterList } from "@/components/memory/memory-cluster-list";
 import { MemoryClusterSidePanel } from "@/components/memory/memory-cluster-side-panel";
 const ONBOARDING_MISSION_ID = "onboarding";
 
-// Chronological rank for cumulative memory views. Mission ids are
-// `mission-YYYYMMDD-HHmmss`, so plain string compare = time order. Onboarding is
-// the base and always sorts first; unknown ids sort last.
-function missionOrderKey(missionId: string | null | undefined) {
-  if (missionId === ONBOARDING_MISSION_ID) return "";
-  return missionId ?? "￿";
-}
-
 // A memory belongs to the cumulative set for the selected mission when it is the
-// onboarding base, or was created in a mission at/before the selected one.
+// onboarding base, or was created in a mission at/before the selected one in the
+// user's per-user mission order. Mission order is randomized per user, so we
+// compare positions in that order (not mission-id time order). When the order is
+// unavailable (not loaded, or selected mission not in it — e.g. onboarding), we
+// fall back to onboarding + the same mission only.
 function isWithinCumulative(
   memoryMissionId: string | null | undefined,
   selectedMissionId: string,
+  missionOrder: string[],
 ) {
   if (memoryMissionId === ONBOARDING_MISSION_ID) return true;
   if (!memoryMissionId) return false;
-  return missionOrderKey(memoryMissionId) <= missionOrderKey(selectedMissionId);
+  const selIdx = missionOrder.indexOf(selectedMissionId);
+  if (selIdx === -1) return memoryMissionId === selectedMissionId;
+  const memIdx = missionOrder.indexOf(memoryMissionId);
+  if (memIdx === -1) return false;
+  return memIdx <= selIdx;
 }
 
 const MemoryClusterGraph = dynamic(() => import("@/app/admin/MemoryClusterGraph"), {
@@ -254,6 +255,8 @@ type SessionMemorySummary = {
     targetId: string;
     weight: number;
   }>;
+  // The target user's per-user mission order, used to compute the cumulative set.
+  missionOrder: string[];
 };
 
 type MemoryGraphFilter = "changed" | "all" | "referenced" | "promoted" | "archived";
@@ -266,6 +269,7 @@ const EMPTY_SESSION_MEMORY_SUMMARY: SessionMemorySummary = {
   graphMemories: [],
   graphClusters: [],
   graphEdges: [],
+  missionOrder: [],
 };
 
 type ActivityLogEvent = {
@@ -363,6 +367,7 @@ async function fetchSessionMemorySummary(
       ? data.graphClusters
       : [],
     graphEdges: Array.isArray(data?.graphEdges) ? data.graphEdges : [],
+    missionOrder: Array.isArray(data?.missionOrder) ? data.missionOrder : [],
   };
 }
 
@@ -2565,9 +2570,13 @@ export default function MainScreenPage() {
   const cumulativeGraphMemories = useMemo(
     () =>
       sessionMemorySummary.graphMemories.filter((memory) =>
-        isWithinCumulative(memory.source?.missionId, missionId),
+        isWithinCumulative(
+          memory.source?.missionId,
+          missionId,
+          sessionMemorySummary.missionOrder,
+        ),
       ),
-    [sessionMemorySummary.graphMemories, missionId],
+    [sessionMemorySummary.graphMemories, sessionMemorySummary.missionOrder, missionId],
   );
   const sessionArchivedMemories = useMemo(() => {
     const referencedIds = new Set(
@@ -3128,6 +3137,27 @@ export default function MainScreenPage() {
 
     return () => unsubMission();
   }, [userId, missionId, viewAs, isAdmin, isOnboardingMission]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Single-option missions have no selection screen (the option mechanic was
+  // removed). Auto-select the only option once so the session records which
+  // persona/brand was worked on and the content plumbing has an active option.
+  const autoSelectedOptionRef = useRef(false);
+  useEffect(() => {
+    if (isReadOnly || !isMissionContextReady || !sessionLoaded || sessionCompleted)
+      return;
+    if (autoSelectedOptionRef.current) return;
+    if (missionOptions.length === 1 && !selectedOptionId) {
+      autoSelectedOptionRef.current = true;
+      void chooseMissionOption(missionOptions[0]);
+    }
+  }, [
+    isReadOnly,
+    isMissionContextReady,
+    sessionLoaded,
+    sessionCompleted,
+    missionOptions,
+    selectedOptionId,
+  ]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!targetSessionUserId || !missionId) {
@@ -6392,7 +6422,7 @@ export default function MainScreenPage() {
             미션 정보를 불러오는 중...
           </div>
         </main>
-      ) : missionOptions.length > 0 && !selectedOptionId ? (
+      ) : missionOptions.length > 1 && !selectedOptionId ? (
         <MissionOptionSelection
           options={missionOptions}
           activePreviewId={activeOptionPreviewId}
