@@ -10,14 +10,14 @@ import { isAdminEmail } from "@/lib/admin";
 
 type Device = "desktop" | "mobile";
 
-type MissionOption = {
+type MissionContent = {
   id: string;
   title: string;
   description: string;
   content: string;
 };
 
-function createEmptyOption(): MissionOption {
+function createEmptyContent(): MissionContent {
   return { id: crypto.randomUUID(), title: "", description: "", content: "" };
 }
 
@@ -26,7 +26,7 @@ const EMPTY_FORM = {
   description: "",
   device: "desktop" as Device,
   durationMinutes: 30,
-  options: [createEmptyOption()],
+  contentBlock: createEmptyContent(),
 };
 
 export default function NewMissionPage() {
@@ -46,26 +46,15 @@ export default function NewMissionPage() {
     });
   }, [router]);
 
-  const updateOption = (id: string, changes: Partial<MissionOption>) => {
+  const updateContent = (changes: Partial<MissionContent>) => {
     setForm((prev) => ({
       ...prev,
-      options: prev.options.map((o) => o.id === id ? { ...o, ...changes } : o),
+      contentBlock: { ...prev.contentBlock, ...changes },
     }));
   };
 
-  const addOption = () => {
-    setForm((prev) => ({ ...prev, options: [...prev.options, createEmptyOption()] }));
-  };
-
-  const removeOption = (id: string) => {
-    setForm((prev) => ({
-      ...prev,
-      options: prev.options.length <= 1 ? prev.options : prev.options.filter((o) => o.id !== id),
-    }));
-  };
-
-  const validOptions = form.options.filter((o) => o.title.trim());
-  const canSubmit = form.title.trim() && validOptions.length > 0 && !isCreating;
+  const hasContentTitle = form.contentBlock.title.trim();
+  const canSubmit = form.title.trim() && hasContentTitle && !isCreating;
 
   const createMission = async () => {
     if (!canSubmit) return;
@@ -86,10 +75,15 @@ export default function NewMissionPage() {
           description: form.description.trim(),
           device: form.device,
           durationMinutes: form.durationMinutes > 0 ? form.durationMinutes : null,
-          options: validOptions.map((o) => ({
-            ...o,
-            title: o.title.trim(),
-          })),
+          // Firestore still stores the mission content in options[0] so the
+          // existing session content plumbing remains compatible.
+          options: [
+            {
+              ...form.contentBlock,
+              title: form.contentBlock.title.trim(),
+              description: form.contentBlock.description.trim(),
+            },
+          ],
         }),
       });
       if (!res.ok) {
@@ -189,57 +183,35 @@ export default function NewMissionPage() {
           </div>
         </div>
 
-        {/* Options */}
+        {/* Mission content */}
         <div className="rounded-3xl border border-slate-100 bg-white p-6 space-y-4">
-          <div className="flex items-center justify-between">
-            <p className="text-sm font-semibold text-slate-500">미션 옵션</p>
-            <button
-              type="button"
-              onClick={addOption}
-              className="rounded-xl border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-500 transition hover:bg-slate-50"
-            >
-              + 옵션 추가
-            </button>
-          </div>
+          <p className="text-sm font-semibold text-slate-500">미션 콘텐츠</p>
 
-          {form.options.map((option, index) => (
-            <div key={option.id} className="space-y-3 rounded-2xl border border-slate-100 bg-slate-50 p-4">
-              <div className="flex items-center justify-between">
-                <p className="text-xs font-semibold text-slate-400">옵션 {index + 1}</p>
-                <button
-                  type="button"
-                  onClick={() => removeOption(option.id)}
-                  className="text-xs text-red-400 transition hover:text-red-500"
-                >
-                  삭제
-                </button>
-              </div>
-              <input
-                value={option.title}
-                onChange={(e) => updateOption(option.id, { title: e.target.value })}
-                placeholder="옵션 제목"
-                className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-slate-400"
-              />
+          <div className="space-y-3 rounded-2xl border border-slate-100 bg-slate-50 p-4">
+            <input
+              value={form.contentBlock.title}
+              onChange={(e) => updateContent({ title: e.target.value })}
+              placeholder="주제/브랜드 이름"
+              className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-slate-400"
+            />
+            <textarea
+              value={form.contentBlock.description}
+              onChange={(e) => updateContent({ description: e.target.value })}
+              placeholder="한 줄 설명"
+              rows={2}
+              className="w-full resize-none rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-slate-400"
+            />
+            <div className="space-y-2">
+              <p className="text-xs font-semibold text-slate-400">콘텐츠 (마크다운)</p>
               <textarea
-                value={option.description}
-                onChange={(e) => updateOption(option.id, { description: e.target.value })}
-                placeholder="옵션 설명"
-                rows={2}
-                className="w-full resize-none rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-slate-400"
+                value={form.contentBlock.content}
+                onChange={(e) => updateContent({ content: e.target.value })}
+                placeholder={"## 서비스 개요\n- ...\n\n## 주요 기능\n- ..."}
+                rows={6}
+                className="w-full resize-y rounded-xl border border-slate-200 bg-white px-3 py-2 font-mono text-sm outline-none focus:border-slate-400"
               />
-              {/* Content — markdown */}
-              <div className="space-y-2">
-                <p className="text-xs font-semibold text-slate-400">콘텐츠 (마크다운)</p>
-                <textarea
-                  value={option.content}
-                  onChange={(e) => updateOption(option.id, { content: e.target.value })}
-                  placeholder={"## 서비스 개요\n- ...\n\n## 주요 기능\n- ..."}
-                  rows={6}
-                  className="w-full resize-y rounded-xl border border-slate-200 bg-white px-3 py-2 font-mono text-sm outline-none focus:border-slate-400"
-                />
-              </div>
             </div>
-          ))}
+          </div>
         </div>
       </div>
     </div>

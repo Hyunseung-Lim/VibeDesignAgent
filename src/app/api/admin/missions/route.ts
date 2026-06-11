@@ -55,7 +55,7 @@ export async function POST(request: Request) {
 
   if (!title || options.length === 0) {
     return Response.json(
-      { error: "title and at least one option are required" },
+      { error: "title and mission content are required" },
       { status: 400 },
     );
   }

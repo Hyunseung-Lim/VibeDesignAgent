@@ -1,6 +1,10 @@
 import Image from "next/image";
 import Link from "next/link";
-import { Button, buttonVariants } from "@/components/ui/button";
+import {
+  CaretDownIcon,
+  SignOutIcon,
+  ShieldCheckIcon,
+} from "@phosphor-icons/react";
 
 type UserMenuProps = {
   userEmail: string;
@@ -30,7 +34,7 @@ export function UserMenu({
       <button
         type="button"
         onClick={onToggle}
-        className="flex items-center gap-2 rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+        className="flex h-10 items-center gap-2 rounded-full px-1.5 pr-2 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
         aria-label="사용자 메뉴 열기"
         aria-expanded={isOpen}
       >
@@ -49,10 +53,16 @@ export function UserMenu({
             {userInitial}
           </span>
         )}
+        <CaretDownIcon
+          size={14}
+          weight="bold"
+          className={`transition-transform ${isOpen ? "rotate-180" : ""}`}
+          aria-hidden
+        />
       </button>
       {isOpen && (
-        <div className="absolute right-0 mt-3 w-64 rounded-xl border border-border bg-popover p-3 text-sm text-popover-foreground shadow-popover">
-          <div className="flex items-center gap-3 border-b border-border pb-3">
+        <div className="absolute right-0 mt-3 w-64 rounded-xl bg-popover p-2 text-sm text-popover-foreground shadow-popover">
+          <div className="flex items-center gap-3 px-2 py-2.5">
             {userPhoto ? (
               <Image
                 src={userPhoto}
@@ -77,28 +87,26 @@ export function UserMenu({
               </p>
             </div>
           </div>
-          <div className="mt-2 space-y-1">
+          <div className="my-1 h-px bg-border" />
+          <div className="space-y-0.5">
             {isAdmin && (
               <Link
                 href="/admin"
                 onClick={onClose}
-                className={buttonVariants({
-                  variant: "ghost",
-                  size: "sm",
-                  className: "w-full justify-start",
-                })}
+                className="flex h-9 w-full items-center gap-2 rounded-lg px-2.5 text-left text-sm font-medium text-foreground transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               >
+                <ShieldCheckIcon size={16} aria-hidden />
                 관리자 페이지
               </Link>
             )}
-            <Button
+            <button
+              type="button"
               onClick={onLogout}
-              variant="ghost"
-              size="sm"
-              className="w-full justify-start"
+              className="flex h-9 w-full items-center gap-2 rounded-lg px-2.5 text-left text-sm font-medium text-foreground transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >
+              <SignOutIcon size={16} aria-hidden />
               로그아웃
-            </Button>
+            </button>
           </div>
         </div>
       )}
