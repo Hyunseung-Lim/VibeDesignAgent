@@ -101,8 +101,15 @@ async function applyDesignSystem(
     theme: { ...tokens, designMd: content.slice(0, 8000) },
   };
   try {
-    if (existingId) {
-      const ds = project.designSystem(existingId);
+    // Reuse the project's existing design system when the client lost track of
+    // the id (e.g. page refresh) so we don't accumulate orphan design systems.
+    let targetId = existingId;
+    if (!targetId) {
+      const existing = await project.listDesignSystems().catch(() => []);
+      targetId = existing[0]?.id ?? null;
+    }
+    if (targetId) {
+      const ds = project.designSystem(targetId);
       await ds.update(input);
       return ds.id;
     }

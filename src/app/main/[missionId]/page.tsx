@@ -191,6 +191,7 @@ type SessionMemoryItem = {
   id: string;
   episodic?: string | null;
   semantic?: string | null;
+  interpretationConfidence?: number | null;
   input?: string | null;
   output?: string | null;
   originalInteractionContent?: string | null;
@@ -5628,6 +5629,7 @@ export default function MainScreenPage() {
         output: memory.output ?? "",
         originalInteractionContent: memory.originalInteractionContent ?? "",
         sourceType: memory.sourceType ?? null,
+        interpretationConfidence: memory.interpretationConfidence ?? null,
         action: [
           referenced ? "referenced" : "",
           promotedIds.has(memory.id) ? "promoted" : "",
@@ -5728,6 +5730,7 @@ export default function MainScreenPage() {
           timestamp: memory.timestamp ?? null,
           archivedAt: memory.archivedAt ?? null,
           archiveReason: memory.archiveReason ?? null,
+          interpretationConfidence: memory.interpretationConfidence ?? null,
           source: memory.source ?? null,
         }),
       );

@@ -69,6 +69,11 @@ export async function POST(request: Request) {
         const keywords = jsonArray(draft.keywordsJson);
         const semantic =
           String(draft.semantic ?? "").trim() || jsonArray(draft.semanticJson)[0] || "";
+        const interpretationConfidence =
+          typeof draft.interpretationConfidence === "number" &&
+          Number.isFinite(draft.interpretationConfidence)
+            ? draft.interpretationConfidence
+            : null;
         const episodic = String(draft.episode ?? "").trim();
         const input = String(draft.input ?? "").trim();
         const output = String(draft.output ?? "").trim();
@@ -112,6 +117,7 @@ export async function POST(request: Request) {
               episode: episodic,
               content: episodic,
               semantic: semantic || null,
+              interpretationConfidence,
               input: draft.input ?? "",
               output: draft.output ?? "",
               originalInteractionContent,

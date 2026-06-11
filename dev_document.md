@@ -942,7 +942,7 @@ type ChatPlan = {
   - 다른 미션으로 넘어갈 수 있는 것은 "실제 제품 사례를 선호한다" 같은 reference consumption behavior뿐이며, 이번 구현에서는 전역 preference memory로 저장하지 않는다.
 - [x] memory graph 인터페이스 통일
   - `/agent`와 세션 리뷰의 "메모리 변화 전체 보기"는 공통 `MemoryClusterGraph`를 사용한다.
-  - 세션 리뷰에서는 `세션 이전/세션 이후`와 `변화만/전체/참고/기억됨/보관됨` 필터를 먼저 적용한 뒤 graph에 전달한다.
+  - (15.60에서 개편) 세션 리뷰의 "메모리 변화 전체 보기"는 /agent 페이지와 동일한 3패널(클러스터 목록 + 그래프 + 상세 사이드패널) 전체 화면 구조를 사용한다. `세션 이전/세션 이후` phase 토글은 헤더에 유지하고, `변화만/전체/참고/기억됨/보관됨` 필터 버튼은 제거(필터는 "변화만" 고정).
   - saved cluster cache에 없는 신규/미분류 memory는 fallback cluster로 묶어 표시한다.
 - [x] 에이전트가 필요한 참조 대상을 스스로 select하도록 설계
   - 후보: memory, cited references, selected element, active idea, mockup HTML, design spec
@@ -2491,9 +2491,11 @@ type ChatPlan = {
   - `./node_modules/.bin/tsc --noEmit` 통과.
   - 라이브 smoke test로 SDK design-system 경로 + 생성 반영 확인(위 사전 검증).
   - **대기**: 앱 내 전체 흐름(실제 세션에서 CREATE_DESIGN_SPEC → 해시 게이트 → DS 적용 → 생성이 DS 반영, 시안 전환 시 갱신)은 라이브 세션에서 미검증.
-- 알려진 한계 / 후속:
-  - `stitchDesignSystemId`는 메모리 state로만 유지 → 세션 중 새로고침 시 다음 생성에서 design system이 한 번 더 생성됨(고아 DS 1개 + 정상 적용). 필요 시 route에서 `listDesignSystems` 재사용 또는 세션 스냅샷 영속화로 보완.
-  - 검증 완료 후 Current Snapshot(2장 SDK 버전, 4.4 목업 비주얼 적용 방식, 6장 `/api/stitch`, 7장 프롬프트 표)에 반영 필요.
+- 고아 DS 하드닝 (후속 구현됨, 2026-06-11):
+  - `applyDesignSystem()`에서 클라이언트가 `designSystemId`를 잃은 경우(새로고침 등) `listDesignSystems`로 프로젝트의 기존 design system을 찾아 재사용하고, 없을 때만 새로 생성 → 고아 DS 누적 없음.
+- 남은 후속:
+  - 라이브 세션 검증: 일반 미션에서 ① 스타일 생성 → 첫 목업 생성 시 `applying design system (style changed)` 로그 + 결과 반영, ② 같은 시안 연속 생성 시 적용 스킵(해시 게이트), ③ 스타일 변경 후 재적용, ④ 스타일 없음/추출 실패 시 정상 생성(폴백) 확인.
+  - 검증 완료 후 Current Snapshot(2장 SDK 버전, 4.4 목업 비주얼 적용 방식, 6장 `/api/stitch`, 7장 프롬프트 표)에 반영하고 본 항목 태그에서 `라이브 세션 검증 대기` 제거.
 
 ### 15.54 시안 노트 안정화 / 액션 가드 / 디자인 스타일 seed `[implemented 2026-06-10]`
 
@@ -2593,3 +2595,110 @@ type ChatPlan = {
 - 신규 강조 표현: emerald 링 → **다이아몬드(◆)** 모양으로 변경(`admin/MemoryClusterGraph.tsx`). 색과 무관하게 모양으로 구분. 사이드 패널 배지도 "◆ 이번 세션 신규", raw action 칩에선 "promoted" 토큰 숨김(전용 배지로 표현).
 - 범례(legend): 그래프 좌하단에 "◆ 새로 생긴 기억 / ● 기존 기억" 작은 칩. **신규(◆) 노드가 있을 때만** 자동 표시(없으면 미표시 → admin 등 비대상 화면 혼란 방지). 공유 컴포넌트라 /agent·리뷰 양쪽 자동 적용.
 - 검증: `./node_modules/.bin/tsc --noEmit` 통과. 라이브에서 온보딩→미션1→미션2 순으로 누적 표시/제외 + 신규(다이아몬드) 노출 재확인 권장. source.missionId 없는 레거시 메모리는 누적에서 제외(안전).
+
+### 15.60 메모리 변화 전체 보기 — /agent 레이아웃 미러링 `[implemented 2026-06-11]`
+
+- 배경: 리뷰 화면의 "메모리 변화 전체 보기"가 모달 + 자체 우측 aside 구조라 /agent 페이지와 인터페이스가 달랐고, 그래프 내장 상세 카드(`showInlineDetail`)와 우측 패널이 같은 정보를 중복 표시했음. 온보딩 리뷰에서는 "아직 node view로 표시할 세션 메모리 변화가 없습니다"만 떠 비어 보이는 문제도 있었음.
+- 레이아웃 개편 (`main/[missionId]/page.tsx`):
+  - 모달 → 전체 화면(fixed inset-0)으로 변경하고 /agent와 동일한 3패널 구성: `MemoryClusterList`(좌, 클러스터 목록) + `MemoryClusterGraph`(중앙, `showInlineDetail={false}`) + `MemoryClusterSidePanel`(우, 선택 클러스터 항목/상세). 노드 상세는 사이드패널 한 곳에서만 표시(중복 제거).
+  - `세션 이전/세션 이후` phase 토글은 그래프 좌상단에서 오버레이 헤더 우측으로 이동(그래프 자체의 "N clusters …" 배지와 겹침 해소). `memoryPhaseToggle` 공용 JSX로 추출해 채팅 패널 내 작은 그래프(panel variant)와 공유.
+  - `변화만/전체/참고/기억됨/보관됨` 필터 버튼 제거(필터는 기본 "변화만" 고정). 우측 aside의 stats/선택 노드/참고 목록도 제거하고 사이드패널로 대체.
+  - 빈 상태에서도 phase 토글을 유지해 "세션 이전" 진입 후 되돌아올 수 있게 수정. 온보딩처럼 세션 이전 메모리가 없으면 오픈 시 "세션 이후"로 자동 전환.
+  - `MemoryClusterList`의 `onRegenerate`를 optional로 바꿔 read-only 리뷰에서는 재생성 버튼 숨김(/agent 동작 불변).
+- 노드 상세 라벨 수정 (`admin/MemoryClusterGraph.tsx`):
+  - 상세 카드 제목이 "Semantic memory"로 하드코딩돼 있던 것을 실제 표시 필드 기준(semantic→"Semantic memory", episode/episodic→"Episodic memory", input→"User input", 없으면 "Memory node")으로 동적 변경. 라벨 fallback 체인에 `episode` 추가.
+  - 세션 리뷰 graph item이 `semantic: semantic ?? episodic ?? input`으로 fallback을 미리 합쳐 넘겨 모든 노드가 "Semantic memory"로 표시되던 문제 수정(원본 `semantic`만 전달).
+- 온보딩 빈 화면 수정: 온보딩은 세션 이전 메모리가 0이므로 promoted 전부가 "before" phase에서 필터링돼 비어 보였음 → phase 자동 전환 + 빈 상태 문구 분기("세션 이전에는 메모리가 없었습니다.")로 해소.
+- 검증: `./node_modules/.bin/tsc --noEmit` 통과. 페이지 피드백 루프로 레이아웃/겹침/빈 화면 확인. (commit d4ba11e)
+
+### 15.61 온보딩 세션 설정 — 정보 입력 단계 제거 `[implemented 2026-06-11]`
+
+- 배경: 온보딩 미션은 before-session 메모리를 만들지 않기로 결정 → step 2(정보 입력)가 미션 요약만 보여주는 무의미한 단계로 남음.
+- 구현 (`main/[missionId]/page.tsx`, `components/session/session-setup-stepper.tsx`, `components/session/mission-option-selection.tsx`):
+  - 온보딩이면 step 2를 건너뛰고 시안 선택 → 바로 세션 시작 단계(`profileStep === 3 || isOnboardingMission`).
+  - `SessionSetupStepper`에 `hideProfileStep` prop 추가: 온보딩은 "미션 선택 → 세션 시작" 2단계로 표시하고 번호를 index 기준으로 재부여. `MissionOptionSelection` 내부 stepper에도 `onboarding` prop 연결(미션 선택 화면에서도 2단계 표시).
+  - 세션 시작 단계의 "이전" 버튼은 온보딩에서 시안 선택으로 복귀. `ProfileReviewCard` 미표시, 세션 시작 시 `/api/memory/profile` POST 생략.
+- 검증: `./node_modules/.bin/tsc --noEmit` 통과.
+
+### 15.62 신규 요구사항 백로그 — 미션 확장 / semantic 적극 생성 / clustering 비교 / 사용자 이해 요약 `[active 2026-06-11]`
+
+연구용 4개 신규 요구사항을 정리하고 우선순위를 매긴다. 구현 전 각 항목의 **열린 결정**을 먼저 합의한다. 진행 순서 원칙은 15.55와 동일: 데이터 정합성/실험 셋업 → 싸고 upstream → 큰 기능 → 연구 분석 도구.
+
+#### 요구 A. 온보딩 제외 세션 9개로 미션 확장
+
+- 요구: 현재 "3개 옵션 중 1개 선택" 구조를 옵션별 개별 미션으로 쪼개 온보딩 제외 총 9개 세션이 되게 한다. (3 미션 × 3 옵션 → 9 미션)
+- 현재 구조: `Mission.options: MissionOption[]`, 세션은 `selectedOptionId`로 1개 선택. 옵션 1개뿐인 미션은 자동 선택(`MissionOptionSelection`).
+- 어디: Firestore `missions` 데이터(콘텐츠 생성이 주). 코드는 `admin/page.tsx`(미션 CRUD), `MissionOptionSelection`, 세션 시작 흐름. 옵션 선택 mechanic을 유지할지/제거할지에 따라 변동.
+- 접근 스케치: 기존 각 옵션의 `title/description/content`를 개별 미션 문서로 승격. 미션당 옵션 0~1개로 단순화하면 옵션 선택 화면은 자동 통과.
+- 고려·의존:
+  - 미션 id가 `mission-YYYYMMDD-HHmmss`이고 **누적 메모리 뷰(15.59)가 id 문자열=시간순으로 누적**하므로, 9개 미션을 의도한 학습 순서대로 id 시퀀스가 정렬되게 생성해야 함.
+  - 옵션 선택 UI/`selectedOptionId` 경로를 제거할지(완전 단일화) 데이터만 9개로 늘릴지 결정 필요.
+- 규모: 콘텐츠 셋업 위주 + 소량 코드. 실험 진행의 선행 조건(데이터 수집 차단 해제).
+- 열린 결정: ① 옵션 선택 mechanic 제거 vs 미션당 1옵션 유지, ② 9개 미션의 순서/난이도 배치, ③ 기존 옵션 콘텐츠 재사용 범위.
+
+#### 요구 B. interaction마다 semantic memory 무조건 생성 (적극적 해석)
+
+- 요구: 지금은 "근거 있는 durable insight"만 보수적으로 semantic 생성(없으면 null). 이를 바꿔 **과해석이 들어가더라도 매 interaction마다 semantic을 1개 이상 생성**. 의도: 사용자가 메모리를 보는 재미 + "어떻게 해석됐어야 맞나"에 대한 insight 도출(연구 관찰 대상).
+- 어디: `src/lib/prompts.ts` `MEMORY_ENCODE_PROMPT`. 현재 보수 문구(라인 ~280 "must be clearly supported", ~304 "Do NOT force or fabricate", ~305 "Return null when no durable inference")를 반전.
+- 접근 스케치: semantic을 required 1개(또는 1~N)로 바꾸고, null 금지. 단 연구 추적성을 위해 **추론임을 표식**(예: 별도 필드 `interpretationConfidence` 또는 semantic이 해석/관찰 기반임을 명시)으로 남겨, 리뷰에서 과해석을 보이고 교정 가능하게.
+- 고려·의존:
+  - B는 C(clustering 비교)와 D(사용자 요약)의 **upstream** — 둘 다 semantic을 소비하므로 B가 먼저 적용된 데이터로 진행해야 일관됨.
+  - semantic 데이터 분포가 바뀌므로 clustering `CLUSTERING_METHOD_VERSION` bump 필요.
+  - 다음 데이터 수집 라운드 **전에** 적용해야 함(수집 후 바꾸면 메모리 데이터가 섞임).
+- 규모: 프롬프트 변경 위주(작음). 영향은 큼(데이터 성격 변화).
+- 열린 결정: ① semantic 개수(항상 1개 vs 1~N), ② 최소한의 grounding 가드 유지 vs 완전 적극, ③ 과해석 추적 표식 방식.
+
+#### 요구 C. clustering 입력 3버전 비교
+
+- 요구: 임베딩 입력을 3가지로 만들어 어떤 게 좋은지 비교. ① semantic만, ② interaction log 제외(episodic+semantic+keyword), ③ 기존(keyword+episodic+semantic+originalInteractionContent+link).
+- 어디: `src/lib/server/memoryClustering.ts` `embeddingText()`(현재 ③), `CLUSTERING_METHOD_VERSION`, cluster cache 키(method version + item signature). 비교 UI는 `/agent`/admin.
+- 접근 스케치: `embeddingText`를 variant 파라미터로 분기, 각 variant를 별도 method-version 키로 캐시(공존). 같은 메모리 집합에 3버전 클러스터를 생성하고 나란히 비교하는 뷰.
+- 고려·의존: B 이후의 semantic 데이터로 비교해야 의미. 누적 뷰/캐시 버전 관리 인프라는 이미 존재. 비교 "지표"를 정성(연구자 eyeball) vs 정량(silhouette 등) 중 무엇으로 할지 결정 필요.
+- 규모: 중간(embeddingText 파라미터화 + 3캐시 생성 + 비교 UI).
+- 열린 결정: ① 비교 지표(정성/정량), ② 3버전 동시 생성 트리거/저장 위치, ③ 비교 뷰 위치(/agent vs admin).
+
+#### 요구 D. 에이전트의 사용자 이해 overall summary
+
+- 요구: 에이전트가 사용자를 어떻게 이해하는지 하나의 종합 요약. (B의 적극적 해석이 쌓인 결과를 한 눈에 보는 payoff)
+- 어디: 신규 — 생성 API + 저장(`users/{uid}/...`) + UI 표면(`/agent` 또는 리뷰). 기존 user-summary 개념 없음.
+- 접근 스케치: 사용자 semantic(+episodic) 메모리를 입력으로 LLM이 1개 narrative 요약 생성. 저장 후 표시. 갱신 트리거(세션 종료 시 / 온디맨드).
+- 고려·의존: B의 풍부한 semantic이 있으면 더 풍성. per-user 전역 1개 vs per-mission 누적 중 선택. 신규 프롬프트는 `prompts.ts`에 추가.
+- 규모: 중간(생성+저장+UI).
+- 열린 결정: ① 범위(전역 1개 vs 미션 누적), ② 갱신 시점, ③ 표시 위치, ④ 사용자에게 보일지/연구자만 볼지.
+
+#### 우선순위 (추천)
+
+의존: **B는 C·D의 upstream**, **A·B는 다음 데이터 수집 전 필수**(실험 셋업·데이터 성격을 바꾸므로 수집 후 변경 시 데이터 오염).
+
+- **P0 — 다음 세션 수집 전 (둘 다 싸고 선행조건, 병렬 가능)**
+  - 요구 A (미션 9개): 데이터 수집 차단 해제. 콘텐츠 셋업 위주.
+  - [x] 요구 B (semantic 적극 생성): 15.63에서 구현. (정정: `CLUSTERING_METHOD_VERSION` bump 불필요 — B는 clustering 입력/방법이 아니라 메모리 데이터만 바꾸고, cluster 캐시 키의 item signature가 데이터 변경 시 자동 재생성을 트리거함.)
+- **P1 — 사용자 이해 요약**
+  - 요구 D: B의 payoff(재미/insight), 사용자 친화 기능. 중간 규모.
+- **P2 — clustering 비교 분석 도구**
+  - 요구 C: 연구 방법론 비교. 누적 데이터 필요, 빌드 규모 최대·즉시 사용자 가치 최소라 마지막.
+
+근거: A는 실험 자체를 돌리기 위한 선행조건, B는 5분짜리 프롬프트 변경이지만 C·D가 먹는 데이터 성격을 바꾸므로 같은 P0에서 함께 처리. D는 B의 결과를 사용자에게 바로 보여주는 기능이라 P1. C는 가장 빌드가 크고(3버전 파라미터화+비교 UI) 누적 데이터가 쌓여야 비교가 의미 있어 P2.
+
+### 15.63 semantic memory 적극 생성 + 해석 신뢰도(interpretationConfidence) `[implemented 2026-06-11]`
+
+- 요구(15.62-B): 보수적으로 null 가능하던 semantic을 매 interaction마다 1개 무조건 생성하도록 전환. 과해석 허용(사용자에 대한 대담한 해석 가설). 단 과해석 추적을 위해 신뢰도 표식을 함께 남김(열린 결정 → "추적 표식 포함" 선택).
+- 프롬프트 (`src/lib/prompts.ts` `MEMORY_ENCODE_PROMPT`):
+  - "Semantic Interpretation (active)" 섹션 추가: 항상 정확히 1개 semantic 생성(null 금지), 근거가 약해도 구체적 해석 가설을 commit, strictly proven 넘어서는 speculative reading 허용·장려.
+  - 출력에 `interpretationConfidence`(0.0–1.0) 추가: 0.8–1.0 명확히 지지 / 0.4–0.7 부분적 추론 / 0.0–0.3 speculative 과해석.
+  - 기존 보수 규칙("clearly supported only", "Do NOT force or fabricate", "Return null …") 제거. semantic은 paraphrase 금지(사용자에 대한 해석이어야 함) 규칙만 유지.
+  - PROFILE_MEMORY_ENCODE_PROMPT(before-session)는 변경 안 함 — 요구는 interaction 한정.
+- 데이터 관통:
+  - `memory/drafts/route.ts`: `EncodedMemory`에 `interpretationConfidence` 추가, `parseMemory`가 `clamp01`로 0~1 정규화(semantic 없으면 null), draft 문서에 `interpretationConfidence` 저장.
+  - `memory/complete-session/route.ts`: draft → promoted memory(`memories_0_1_2`)로 `interpretationConfidence` 승계.
+  - `memory/session-summary/route.ts`: `compactMemory`/`compactGraphMemory`에 필드 추가.
+  - `memory/all/route.ts`(/agent): 응답에 필드 추가.
+- 타입/UI:
+  - `memory-cluster-types.ts`: `MemoryItem`/`ClusterGraphItem`에 `interpretationConfidence?: number | null` 추가.
+  - `main/[missionId]/page.tsx`: `SessionMemoryItem` 타입 + graphItems(ClusterGraphItem) + sidePanelMemories(MemoryItem) 매핑에 필드 전달.
+  - `agent/page.tsx`: clusterItems 매핑에 필드 전달.
+  - `memory-cluster-side-panel.tsx`: 선택 노드의 Semantic 필드 아래에 신뢰도 배지(`interpretationTier`): ≥0.8 "해석 근거 강함"(emerald) / ≥0.4 "해석 추론"(amber) / <0.4 "과해석"(rose). /agent·세션 리뷰 공유.
+  - admin 경로는 필드가 optional이라 미표시여도 무해(후속 시 추가 가능).
+- 정정: 15.62에 적었던 `CLUSTERING_METHOD_VERSION` bump은 불필요(데이터만 바뀌고 cluster 캐시 키 item signature가 자동 재생성 트리거).
+- 검증: `./node_modules/.bin/tsc --noEmit` 통과. 라이브에서 신규 interaction이 항상 semantic + confidence를 갖는지, 리뷰/agent 패널에 신뢰도 배지가 뜨는지 확인 권장. 기존(필드 없는) 메모리는 배지 미표시(graceful).
+- 후속: 과해석이 실제로 유용한 insight를 주는지 관찰 후, 필요하면 retrieval/clustering에서 저신뢰 semantic 가중 조정 검토(현재는 동일 취급).

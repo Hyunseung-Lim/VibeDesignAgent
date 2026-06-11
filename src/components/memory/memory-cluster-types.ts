@@ -14,6 +14,9 @@ export type MemoryItem = {
   archivedAt: number | null;
   archiveReason: string | null;
   source: { missionId?: string; draftId?: string } | null;
+  // 0.0–1.0: how well the interaction supported the semantic interpretation
+  // (low = speculative over-reading). null for legacy memories.
+  interpretationConfidence?: number | null;
 };
 
 export type MemoryCluster = {
@@ -47,6 +50,7 @@ export type ClusterGraphItem = {
   timestamp: number;
   keyword: string[];
   keywords: string[];
+  interpretationConfidence?: number | null;
   row: {
     source?: { missionId?: string; draftId?: string };
   };

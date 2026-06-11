@@ -277,8 +277,21 @@ Always:
 
 Never:
 - Summarize only one side of the interaction.
-- Invent, force, or infer user traits from simple facts; semantic items must be clearly supported inferences, not restatements of what happened.
+- Restate what the user literally said or did as a semantic insight; the semantic must be an interpretation about the person, not a paraphrase of the turn.
 - Include timestamps, speaker names, or generic filler words in keywords.
+
+# Semantic Interpretation (active)
+
+Always produce exactly one semantic insight — never null. Interpret the user as a person: their intent, preferences, traits, tendencies, working style, taste, or communication style.
+
+Be bold. Even when the turn only weakly supports it, commit to a concrete interpretive hypothesis about the user rather than refusing. Going beyond what is strictly proven is allowed and expected; a speculative but specific reading is more useful here than a cautious non-answer.
+
+Then rate how well the interaction actually supports that insight with "interpretationConfidence" (0.0–1.0):
+- 0.8–1.0: directly and clearly supported by the interaction.
+- 0.4–0.7: reasonable inference with partial support.
+- 0.0–0.3: speculative over-reading that goes well beyond the evidence.
+
+Keep the semantic specific and readable (one sentence), not generic filler.
 
 # Output Format
 
@@ -296,13 +309,12 @@ Return exactly this JSON shape:
   // including the user request, relevant prior context, agent output/outcome,
   // and immediate outcome, feedback, or decision.
 
-  "semantic": null
-  // Optional one-sentence English durable insight about the user's intent, preferences, traits, tendencies, working style, or communication style.
-  // Return a single information-rich insight when the current interaction clearly supports one.
-  // Extract as much useful long-term insight as one semantic memory can reasonably hold, while keeping it grounded and readable.
-  // Do NOT include simple factual statements about what the user said or did.
-  // Do NOT force or fabricate inferences.
-  // Return null when there is no clearly supported durable inference.
+  "semantic": "",
+  // Required one-sentence English interpretive insight about the user (see Semantic Interpretation). Never null, never empty.
+
+  "interpretationConfidence": 0.0
+  // Number 0.0–1.0: how well the interaction supports the semantic insight above.
+  // High = clearly supported; low = speculative over-reading.
 }`;
 
 export const PROFILE_MEMORY_SEGMENT_PROMPT = `# Task

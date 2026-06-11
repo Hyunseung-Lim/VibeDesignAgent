@@ -60,6 +60,7 @@ export async function GET(request: Request) {
           timestamp: num(data.timestamp ?? data.createdAt),
           archivedAt: num(data.archivedAt),
           archiveReason: str(data.archiveReason),
+          interpretationConfidence: num(data.interpretationConfidence),
           source: data.source && typeof data.source === "object"
             ? data.source
             : null,

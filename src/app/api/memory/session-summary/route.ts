@@ -136,6 +136,7 @@ function compactMemory(id: string, doc: Record<string, unknown>) {
     sourceType: stringOrNull(doc.sourceType ?? doc.memorySource),
     source: doc.source ?? null,
     timestamp: numberOrNull(doc.timestamp ?? doc.createdAt),
+    interpretationConfidence: numberOrNull(doc.interpretationConfidence),
   };
 }
 
@@ -154,6 +155,7 @@ function compactGraphMemory(item: ReturnType<typeof compactMemory>) {
     sourceType: item.sourceType,
     source: item.source,
     timestamp: item.timestamp,
+    interpretationConfidence: item.interpretationConfidence,
   };
 }
 
