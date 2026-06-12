@@ -70,8 +70,24 @@ import {
 } from "@/components/session/session-setup-cards";
 import { SessionSetupStepper } from "@/components/session/session-setup-stepper";
 import { MemoryScoreBar } from "@/components/memory/memory-score-bar";
+import { MemoryCard } from "@/components/memory/memory-card";
+import { SessionMemoryDiff } from "@/components/memory/session-memory-diff";
+import { PromptViewer } from "@/components/admin/prompt-viewer";
 import { MemoryClusterList } from "@/components/memory/memory-cluster-list";
 import { MemoryClusterSidePanel } from "@/components/memory/memory-cluster-side-panel";
+import {
+  cleanMessageContentForModel,
+  extractChatPhases,
+  normalizeActionBlockAliases,
+  processMessageContent,
+  splitPendingMockupCompletionText,
+} from "@/lib/session/chat-content";
+import {
+  injectHeightReporter,
+  injectNoNavigation,
+  injectSelectionScript,
+} from "@/lib/session/mockup-html";
+
 const ONBOARDING_MISSION_ID = "onboarding";
 
 // A memory belongs to the cumulative set for the selected mission when it is the
@@ -94,7 +110,7 @@ function isWithinCumulative(
   return memIdx <= selIdx;
 }
 
-const MemoryClusterGraph = dynamic(() => import("@/app/admin/MemoryClusterGraph"), {
+const MemoryClusterGraph = dynamic(() => import("@/components/memory/memory-cluster-graph"), {
   ssr: false,
   loading: () => (
     <div className="flex h-full min-h-96 items-center justify-center bg-white text-sm text-slate-400">
@@ -536,21 +552,6 @@ type SelectedElement = {
   outerHTML: string;
 };
 
-
-type MockupCaptureSection = {
-  label: string;
-  description: string;
-  yRatio: number;
-  kind: string;
-};
-
-type MockupCapture = {
-  dataUrl: string;
-  width: number;
-  height: number;
-  sections: MockupCaptureSection[];
-};
-
 type CreateNoteData = {
   title?: string;
   description?: string;
@@ -744,46 +745,6 @@ async function fetchOnboardingMissionData() {
   }
 }
 
-function isInlineOrLocalAsset(url: string) {
-  return (
-    !url ||
-    url.startsWith("data:") ||
-    url.startsWith("blob:") ||
-    url.startsWith("#") ||
-    url.startsWith("about:")
-  );
-}
-
-async function fetchAssetDataUrl(url: string, baseUrl: string) {
-  if (isInlineOrLocalAsset(url)) return url;
-  try {
-    const absoluteUrl = new URL(url, baseUrl).toString();
-    const res = await fetch(
-      `/api/image-data?url=${encodeURIComponent(absoluteUrl)}`,
-    );
-    if (!res.ok) return url;
-    const data = (await res.json()) as { dataUrl?: string };
-    return data.dataUrl ?? url;
-  } catch {
-    return url;
-  }
-}
-
-async function fetchAssetText(url: string, baseUrl: string) {
-  if (isInlineOrLocalAsset(url)) return "";
-  try {
-    const absoluteUrl = new URL(url, baseUrl).toString();
-    const res = await fetch(
-      `/api/image-data?url=${encodeURIComponent(absoluteUrl)}`,
-    );
-    if (!res.ok) return "";
-    const data = (await res.json()) as { text?: string };
-    return data.text ?? "";
-  } catch {
-    return "";
-  }
-}
-
 function extractJsonActionPayload(
   text: string,
   tag: "CREATE_NOTE" | "UPDATE_NOTE",
@@ -954,737 +915,6 @@ function parseCreateDesignSpecBlock(
   return null;
 }
 
-function compactText(value: string, maxLength = 180) {
-  const normalized = value.replace(/\s+/g, " ").trim();
-  return normalized.length > maxLength
-    ? `${normalized.slice(0, maxLength - 1).trim()}...`
-    : normalized;
-}
-
-function elementText(el: Element, maxLength = 180) {
-  return compactText((el.textContent ?? "").replace(/\s+/g, " "), maxLength);
-}
-
-function nearestSectionElement(el: Element) {
-  return el.closest("section, article, header, nav, footer, main > div") ?? el;
-}
-
-function sectionKind(label: string, tagName: string) {
-  const text = label.toLowerCase();
-  if (tagName === "nav" || tagName === "header") return "navigation";
-  if (tagName === "footer") return "footer";
-  if (/faq|question|문의|질문/.test(text)) return "faq";
-  if (/review|testimonial|rating|후기|리뷰|추천/.test(text)) return "reviews";
-  if (/feature|benefit|특징|혜택|기능/.test(text)) return "features";
-  if (/logo|partner|press|media|trusted|신뢰|매체|파트너/.test(text))
-    return "trust";
-  if (/cta|subscribe|sign|download|구독|가입|시작|문의/.test(text))
-    return "conversion";
-  return "section";
-}
-
-function extractMockupCaptureSections(
-  doc: Document,
-  fullHeight: number,
-): MockupCaptureSection[] {
-  const sections: MockupCaptureSection[] = [];
-  const seen = new Set<string>();
-
-  const addSection = (
-    source: Element | null | undefined,
-    label: string,
-    kind = "section",
-  ) => {
-    if (!source || !label.trim()) return;
-    const rect = source.getBoundingClientRect();
-    if (rect.width < 20 || rect.height < 12) return;
-    const yRatio = Math.max(
-      0.03,
-      Math.min(0.97, (rect.top + rect.height * 0.45) / fullHeight),
-    );
-    const normalizedLabel = compactText(label, 72);
-    const dedupeKey = `${Math.round(yRatio * 20)}:${normalizedLabel.toLowerCase()}`;
-    if (seen.has(dedupeKey)) return;
-    seen.add(dedupeKey);
-
-    const sourceText = elementText(source, 260);
-    const description =
-      compactText(sourceText.replace(normalizedLabel, "").trim(), 170) ||
-      sourceText ||
-      normalizedLabel;
-    sections.push({
-      label: normalizedLabel,
-      description,
-      yRatio,
-      kind,
-    });
-  };
-
-  const nav = doc.querySelector("header, nav, [role='banner']");
-  addSection(nav, "Navigation", "navigation");
-
-  const headings = Array.from(
-    doc.querySelectorAll<HTMLElement>("h1, h2, h3, [role='heading']"),
-  ).filter((heading) => elementText(heading, 90).length > 0);
-
-  for (const heading of headings) {
-    const section = nearestSectionElement(heading);
-    const label = elementText(heading, 90);
-    addSection(
-      section,
-      label,
-      sectionKind(label, section.tagName.toLowerCase()),
-    );
-  }
-
-  const footer = doc.querySelector("footer, [role='contentinfo']");
-  addSection(footer, "Footer", "footer");
-
-  return sections
-    .sort((a, b) => a.yRatio - b.yRatio)
-    .filter((section, index, all) => {
-      const previous = all[index - 1];
-      return !previous || Math.abs(section.yRatio - previous.yRatio) > 0.045;
-    })
-    .slice(0, 9);
-}
-
-async function inlineCaptureAssets(doc: Document) {
-  const baseUrl = doc.baseURI || window.location.href;
-  const cssUrlPattern = /url\((['"]?)(.*?)\1\)/g;
-
-  const inlineCssUrls = async (css: string, cssBaseUrl: string) => {
-    let nextCss = css;
-    const importMatches = Array.from(
-      nextCss.matchAll(/@import\s+(?:url\()?['"]?([^'")]+)['"]?\)?[^;]*;/g),
-    );
-    for (const match of importMatches) {
-      const importedCss = await fetchAssetText(match[1], cssBaseUrl);
-      if (!importedCss) continue;
-      const importedBaseUrl = new URL(match[1], cssBaseUrl).toString();
-      const inlinedImport = await inlineCssUrls(importedCss, importedBaseUrl);
-      nextCss = nextCss.replace(match[0], inlinedImport);
-    }
-
-    const replacements = await Promise.all(
-      Array.from(nextCss.matchAll(cssUrlPattern)).map(async (match) => {
-        const originalUrl = match[2];
-        const dataUrl = await fetchAssetDataUrl(originalUrl, cssBaseUrl);
-        return { raw: match[0], value: `url("${dataUrl}")` };
-      }),
-    );
-
-    return replacements.reduce(
-      (acc, item) => acc.replace(item.raw, item.value),
-      nextCss,
-    );
-  };
-
-  await Promise.all(
-    Array.from(
-      doc.querySelectorAll<HTMLLinkElement>('link[rel~="stylesheet"][href]'),
-    ).map(async (link) => {
-      const href = link.getAttribute("href");
-      if (!href) return;
-      const css = await fetchAssetText(href, baseUrl);
-      if (!css) return;
-      const cssBaseUrl = new URL(href, baseUrl).toString();
-      const style = doc.createElement("style");
-      style.setAttribute("data-vda-inlined-stylesheet", href);
-      style.textContent = await inlineCssUrls(css, cssBaseUrl);
-      link.replaceWith(style);
-    }),
-  );
-
-  await Promise.all(
-    Array.from(doc.querySelectorAll<HTMLStyleElement>("style")).map(
-      async (style) => {
-        if (
-          !style.textContent?.includes("url(") &&
-          !style.textContent?.includes("@import")
-        )
-          return;
-        style.textContent = await inlineCssUrls(style.textContent, baseUrl);
-      },
-    ),
-  );
-
-  if ("fonts" in doc) {
-    await (doc as Document & { fonts: FontFaceSet }).fonts.ready.catch(
-      () => undefined,
-    );
-  }
-
-  await Promise.all(
-    Array.from(doc.images).map(async (img) => {
-      const src = img.getAttribute("src");
-      if (!src || isInlineOrLocalAsset(src)) return;
-      const dataUrl = await fetchAssetDataUrl(src, baseUrl);
-      img.setAttribute("src", dataUrl);
-      img.removeAttribute("srcset");
-      img.removeAttribute("sizes");
-    }),
-  );
-
-  await Promise.all(
-    Array.from(doc.querySelectorAll("svg image")).map(async (image) => {
-      const href =
-        image.getAttribute("href") || image.getAttribute("xlink:href");
-      if (!href || isInlineOrLocalAsset(href)) return;
-      const dataUrl = await fetchAssetDataUrl(href, baseUrl);
-      image.setAttribute("href", dataUrl);
-      image.setAttribute("xlink:href", dataUrl);
-    }),
-  );
-
-  await Promise.all(
-    Array.from(doc.querySelectorAll("svg use")).map(async (use) => {
-      const href = use.getAttribute("href") || use.getAttribute("xlink:href");
-      if (!href || isInlineOrLocalAsset(href)) return;
-      const [assetUrl, fragment = ""] = href.split("#");
-      const dataUrl = await fetchAssetDataUrl(assetUrl, baseUrl);
-      const nextHref = fragment ? `${dataUrl}#${fragment}` : dataUrl;
-      use.setAttribute("href", nextHref);
-      use.setAttribute("xlink:href", nextHref);
-    }),
-  );
-
-  await Promise.all(
-    Array.from(doc.querySelectorAll<HTMLElement>("*")).map(async (el) => {
-      const computed = doc.defaultView?.getComputedStyle(el);
-      if (!computed) return;
-
-      for (const prop of [
-        "backgroundImage",
-        "maskImage",
-        "webkitMaskImage",
-      ] as const) {
-        const value = computed[prop];
-        if (!value || value === "none" || !value.includes("url(")) continue;
-
-        const replacements = await Promise.all(
-          Array.from(value.matchAll(cssUrlPattern)).map(async (match) => {
-            const originalUrl = match[2];
-            const dataUrl = await fetchAssetDataUrl(originalUrl, baseUrl);
-            return { raw: match[0], value: `url("${dataUrl}")` };
-          }),
-        );
-
-        const nextValue = replacements.reduce(
-          (acc, item) => acc.replace(item.raw, item.value),
-          value,
-        );
-        el.style[prop] = nextValue;
-      }
-    }),
-  );
-}
-
-function pseudoContentToText(content: string) {
-  if (!content || content === "none" || content === "normal") return "";
-  const unquoted = content.replace(/^['"]|['"]$/g, "");
-  return unquoted.replace(/\\([0-9a-fA-F]{1,6})\s?/g, (_, hex: string) =>
-    String.fromCodePoint(parseInt(hex, 16)),
-  );
-}
-
-function materializePseudoElements(doc: Document) {
-  const pseudoProps = [
-    "position",
-    "display",
-    "box-sizing",
-    "width",
-    "height",
-    "margin",
-    "padding",
-    "color",
-    "background",
-    "border",
-    "border-radius",
-    "font",
-    "font-family",
-    "font-size",
-    "font-weight",
-    "line-height",
-    "text-align",
-    "vertical-align",
-    "opacity",
-    "transform",
-    "inset",
-    "top",
-    "right",
-    "bottom",
-    "left",
-  ];
-
-  Array.from(doc.querySelectorAll<HTMLElement>("*")).forEach((el) => {
-    for (const pseudo of ["::before", "::after"] as const) {
-      const computed = doc.defaultView?.getComputedStyle(el, pseudo);
-      if (!computed) continue;
-      const text = pseudoContentToText(computed.content);
-      if (!text) continue;
-
-      const span = doc.createElement("span");
-      span.textContent = text;
-      span.setAttribute("aria-hidden", "true");
-      span.setAttribute("data-vda-materialized-pseudo", pseudo);
-      span.setAttribute(
-        "style",
-        pseudoProps
-          .map((prop) => `${prop}:${computed.getPropertyValue(prop)};`)
-          .join(""),
-      );
-
-      if (pseudo === "::before") el.prepend(span);
-      else el.append(span);
-    }
-  });
-}
-
-function cloneWithComputedStyles(doc: Document) {
-  const sourceNodes = [
-    doc.documentElement,
-    ...Array.from(doc.documentElement.querySelectorAll("*")),
-  ] as Element[];
-  const clonedRoot = doc.documentElement.cloneNode(true) as HTMLElement;
-  const clonedNodes = [
-    clonedRoot,
-    ...Array.from(clonedRoot.querySelectorAll("*")),
-  ] as HTMLElement[];
-
-  sourceNodes.forEach((source, index) => {
-    const target = clonedNodes[index];
-    if (!target) return;
-    const computed = doc.defaultView?.getComputedStyle(source);
-    if (!computed) return;
-    const style = Array.from(computed)
-      .map(
-        (prop) =>
-          `${prop}:${computed.getPropertyValue(prop)}${computed.getPropertyPriority(prop) ? " !important" : ""};`,
-      )
-      .join("");
-    target.setAttribute(
-      "style",
-      `${target.getAttribute("style") ?? ""};${style}`,
-    );
-  });
-
-  return clonedRoot;
-}
-
-async function scaleScreenshot(
-  capture: {
-    dataUrl: string;
-    width: number;
-    height: number;
-    sections: unknown[];
-  },
-  maxWidth: number,
-): Promise<{
-  dataUrl: string;
-  width: number;
-  height: number;
-  sections: unknown[];
-}> {
-  if (
-    !capture.dataUrl.startsWith("data:image/png") ||
-    capture.width <= maxWidth
-  )
-    return capture;
-  const scale = maxWidth / capture.width;
-  const newW = maxWidth;
-  const newH = Math.round(capture.height * scale);
-  const img = new Image();
-  await new Promise<void>((resolve) => {
-    img.onload = () => resolve();
-    img.onerror = () => resolve(); // fallback: keep original on error
-    img.src = capture.dataUrl;
-  });
-  if (!img.naturalWidth) return capture;
-  const canvas = document.createElement("canvas");
-  canvas.width = newW;
-  canvas.height = newH;
-  const ctx = canvas.getContext("2d");
-  if (!ctx) return capture;
-  ctx.drawImage(img, 0, 0, newW, newH);
-  return {
-    ...capture,
-    dataUrl: canvas.toDataURL("image/png"),
-    width: newW,
-    height: newH,
-  };
-}
-
-async function captureMockupScreenshot(
-  html: string,
-  device: Device,
-): Promise<MockupCapture | null> {
-  if (typeof window === "undefined") return null;
-
-  const { width, height } = DEVICE_SIZE[device];
-  const iframe = document.createElement("iframe");
-  iframe.setAttribute("sandbox", "allow-scripts allow-same-origin");
-  iframe.style.position = "fixed";
-  iframe.style.left = "-10000px";
-  iframe.style.top = "0";
-  iframe.style.width = `${width}px`;
-  iframe.style.height = `${height}px`;
-  iframe.style.border = "0";
-  iframe.style.pointerEvents = "none";
-
-  document.body.appendChild(iframe);
-
-  try {
-    await new Promise<void>((resolve) => {
-      iframe.onload = () => resolve();
-      iframe.srcdoc = html;
-      window.setTimeout(resolve, 1200);
-    });
-
-    const doc = iframe.contentDocument;
-    if (!doc?.documentElement) return null;
-
-    await inlineCaptureAssets(doc);
-    materializePseudoElements(doc);
-    await new Promise((resolve) => window.setTimeout(resolve, 300));
-
-    const fullHeight = Math.min(
-      Math.max(
-        height,
-        doc.body?.scrollHeight ?? 0,
-        doc.body?.offsetHeight ?? 0,
-        doc.documentElement.scrollHeight,
-        doc.documentElement.offsetHeight,
-      ),
-      8000,
-    );
-    iframe.style.height = `${fullHeight}px`;
-    doc.documentElement.style.overflow = "hidden";
-    if (doc.body) doc.body.style.overflow = "hidden";
-    await new Promise((resolve) => window.setTimeout(resolve, 100));
-    const sections = extractMockupCaptureSections(doc, fullHeight);
-
-    const clonedRoot = cloneWithComputedStyles(doc);
-    const serialized = new XMLSerializer().serializeToString(clonedRoot);
-    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${fullHeight}"><foreignObject width="100%" height="100%">${serialized}</foreignObject></svg>`;
-    const svgDataUrl = `data:image/svg+xml;base64,${btoa(unescape(encodeURIComponent(svg)))}`;
-
-    try {
-      const image = new Image();
-      image.crossOrigin = "anonymous";
-      await new Promise<void>((resolve, reject) => {
-        image.onload = () => resolve();
-        image.onerror = () =>
-          reject(new Error("mockup screenshot image load failed"));
-        image.src = svgDataUrl;
-      });
-      const canvas = document.createElement("canvas");
-      canvas.width = width;
-      canvas.height = fullHeight;
-      const ctx = canvas.getContext("2d");
-      if (!ctx)
-        return { dataUrl: svgDataUrl, width, height: fullHeight, sections };
-      ctx.fillStyle = "#ffffff";
-      ctx.fillRect(0, 0, width, fullHeight);
-      ctx.drawImage(image, 0, 0, width, fullHeight);
-      return {
-        dataUrl: canvas.toDataURL("image/png"),
-        width,
-        height: fullHeight,
-        sections,
-      };
-    } catch {
-      return { dataUrl: svgDataUrl, width, height: fullHeight, sections };
-    }
-  } finally {
-    iframe.remove();
-  }
-}
-
-function injectNoNavigation(html: string): string {
-  const script = `<script>
-(function(){
-  document.addEventListener('click', function(e){
-    var a = e.target && (e.target.closest ? e.target.closest('a[href]') : null);
-    if(a){ e.preventDefault(); e.stopPropagation(); }
-  }, true);
-  document.addEventListener('submit', function(e){ e.preventDefault(); }, true);
-})();
-</script>`;
-  const idx = html.lastIndexOf("</body>");
-  return idx !== -1
-    ? html.slice(0, idx) + script + html.slice(idx)
-    : html + script;
-}
-
-function injectHeightReporter(html: string, artboardId: string): string {
-  const script = `<style>
-/* Prevent viewport-relative heights from creating feedback loop with iframe resize */
-html, body { min-height: 0 !important; height: auto !important; }
-.h-screen, .h-dvh, .h-svh, .h-lvh,
-.min-h-screen, .min-h-dvh, .min-h-svh, .min-h-lvh {
-  height: auto !important;
-  min-height: 0 !important;
-}
-</style>
-<script>
-(function(){
-  var lastHeight = 0;
-  var reportCount = 0;
-  var MAX_REPORTS = 6;
-  var initialVh = window.innerHeight || 900;
-  var initialVw = window.innerWidth || 1512;
-  /* Freeze window.innerHeight/innerWidth so that resize handlers triggered by
-     parent iframe resizing cannot update --vh / --vw CSS custom properties,
-     which would cause a feedback loop where the artboard grows on every report. */
-  try {
-    Object.defineProperty(window, 'innerHeight', { get: function(){ return initialVh; }, configurable: true });
-    Object.defineProperty(window, 'innerWidth',  { get: function(){ return initialVw; }, configurable: true });
-  } catch(e) {}
-  function freezeVhUnits() {
-    var unitRe = /(\d*\.?\d+)(svh|dvh|lvh|vh)/g;
-    function replaceVh(s) { return s.replace(unitRe, function(_, n) { return (parseFloat(n) * initialVh / 100).toFixed(1) + 'px'; }); }
-    var els = document.querySelectorAll('*[style]');
-    for (var i = 0; i < els.length; i++) {
-      var s = els[i].getAttribute('style');
-      if (s && /vh/.test(s)) els[i].setAttribute('style', replaceVh(s));
-    }
-    var tags = document.querySelectorAll('style');
-    for (var j = 0; j < tags.length; j++) {
-      var c = tags[j].textContent;
-      if (c && /vh/.test(c)) tags[j].textContent = replaceVh(c);
-    }
-  }
-  freezeVhUnits();
-  function measure(){
-    if (reportCount >= MAX_REPORTS) return;
-    var body = document.body;
-    var root = document.documentElement;
-    var height = Math.max(
-      body ? body.scrollHeight : 0,
-      body ? body.offsetHeight : 0,
-      root ? root.scrollHeight : 0,
-      root ? root.offsetHeight : 0
-    );
-    if (Math.abs(height - lastHeight) < 2) return;
-    lastHeight = height;
-    reportCount++;
-    window.parent.postMessage({
-      type: 'vda-artboard-height',
-      artboardId: '${artboardId}',
-      height: height
-    }, '*');
-  }
-  if (document.documentElement) document.documentElement.style.overflow = 'hidden';
-  if (document.body) document.body.style.overflow = 'hidden';
-  document.addEventListener('contextmenu', function(e) {
-    e.preventDefault();
-    e.stopPropagation();
-    window.parent.postMessage({
-      type: 'vda-artboard-context-menu',
-      artboardId: '${artboardId}',
-      clientX: e.clientX,
-      clientY: e.clientY
-    }, '*');
-  }, { capture: true });
-  window.addEventListener('load', measure);
-  setTimeout(measure, 0);
-  setTimeout(measure, 500);
-  setTimeout(measure, 1500);
-  setTimeout(measure, 3000);
-})();
-</script>`;
-  const idx = html.lastIndexOf("</body>");
-  return idx !== -1
-    ? html.slice(0, idx) + script + html.slice(idx)
-    : html + script;
-}
-
-type ContentChip = { label: string; done: boolean; failed?: boolean; code?: string };
-type ContentPart =
-  | { type: "text"; content: string }
-  | { type: "chip"; chip: ContentChip };
-
-const BLOCK_RULES = [
-  {
-    complete: /\[CREATE_NOTE:(?:\s*\{[\s\S]*?\}|[\s\S]*?\n)\]/,
-    partial: /\[CREATE_NOTE:[\s\S]*$/,
-    doneLabel: "노트 생성됨",
-    pendingLabel: "노트 작성 중...",
-    failedLabel: "노트 작성 실패",
-    failedMarker: "⚠️ 노트를 먼저 저장해야",
-  },
-  {
-    complete: /\[UPDATE_NOTE:(?:\s*\{[\s\S]*?\}|[\s\S]*?\n)\]/,
-    partial: /\[UPDATE_NOTE:[\s\S]*$/,
-    doneLabel: "노트 수정됨",
-    pendingLabel: "노트 수정 중...",
-  },
-  {
-    complete: /\[GENERATE_MOCKUP(?::[^\]]*)?\]/,
-    partial: /\[GENERATE_MOCKUP:[\s\S]*$/,
-    doneLabel: "새 목업 생성 요청",
-    pendingLabel: "목업 설명 작성 중...",
-    failedLabel: "목업 생성 불가",
-    failedMarker: "⚠️ 디자인 스타일이 없어 목업을",
-  },
-  {
-    complete: /\[EDIT_MOCKUP(?::[^\]]*)?\]/,
-    partial: /\[EDIT_MOCKUP:[\s\S]*$/,
-    doneLabel: "목업 수정 요청",
-    pendingLabel: "수정 내용 작성 중...",
-  },
-  {
-    complete: /\[FETCH_REFERENCES(?::[^\]]+)?\]/,
-    partial: /\[FETCH_REFERENCES[\s\S]*$/,
-    doneLabel: "레퍼런스 검색 요청됨",
-    pendingLabel: "레퍼런스 검색 중...",
-  },
-  {
-    complete: /\[WEB_SEARCHED\]/,
-    partial: /\[WEB_SEARCHED\]/,
-    doneLabel: "웹 검색 완료",
-    pendingLabel: "웹 검색 중...",
-  },
-  {
-    complete: /\[CREATE_DESIGN_SPEC:\s*\{[\s\S]*?\}\]/,
-    partial: /\[CREATE_DESIGN_SPEC:[\s\S]*$/,
-    doneLabel: "디자인 스타일 추가됨",
-    pendingLabel: "디자인 스타일 작성 중...",
-  },
-];
-
-function processMessageContent(content: string): ContentPart[] {
-  const parts: ContentPart[] = [];
-  let remaining = content;
-
-  while (remaining.length > 0) {
-    let earliest: {
-      index: number;
-      matchStr: string;
-      label: string;
-      done: boolean;
-      failedLabel?: string;
-      failedMarker?: string;
-    } | null = null;
-
-    for (const rule of BLOCK_RULES) {
-      for (const [regex, done, label] of [
-        [rule.complete, true, rule.doneLabel],
-        [rule.partial, false, rule.pendingLabel],
-      ] as [RegExp, boolean, string][]) {
-        const m = remaining.match(regex);
-        if (
-          m &&
-          m.index !== undefined &&
-          (earliest === null || m.index < earliest.index)
-        ) {
-          earliest = {
-            index: m.index,
-            matchStr: m[0],
-            label,
-            done,
-            failedLabel: (rule as { failedLabel?: string }).failedLabel,
-            failedMarker: (rule as { failedMarker?: string }).failedMarker,
-          };
-        }
-      }
-    }
-
-    if (!earliest) {
-      if (remaining.trim())
-        parts.push({ type: "text", content: remaining.trim() });
-      break;
-    }
-
-    const before = remaining.slice(0, earliest.index).trim();
-    if (before) parts.push({ type: "text", content: before });
-
-    const afterChip = remaining.slice(earliest.index + earliest.matchStr.length);
-    const failed = !!(
-      earliest.failedLabel &&
-      earliest.failedMarker &&
-      (afterChip.includes(earliest.failedMarker) || content.includes(earliest.failedMarker))
-    );
-
-    // Extract code content from the matched block
-    const codeMatch = earliest.matchStr.match(
-      /```(?:html|presentation)\s*\n([\s\S]*?)(?:\n?\s*```|$)/,
-    );
-    const code = codeMatch ? codeMatch[1].trim() : earliest.matchStr;
-
-    parts.push({
-      type: "chip",
-      chip: {
-        label: failed ? (earliest.failedLabel as string) : earliest.label,
-        done: failed || earliest.done,
-        failed,
-        code,
-      },
-    });
-    remaining = afterChip;
-  }
-
-  return parts;
-}
-
-function extractChatPhases(content: string) {
-  const phases: string[] = [];
-  const visibleText = content
-    .replace(
-      /\[PROMPT_STATUS:\s*([^\]]+)\]\n?/g,
-      (_match, label: string) => {
-        phases.push(label.trim());
-        return "";
-      },
-    )
-    .replace(
-      /\[CHAT_PHASE:\s*([^\]]+)\]\n?/g,
-      (_match, label: string) => {
-        phases.push(label.trim());
-        return "";
-      },
-    )
-    .replace(/\[(?:PROMPT_STATUS|CHAT_PHASE):[\s\S]*$/, "");
-  return {
-    visibleText,
-    phases: Array.from(new Set(phases.filter(Boolean))),
-  };
-}
-
-function splitPendingMockupCompletionText(content: string) {
-  const match = content.match(/\[(?:GENERATE|EDIT)_MOCKUP:\s*[\s\S]*?\]/);
-  if (!match || match.index === undefined) {
-    return { visibleText: content, completionText: "" };
-  }
-
-  const blockEnd = match.index + match[0].length;
-  const completionText = content.slice(blockEnd).trim();
-  if (!completionText) return { visibleText: content, completionText: "" };
-
-  return {
-    visibleText: content.slice(0, blockEnd).trimEnd(),
-    completionText,
-  };
-}
-
-function normalizeActionBlockAliases(content: string) {
-  return content
-    .replace(/\[(?:목업\s*)?생성\s*요청\s*\]/g, "[GENERATE_MOCKUP: ]")
-    .replace(
-      /\[(?:목업\s*)?생성\s*요청\s*:\s*([\s\S]*?)\]/g,
-      "[GENERATE_MOCKUP: $1]",
-    )
-    .replace(/\[목업\s*생성\s*:\s*([\s\S]*?)\]/g, "[GENERATE_MOCKUP: $1]")
-    .replace(/\[(?:목업\s*)?수정\s*요청\s*\]/g, "[EDIT_MOCKUP: ]")
-    .replace(
-      /\[(?:목업\s*)?수정\s*요청\s*:\s*([\s\S]*?)\]/g,
-      "[EDIT_MOCKUP: $1]",
-    )
-    .replace(/\[목업\s*수정\s*:\s*([\s\S]*?)\]/g, "[EDIT_MOCKUP: $1]")
-    .replace(/\[레퍼런스\s*검색\s*:\s*([\s\S]*?)\]/g, "[FETCH_REFERENCES: $1]");
-}
-
 function defaultMockupPromptForIdea(idea: Idea | null, targetDevice: Device) {
   const deviceLabel =
     targetDevice === "mobile" ? "mobile app screen" : "desktop web page";
@@ -1712,38 +942,6 @@ function normalizeMockupActionPrompt(rawPrompt: string) {
   }
 
   return prompt;
-}
-
-function cleanMessageContentForModel(content: string) {
-  return content
-    .replace(/\[CREATE_NOTE:\s*\{[\s\S]*?\}\]/g, "[노트 생성]")
-    .replace(/\[UPDATE_NOTE:\s*\{[\s\S]*?\}\]/g, "[노트 수정]")
-    .replace(
-      /\[GENERATE_MOCKUP:[\s\S]*?\]/g,
-      "이전 액션: mockup generation requested.",
-    )
-    .replace(/\[EDIT_MOCKUP:[\s\S]*?\]/g, "이전 액션: mockup edit requested.")
-    .replace(
-      /```presentation\s*\n[\s\S]*?\n?\s*```/g,
-      "이전 액션: presentation requested.",
-    )
-    .replace(
-      /\[FETCH_REFERENCES(?::[^\]]+)?\]/g,
-      "이전 액션: reference search requested.",
-    )
-    .replace(
-      /### 레퍼런스 선택 이유[\s\S]*?(?=\n### |\n```|\n\[|$)/g,
-      (match) => {
-        const trimmed = match.trim();
-        return trimmed.length <= 600
-          ? trimmed
-          : trimmed.slice(0, 600) + "\n\n[이하 reference preference context로 압축됨]";
-      },
-    )
-    .replace(/\[WEB_SEARCHED\]/g, "이전 액션: web search completed.")
-    .replace(/\[CREATE_DESIGN_SPEC:\s*\{[\s\S]*?\}\]/g, "[디자인 스타일 추가]")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
 }
 
 function csvCell(value: unknown) {
@@ -1859,75 +1057,6 @@ function formatMemoryInputWithCitations(
     );
   }
   return sections.join("\n\n");
-}
-
-function injectSelectionScript(html: string, artboardId: string): string {
-  const script = `
-<style>
-  [data-vda-selected] { outline: 2px solid #6366f1 !important; outline-offset: 2px; }
-</style>
-<script>
-  document.addEventListener('wheel', function(e) {
-    e.preventDefault();
-    e.stopPropagation();
-    window.parent.postMessage({
-      type: 'vda-canvas-wheel',
-      artboardId: '${artboardId}',
-      deltaY: e.deltaY,
-      deltaMode: e.deltaMode,
-      ctrlKey: e.ctrlKey,
-      clientX: e.clientX,
-      clientY: e.clientY
-    }, '*');
-  }, { capture: true, passive: false });
-  document.addEventListener('gesturestart', function(e) {
-    e.preventDefault();
-    e.stopPropagation();
-    window.parent.postMessage({
-      type: 'vda-canvas-gesture-start',
-      artboardId: '${artboardId}'
-    }, '*');
-  }, { capture: true, passive: false });
-  document.addEventListener('gesturechange', function(e) {
-    e.preventDefault();
-    e.stopPropagation();
-    window.parent.postMessage({
-      type: 'vda-canvas-gesture-change',
-      artboardId: '${artboardId}',
-      scale: e.scale,
-      clientX: e.clientX,
-      clientY: e.clientY
-    }, '*');
-  }, { capture: true, passive: false });
-  document.addEventListener('click', function(e) {
-    e.preventDefault();
-    e.stopPropagation();
-    document.querySelectorAll('[data-vda-selected]').forEach(function(el) {
-      el.removeAttribute('data-vda-selected');
-    });
-    var el = e.target;
-    el.setAttribute('data-vda-selected', 'true');
-
-    var selector = el.tagName.toLowerCase();
-    if (el.id) selector += '#' + el.id;
-    else if (el.className && typeof el.className === 'string') {
-      var cls = el.className.trim().split(/\\s+/)[0];
-      if (cls) selector += '.' + cls;
-    }
-
-    window.parent.postMessage({
-      type: 'vda-element-selected',
-      artboardId: '${artboardId}',
-      selector: selector,
-      outerHTML: el.outerHTML,
-    }, '*');
-  }, true);
-</script>`;
-
-  if (html.includes("</body>")) {
-    return html.replace("</body>", script + "\n</body>");
-  }
-  return html + script;
 }
 
 const ARTBOARD_GAP = 120;
@@ -2167,10 +1296,6 @@ function reviewReferenceLabel(reference: unknown) {
   const url = typeof data.url === "string" ? data.url : "";
   const id = typeof data.id === "string" ? data.id : "";
   return title || url || id || "레퍼런스";
-}
-
-function stringifyReviewJson(value: unknown) {
-  return JSON.stringify(value, null, 2) ?? "null";
 }
 
 function cleanForFirestore<T>(value: T): T {
@@ -6107,62 +5232,13 @@ export default function MainScreenPage() {
         </div>
       )}
       {rawPromptModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 px-4 backdrop-blur-sm">
-          <div className="flex max-h-[86vh] w-full max-w-4xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl shadow-slate-900/25">
-            <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4">
-              <div>
-                <p className="text-sm font-semibold text-slate-900">
-                  Raw prompt
-                </p>
-                <p className="mt-0.5 text-xs text-slate-400">
-                  turn {rawPromptModal.turnId}
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setRawPromptModal(null)}
-                className="rounded-full p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
-                aria-label="raw prompt 닫기"
-              >
-                <XIcon size={16} />
-              </button>
-            </div>
-            <div className="min-h-0 flex-1 overflow-y-auto p-5">
-              <div className="space-y-4">
-                <section>
-                  <p className="mb-2 text-xs font-semibold uppercase text-slate-400">
-                    Sanitized raw prompt
-                  </p>
-                  <pre className="max-h-[46vh] overflow-y-auto whitespace-pre-wrap wrap-break-word rounded-xl bg-slate-950 p-4 text-xs leading-relaxed text-slate-100">
-                    {stringifyReviewJson(rawPromptModal.rawPrompt)}
-                  </pre>
-                </section>
-                {rawPromptModal.rawPromptSanitization != null && (
-                  <section>
-                    <p className="mb-2 text-xs font-semibold uppercase text-slate-400">
-                      Sanitization
-                    </p>
-                    <pre className="max-h-48 overflow-y-auto whitespace-pre-wrap wrap-break-word rounded-xl bg-slate-50 p-4 text-xs leading-relaxed text-slate-600">
-                      {stringifyReviewJson(
-                        rawPromptModal.rawPromptSanitization,
-                      )}
-                    </pre>
-                  </section>
-                )}
-                {rawPromptModal.rawResponseMeta != null && (
-                  <section>
-                    <p className="mb-2 text-xs font-semibold uppercase text-slate-400">
-                      Response meta
-                    </p>
-                    <pre className="max-h-48 overflow-y-auto whitespace-pre-wrap wrap-break-word rounded-xl bg-slate-50 p-4 text-xs leading-relaxed text-slate-600">
-                      {stringifyReviewJson(rawPromptModal.rawResponseMeta)}
-                    </pre>
-                  </section>
-                )}
-              </div>
-            </div>
-          </div>
-        </div>
+        <PromptViewer
+          turnId={rawPromptModal.turnId}
+          rawPrompt={rawPromptModal.rawPrompt}
+          rawPromptSanitization={rawPromptModal.rawPromptSanitization}
+          rawResponseMeta={rawPromptModal.rawResponseMeta}
+          onClose={() => setRawPromptModal(null)}
+        />
       )}
       {/* Read-only banner */}
       {isReadOnly && (
@@ -6930,9 +6006,33 @@ export default function MainScreenPage() {
                   <div className="space-y-3">
                     {beforeSessionMemoryImpact.items.map(
                       ({ memory, referenced }) => (
-                        <button
+                        <MemoryCard
                           key={memory.id}
-                          type="button"
+                          referenced={Boolean(referenced)}
+                          statusLabel={
+                            referenced ? "세션 중 참고됨" : "세션 전 정보로 유지"
+                          }
+                          summary={memorySummaryText(memory)}
+                          weightStrengthLabel={
+                            memory.weight != null
+                              ? formatWeightStrength(memory.weight)
+                              : null
+                          }
+                          weightScoreLabel={
+                            memory.weight != null
+                              ? formatReviewScore(memory.weight)
+                              : null
+                          }
+                          weightDeltaLabel={
+                            referenced?.weightDelta != null &&
+                            referenced.weightDelta !== 0
+                              ? formatReviewDelta(referenced.weightDelta)
+                              : null
+                          }
+                          weightDeltaPositive={
+                            referenced?.weightDelta != null &&
+                            referenced.weightDelta > 0
+                          }
                           onClick={() => {
                             setSelectedGraphMemoryId(memory.id);
                             setIsMemoryDiffOpen(true);
@@ -6942,65 +6042,7 @@ export default function MainScreenPage() {
                               );
                             }
                           }}
-                          className={`w-full rounded-xl border text-left transition ${
-                            referenced
-                              ? "border-blue-100 bg-blue-50 hover:border-blue-200 hover:bg-blue-100/60"
-                              : "border-slate-100 bg-white hover:border-slate-200 hover:bg-slate-50"
-                          }`}
-                        >
-                          {/* Status bar */}
-                          <div
-                            className={`flex items-center gap-1.5 rounded-t-xl border-b px-4 py-2 ${
-                              referenced
-                                ? "border-blue-100 bg-blue-100/50"
-                                : "border-slate-100 bg-slate-50"
-                            }`}
-                          >
-                            <span
-                              className={`h-1.5 w-1.5 shrink-0 rounded-full ${
-                                referenced ? "bg-blue-500" : "bg-sky-300"
-                              }`}
-                              aria-hidden="true"
-                            />
-                            <span
-                              className={`text-[10px] font-semibold ${
-                                referenced ? "text-blue-600" : "text-sky-600"
-                              }`}
-                            >
-                              {referenced ? "세션 중 참고됨" : "세션 전 정보로 유지"}
-                            </span>
-                            {memory.weight != null ? (
-                              <span className="ml-auto text-[10px] font-semibold text-slate-400">
-                                {formatWeightStrength(memory.weight) ? (
-                                  <span className="text-slate-500">
-                                    {formatWeightStrength(memory.weight)}{" "}
-                                  </span>
-                                ) : null}
-                                weight {formatReviewScore(memory.weight)}
-                                {referenced?.weightDelta != null &&
-                                referenced.weightDelta !== 0 ? (
-                                  <span
-                                    className={
-                                      referenced.weightDelta > 0
-                                        ? " text-blue-500"
-                                        : " text-slate-400"
-                                    }
-                                  >
-                                    {" "}
-                                    {formatReviewDelta(referenced.weightDelta)}
-                                  </span>
-                                ) : null}
-                              </span>
-                            ) : null}
-                          </div>
-
-                          {/* Card body */}
-                          <div className="px-4 py-3">
-                            <p className="text-sm leading-relaxed text-slate-800">
-                              {memorySummaryText(memory)}
-                            </p>
-                          </div>
-                        </button>
+                        />
                       ),
                     )}
                   </div>
@@ -7363,34 +6405,12 @@ export default function MainScreenPage() {
       )}
 
       {isMemoryDiffOpen && (
-        <div className="fixed inset-0 z-50 flex flex-col bg-white">
-          {/* Header — same structure as the agent page header */}
-          <header className="flex shrink-0 items-center justify-between border-b border-slate-200 bg-white px-6 py-4 lg:px-10">
-            <div className="flex items-center gap-4">
-              <button
-                type="button"
-                onClick={() => setIsMemoryDiffOpen(false)}
-                className="rounded-full p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
-                aria-label="메모리 변화 전체 보기 닫기"
-              >
-                <XIcon size={18} />
-              </button>
-              <div>
-                <p className="text-base font-semibold text-slate-900">
-                  메모리 변화 전체 보기
-                </p>
-                <p className="mt-0.5 text-xs text-slate-400">
-                  세션 이전과 이후의 전체 memory node 상태를 비교합니다.
-                </p>
-              </div>
-            </div>
-            {memoryPhaseToggle}
-          </header>
-          {/* Body — cluster list + graph + detail panel, same as the agent page */}
-          <div className="flex min-h-0 flex-1 overflow-hidden">
-            {renderSessionImpactGraph("overlay")}
-          </div>
-        </div>
+        <SessionMemoryDiff
+          phaseToggle={memoryPhaseToggle}
+          onClose={() => setIsMemoryDiffOpen(false)}
+        >
+          {renderSessionImpactGraph("overlay")}
+        </SessionMemoryDiff>
       )}
 
       {/* Mockup expanded canvas: keep the chat panel visible */}

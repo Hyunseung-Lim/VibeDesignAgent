@@ -55,7 +55,7 @@ function sessionFilterDate(timestamp: number) {
 }
 
 const MemoryClusterGraph = dynamic(
-  () => import("@/app/admin/MemoryClusterGraph"),
+  () => import("@/components/memory/memory-cluster-graph"),
   {
     ssr: false,
     loading: () => (

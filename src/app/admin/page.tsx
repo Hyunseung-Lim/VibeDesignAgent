@@ -43,18 +43,22 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
+import { AdminDataTable } from "@/components/admin/admin-data-table";
 import { MemoryClusterList } from "@/components/memory/memory-cluster-list";
 import { MemoryClusterSidePanel } from "@/components/memory/memory-cluster-side-panel";
 import type { MemoryItem } from "@/components/memory/memory-cluster-types";
 
-const MemoryClusterGraph = dynamic(() => import("./MemoryClusterGraph"), {
-  ssr: false,
-  loading: () => (
-    <div className="flex h-112 min-h-96 items-center justify-center rounded-2xl border border-border bg-card text-sm text-muted-foreground shadow-sm">
-      Graph view loading...
-    </div>
-  ),
-});
+const MemoryClusterGraph = dynamic(
+  () => import("@/components/memory/memory-cluster-graph"),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="flex h-112 min-h-96 items-center justify-center rounded-2xl border border-border bg-card text-sm text-muted-foreground shadow-sm">
+        Graph view loading...
+      </div>
+    ),
+  },
+);
 
 const ONBOARDING_MISSION_ID = "onboarding";
 
@@ -1762,127 +1766,131 @@ export default function AdminPage() {
             <div className="h-[calc(100vh-14rem)] min-h-80">
               {memoryViewTab === "table" ? (
                 <div className="h-full overflow-y-auto overscroll-contain">
-                  {visibleMemoryRows.length === 0 ? (
-                    <p className="px-6 py-4 text-sm text-muted-foreground">
-                      v{memoryVersionTab} 메모리 없음
-                    </p>
-                  ) : (
-                    <table className="w-full min-w-240 border-separate border-spacing-0 text-left text-xs text-muted-foreground">
-                      <thead className="sticky top-0 z-10 bg-card text-muted-foreground shadow-[0_1px_0_0_rgba(226,232,240,1)]">
-                        <tr>
-                          {[
-                            "Timestamp",
-                            "Mission",
-                            "Action",
-                            "Input",
-                            "Episode",
-                            "Semantic",
-                            "Weight",
-                            "Keywords",
-                          ].map((label) => (
-                            <th
-                              key={label}
-                              className="border-b border-border px-3 py-2 font-semibold"
-                            >
-                              {label}
-                            </th>
-                          ))}
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {visibleMemoryRows.map((row) => {
+                  <AdminDataTable
+                    rows={visibleMemoryRows}
+                    rowKey={(row) =>
+                      `${row.version ?? "unknown"}-${row.type}-${row.id}`
+                    }
+                    emptyMessage={`v${memoryVersionTab} 메모리 없음`}
+                    tableClassName="min-w-240"
+                    columns={[
+                      {
+                        key: "timestamp",
+                        label: "Timestamp",
+                        cellClassName:
+                          "whitespace-nowrap text-muted-foreground",
+                        render: (row) =>
+                          row.timestamp
+                            ? new Date(row.timestamp as number).toLocaleString(
+                                "ko-KR",
+                                {
+                                  month: "numeric",
+                                  day: "numeric",
+                                  hour: "2-digit",
+                                  minute: "2-digit",
+                                },
+                              )
+                            : "—",
+                      },
+                      {
+                        key: "mission",
+                        label: "Mission",
+                        cellClassName:
+                          "whitespace-nowrap text-xs text-muted-foreground",
+                        render: (row) => row.source?.missionId ?? "—",
+                      },
+                      {
+                        key: "action",
+                        label: "Action",
+                        cellClassName: "whitespace-nowrap",
+                        render: (row) =>
+                          row.agentActionCategory ? (
+                            <Badge variant="warning" className="rounded-full">
+                              {row.agentActionCategory}
+                            </Badge>
+                          ) : (
+                            <span className="text-muted-foreground">—</span>
+                          ),
+                      },
+                      {
+                        key: "input",
+                        label: "Input",
+                        cellClassName: "max-w-64 wrap-anywhere text-foreground",
+                        render: (row) => row.input ?? "",
+                      },
+                      {
+                        key: "episode",
+                        label: "Episode",
+                        cellClassName:
+                          "max-w-72 wrap-anywhere text-muted-foreground italic",
+                        render: (row) => row.episode ?? "",
+                      },
+                      {
+                        key: "semantic",
+                        label: "Semantic",
+                        cellClassName: "max-w-80 wrap-anywhere",
+                        render: (row) => {
                           const semantics = semanticItems(row);
-                          const weights = memoryWeights(row);
-                          return (
-                            <tr
-                              key={`${row.version ?? "unknown"}-${row.type}-${row.id}`}
-                              className="align-top hover:bg-muted/60"
-                            >
-                              <td className="whitespace-nowrap border-b border-border px-3 py-3 text-muted-foreground">
-                                {row.timestamp
-                                  ? new Date(
-                                      row.timestamp as number,
-                                    ).toLocaleString("ko-KR", {
-                                      month: "numeric",
-                                      day: "numeric",
-                                      hour: "2-digit",
-                                      minute: "2-digit",
-                                    })
-                                  : "—"}
-                              </td>
-                              <td className="whitespace-nowrap border-b border-border px-3 py-3 text-xs text-muted-foreground">
-                                {row.source?.missionId ?? "—"}
-                              </td>
-                              <td className="whitespace-nowrap border-b border-border px-3 py-3">
-                                {row.agentActionCategory ? (
-                                  <Badge variant="warning" className="rounded-full">
-                                    {row.agentActionCategory}
-                                  </Badge>
-                                ) : (
-                                  <span className="text-muted-foreground">—</span>
-                                )}
-                              </td>
-                              <td className="max-w-64 wrap-anywhere border-b border-border px-3 py-3 text-foreground">
-                                {row.input ?? ""}
-                              </td>
-                              <td className="max-w-72 wrap-anywhere border-b border-border px-3 py-3 text-muted-foreground italic">
-                                {row.episode ?? ""}
-                              </td>
-                              <td className="max-w-80 wrap-anywhere border-b border-border px-3 py-3">
-                                {semantics.length === 0 ? (
-                                  <span className="text-muted-foreground">—</span>
-                                ) : (
-                                  <div className="flex flex-col gap-1">
-                                    {semantics.map((s: string, i: number) => (
-                                      <Badge
-                                        key={i}
-                                        variant="outline"
-                                        className="inline-block h-auto max-w-full wrap-anywhere rounded-lg whitespace-normal border-transparent bg-indigo-50 px-2.5 py-1 text-xs leading-snug text-indigo-700"
-                                      >
-                                        {s}
-                                      </Badge>
-                                    ))}
-                                  </div>
-                                )}
-                              </td>
-                              <td className="whitespace-nowrap border-b border-border px-3 py-3">
-                                {weights.length === 0 ? (
-                                  <span className="text-muted-foreground">—</span>
-                                ) : (
-                                  <div className="flex flex-col gap-1">
-                                    {weights.map((weight, index) => (
-                                      <Badge
-                                        key={index}
-                                        variant="secondary"
-                                        className="inline-block h-auto rounded-lg"
-                                      >
-                                        {formatScore(weight)}
-                                      </Badge>
-                                    ))}
-                                  </div>
-                                )}
-                              </td>
-                              <td className="max-w-48 wrap-anywhere border-b border-border px-3 py-3">
-                                <div className="flex flex-wrap gap-1">
-                                  {(row.keywords ?? []).map(
-                                    (kw: string, i: number) => (
-                                      <Badge
-                                        key={i}
-                                        variant="secondary"
-                                        className="h-auto max-w-full wrap-anywhere rounded-full whitespace-normal"
-                                      >
-                                        {kw}
-                                      </Badge>
-                                    ),
-                                  )}
-                                </div>
-                              </td>
-                            </tr>
+                          return semantics.length === 0 ? (
+                            <span className="text-muted-foreground">—</span>
+                          ) : (
+                            <div className="flex flex-col gap-1">
+                              {semantics.map((s: string, i: number) => (
+                                <Badge
+                                  key={i}
+                                  variant="outline"
+                                  className="inline-block h-auto max-w-full wrap-anywhere rounded-lg whitespace-normal border-transparent bg-indigo-50 px-2.5 py-1 text-xs leading-snug text-indigo-700"
+                                >
+                                  {s}
+                                </Badge>
+                              ))}
+                            </div>
                           );
-                        })}
-                      </tbody>
-                    </table>
-                  )}
+                        },
+                      },
+                      {
+                        key: "weight",
+                        label: "Weight",
+                        cellClassName: "whitespace-nowrap",
+                        render: (row) => {
+                          const weights = memoryWeights(row);
+                          return weights.length === 0 ? (
+                            <span className="text-muted-foreground">—</span>
+                          ) : (
+                            <div className="flex flex-col gap-1">
+                              {weights.map((weight, index) => (
+                                <Badge
+                                  key={index}
+                                  variant="secondary"
+                                  className="inline-block h-auto rounded-lg"
+                                >
+                                  {formatScore(weight)}
+                                </Badge>
+                              ))}
+                            </div>
+                          );
+                        },
+                      },
+                      {
+                        key: "keywords",
+                        label: "Keywords",
+                        cellClassName: "max-w-48 wrap-anywhere",
+                        render: (row) => (
+                          <div className="flex flex-wrap gap-1">
+                            {(row.keywords ?? []).map((kw: string, i: number) => (
+                              <Badge
+                                key={i}
+                                variant="secondary"
+                                className="h-auto max-w-full wrap-anywhere rounded-full whitespace-normal"
+                              >
+                                {kw}
+                              </Badge>
+                            ))}
+                          </div>
+                        ),
+                      },
+                    ]}
+                  />
                 </div>
               ) : memoryViewTab === "retrievals" ? (
                 <div className="grid h-full grid-cols-[minmax(260px,360px)_1fr] overflow-hidden">

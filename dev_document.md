@@ -1320,8 +1320,8 @@ type ChatPlan = {
    - [x] `LobbySummary`
    - [x] `OnboardingSteps`
    - [x] `ReferenceCard`
-   - [ ] `IdeaTabs`
-   - [ ] `IdeaEditor`
+   - [x] `IdeaTabs`
+   - [x] `IdeaEditor` `[IdeaWorkspace + IdeaNoteSection으로 대체 구현됨 (src/components/session/idea-workspace.tsx, idea-note-section.tsx)]`
    - [x] `MockupCanvasToolbar`
    - [x] `ChatPanel`
    - [x] `ChatBubble`
@@ -1332,12 +1332,12 @@ type ChatPlan = {
    - [x] `MemoryClusterList`
    - [x] `MemoryClusterEmptyState`
    - [x] `MemoryClusterSidePanel`
-   - [x] `MemoryClusterGraph`
-   - [ ] `MemoryCard`
-   - [ ] `RetrievedMemoryBadge`
-   - [ ] `SessionMemoryDiff`
-   - [ ] `AdminDataTable`
-   - [ ] `PromptViewer`
+   - [x] `MemoryClusterGraph` `[src/components/memory/memory-cluster-graph.tsx로 이동 완료]`
+   - [x] `MemoryCard` `[src/components/memory/memory-card.tsx — before-session 메모리 카드에 적용]`
+   - [x] `RetrievedMemoryBadge` `[src/components/memory/retrieved-memory-badge.tsx — ChatBubble에 적용]`
+   - [x] `SessionMemoryDiff` `[src/components/memory/session-memory-diff.tsx — 메모리 변화 전체 보기 오버레이 shell]`
+   - [x] `AdminDataTable` `[src/components/admin/admin-data-table.tsx — /admin 메모리 테이블에 적용. 나머지 admin 목록의 단계적 전환은 선택 과제]`
+   - [x] `PromptViewer` `[src/components/admin/prompt-viewer.tsx — raw prompt 모달에 적용]`
 
 ### 15.8 주요 화면 재설계 방향
 
@@ -1359,10 +1359,10 @@ type ChatPlan = {
 
 - [ ] hover state는 색 변화만이 아니라 border/shadow/translate 중 하나를 일관되게 사용
 - [ ] press state는 `scale(0.98)` 또는 명확한 active state를 짧게 제공
-- [ ] `transition-all` 사용 금지. 필요한 property만 지정
+- [x] `transition-all` 사용 금지. 필요한 property만 지정 `[button/badge/tabs 3곳을 명시적 property 목록으로 교체 완료]`
 - [ ] loading은 skeleton/spinner/progress를 상황별로 구분
-- [ ] 숫자/시간/카운트는 tabular numbers 적용
-- [ ] 긴 제목과 설명은 `text-wrap: balance` 또는 `pretty` 적용 여부 검토
+- [x] 숫자/시간/카운트는 tabular numbers 적용 `[9곳 적용 확인]`
+- [ ] 긴 제목과 설명은 `text-wrap: balance` 또는 `pretty` 적용 여부 검토 `[1곳만 적용, 전체 검토 미완]`
 - [ ] nested card/button radius는 concentric하게 맞춤
 - [ ] icon-only button에는 tooltip과 accessible label 제공
 - [ ] enter/exit animation은 interruptible CSS transition 우선
@@ -1407,7 +1407,7 @@ type ChatPlan = {
    - [x] 기존 Phosphor icon 사용 정책 유지 또는 lucide 전환 범위 결정
 4. Product Component Refactor
    - [x] 중복 UI를 product component로 추출
-   - [x] 큰 route file의 UI 책임을 단계적으로 분리
+   - [ ] 큰 route file의 UI 책임을 단계적으로 분리 `[진행 중: /main/[missionId] 7,500줄 → 약 6,500줄 (미사용 mockup capture 코드 ~500줄 제거, chat-content/mockup-html 헬퍼를 src/lib/session/으로 분리, PromptViewer/SessionMemoryDiff/MemoryCard 추출). /admin 약 3,200줄 분해는 미완]`
 5. Route Redesign
    - [x] `/`
    - [x] `/onboarding`
@@ -1416,7 +1416,7 @@ type ChatPlan = {
    - [x] `/agent`
    - [ ] `/admin` `[partially implemented: feedback/destructive flows done, layout redesign pending]`
 6. Polish Pass
-   - [x] jakubkrehel checklist 적용
+   - [x] jakubkrehel checklist 적용 `[1차 pass 완료. 단 15.9 세부 항목은 미검증 상태이므로 항목별 확인 필요]`
    - [x] emilkowalski 관점으로 주요 화면 리뷰
 7. Verification
    - [x] `npm run lint`

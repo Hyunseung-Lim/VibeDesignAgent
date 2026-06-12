@@ -2,6 +2,7 @@ import ReactMarkdown from "react-markdown";
 import type { ComponentProps } from "react";
 import { Brain, ChevronDown, ChevronUp } from "lucide-react";
 import { ToolActionChip, type ToolActionChipData } from "./tool-action-chip";
+import { RetrievedMemoryBadge } from "@/components/memory/retrieved-memory-badge";
 
 export type ChatBubbleMessage = {
   id: string;
@@ -215,13 +216,10 @@ export function ChatBubble({
 
         {!isUser && adminMemoryCount > 0 && (
           <div className="mt-3 flex flex-wrap gap-2 border-t border-slate-200 pt-3">
-            <button
-              type="button"
+            <RetrievedMemoryBadge
+              count={adminMemoryCount}
               onClick={onShowRetrievedMemory}
-              className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-500 transition hover:border-slate-300 hover:text-slate-800"
-            >
-              참고 메모리 {adminMemoryCount}개
-            </button>
+            />
           </div>
         )}
 
