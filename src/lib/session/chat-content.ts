@@ -14,7 +14,11 @@ export type ContentPart =
 
 const BLOCK_RULES = [
   {
-    complete: /\[CREATE_NOTE:(?:\s*\{[\s\S]*?\}|[\s\S]*?\n)\]/,
+    // Allow whitespace/newlines between the end of the payload and `]` so a
+    // completed note isn't stuck showing "작성 중" when the model pretty-prints
+    // or pads the closing bracket (e.g. `} ]`, `}\n  ]`). Mirrors the tolerance
+    // of the bracket-aware parser in the main page (parseNoteBlock).
+    complete: /\[CREATE_NOTE:(?:\s*\{[\s\S]*?\}\s*|[\s\S]*?\n\s*)\]/,
     partial: /\[CREATE_NOTE:[\s\S]*$/,
     doneLabel: "노트 생성됨",
     pendingLabel: "노트 작성 중...",
@@ -22,7 +26,7 @@ const BLOCK_RULES = [
     failedMarker: "⚠️ 노트를 먼저 저장해야",
   },
   {
-    complete: /\[UPDATE_NOTE:(?:\s*\{[\s\S]*?\}|[\s\S]*?\n)\]/,
+    complete: /\[UPDATE_NOTE:(?:\s*\{[\s\S]*?\}\s*|[\s\S]*?\n\s*)\]/,
     partial: /\[UPDATE_NOTE:[\s\S]*$/,
     doneLabel: "노트 수정됨",
     pendingLabel: "노트 수정 중...",
