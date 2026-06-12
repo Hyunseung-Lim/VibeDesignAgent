@@ -21,16 +21,16 @@
 
 ## 2. 기술 스택
 
-| 영역            | 기술                                                  |
-| --------------- | ----------------------------------------------------- |
-| 프레임워크      | Next.js (App Router), TypeScript                      |
-| 스타일링        | Tailwind CSS v4, @phosphor-icons/react                |
-| 인증            | Firebase Authentication (Google OAuth)                |
-| 데이터베이스    | Firebase Firestore                                    |
+| 영역            | 기술                                                                                  |
+| --------------- | ------------------------------------------------------------------------------------- |
+| 프레임워크      | Next.js (App Router), TypeScript                                                      |
+| 스타일링        | Tailwind CSS v4, @phosphor-icons/react                                                |
+| 인증            | Firebase Authentication (Google OAuth)                                                |
+| 데이터베이스    | Firebase Firestore                                                                    |
 | AI 채팅         | OpenAI Responses API (기본 `gpt-5.4`) / Anthropic Claude 선택 + web_search_preview 툴 |
-| 목업 생성       | Google Stitch SDK                                     |
-| 이미지 검색     | Serper API (Google 이미지 검색)                       |
-| 마크다운 렌더링 | react-markdown                                        |
+| 목업 생성       | Google Stitch SDK                                                                     |
+| 이미지 검색     | Serper API (Google 이미지 검색)                                                       |
+| 마크다운 렌더링 | react-markdown                                                                        |
 
 ---
 
@@ -250,7 +250,7 @@ type Idea = {
 | `POST /api/memory/retrieve`                       | query embedding 기반 memory top 5 검색 및 weight 업데이트               |
 | `GET/POST /api/memory/profile`                    | profile source 저장/조회 및 derived memory 생성                         |
 | `POST /api/admin/missions`                        | 미션 생성 (관리자 전용)                                                 |
-| `GET /api/admin/users/[uid]/memory`               | admin memory/cluster view용 메모리 조회                                  |
+| `GET /api/admin/users/[uid]/memory`               | admin memory/cluster view용 메모리 조회                                 |
 | `GET/POST /api/admin/users/[uid]/memory/clusters` | admin memory cluster 캐시 조회/생성                                     |
 | `GET /api/admin/users/[uid]/memory/forgetting`    | archive 후보 산출                                                       |
 | `PATCH /api/admin/users/[uid]/memory/forgetting`  | semantic item soft archive                                              |
@@ -1257,7 +1257,7 @@ type ChatPlan = {
 - [ ] 목업 캔버스의 zoom/pan/fit/fullscreen controls를 icon button + tooltip 기준으로 정리
 - [ ] Chat streaming, tool action chip, web searched badge, memory toggle의 visual language 통일 `[partially implemented: ToolActionChip tokenized]`
 - [ ] 세션 종료/최종 디자인 선택 흐름의 confirm/warning state 개선
-- [ ] 모바일에서는 panel tabs 또는 sheet 기반 전환으로 재설계
+- [~] 모바일에서는 panel tabs 또는 sheet 기반 전환으로 재설계 `[취소됨: 모바일 화면을 별도로 만들지 않기로 결정. 대신 desktop-only 고정 레이아웃(min-width lock) 적용 — globals.css body min-width: 1024px + layout.tsx viewport.width: 1024]`
 
 #### `/agent`
 
@@ -1357,31 +1357,26 @@ type ChatPlan = {
 
 ### 15.9 Micro-interaction Polish 체크리스트
 
-- [ ] hover state는 색 변화만이 아니라 border/shadow/translate 중 하나를 일관되게 사용
-- [ ] press state는 `scale(0.98)` 또는 명확한 active state를 짧게 제공
+- [x] hover state는 색 변화만이 아니라 border/shadow/translate 중 하나를 일관되게 사용 `[primitive는 bg+border, 리스트/카드 버튼은 border+bg 조합 확인. 최종 시각 확인 권장]`
+- [x] press state는 `scale(0.98)` 또는 명확한 active state를 짧게 제공 `[Button primitive의 active:translate-y-px]`
 - [x] `transition-all` 사용 금지. 필요한 property만 지정 `[button/badge/tabs 3곳을 명시적 property 목록으로 교체 완료]`
-- [ ] loading은 skeleton/spinner/progress를 상황별로 구분
+- [x] loading은 skeleton/spinner/progress를 상황별로 구분 `[skeleton(main 세션), pulse placeholder(lobby), spinner(chat/reference/mockup), sonner(작업 피드백) 구분 사용 확인]`
 - [x] 숫자/시간/카운트는 tabular numbers 적용 `[9곳 적용 확인]`
-- [ ] 긴 제목과 설명은 `text-wrap: balance` 또는 `pretty` 적용 여부 검토 `[1곳만 적용, 전체 검토 미완]`
-- [ ] nested card/button radius는 concentric하게 맞춤
-- [ ] icon-only button에는 tooltip과 accessible label 제공
-- [ ] enter/exit animation은 interruptible CSS transition 우선
-- [ ] 페이지 첫 로드에서 과한 animation을 실행하지 않음
+- [x] 긴 제목과 설명은 `text-wrap: balance` 또는 `pretty` 적용 여부 검토 `[로그인/온보딩 h1+설명, 미션 카드 제목, alert-dialog description에 적용]`
+- [ ] nested card/button radius는 concentric하게 맞춤 `[시각 확인 필요]`
+- [x] icon-only button에는 tooltip과 accessible label 제공 `[size="icon" 및 raw icon button 전수 감사, aria-label 8곳 보강]`
+- [x] enter/exit animation은 interruptible CSS transition 우선 `[radix data-state 기반 표준 패턴(100–200ms), 페이지 커스텀 entrance animation 없음]`
+- [x] 페이지 첫 로드에서 과한 animation을 실행하지 않음 `[페이지 mount entrance animation 없음 확인. lobby는 loading pulse만]`
 
-### 15.10 접근성 / 모바일 / 상태 검증
+### 15.10 접근성 / 상태 검증
 
 - 접근성:
-  - [ ] 모든 interactive element에 keyboard focus 표시
-  - [ ] icon-only button에 `aria-label`
-  - [ ] Dialog/Sheet focus trap과 escape close 확인
-  - [ ] destructive action은 Alert Dialog 사용
-  - [ ] error message는 `role="alert"` 또는 적절한 live region 사용
-  - [ ] 색 대비 확인
-- 모바일:
-  - [ ] 360px, 390px, 430px, 768px, desktop viewport에서 확인
-  - [ ] 세션 화면은 패널을 탭/시트로 전환
-  - [ ] 긴 버튼 텍스트와 긴 미션 제목 overflow 확인
-  - [ ] canvas controls가 목업을 가리지 않는지 확인
+  - [x] 모든 interactive element에 keyboard focus 표시 `[globals.css 전역 :focus-visible outline + primitive focus ring]`
+  - [x] icon-only button에 `aria-label` `[agent 뒤로가기, admin 미션/참여자/삭제 버튼 등 8곳 보강]`
+  - [x] Dialog/Sheet focus trap과 escape close 확인 `[radix 기본 제공. custom overlay(PromptViewer/SessionMemoryDiff)에 ESC close 추가 — focus trap은 미적용, 필요 시 Dialog 전환 검토]`
+  - [x] destructive action은 Alert Dialog 사용 `[main 디자인 삭제, admin 미션/유저 데이터 삭제 모두 AlertDialog 확인]`
+  - [x] error message는 `role="alert"` 또는 적절한 live region 사용 `[login/lobby 기존 2곳 + admin/new, memory-log-views 추가]`
+  - [ ] 색 대비 확인 `[브라우저/도구 확인 필요]`
 - 상태:
   - [ ] loading
   - [ ] empty
@@ -1407,7 +1402,7 @@ type ChatPlan = {
    - [x] 기존 Phosphor icon 사용 정책 유지 또는 lucide 전환 범위 결정
 4. Product Component Refactor
    - [x] 중복 UI를 product component로 추출
-   - [ ] 큰 route file의 UI 책임을 단계적으로 분리 `[진행 중: /main/[missionId] 7,500줄 → 약 6,500줄 (미사용 mockup capture 코드 ~500줄 제거, chat-content/mockup-html 헬퍼를 src/lib/session/으로 분리, PromptViewer/SessionMemoryDiff/MemoryCard 추출). /admin 약 3,200줄 분해는 미완]`
+   - [ ] 큰 route file의 UI 책임을 단계적으로 분리 `[진행 중: /main/[missionId] 7,500줄 → 약 6,500줄 (미사용 mockup capture 코드 ~500줄 제거, chat-content/mockup-html 헬퍼를 src/lib/session/으로 분리, PromptViewer/SessionMemoryDiff/MemoryCard 추출). /admin 3,200줄 → 약 2,400줄 (retrievals/forgetting/archived 탭을 memory-log-views로, 유저 카드를 admin-user-card로 추출). 다음 후보: /main의 renderMockupCanvas·renderSessionImpactGraph, /admin missions 탭 폼]`
 5. Route Redesign
    - [x] `/`
    - [x] `/onboarding`

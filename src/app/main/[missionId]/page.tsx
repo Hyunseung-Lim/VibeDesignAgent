@@ -5914,6 +5914,7 @@ export default function MainScreenPage() {
                   type="button"
                   onClick={() => setReviewDetailModal(null)}
                   className="rounded-full p-1.5 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
+                  aria-label="기억 상세 닫기"
                 >
                   <XIcon size={14} />
                 </button>

@@ -1,6 +1,6 @@
 "use client";
 
-import type { ReactNode } from "react";
+import { useEffect, type ReactNode } from "react";
 import { XIcon } from "@phosphor-icons/react";
 
 interface SessionMemoryDiffProps {
@@ -17,6 +17,14 @@ export function SessionMemoryDiff({
   onClose,
   children,
 }: SessionMemoryDiffProps) {
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [onClose]);
+
   return (
     <div className="fixed inset-0 z-50 flex flex-col bg-white">
       {/* Header — same structure as the agent page header */}

@@ -44,6 +44,20 @@ import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { AdminDataTable } from "@/components/admin/admin-data-table";
+import {
+  AdminUserCard,
+  onboardingBadge,
+  type AdminUser,
+  type Participant,
+} from "@/components/admin/admin-user-card";
+import {
+  MemoryArchivedView,
+  MemoryForgettingView,
+  MemoryRetrievalsView,
+  formatScore,
+  type MemoryForgettingCandidate,
+  type MemoryRetrievalLog,
+} from "@/components/admin/memory-log-views";
 import { MemoryClusterList } from "@/components/memory/memory-cluster-list";
 import { MemoryClusterSidePanel } from "@/components/memory/memory-cluster-side-panel";
 import type { MemoryItem } from "@/components/memory/memory-cluster-types";
@@ -63,23 +77,6 @@ const MemoryClusterGraph = dynamic(
 const ONBOARDING_MISSION_ID = "onboarding";
 
 type Device = "desktop" | "mobile";
-
-type Participant = {
-  id: string; // userId
-  displayName: string | null;
-  email: string | null;
-  photoURL: string | null;
-  updatedAt: number;
-  onboardingStatus?: "completed" | "required" | "unknown";
-  isAdmin?: boolean;
-};
-
-type AdminUser = Participant & {
-  missionIds: string[];
-  sessionMissionIds: string[];
-  completedSessionMissionIds: string[];
-  missionOrder: string[];
-};
 
 type AdminMemoryRow = {
   id: string;
@@ -173,64 +170,6 @@ type MemoryGraphClusterDiagnostics = {
     singletonCount: number;
     rawCommunityCount: number;
     cappedCommunityCount: number;
-  };
-};
-
-type MemoryRetrievalItem = {
-  id: string;
-  memoryId: string;
-  semanticItemId: string | null;
-  semantic: string;
-  episodic?: string;
-  episode?: string;
-  similarity: number | null;
-  weight?: number | null;
-  retrievedCount: number;
-  archivedAt?: number | null;
-  source?: { missionId?: string; draftId?: string } | null;
-  timestamp?: number | null;
-};
-
-type MemoryRetrievalScoreDelta = {
-  memoryId?: string;
-  semanticItemId?: string | null;
-  weight?: number;
-  weightDelta?: number;
-};
-
-type MemoryRetrievalLog = {
-  id: string;
-  query: string;
-  missionId?: string | null;
-  queryEmbeddingModel?: string;
-  createdAt: number;
-  retrieved: MemoryRetrievalItem[];
-  scoreDeltas: MemoryRetrievalScoreDelta[];
-};
-
-type MemoryForgettingCandidate = {
-  id: string;
-  reason: "low-weight" | "duplicate";
-  reasonLabel: string;
-  memoryId: string;
-  semanticItemId: string | null;
-  semantic: string | null;
-  episodic?: string;
-  weight?: number | null;
-  retrievedCount: number;
-  lastRetrievedAt: number | null;
-  createdAt: number | null;
-  archivedAt?: number | null;
-  archiveReason?: string | null;
-  duplicateOf?: string | null;
-  source?: { missionId?: string; draftId?: string } | null;
-  keywords?: string[];
-  duplicate?: {
-    memoryId: string;
-    semanticItemId: string | null;
-    semantic: string | null;
-    episodic?: string;
-    similarity: number;
   };
 };
 
@@ -364,12 +303,6 @@ function parseMemoryGraphClusterDiagnostics(value: unknown) {
         },
       }
     : null;
-}
-
-function formatScore(value?: number | null) {
-  return typeof value === "number" && Number.isFinite(value)
-    ? value.toFixed(3)
-    : "—";
 }
 
 function stableHash(value: string) {
@@ -669,18 +602,6 @@ export default function AdminPage() {
           )
         : prev.filter((p) => p.id !== participant.id),
     );
-  };
-
-  const onboardingBadge = (
-    status?: Participant["onboardingStatus"],
-  ): { label: string; variant: "success" | "warning" | "secondary" } => {
-    if (status === "completed") {
-      return { label: "온보딩 완료", variant: "success" };
-    }
-    if (status === "required") {
-      return { label: "온보딩 필요", variant: "warning" };
-    }
-    return { label: "온보딩 확인 불가", variant: "secondary" };
   };
 
   const missionTitle = (missionId: string) =>
@@ -1893,617 +1814,29 @@ export default function AdminPage() {
                   />
                 </div>
               ) : memoryViewTab === "retrievals" ? (
-                <div className="grid h-full grid-cols-[minmax(260px,360px)_1fr] overflow-hidden">
-                  <div className="h-full overflow-y-auto overscroll-contain border-r border-border bg-muted/60 p-3">
-                    {memoryRetrievalError && (
-                      <p className="mb-3 rounded-xl bg-red-50 px-3 py-2 text-xs text-red-500">
-                        {memoryRetrievalError}
-                      </p>
-                    )}
-                    {isLoadingMemoryRetrievals ? (
-                      <p className="px-2 py-3 text-xs text-muted-foreground">
-                        Retrieval logs를 불러오는 중입니다.
-                      </p>
-                    ) : memoryRetrievalLogs.length === 0 ? (
-                      <p className="px-2 py-3 text-xs leading-relaxed text-muted-foreground">
-                        아직 retrieval log가 없습니다. 사용자가 채팅을 보내면
-                        query와 검색된 memory가 여기에 기록됩니다.
-                      </p>
-                    ) : (
-                      <div className="space-y-2">
-                        {memoryRetrievalLogs.map((log) => (
-                          <button
-                            key={log.id}
-                            type="button"
-                            onClick={() => setSelectedMemoryRetrievalId(log.id)}
-                            className={`w-full rounded-xl border px-3 py-3 text-left transition ${
-                              selectedMemoryRetrieval?.id === log.id
-                                ? "border-border bg-card shadow-sm"
-                                : "border-transparent bg-card/60 hover:border-border hover:bg-card"
-                            }`}
-                          >
-                            <div className="flex items-start justify-between gap-2">
-                              <p className="line-clamp-2 text-xs font-semibold leading-relaxed text-foreground">
-                                {log.query || "(empty query)"}
-                              </p>
-                              <Badge variant="secondary" className="shrink-0 rounded-full">
-                                {log.retrieved.length} used
-                              </Badge>
-                            </div>
-                            <div className="mt-2 flex flex-wrap gap-1.5 text-[11px] text-muted-foreground">
-                              <span>
-                                {log.createdAt
-                                  ? new Date(log.createdAt).toLocaleString(
-                                      "ko-KR",
-                                      {
-                                        month: "numeric",
-                                        day: "numeric",
-                                        hour: "2-digit",
-                                        minute: "2-digit",
-                                      },
-                                    )
-                                  : "—"}
-                              </span>
-                              {log.missionId && <span>{log.missionId}</span>}
-                            </div>
-                            <p className="mt-2 line-clamp-1 text-[11px] text-muted-foreground">
-                              Top memory: {log.retrieved[0]?.semantic || "—"}
-                            </p>
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                  <div className="h-full overflow-y-auto overscroll-contain p-5">
-                    {isLoadingMemoryRetrievals ? (
-                      <div className="flex h-full min-h-80 items-center justify-center text-sm text-muted-foreground">
-                        Retrieval logs를 불러오는 중입니다.
-                      </div>
-                    ) : !selectedMemoryRetrieval ? (
-                      <div className="flex h-full min-h-80 items-center justify-center text-sm text-muted-foreground">
-                        선택된 retrieval log가 없습니다.
-                      </div>
-                    ) : (
-                      <div className="space-y-5">
-                        <section className="space-y-3">
-                          <div className="flex flex-wrap items-start justify-between gap-3">
-                            <div>
-                              <h3 className="text-lg font-semibold text-foreground">
-                                Memory used for this turn
-                              </h3>
-                              <p className="mt-1 text-sm text-muted-foreground">
-                                The user message was embedded, compared with
-                                saved semantic memories, and the closest matches
-                                were sent to the agent.
-                              </p>
-                            </div>
-                            <div className="flex flex-wrap gap-2">
-                              <Badge variant="success" className="rounded-full">
-                                {selectedMemoryRetrieval.retrieved.length} used
-                              </Badge>
-                              {selectedMemoryRetrieval.missionId && (
-                                <Badge variant="secondary" className="rounded-full">
-                                  {selectedMemoryRetrieval.missionId}
-                                </Badge>
-                              )}
-                            </div>
-                          </div>
-                          <div className="grid gap-2 md:grid-cols-3">
-                            <div className="rounded-xl bg-muted px-3 py-3">
-                              <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-                                1. Query
-                              </p>
-                              <p className="mt-1 line-clamp-3 text-xs leading-relaxed text-foreground">
-                                {selectedMemoryRetrieval.query || "—"}
-                              </p>
-                            </div>
-                            <div className="rounded-xl bg-muted px-3 py-3">
-                              <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-                                2. Search
-                              </p>
-                              <p className="mt-1 text-xs leading-relaxed text-foreground">
-                                Vector similarity over semantic memory, no LLM
-                                ranking.
-                              </p>
-                            </div>
-                            <div className="rounded-xl bg-muted px-3 py-3">
-                              <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-                                3. Learning
-                              </p>
-                              <p className="mt-1 text-xs leading-relaxed text-foreground">
-                                Used memories are reinforced; nearby unused
-                                candidates decay slightly.
-                              </p>
-                            </div>
-                          </div>
-                          <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
-                            <span>
-                              {selectedMemoryRetrieval.createdAt
-                                ? new Date(
-                                    selectedMemoryRetrieval.createdAt,
-                                  ).toLocaleString("ko-KR")
-                                : "—"}
-                            </span>
-                            {selectedMemoryRetrieval.missionId && (
-                              <span>{selectedMemoryRetrieval.missionId}</span>
-                            )}
-                            {selectedMemoryRetrieval.queryEmbeddingModel && (
-                              <span>
-                                {selectedMemoryRetrieval.queryEmbeddingModel}
-                              </span>
-                            )}
-                          </div>
-                        </section>
-
-                        <section>
-                          <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                            retrieved[]
-                          </p>
-                          <div className="space-y-3">
-                            {selectedMemoryRetrieval.retrieved.map(
-                              (item, index) => {
-                                const delta =
-                                  selectedMemoryRetrieval.scoreDeltas.find(
-                                    (candidate) =>
-                                      candidate.memoryId === item.memoryId &&
-                                      candidate.semanticItemId ===
-                                        item.semanticItemId,
-                                  );
-                                return (
-                                  <div
-                                    key={item.id}
-                                    className="rounded-2xl border border-border bg-card p-4 text-xs shadow-sm"
-                                  >
-                                    <div className="flex flex-wrap items-start justify-between gap-3">
-                                      <div className="flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
-                                        <Badge className="rounded-full">
-                                          #{index + 1}
-                                        </Badge>
-                                        <Badge variant="success" className="rounded-full">
-                                          similarity{" "}
-                                          {formatScore(item.similarity)}
-                                        </Badge>
-                                        {item.semantic && (
-                                          <Badge
-                                            variant="outline"
-                                            className="rounded-full border-transparent bg-violet-50 text-violet-600"
-                                          >
-                                            semantic
-                                          </Badge>
-                                        )}
-                                        {item.episode && (
-                                          <Badge
-                                            variant="outline"
-                                            className="rounded-full border-transparent bg-sky-50 text-sky-600"
-                                          >
-                                            episode
-                                          </Badge>
-                                        )}
-                                        <span>
-                                          weight{" "}
-                                          {formatScore(item.weight)}
-                                        </span>
-                                        <span>
-                                          retrievedCount {item.retrievedCount}
-                                        </span>
-                                        {item.source?.missionId && (
-                                          <span>
-                                            source.missionId{" "}
-                                            {item.source.missionId}
-                                          </span>
-                                        )}
-                                      </div>
-                                    </div>
-                                    <p className="mt-3 wrap-anywhere text-sm leading-relaxed text-foreground">
-                                      {item.semantic ||
-                                        "(semantic item not found)"}
-                                    </p>
-                                    <details className="mt-3 rounded-xl bg-muted px-3 py-2">
-                                      <summary className="cursor-pointer text-[11px] font-semibold text-muted-foreground">
-                                        Fields
-                                      </summary>
-                                      <div className="mt-2 grid gap-2 text-[11px] text-muted-foreground sm:grid-cols-2 lg:grid-cols-4">
-                                        <span>
-                                          scoreDeltas[].weight{" "}
-                                          {formatScore(delta?.weight)}
-                                        </span>
-                                        <span>
-                                          scoreDeltas[].weightDelta{" "}
-                                          {formatScore(delta?.weightDelta)}
-                                        </span>
-                                      </div>
-                                      <p className="mt-2 wrap-anywhere text-[11px] text-muted-foreground">
-                                        memoryId {item.memoryId} ·
-                                        semanticItemId {item.semanticItemId}
-                                      </p>
-                                    </details>
-                                  </div>
-                                );
-                              },
-                            )}
-                          </div>
-                        </section>
-                      </div>
-                    )}
-                  </div>
-                </div>
+                <MemoryRetrievalsView
+                  logs={memoryRetrievalLogs}
+                  selected={selectedMemoryRetrieval}
+                  isLoading={isLoadingMemoryRetrievals}
+                  error={memoryRetrievalError}
+                  onSelect={setSelectedMemoryRetrievalId}
+                />
               ) : memoryViewTab === "forgetting" ? (
-                <div className="grid h-full grid-cols-[minmax(260px,360px)_1fr] overflow-hidden">
-                  <div className="h-full overflow-y-auto overscroll-contain border-r border-border bg-muted/60 p-3">
-                    {memoryForgettingError && (
-                      <p className="mb-3 rounded-xl bg-red-50 px-3 py-2 text-xs text-red-500">
-                        {memoryForgettingError}
-                      </p>
-                    )}
-                    {isLoadingMemoryForgetting ? (
-                      <p className="px-2 py-3 text-xs text-muted-foreground">
-                        Forgetting 후보를 자동 archive하는 중입니다.
-                      </p>
-                    ) : memoryForgettingCandidates.length === 0 ? (
-                      <p className="px-2 py-3 text-xs leading-relaxed text-muted-foreground">
-                        새로 자동 archive된 후보가 없습니다. 전체 archive
-                        기록은 Archived 탭에서 확인할 수 있습니다.
-                      </p>
-                    ) : (
-                      <div className="space-y-2">
-                        {memoryForgettingCandidates.map((candidate) => (
-                          <button
-                            key={candidate.id}
-                            type="button"
-                            onClick={() =>
-                              setSelectedMemoryForgettingId(candidate.id)
-                            }
-                            className={`w-full rounded-xl border px-3 py-3 text-left transition ${
-                              selectedMemoryForgetting?.id === candidate.id
-                                ? "border-border bg-card shadow-sm"
-                                : "border-transparent bg-card/60 hover:border-border hover:bg-card"
-                            }`}
-                          >
-                            <div className="flex items-start justify-between gap-2">
-                              <p className="line-clamp-2 text-xs font-semibold leading-relaxed text-foreground">
-                                {candidate.semantic}
-                              </p>
-                              <Badge
-                                variant="outline"
-                                className="shrink-0 rounded-full border-transparent bg-rose-50 text-rose-600"
-                              >
-                                {candidate.reason}
-                              </Badge>
-                            </div>
-                            <div className="mt-2 flex flex-wrap gap-1.5 text-[11px] text-muted-foreground">
-                              <span>
-                                weight{" "}
-                                {formatScore(candidate.weight)}
-                              </span>
-                              <span>
-                                retrievedCount {candidate.retrievedCount}
-                              </span>
-                              {candidate.archivedAt && (
-                                <span>
-                                  archivedAt{" "}
-                                  {new Date(
-                                    candidate.archivedAt,
-                                  ).toLocaleString("ko-KR")}
-                                </span>
-                              )}
-                              {candidate.source?.missionId && (
-                                <span>{candidate.source.missionId}</span>
-                              )}
-                            </div>
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                  <div className="h-full overflow-y-auto overscroll-contain p-5">
-                    {isLoadingMemoryForgetting ? (
-                      <div className="flex h-full min-h-80 items-center justify-center text-sm text-muted-foreground">
-                        Forgetting 후보를 자동 archive하는 중입니다.
-                      </div>
-                    ) : !selectedMemoryForgetting ? (
-                      <div className="flex h-full min-h-80 items-center justify-center text-sm text-muted-foreground">
-                        새로 자동 archive된 후보가 없습니다.
-                      </div>
-                    ) : (
-                      <div className="space-y-5">
-                        <section className="space-y-3">
-                          <div className="flex flex-wrap items-start justify-between gap-3">
-                            <div>
-                              <h3 className="text-lg font-semibold text-foreground">
-                                Auto archived memory
-                              </h3>
-                              <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
-                                Forgetting 기준에 걸린 semantic item을 자동
-                                soft archive했습니다.
-                              </p>
-                            </div>
-                          </div>
-                          <div className="flex flex-wrap gap-2">
-                            <Badge
-                              variant="outline"
-                              className="rounded-full border-transparent bg-rose-50 text-rose-600"
-                            >
-                              {selectedMemoryForgetting.reason}
-                            </Badge>
-                            <Badge variant="secondary" className="rounded-full">
-                              weight{" "}
-                              {formatScore(
-                                selectedMemoryForgetting.weight,
-                              )}
-                            </Badge>
-                            <Badge variant="secondary" className="rounded-full">
-                              retrievedCount{" "}
-                              {selectedMemoryForgetting.retrievedCount}
-                            </Badge>
-                            {selectedMemoryForgetting.archivedAt && (
-                              <Badge variant="secondary" className="rounded-full">
-                                archivedAt{" "}
-                                {new Date(
-                                  selectedMemoryForgetting.archivedAt,
-                                ).toLocaleString("ko-KR")}
-                              </Badge>
-                            )}
-                          </div>
-                          <p className="rounded-xl bg-muted px-3 py-3 text-xs leading-relaxed text-muted-foreground">
-                            {selectedMemoryForgetting.reasonLabel}
-                          </p>
-                        </section>
-
-                        <section>
-                          <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                            Semantic
-                          </p>
-                          <p className="wrap-anywhere rounded-2xl border border-border bg-card p-4 text-sm leading-relaxed text-foreground shadow-sm">
-                            {selectedMemoryForgetting.semantic}
-                          </p>
-                          {selectedMemoryForgetting.keywords &&
-                            selectedMemoryForgetting.keywords.length > 0 && (
-                              <div className="mt-3 flex flex-wrap gap-1">
-                                {selectedMemoryForgetting.keywords.map(
-                                  (keyword) => (
-                                    <Badge
-                                      key={keyword}
-                                      variant="secondary"
-                                      className="rounded-full"
-                                    >
-                                      {keyword}
-                                    </Badge>
-                                  ),
-                                )}
-                              </div>
-                            )}
-                        </section>
-
-                        {selectedMemoryForgetting.duplicate && (
-                          <section>
-                            <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                              Similar semantic kept
-                            </p>
-                            <div className="rounded-2xl border border-emerald-100 bg-emerald-50 p-4 text-xs">
-                              <div className="mb-2 flex flex-wrap gap-2 text-[11px] font-semibold text-emerald-700">
-                                <span>
-                                  Match{" "}
-                                  {formatScore(
-                                    selectedMemoryForgetting.duplicate
-                                      .similarity,
-                                  )}
-                                </span>
-                                <span>
-                                  {selectedMemoryForgetting.duplicate.memoryId}:
-                                  {
-                                    selectedMemoryForgetting.duplicate
-                                      .semanticItemId
-                                  }
-                                </span>
-                              </div>
-                              <p className="wrap-anywhere leading-relaxed text-emerald-900">
-                                {selectedMemoryForgetting.duplicate.semantic}
-                              </p>
-                            </div>
-                          </section>
-                        )}
-
-                        <details className="rounded-xl bg-muted px-3 py-2">
-                          <summary className="cursor-pointer text-[11px] font-semibold text-muted-foreground">
-                            Technical details
-                          </summary>
-                          <div className="mt-2 grid gap-2 text-[11px] text-muted-foreground sm:grid-cols-2 lg:grid-cols-4">
-                            <span>
-                              archiveReason{" "}
-                              {selectedMemoryForgetting.archiveReason ?? "—"}
-                            </span>
-                            <span>
-                              last retrieved{" "}
-                              {selectedMemoryForgetting.lastRetrievedAt
-                                ? new Date(
-                                    selectedMemoryForgetting.lastRetrievedAt,
-                                  ).toLocaleDateString("ko-KR")
-                                : "—"}
-                            </span>
-                          </div>
-                          <p className="mt-2 wrap-anywhere text-[11px] text-muted-foreground">
-                            {selectedMemoryForgetting.memoryId}:
-                            {selectedMemoryForgetting.semanticItemId}
-                          </p>
-                        </details>
-                      </div>
-                    )}
-                  </div>
-                </div>
+                <MemoryForgettingView
+                  candidates={memoryForgettingCandidates}
+                  selected={selectedMemoryForgetting}
+                  isLoading={isLoadingMemoryForgetting}
+                  error={memoryForgettingError}
+                  onSelect={setSelectedMemoryForgettingId}
+                />
               ) : memoryViewTab === "archived" ? (
-                <div className="grid h-full grid-cols-[minmax(260px,360px)_1fr] overflow-hidden">
-                  <div className="h-full overflow-y-auto overscroll-contain border-r border-border bg-muted/60 p-3">
-                    {memoryForgettingError && (
-                      <p className="mb-3 rounded-xl bg-red-50 px-3 py-2 text-xs text-red-500">
-                        {memoryForgettingError}
-                      </p>
-                    )}
-                    {isLoadingMemoryForgetting ? (
-                      <p className="px-2 py-3 text-xs text-muted-foreground">
-                        Archived memory를 불러오는 중입니다.
-                      </p>
-                    ) : memoryArchivedItems.length === 0 ? (
-                      <p className="px-2 py-3 text-xs leading-relaxed text-muted-foreground">
-                        archivedAt이 기록된 semantic item이 없습니다.
-                      </p>
-                    ) : (
-                      <div className="space-y-2">
-                        {memoryArchivedItems.map((item) => (
-                          <button
-                            key={item.id}
-                            type="button"
-                            onClick={() => setSelectedMemoryArchivedId(item.id)}
-                            className={`w-full rounded-xl border px-3 py-3 text-left transition ${
-                              selectedMemoryArchived?.id === item.id
-                                ? "border-border bg-card shadow-sm"
-                                : "border-transparent bg-card/60 hover:border-border hover:bg-card"
-                            }`}
-                          >
-                            <div className="flex items-start justify-between gap-2">
-                              <p className="line-clamp-2 text-xs font-semibold leading-relaxed text-foreground">
-                                {item.semantic}
-                              </p>
-                              <Badge variant="secondary" className="shrink-0 rounded-full">
-                                {item.archiveReason ?? item.reason}
-                              </Badge>
-                            </div>
-                            <div className="mt-2 flex flex-wrap gap-1.5 text-[11px] text-muted-foreground">
-                              <span>
-                                archivedAt{" "}
-                                {item.archivedAt
-                                  ? new Date(item.archivedAt).toLocaleString(
-                                      "ko-KR",
-                                    )
-                                  : "—"}
-                              </span>
-                              <span>
-                                weight{" "}
-                                {formatScore(item.weight)}
-                              </span>
-                              {item.duplicate && (
-                                <span>
-                                  similarTo{" "}
-                                  {formatScore(item.duplicate.similarity)}
-                                </span>
-                              )}
-                            </div>
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                  <div className="h-full overflow-y-auto overscroll-contain p-5">
-                    {isLoadingMemoryForgetting ? (
-                      <div className="flex h-full min-h-80 items-center justify-center text-sm text-muted-foreground">
-                        Archived memory를 불러오는 중입니다.
-                      </div>
-                    ) : !selectedMemoryArchived ? (
-                      <div className="flex h-full min-h-80 items-center justify-center text-sm text-muted-foreground">
-                        선택된 archived memory가 없습니다.
-                      </div>
-                    ) : (
-                      <div className="space-y-5">
-                        <section className="space-y-3">
-                          <div>
-                            <h3 className="text-lg font-semibold text-foreground">
-                              Archived memory
-                            </h3>
-                            <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
-                              archivedAt이 있는 semantic item입니다. Retrieval
-                              대상에서는 제외됩니다.
-                            </p>
-                          </div>
-                          <div className="flex flex-wrap gap-2">
-                            <Badge variant="secondary" className="rounded-full">
-                              archiveReason{" "}
-                              {selectedMemoryArchived.archiveReason ?? "—"}
-                            </Badge>
-                            <Badge variant="secondary" className="rounded-full">
-                              archivedAt{" "}
-                              {selectedMemoryArchived.archivedAt
-                                ? new Date(
-                                    selectedMemoryArchived.archivedAt,
-                                  ).toLocaleString("ko-KR")
-                                : "—"}
-                            </Badge>
-                            <Badge variant="secondary" className="rounded-full">
-                              weight{" "}
-                              {formatScore(
-                                selectedMemoryArchived.weight,
-                              )}
-                            </Badge>
-                          </div>
-                        </section>
-
-                        <section>
-                          <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                            Semantic
-                          </p>
-                          <p className="wrap-anywhere rounded-2xl border border-border bg-card p-4 text-sm leading-relaxed text-foreground shadow-sm">
-                            {selectedMemoryArchived.semantic}
-                          </p>
-                        </section>
-
-                        {selectedMemoryArchived.duplicate && (
-                          <section>
-                            <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                              Similar memory kept
-                            </p>
-                            <div className="rounded-2xl border border-emerald-100 bg-emerald-50 p-4 text-xs">
-                              <div className="mb-2 flex flex-wrap gap-2 text-[11px] font-semibold text-emerald-700">
-                                <span>
-                                  Match{" "}
-                                  {formatScore(
-                                    selectedMemoryArchived.duplicate
-                                      .similarity,
-                                  )}
-                                </span>
-                                <span>
-                                  {selectedMemoryArchived.duplicate.memoryId}:
-                                  {
-                                    selectedMemoryArchived.duplicate
-                                      .semanticItemId
-                                  }
-                                </span>
-                              </div>
-                              {selectedMemoryArchived.duplicate.semantic && (
-                                <p className="wrap-anywhere leading-relaxed text-emerald-900">
-                                  {selectedMemoryArchived.duplicate.semantic}
-                                </p>
-                              )}
-                              {selectedMemoryArchived.duplicate.episodic && (
-                                <p className="mt-2 wrap-anywhere leading-relaxed text-emerald-800/80">
-                                  {selectedMemoryArchived.duplicate.episodic}
-                                </p>
-                              )}
-                            </div>
-                          </section>
-                        )}
-
-                        <details className="rounded-xl bg-muted px-3 py-2">
-                          <summary className="cursor-pointer text-[11px] font-semibold text-muted-foreground">
-                            Fields
-                          </summary>
-                          <div className="mt-2 grid gap-2 text-[11px] text-muted-foreground sm:grid-cols-2 lg:grid-cols-4">
-                            <span>
-                              retrievedCount{" "}
-                              {selectedMemoryArchived.retrievedCount}
-                            </span>
-                            <span>
-                              duplicateOf{" "}
-                              {selectedMemoryArchived.duplicateOf ?? "—"}
-                            </span>
-                          </div>
-                          <p className="mt-2 wrap-anywhere text-[11px] text-muted-foreground">
-                            memoryId {selectedMemoryArchived.memoryId} ·
-                            semanticItemId{" "}
-                            {selectedMemoryArchived.semanticItemId}
-                          </p>
-                        </details>
-                      </div>
-                    )}
-                  </div>
-                </div>
+                <MemoryArchivedView
+                  items={memoryArchivedItems}
+                  selected={selectedMemoryArchived}
+                  isLoading={isLoadingMemoryForgetting}
+                  error={memoryForgettingError}
+                  onSelect={setSelectedMemoryArchivedId}
+                />
               ) : (
                 <div className="flex h-full min-h-0 overflow-hidden">
                   <MemoryClusterList
@@ -2641,149 +1974,20 @@ export default function AdminPage() {
             </div>
           ) : (
             <div className="grid gap-3 lg:grid-cols-2">
-              {adminUsers.map((user) => {
-                const badge = onboardingBadge(user.onboardingStatus);
-                const missionIds = Array.from(
-                  new Set([
-                    ...(user.onboardingStatus === "completed"
-                      ? [ONBOARDING_MISSION_ID]
-                      : []),
-                    ...user.missionIds,
-                  ]),
-                );
-                return (
-                  <div
-                    key={user.id}
-                    className="rounded-3xl border border-border bg-card p-5 shadow-sm"
-                  >
-                    <div className="flex items-start gap-3">
-                      {user.photoURL ? (
-                        <img
-                          src={user.photoURL}
-                          alt=""
-                          className="h-10 w-10 rounded-full object-cover"
-                        />
-                      ) : (
-                        <div className="flex h-10 w-10 items-center justify-center rounded-full bg-primary text-sm font-semibold text-primary-foreground">
-                          {(user.displayName ?? user.email ?? "?")
-                            .charAt(0)
-                            .toUpperCase()}
-                        </div>
-                      )}
-                      <div className="min-w-0 flex-1">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <p className="truncate text-sm font-semibold text-foreground">
-                            {user.displayName ?? user.email ?? user.id}
-                          </p>
-                          <Badge variant={badge.variant} className="rounded-full">
-                            {badge.label}
-                          </Badge>
-                          {user.isAdmin && (
-                            <Badge
-                              variant="outline"
-                              className="rounded-full border-transparent bg-indigo-50 text-indigo-700"
-                            >
-                              관리자
-                            </Badge>
-                          )}
-                        </div>
-                        {user.displayName && user.email && (
-                          <p className="truncate text-xs text-muted-foreground">
-                            {user.email}
-                          </p>
-                        )}
-                        <p className="mt-1 text-[11px] text-muted-foreground">
-                          {user.id}
-                        </p>
-                      </div>
-                    </div>
-
-                    {user.missionOrder?.length > 0 && (
-                      <div className="mt-3">
-                        <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-                          미션 순서 (유저별 랜덤)
-                        </p>
-                        <ol className="flex flex-wrap gap-1.5">
-                          {user.missionOrder.map((mid, i) => (
-                            <li
-                              key={mid}
-                              className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-[11px] text-foreground"
-                            >
-                              <span className="font-semibold text-muted-foreground">
-                                {i + 1}
-                              </span>
-                              <span className="truncate max-w-40">
-                                {missionTitle(mid)}
-                              </span>
-                            </li>
-                          ))}
-                        </ol>
-                      </div>
-                    )}
-
-                    <div className="mt-4 flex flex-wrap gap-2">
-                      {missionIds.length === 0 ? (
-                        <span className="text-xs text-muted-foreground">
-                          연결된 미션 없음
-                        </span>
-                      ) : (
-                        missionIds.map((missionId) => {
-                          const isCompleted =
-                            missionId === ONBOARDING_MISSION_ID
-                              ? user.onboardingStatus === "completed"
-                              : user.completedSessionMissionIds.includes(
-                                  missionId,
-                                );
-                          return (
-                            <span
-                              key={missionId}
-                              className="inline-flex overflow-hidden rounded-full border border-border text-xs font-semibold"
-                            >
-                              <Link
-                                href={`/main/${missionId}?viewAs=${user.id}`}
-                                className="px-3 py-1 text-muted-foreground transition hover:bg-muted hover:text-foreground"
-                              >
-                                {missionTitle(missionId)}
-                              </Link>
-                              {isCompleted && (
-                                <Link
-                                  href={`/main/${missionId}?viewAs=${user.id}&review=1`}
-                                  className="border-l border-border px-2.5 py-1 text-indigo-500 transition hover:bg-indigo-50 hover:text-indigo-700"
-                                >
-                                  리뷰
-                                </Link>
-                              )}
-                            </span>
-                          );
-                        })
-                      )}
-                    </div>
-
-                    <div className="mt-4 flex flex-wrap items-center gap-2">
-                      <Button
-                        type="button"
-                        variant="link"
-                        onClick={() => openMemoryTable(user)}
-                        disabled={isLoadingMemory}
-                        className="h-auto rounded-md px-3 py-1.5 text-[11px] font-semibold text-indigo-500 hover:bg-indigo-50 hover:text-indigo-700 hover:no-underline disabled:text-muted-foreground"
-                      >
-                        메모리 테이블 보기 →
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="link"
-                        onClick={() => requestBackupAndDeleteSessions(user)}
-                        disabled={deletingSessionsUserId === user.id}
-                        className="h-auto rounded-md px-3 py-1.5 text-[11px] font-semibold text-red-400 hover:bg-red-50 hover:text-red-600 hover:no-underline disabled:text-muted-foreground"
-                      >
-                        {deletingSessionsUserId === user.id
-                          ? "백업/삭제 중..."
-                          : "세션 백업 후 삭제"}
-                      </Button>
-                    </div>
-                  </div>
-                );
-              })}
+              {adminUsers.map((user) => (
+                <AdminUserCard
+                  key={user.id}
+                  user={user}
+                  onboardingMissionId={ONBOARDING_MISSION_ID}
+                  missionTitle={missionTitle}
+                  isLoadingMemory={isLoadingMemory}
+                  isDeletingSessions={deletingSessionsUserId === user.id}
+                  onOpenMemoryTable={() => openMemoryTable(user)}
+                  onBackupAndDeleteSessions={() =>
+                    requestBackupAndDeleteSessions(user)
+                  }
+                />
+              ))}
             </div>
           )}
         </section>
@@ -2813,6 +2017,7 @@ export default function AdminPage() {
                 onClick={openOnboardingParticipants}
                 className="rounded-full text-muted-foreground"
                 title="온보딩 유저 보기"
+                aria-label="온보딩 유저 보기"
               >
                 <UsersThreeIcon size={16} />
               </Button>
@@ -3048,6 +2253,7 @@ export default function AdminPage() {
                             onClick={() => openParticipants(mission.id)}
                             className="rounded-full text-muted-foreground"
                             title="참여자 보기"
+                            aria-label="참여자 보기"
                           >
                             <UsersThreeIcon size={16} />
                           </Button>
@@ -3058,6 +2264,7 @@ export default function AdminPage() {
                             onClick={() => startEdit(mission)}
                             className="rounded-full text-muted-foreground"
                             title="수정"
+                            aria-label="미션 수정"
                           >
                             <PencilSimpleIcon size={16} />
                           </Button>
@@ -3068,6 +2275,7 @@ export default function AdminPage() {
                             onClick={() => requestDeleteMission(mission)}
                             className="rounded-full text-muted-foreground hover:bg-red-50 hover:text-red-400"
                             title="삭제"
+                            aria-label="미션 삭제"
                           >
                             <XIcon size={16} />
                           </Button>
@@ -3104,6 +2312,7 @@ export default function AdminPage() {
                 size="icon"
                 onClick={closeParticipants}
                 className="rounded-full text-muted-foreground"
+                aria-label="참여자 목록 닫기"
               >
                 ✕
               </Button>
@@ -3179,6 +2388,9 @@ export default function AdminPage() {
                           onClick={() => requestDeleteUserData(p)}
                           className="rounded-full text-muted-foreground hover:bg-red-50 hover:text-red-500"
                           title={
+                            p.isAdmin ? "관리자 미션 기록 삭제" : "미션 기록 삭제"
+                          }
+                          aria-label={
                             p.isAdmin ? "관리자 미션 기록 삭제" : "미션 기록 삭제"
                           }
                         >

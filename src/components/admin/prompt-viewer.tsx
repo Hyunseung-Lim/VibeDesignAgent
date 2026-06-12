@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect } from "react";
 import { XIcon } from "@phosphor-icons/react";
 
 interface PromptViewerProps {
@@ -22,6 +23,14 @@ export function PromptViewer({
   rawResponseMeta,
   onClose,
 }: PromptViewerProps) {
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [onClose]);
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 px-4 backdrop-blur-sm">
       <div className="flex max-h-[86vh] w-full max-w-4xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl shadow-slate-900/25">

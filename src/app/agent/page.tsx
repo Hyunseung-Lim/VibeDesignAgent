@@ -311,6 +311,7 @@ export default function AgentMemoryPage() {
             size="icon"
             onClick={() => router.push("/lobby")}
             className="rounded-full text-muted-foreground"
+            aria-label="로비로 돌아가기"
           >
             <ArrowLeftIcon size={18} />
           </Button>

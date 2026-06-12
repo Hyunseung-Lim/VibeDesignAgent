@@ -125,7 +125,10 @@ export default function NewMissionPage() {
       {/* Form */}
       <div className="mx-auto max-w-2xl space-y-6 px-4 py-10 lg:px-10">
         {error && (
-          <div className="rounded-2xl border border-red-100 bg-red-50 px-4 py-3 text-sm text-red-600">
+          <div
+            role="alert"
+            className="rounded-2xl border border-red-100 bg-red-50 px-4 py-3 text-sm text-red-600"
+          >
             {error}
           </div>
         )}

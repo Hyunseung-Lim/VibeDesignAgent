@@ -64,10 +64,10 @@ export default function Home() {
           <p className="text-xs font-semibold uppercase tracking-[0.32em] text-muted-foreground">
             VIBEDESIGN AGENT
           </p>
-          <h1 className="mt-4 text-3xl font-semibold text-foreground">
+          <h1 className="mt-4 text-3xl font-semibold text-balance text-foreground">
             Google 계정으로 로그인
           </h1>
-          <p className="mt-2 text-sm text-muted-foreground">
+          <p className="mt-2 text-sm text-pretty text-muted-foreground">
             로그인 후 일별 과제와 진행 상태를 로비에서 확인할 수 있습니다.
           </p>
         </div>

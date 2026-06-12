@@ -86,7 +86,7 @@ export function MissionCard({
       }`}
     >
       <div className="flex flex-wrap items-start gap-3">
-        <p className="flex flex-1 items-center gap-1.5 text-base font-semibold leading-snug text-card-foreground text-wrap">
+        <p className="flex flex-1 items-center gap-1.5 text-base font-semibold leading-snug text-card-foreground text-balance">
           {isLocked && (
             <LockSimpleIcon
               size={15}
