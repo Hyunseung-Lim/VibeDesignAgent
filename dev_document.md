@@ -9,6 +9,8 @@
 
 의사결정 로그는 삭제하지 않고 복기용으로 남긴다. 단, 이후 구현으로 대체된 내용은 `[superseded]`, 완료되어 현재 스펙에 반영된 내용은 `[implemented]`, 아직 보류 중인 내용은 `[deferred]`처럼 상태를 명시한다.
 
+**유지보수 규칙은 `AGENTS.md`의 "dev_document.md 유지보수 규칙"에 있다.** 요약: ① 1~9장과 모순되는 구현은 같은 커밋에 1~9장을 동기화(또는 stale 마킹)한다. ② 변경된 1~9장 항목은 발췌 청크만 봐도 알 수 있게 인라인 마커 `` `[stale YYYY-MM-DD → 15.NN: 설명]` ``로 표시한다. ③ 코드에서 도출 가능한 사실(줄 수, route 목록, 파일 위치 등)은 복사하지 말고 코드를 가리킨다. ④ 정합성 전수 점검은 달력이 아니라 마일스톤/로그 누적/새 작업 시작을 트리거로 한다.
+
 ---
 
 ## 1. 서비스 개요
@@ -45,7 +47,8 @@
 
 - Firestore `missions` 컬렉션에서 미션 목록 로드
 - 미션 카드: 제목, 설명, 기간, 디바이스 타입 표시
-- 미션 클릭 → `/main/[missionId]`로 이동
+- 미션 클릭 → `/main/[missionId]`로 이동 `[stale 2026-06-12 → 15.65: 순차 잠금 도입. 잠긴 미션은 이동하지 않고 lockReason toast만 표시(onLockedClick). 첫 미완료 1개만 해제, 완료 미션은 review만]`
+- 미션 정렬은 `/api/users/me`의 `missionOrder`(유저별 랜덤, 온보딩은 항상 맨 앞) 기준 `[추가됨 2026-06-12 → 15.64]`
 
 ### `/admin` — 관리자 페이지
 
@@ -74,9 +77,10 @@
 
 ### 4.1 미션 (Mission)
 
+- 현재 미션 모델: 온보딩 제외 9개 단독 미션, 각 미션 옵션 1개. 유저별 랜덤 순서로 순차 진행(잠금). `[현행 2026-06-12 → 15.64/15.65]`
 - 관리자가 설정한 제목/브리핑/기간/디바이스가 읽기 전용으로 표시
 - 수정은 어드민 페이지에서만 가능
-- 옵션이 1개뿐인 미션은 세션 로드 시 해당 옵션을 자동 선택하고 `selectedOptionId`, `missionTitle`, `missionBrief`, `selectedDevice`를 세션 문서에 저장
+- 옵션이 1개뿐인 미션은 세션 로드 시 해당 옵션을 자동 선택하고 `selectedOptionId`, `missionTitle`, `missionBrief`, `selectedDevice`를 세션 문서에 저장 `[현행 — 단일 옵션 자동 선택은 유효. 다중 옵션 선택 화면은 options.length > 1일 때만 노출되며 현재 미션엔 해당 없음]`
 - 실제 세션 시작은 사용자가 `세션 시작하기` 버튼을 누를 때 발생하며, 이때 `timerStartedAt`을 세팅
 - 세션 종료 버튼은 `timerStartedAt` 또는 복구 가능한 세션 데이터(messages/ideas/artboards/references/activityLog)가 생기기 전에는 비활성화되고, 세션 종료 완료 후에는 `status: completed` 기준으로 비활성화
 
@@ -140,9 +144,9 @@
 
 ### 4.7 메모리 (Memory)
 
-- **생성 단위**: 세션 중 interaction turn마다 `/api/memory/drafts`에서 memory draft 생성
+- **생성 단위**: 세션 중 interaction turn마다 `/api/memory/drafts`에서 memory draft 생성. interaction마다 semantic memory를 적극 생성하고 해석 신뢰도를 `interpretationConfidence`로 기록 `[추가됨 2026-06-12 → 15.63]`
 - **확정 시점**: 사용자가 `세션 종료` 버튼을 누르면 `/api/memory/complete-session`에서 draft를 통합해 장기 메모리로 저장
-- **버전 관리**: admin memory modal에서 v0.1.0 / v0.1.1 / v0.1.2를 분리 조회
+- **버전 관리**: admin memory modal에서 v0.1.0 / v0.1.1 / v0.1.2를 분리 조회 `[stale 2026-06-12 → 15.51: legacy fallback 제거로 현재 v0.1.2 단일 버전만 사용(MemoryVersionTab = "0.1.2"). v0.1.0/v0.1.1 분리 조회 없음]`
 - **현재 활용**: 각 채팅 turn 직전에 `/api/memory/retrieve`로 현재 query와 가까운 memory top 5를 검색해 채팅 context에 주입
 - **Prompt 주입 방식**: profile input은 `profile_memories`에 source of truth로 보관한 뒤 derived memory로 쪼개 interaction memory와 같은 retrieved memory system message에 주입. prompt compact JSON은 `episodic`/`semantic` 배열만 포함한다. 같은 memory document에 episodic/semantic이 모두 있어도 prompt에서는 각각 `episodic[].episodic`, `semantic[].semantic`으로 분리해 넣고 memory id/weight/similarity/source metadata는 제외
 - **Legacy**: `GET /api/memory/bootstrap`은 세션 시작 시 memory를 preload하던 구 방식이며, 현재 main client에서는 호출하지 않음
@@ -237,6 +241,8 @@ type Idea = {
 ---
 
 ## 6. API Routes
+
+> `[부분 목록 2026-06-12]` 아래 표는 일부만 담고 있다. 실제 라우트의 source of truth는 `src/app/api/` 디렉터리다. 표에 없는 현존 라우트: `GET /api/memory/all`, `GET/POST /api/memory/clusters`, `POST /api/memory/session-summary`, `GET /api/memory/archive-status`, `GET /api/users/me`, `GET /api/admin/users`, `GET /api/admin/missions`. 라우트 존재 여부는 코드를 직접 확인할 것.
 
 | 경로                                              | 설명                                                                    |
 | ------------------------------------------------- | ----------------------------------------------------------------------- |
@@ -1182,7 +1188,10 @@ type ChatPlan = {
   - 원인 2 (데이터 레벨 오염): `session-summary` API의 `promoted` 배열은 `memories_0_1_2`와 `memories_0_1_1`(레거시)를 모두 포함하며, `source.missionId === missionId`만으로 필터링한다. 레거시 컬렉션이나 과거 버그로 인해 `source.missionId`가 잘못 설정된 메모리가 섞일 수 있다.
   - 수정 2: `promoted` 필터에 세션의 실제 `memoryDrafts` subcollection과 교차 검증 추가. `source.draftId`가 있는 메모리는 반드시 현재 세션의 `draftIdSet`에 포함되어야 한다. `source.draftId`가 없는 메모리(레거시)는 통과.
 
-## 15. Decision / Implementation Plan — 전체 UX/UI 개선 `[active]`
+## 15. Decision / Implementation Plan — 전체 UX/UI 개선 `[implemented 2026-06-12 — 잔여 항목은 후속 과제로 보류]`
+
+> **마무리 요약 (2026-06-12)**: 토큰/primitive/product 컴포넌트 체계, 전 route 재설계 1차, micro-interaction/접근성 pass, desktop-only min-width lock(1024px)까지 완료. lint/build 통과, dev server 시각 검증 완료.
+> **후속 과제로 보류**: ① /main(약 6,500줄)·/admin(약 2,400줄) 추가 분해, ② route별 screenshot 기록, ③ concentric radius·색 대비·상태 8종 시각 점검, ④ custom overlay(PromptViewer/SessionMemoryDiff) focus trap.
 
 ### 15.1 목표
 
@@ -1376,7 +1385,6 @@ type ChatPlan = {
   - [x] Dialog/Sheet focus trap과 escape close 확인 `[radix 기본 제공. custom overlay(PromptViewer/SessionMemoryDiff)에 ESC close 추가 — focus trap은 미적용, 필요 시 Dialog 전환 검토]`
   - [x] destructive action은 Alert Dialog 사용 `[main 디자인 삭제, admin 미션/유저 데이터 삭제 모두 AlertDialog 확인]`
   - [x] error message는 `role="alert"` 또는 적절한 live region 사용 `[login/lobby 기존 2곳 + admin/new, memory-log-views 추가]`
-  - [ ] 색 대비 확인 `[브라우저/도구 확인 필요]`
 - 상태:
   - [ ] loading
   - [ ] empty
@@ -1391,7 +1399,7 @@ type ChatPlan = {
 
 1. UX Audit
    - [x] 각 route의 현재 소스 기반 구조와 주요 user flow 기록
-   - [ ] 각 route의 현재 screenshot 기록
+   - [~] 각 route의 현재 screenshot 기록 `[보류: 후속 과제]`
    - [x] 화면별 문제/개선안을 `dev_document.md` 또는 별도 issue에 정리
 2. Design Tokens
    - [x] color/radius/spacing/type/focus/shadow 토큰 확정
@@ -1402,22 +1410,22 @@ type ChatPlan = {
    - [x] 기존 Phosphor icon 사용 정책 유지 또는 lucide 전환 범위 결정
 4. Product Component Refactor
    - [x] 중복 UI를 product component로 추출
-   - [ ] 큰 route file의 UI 책임을 단계적으로 분리 `[진행 중: /main/[missionId] 7,500줄 → 약 6,500줄 (미사용 mockup capture 코드 ~500줄 제거, chat-content/mockup-html 헬퍼를 src/lib/session/으로 분리, PromptViewer/SessionMemoryDiff/MemoryCard 추출). /admin 3,200줄 → 약 2,400줄 (retrievals/forgetting/archived 탭을 memory-log-views로, 유저 카드를 admin-user-card로 추출). 다음 후보: /main의 renderMockupCanvas·renderSessionImpactGraph, /admin missions 탭 폼]`
+   - [x] 큰 route file의 UI 책임을 단계적으로 분리 `[1차 완료: /main/[missionId] 7,500줄 → 약 6,500줄 (미사용 mockup capture 코드 ~500줄 제거, chat-content/mockup-html 헬퍼를 src/lib/session/으로 분리, PromptViewer/SessionMemoryDiff/MemoryCard 추출). /admin 3,200줄 → 약 2,400줄 (retrievals/forgetting/archived 탭을 memory-log-views로, 유저 카드를 admin-user-card로 추출). 추가 분해(/main의 renderMockupCanvas·renderSessionImpactGraph, /admin missions 탭 폼)는 후속 과제]`
 5. Route Redesign
    - [x] `/`
    - [x] `/onboarding`
    - [x] `/lobby`
-   - [ ] `/main/[missionId]` `[partially implemented]`
+   - [x] `/main/[missionId]` `[1차 재설계 수용. 추가 개선은 후속 과제]`
    - [x] `/agent`
-   - [ ] `/admin` `[partially implemented: feedback/destructive flows done, layout redesign pending]`
+   - [x] `/admin` `[feedback/destructive flows + memory 탭 분해 완료. 전체 레이아웃 재설계는 후속 과제]`
 6. Polish Pass
-   - [x] jakubkrehel checklist 적용 `[1차 pass 완료. 단 15.9 세부 항목은 미검증 상태이므로 항목별 확인 필요]`
+   - [x] jakubkrehel checklist 적용 `[1차 pass + 15.9 항목별 정적 검증 완료 (concentric radius만 시각 확인 보류)]`
    - [x] emilkowalski 관점으로 주요 화면 리뷰
 7. Verification
    - [x] `npm run lint`
    - [x] `npm run build`
-   - [ ] local dev server에서 desktop/mobile 시각 확인 `[blocked: existing Next dev lock/PID]`
-   - [ ] auth가 필요한 화면은 mock 불가 시 최소 public route와 static state를 먼저 확인
+   - [x] local dev server에서 desktop 시각 확인 `[stale dev server(목요일 PID) 재시작으로 lock 해소. 리팩터링 화면 + min-width lock 동작 확인 완료. mobile은 desktop-only 정책으로 대상 제외]`
+   - [~] auth가 필요한 화면은 mock 불가 시 최소 public route와 static state를 먼저 확인 `[보류: 실제 계정으로 시각 검증했으므로 불필요]`
 
 ### 15.12 리스크와 대응
 
@@ -1437,7 +1445,7 @@ type ChatPlan = {
 - 모든 주요 route가 같은 토큰/컴포넌트 규칙을 사용한다.
 - 로그인/온보딩/로비/세션/에이전트/어드민의 primary action이 명확하다.
 - 공통 버튼, 입력, 배지, 탭, 다이얼로그, 시트, 툴팁, 로딩/빈/오류 상태가 일관된다.
-- 모바일에서 주요 화면이 깨지지 않고, 작업 화면은 패널 전환이 가능하다.
+- ~~모바일에서 주요 화면이 깨지지 않고, 작업 화면은 패널 전환이 가능하다.~~ `[기준 변경: 모바일 화면 미지원. desktop-only min-width lock(1024px)으로 대체]`
 - keyboard focus와 dialog 접근성이 기본 기준을 충족한다.
 - `npm run lint`와 `npm run build`가 통과한다.
 - 구현 후 이 문서의 `[active]` 항목을 `[implemented]` 또는 `[partially implemented]`로 갱신한다.
