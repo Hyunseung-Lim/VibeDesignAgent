@@ -585,6 +585,37 @@ function forceIntentFromUserText(
   hasDesignSpec: boolean,
 ) {
   const text = latestUserText.toLowerCase();
+
+  // A request to FIND/SEARCH references is a reference search even when it
+  // mentions design style — searching wins over authoring a design spec. Forcing
+  // fetch_references here applies the reference-turn protections (web search off,
+  // no prose narration) so the reply cannot describe sites that differ from the
+  // actual cards. Mirrors the client isReferenceSearchRequest heuristic.
+  const referenceSearch =
+    /(레퍼런스|참고\s*(?:자료|이미지|사이트|앱|화면)?|벤치마크|inspiration|reference)s?\s*(찾|검색|추천|보여|골라|추가|모아|뽑|줘)|(?:찾|검색|추천|보여|골라|추가|모아|뽑).{0,12}(레퍼런스|참고\s*(?:자료|이미지|사이트|앱|화면)?|벤치마크|inspiration|reference)s?/i.test(
+      text,
+    ) ||
+    /(레퍼런스|참고\s*(?:자료|이미지|사이트|앱|화면)?|벤치마크|reference)s?(?:\s*(?:섹션|패널|목록|리스트))?\s*[에로]?\s*(?:추가|넣)/i.test(
+      text,
+    );
+  if (referenceSearch) {
+    return {
+      ...plan,
+      intent: "fetch_references" as const,
+      confidence: Math.max(plan.confidence, 0.9),
+      needs: {
+        ...plan.needs,
+        mission: true,
+        activeIdea: false,
+        designSpec: false,
+        mockupHtml: false,
+        selectedElement: false,
+        conversationHistory: plan.needs.conversationHistory ?? "minimal",
+      },
+      reason: `${plan.reason ? `${plan.reason} ` : ""}Forced fetch_references because the user asked to find references.`,
+    };
+  }
+
   const explicitDesignSpec =
     /(디자인\s*스타일|디자인스타일|스타일\s*가이드|디자인\s*시스템|비주얼\s*스타일|시각\s*스타일|visual\s*style|visual\s*style\s*notes|design\s*spec|design\s*style|style\s*guide|design\s*system)/i.test(
       text,
