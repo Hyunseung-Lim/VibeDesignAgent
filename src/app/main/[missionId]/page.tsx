@@ -1121,7 +1121,13 @@ function isReferenceSearchRequest(text: string) {
     /(레퍼런스|참고\s*(자료|이미지|사이트|앱|화면)?|벤치마크|inspiration|reference)s?\s*(찾|검색|추천|보여|골라|추가|줘)|(?:찾|검색|추천|보여|골라|추가).{0,12}(레퍼런스|참고\s*(자료|이미지|사이트|앱|화면)?|벤치마크|inspiration|reference)s?/i.test(
       text,
     );
-  if (explicitReference) return true;
+  // "레퍼런스(섹션/패널/목록)에/로 추가/넣" — "add to references" phrasing where a
+  // word sits between 레퍼런스 and the verb, which the adjacency pattern misses.
+  const addToReferences =
+    /(레퍼런스|참고\s*(?:자료|이미지|사이트|앱|화면)?|벤치마크|reference)s?(?:\s*(?:섹션|패널|목록|리스트))?\s*[에로]?\s*(?:추가|넣)/i.test(
+      text,
+    );
+  if (explicitReference || addToReferences) return true;
 
   const asksForExamples =
     /(추천|찾|검색|보여|골라|알려|제안|뽑아|추려|recommend|suggest|find|show)/i.test(
@@ -1137,6 +1143,27 @@ function isReferenceSearchRequest(text: string) {
     );
 
   return asksForExamples && externalDesignTarget && inspirationQualifier;
+}
+
+// Explicit reference count the user asked for (e.g. "3개", "두 개", "5 references").
+// Returns null when unspecified; the server clamps and defaults.
+function parseRequestedReferenceCount(text: string): number | null {
+  const digit = text.match(
+    /(\d+)\s*(?:개|장|곳|군데|references?|refs?|examples?|apps?|sites?)/i,
+  );
+  if (digit) {
+    const n = parseInt(digit[1], 10);
+    if (Number.isFinite(n) && n > 0) return n;
+  }
+  const KO: Record<string, number> = {
+    한: 1, 하나: 1, 두: 2, 둘: 2, 세: 3, 셋: 3, 네: 4, 넷: 4,
+    다섯: 5, 여섯: 6, 일곱: 7, 여덟: 8, 아홉: 9, 열: 10,
+  };
+  const ko = text.match(
+    /(하나|한|둘|두|셋|세|넷|네|다섯|여섯|일곱|여덟|아홉|열)\s*(?:개|장|곳|군데)/,
+  );
+  if (ko) return KO[ko[1]] ?? null;
+  return null;
 }
 
 function isReferenceMemory(record: MemoryRecord) {
@@ -3468,6 +3495,7 @@ export default function MainScreenPage() {
           effectiveMissionTitle ?? "",
           effectiveMissionBrief ?? "",
           customQuery,
+          parseRequestedReferenceCount(text),
         ).then((newReferences) => appendReferenceSummary(newReferences));
       } else if (isReferenceSearchRequest(text)) {
         const fallbackReferenceQuery = buildReferenceSearchQuery(
@@ -3480,6 +3508,7 @@ export default function MainScreenPage() {
           effectiveMissionTitle ?? "",
           effectiveMissionBrief ?? "",
           fallbackReferenceQuery || text,
+          parseRequestedReferenceCount(text),
         ).then((newReferences) => appendReferenceSummary(newReferences));
       }
 
@@ -3881,7 +3910,12 @@ export default function MainScreenPage() {
   const clearSelectedElement = () => setSelectedElement(null);
 
   const fetchReferences = useCallback(
-    async (title: string, brief: string, customQuery?: string | null) => {
+    async (
+      title: string,
+      brief: string,
+      customQuery?: string | null,
+      requestedCount?: number | null,
+    ) => {
       if (isFetchingRefs || isReadOnly) return [];
       setIsFetchingRefs(true);
       setReferenceSearchError("");
@@ -3899,6 +3933,7 @@ export default function MainScreenPage() {
             missionTitle: title,
             missionBrief: brief,
             customQuery,
+            requestedCount: requestedCount ?? undefined,
             existingReferences: [...references, ...loggedReferenceLinks],
             referencePreferenceContext: missionId
               ? buildReferencePreferenceContext(

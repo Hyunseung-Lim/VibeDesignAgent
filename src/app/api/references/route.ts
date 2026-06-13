@@ -12,6 +12,9 @@ const QUERY_MODEL = "gpt-5.4";
 const RERANK_MODEL = "gpt-4o";
 const MAX_RERANK_CANDIDATES = 18;
 const FINAL_REFERENCE_COUNT = 3;
+// Upper bound when the user asks for a specific number of references. Keeps
+// "100개" style requests from degrading search quality / flooding the panel.
+const MAX_REFERENCE_COUNT = 6;
 
 // Verified via Serper /search test: these domains return results with site: operator
 const CURATION_DOMAINS = [
@@ -667,6 +670,7 @@ async function rerankReferenceCandidates(
   searchContext: string,
   mode: ReferenceMode,
   referencePreferenceContext: unknown,
+  targetCount: number,
 ): Promise<RankedReferenceCandidate[]> {
   if (candidates.length === 0) return [];
   try {
@@ -684,7 +688,7 @@ async function rerankReferenceCandidates(
       input: [
         {
           role: "system",
-          content: referenceCandidateRankingPrompt(mode, FINAL_REFERENCE_COUNT),
+          content: referenceCandidateRankingPrompt(mode, targetCount),
         },
         {
           role: "user",
@@ -709,7 +713,7 @@ async function rerankReferenceCandidates(
       const candidate = byUrl.get(canonicalUrl(item.url));
       if (candidate) selected.push({ ...candidate, ranked: item });
     });
-    return selected.slice(0, FINAL_REFERENCE_COUNT);
+    return selected.slice(0, targetCount);
   } catch (error) {
     console.error("[references] rerank failed", error);
     return [];
@@ -722,6 +726,7 @@ async function searchProductReferences(
   blockedUrls: Set<string>,
   omittedNames: string[],
   referencePreferenceContext: unknown,
+  targetCount: number,
 ) {
   try {
     const response = await openai.responses.create({
@@ -763,7 +768,7 @@ async function searchProductReferences(
       parsed.slice(0, 6).map((ref) => () => hydrateReferenceMetadata(ref)),
       3,
     );
-    return hydrated.slice(0, FINAL_REFERENCE_COUNT);
+    return hydrated.slice(0, targetCount);
   } catch (error) {
     console.error("[references] product web search failed", error);
     return [];
@@ -778,6 +783,7 @@ export async function POST(request: Request) {
     customQuery?: unknown;
     existingReferences?: unknown;
     referencePreferenceContext?: unknown;
+    requestedCount?: unknown;
   };
   try {
     body = await request.json();
@@ -790,6 +796,12 @@ export async function POST(request: Request) {
   const missionBrief = sanitizeInput(body.missionBrief);
   const customQuery = sanitizeInput(body.customQuery) || null;
   const { existingReferences } = body;
+  // Honor an explicit requested count (clamped); default to FINAL_REFERENCE_COUNT.
+  const rawCount = Number(body.requestedCount);
+  const targetCount =
+    Number.isFinite(rawCount) && rawCount > 0
+      ? Math.min(Math.floor(rawCount), MAX_REFERENCE_COUNT)
+      : FINAL_REFERENCE_COUNT;
   const referencePreferenceContext = compactReferencePreferenceContext(
     body.referencePreferenceContext,
   );
@@ -843,12 +855,16 @@ export async function POST(request: Request) {
             blockedUrls,
             omittedNames,
             referencePreferenceContext,
+            targetCount,
           )
         : [];
-    if (productReferences.length >= FINAL_REFERENCE_COUNT) {
+    // Product mode returns exactly what the web search found (capped at
+    // targetCount) without padding from image search — so naming 2 specific
+    // products yields 2 cards, not a padded 3.
+    if (productReferences.length > 0) {
       return Response.json({
         mode: referenceMode,
-        references: productReferences.map(
+        references: productReferences.slice(0, targetCount).map(
           (reference): ReferenceCard => ({
             id: `ref-${crypto.randomUUID()}`,
             title: reference.title || reference.url,
@@ -935,12 +951,13 @@ export async function POST(request: Request) {
       searchContext,
       referenceMode,
       referencePreferenceContext,
+      targetCount,
     );
     const selectedCandidates =
       rankedCandidates.length > 0
         ? rankedCandidates
         : candidatePool
-            .slice(0, FINAL_REFERENCE_COUNT)
+            .slice(0, targetCount)
             .map((candidate) => ({ ...candidate, ranked: null }));
 
     const resolved = await Promise.all(

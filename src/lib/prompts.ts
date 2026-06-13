@@ -70,7 +70,9 @@ const CHAT_REFERENCE_ACTION_PROMPT = `Reference search rules:
 - Preserve explicit source constraints from the user's request, such as real/actual/live, official, portfolio, case study, app, website, product page, visual style, structure, platform, or region.
 - When the user asks for real references, prioritize live, inspectable sources over concept-only gallery posts: official product/brand/person pages, working websites/apps, portfolios, case studies, documentation, design systems, or reputable editorial sources. Use gallery platforms only when they are the best available evidence or when the user explicitly asks for visual inspiration.
 - If the user refines a previous reference search, output a new [FETCH_REFERENCES: ...] query.
-- Do not satisfy reference requests by listing URLs or image links in chat.`;
+- The actual reference search runs AFTER your reply, and its real results are appended to the message automatically. You have NOT seen any results yet.
+- Do not name, describe, evaluate, recommend, or preview any specific reference, site, brand, app, or URL in your reply — anything you describe now would contradict the references the user actually receives. Your entire reply for a reference search is the [FETCH_REFERENCES: query] action plus at most one short neutral sentence stating that you are searching.
+- Output only the [FETCH_REFERENCES: query] action this turn. Do NOT also emit [CREATE_NOTE], [UPDATE_NOTE], [GENERATE_MOCKUP], [EDIT_MOCKUP], or [CREATE_DESIGN_SPEC] — searching references is the entire task for this turn unless the user explicitly asked for a note or mockup in the same message.`;
 
 const CHAT_PRESENTATION_ACTION_PROMPT = `Presentation rules:
 - Output exactly one presentation code block: \`\`\`presentation\n{json}\n\`\`\`.
@@ -96,7 +98,10 @@ export function chatActionInstructionPrompt(
   } else if (intent === "create_design_spec") {
     prompts.push(CHAT_DESIGN_SPEC_ACTION_PROMPT);
   } else if (intent === "fetch_references") {
-    prompts.push(CHAT_REFERENCE_ACTION_PROMPT, CHAT_WEB_LOOKUP_ACTION_PROMPT);
+    // No web-lookup instruction here: on a reference-search turn the model must
+    // not independently web-search and narrate a site, since the actual cards
+    // come from /api/references after the reply. Keeping them in sync.
+    prompts.push(CHAT_REFERENCE_ACTION_PROMPT);
   } else if (intent === "presentation") {
     prompts.push(CHAT_PRESENTATION_ACTION_PROMPT);
   } else {
@@ -217,6 +222,7 @@ Rules:
 - Always prefer the smallest useful context.
 - If the user asks to create, define, revise, recommend, or write 디자인 스타일, style guide, design system, design spec, visual style notes, colors, typography, spacing, mood, tone, UI style, brand tone, or avoid-list style constraints, choose intent "create_design_spec", not "create_note" or "generate_mockup".
 - If the current request asks to organize visual direction so it can be inserted into a style/reference section, choose intent "create_design_spec".
+- If the user asks to add, include, or put specific apps, products, brands, sites, or examples into the reference section, list, or panel (e.g. "X랑 Y 레퍼런스에 추가해줘"), choose intent "fetch_references" — they must be searched and added as reference cards, not written into a note.
 - Need mockupHtml for editing, presentation from current mockup, or explicit analysis of the existing mockup.
 - Need selectedElement when the user is editing a selected element.
 - Need activeIdea for note updates, mockup generation from the current note, presentations, or design spec work tied to the note.

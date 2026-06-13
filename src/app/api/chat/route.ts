@@ -348,11 +348,19 @@ function anthropicMessages(input: BuiltChatMessage[]) {
 async function* createOpenAIChatStream(
   input: BuiltChatMessage[],
   hasRefUrls: boolean,
+  allowWebSearch: boolean,
 ): AsyncGenerator<ChatProviderStreamEvent> {
   const stream = await openai.responses.create({
     model: OPENAI_CHAT_MODEL,
-    tools: [{ type: "web_search_preview" }],
-    tool_choice: hasRefUrls ? "required" : "auto",
+    // On a pure reference-search turn web search is disabled so the model
+    // cannot search and describe a site that differs from the cards produced
+    // by /api/references. Cited-URL turns still need it (allowWebSearch=true).
+    ...(allowWebSearch
+      ? {
+          tools: [{ type: "web_search_preview" as const }],
+          tool_choice: hasRefUrls ? ("required" as const) : ("auto" as const),
+        }
+      : {}),
     input,
     stream: true,
   });
@@ -479,10 +487,11 @@ function createChatResponseStream(
   input: BuiltChatMessage[],
   hasRefUrls: boolean,
   provider: ChatResponseProvider,
+  allowWebSearch: boolean,
 ) {
   return provider === "anthropic"
     ? createAnthropicChatStream(input)
-    : createOpenAIChatStream(input, hasRefUrls);
+    : createOpenAIChatStream(input, hasRefUrls, allowWebSearch);
 }
 
 function parseChatPlan(text: string): ChatPlan | null {
@@ -1054,10 +1063,17 @@ export async function POST(request: Request) {
     }
   };
 
+  // Pure reference-search turns (no cited URLs to visit) disable web search so
+  // the reply cannot describe a site different from the cards /api/references
+  // returns afterward. See B fix for the card↔chat sync issue.
+  const allowWebSearch = !(
+    promptPlan.intent === "fetch_references" && !hasRefUrls
+  );
   const stream = createChatResponseStream(
     rawPromptInput,
     hasRefUrls,
     selectedResponseProvider,
+    allowWebSearch,
   );
 
   const encoder = new TextEncoder();
