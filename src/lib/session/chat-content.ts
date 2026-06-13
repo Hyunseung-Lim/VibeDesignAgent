@@ -12,25 +12,86 @@ export type ContentPart =
   | { type: "text"; content: string }
   | { type: "chip"; chip: ContentChip };
 
-const BLOCK_RULES = [
+// Note blocks ([CREATE_NOTE:] / [UPDATE_NOTE:]) are detected by structural
+// scanning rather than regex, because the note body is freeform markdown that
+// can contain `]`, `}`, newlines, and no trailing newline. A note is "complete"
+// exactly when parseNoteBlock (in the session page) could extract it — i.e. a
+// balanced closing `]`, or a balanced `{...}` JSON payload. Matching that
+// condition keeps the chip ("작성 중" vs "노트 생성됨") in sync with whether the
+// note was actually saved, which a regex kept getting wrong.
+const NOTE_RULES = [
   {
-    // Allow whitespace/newlines between the end of the payload and `]` so a
-    // completed note isn't stuck showing "작성 중" when the model pretty-prints
-    // or pads the closing bracket (e.g. `} ]`, `}\n  ]`). Mirrors the tolerance
-    // of the bracket-aware parser in the main page (parseNoteBlock).
-    complete: /\[CREATE_NOTE:(?:\s*\{[\s\S]*?\}\s*|[\s\S]*?\n\s*)\]/,
-    partial: /\[CREATE_NOTE:[\s\S]*$/,
+    tag: "CREATE_NOTE",
     doneLabel: "노트 생성됨",
     pendingLabel: "노트 작성 중...",
     failedLabel: "노트 작성 실패",
     failedMarker: "⚠️ 노트를 먼저 저장해야",
   },
   {
-    complete: /\[UPDATE_NOTE:(?:\s*\{[\s\S]*?\}\s*|[\s\S]*?\n\s*)\]/,
-    partial: /\[UPDATE_NOTE:[\s\S]*$/,
+    tag: "UPDATE_NOTE",
     doneLabel: "노트 수정됨",
     pendingLabel: "노트 수정 중...",
   },
+] as const;
+
+function findNoteBlock(
+  text: string,
+  tag: string,
+): { index: number; matchStr: string; done: boolean } | null {
+  const opener = `[${tag}:`;
+  const index = text.indexOf(opener);
+  if (index === -1) return null;
+  const inner = index + opener.length;
+
+  // 1) Balanced closing `]` (matches extractPlainNoteContent's bracket scan).
+  let depth = 1;
+  for (let i = inner; i < text.length; i += 1) {
+    if (text[i] === "[") depth += 1;
+    else if (text[i] === "]") {
+      depth -= 1;
+      if (depth === 0) {
+        return { index, matchStr: text.slice(index, i + 1), done: true };
+      }
+    }
+  }
+
+  // 2) No closing `]` yet, but a balanced `{...}` payload means the note parser
+  //    can already create it (matches extractJsonActionPayload's brace scan).
+  const braceStart = text.indexOf("{", inner);
+  if (braceStart !== -1) {
+    let braceDepth = 0;
+    let inString = false;
+    let escaped = false;
+    for (let i = braceStart; i < text.length; i += 1) {
+      const char = text[i];
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+      if (char === "\\") {
+        escaped = true;
+        continue;
+      }
+      if (char === '"') {
+        inString = !inString;
+        continue;
+      }
+      if (inString) continue;
+      if (char === "{") braceDepth += 1;
+      else if (char === "}") {
+        braceDepth -= 1;
+        if (braceDepth === 0) {
+          return { index, matchStr: text.slice(index, i + 1), done: true };
+        }
+      }
+    }
+  }
+
+  // 3) Still streaming / incomplete.
+  return { index, matchStr: text.slice(index), done: false };
+}
+
+const BLOCK_RULES = [
   {
     complete: /\[GENERATE_MOCKUP(?::[^\]]*)?\]/,
     partial: /\[GENERATE_MOCKUP:[\s\S]*$/,
@@ -79,6 +140,22 @@ export function processMessageContent(content: string): ContentPart[] {
       failedMarker?: string;
     } | null = null;
 
+    // Bracket/brace-balanced note blocks (CREATE_NOTE / UPDATE_NOTE).
+    for (const rule of NOTE_RULES) {
+      const found = findNoteBlock(remaining, rule.tag);
+      if (found && (earliest === null || found.index < earliest.index)) {
+        earliest = {
+          index: found.index,
+          matchStr: found.matchStr,
+          label: found.done ? rule.doneLabel : rule.pendingLabel,
+          done: found.done,
+          failedLabel: (rule as { failedLabel?: string }).failedLabel,
+          failedMarker: (rule as { failedMarker?: string }).failedMarker,
+        };
+      }
+    }
+
+    // Regex-based blocks (mockup, references, web search, design spec).
     for (const rule of BLOCK_RULES) {
       for (const [regex, done, label] of [
         [rule.complete, true, rule.doneLabel],
