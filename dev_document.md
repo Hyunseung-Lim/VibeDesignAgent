@@ -80,7 +80,8 @@
 - 현재 미션 모델: 온보딩 제외 9개 단독 미션, 각 미션 옵션 1개. 유저별 랜덤 순서로 순차 진행(잠금). `[현행 2026-06-12 → 15.64/15.65]`
 - 관리자가 설정한 제목/브리핑/기간/디바이스가 읽기 전용으로 표시
 - 수정은 어드민 페이지에서만 가능
-- 옵션이 1개뿐인 미션은 세션 로드 시 해당 옵션을 자동 선택하고 `selectedOptionId`, `missionTitle`, `missionBrief`, `selectedDevice`를 세션 문서에 저장 `[현행 — 단일 옵션 자동 선택은 유효. 다중 옵션 선택 화면은 options.length > 1일 때만 노출되며 현재 미션엔 해당 없음]`
+- 옵션이 1개뿐인 미션은 세션 로드 시 해당 옵션을 자동 선택하고 `selectedOptionId`, `missionTitle`, `missionBrief`, `selectedDevice`를 세션 문서에 저장. 다중 옵션 선택 화면은 `options.length > 1`일 때만 노출되며 현재 미션엔 해당 없음
+- 일반 미션의 세션 시작 전 setup은 `미션 읽기` → `사전 정보` → `세션 시작` 3단계다. 2단계에서는 미션을 진행할 때 에이전트가 미리 알아야 할 정보를 자유 입력한다. 온보딩은 before-session memory를 만들지 않으므로 정보 입력 단계를 건너뜀 `[현행 2026-06-13 → 15.67]`
 - 실제 세션 시작은 사용자가 `세션 시작하기` 버튼을 누를 때 발생하며, 이때 `timerStartedAt`을 세팅
 - 세션 종료 버튼은 `timerStartedAt` 또는 복구 가능한 세션 데이터(messages/ideas/artboards/references/activityLog)가 생기기 전에는 비활성화되고, 세션 종료 완료 후에는 `status: completed` 기준으로 비활성화
 
@@ -2756,3 +2757,14 @@ type ChatPlan = {
   - 로딩 중 summary도 0 기준으로 유지하고, 미션 목록 우측 문구는 "미션 불러오는 중"으로 표시.
   - `missionOrder` 정렬에서 양쪽 모두 order에 없는 경우 `Infinity - Infinity`가 `NaN`이 되므로, 이때 `createdAt` fallback으로 안정 정렬.
 - 검증: `./node_modules/.bin/eslint src/app/lobby/page.tsx` 통과. 라이브에서 최초 진입/새로고침 시 skeleton 이후 전체 미션 목록이 한 번에 표시되는지 재확인 권장.
+
+### 15.67 세션 setup 1단계 미션 읽기 분리 `[implemented 2026-06-13]`
+
+- 배경: 15.64에서 미션 선택 mechanic이 사라져 단일 옵션 미션이 자동 선택되면서, 일반 미션 진입 시 첫 화면이 바로 "정보 입력"으로 보이는 상태가 됨. QA Note 요청: "미션 선택 없어졌다 보니 1번을 그냥 미션 읽기 같은 거로 하고 에이전트가 알아야 할 것들 따로 분리".
+- 구현:
+  - `SessionSetupStepper`의 1단계 라벨을 "미션 선택"에서 "미션 읽기"로 변경하고, 2단계 라벨을 "사전 정보"로 변경.
+  - `main/[missionId]/page.tsx`의 setup state를 `profileStep: 1 | 2 | 3`으로 확장. 단일 옵션 자동 선택은 유지하되, 자동 선택 후에도 일반 미션은 1단계 미션 요약 화면에 머문다.
+  - 1단계 화면은 `SetupMissionSummaryCard`만 표시하고, 다음 버튼으로 2단계 `ProfileInputCard`("에이전트가 미리 알아야 할 것들")로 이동한다.
+  - 2단계 뒤로가기는 단일 옵션 미션에서는 1단계로 돌아가고, 다중 옵션 미션에서는 선택 상태를 해제한 뒤 1단계로 돌아간다.
+- 온보딩: 기존 15.61 정책 유지. 온보딩은 before-session memory를 만들지 않으므로 정보 입력 단계를 숨기고, 선택 후 바로 세션 시작 단계로 간다.
+- 검증: `npm run lint -- 'src/app/main/[missionId]/page.tsx' src/components/session/session-setup-stepper.tsx` 및 `./node_modules/.bin/tsc --noEmit` 통과.

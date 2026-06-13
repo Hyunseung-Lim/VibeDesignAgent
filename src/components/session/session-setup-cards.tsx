@@ -25,15 +25,18 @@ type SetupMissionSummaryCardProps = {
 export function ProfileInputCard({ value, onChange }: ProfileInputCardProps) {
   return (
     <div className="rounded-2xl border border-slate-200 bg-white px-6 py-5">
-      <p className="font-semibold text-slate-900">에이전트가 알아야 할 것들</p>
+      <p className="font-semibold text-slate-900">
+        에이전트가 미리 알아야 할 것들
+      </p>
       <p className="mt-1 text-sm leading-relaxed text-slate-500">
-        대화를 통해 알아낼 수 없는 것들을 자유롭게 적어주세요. 브랜드 컬러,
-        타겟 사용자, 프로젝트 제약 조건 등 처음부터 알아야 하는 맥락이 좋습니다.
+        미션을 진행할 때 처음부터 반영해야 하는 정보를 적어주세요. 브랜드
+        컬러, 타겟 사용자, 프로젝트 제약 조건처럼 대화만으로 알기 어려운
+        맥락이 좋습니다.
       </p>
       <textarea
         value={value}
         onChange={(event) => onChange(event.target.value)}
-        placeholder="예: 브랜드 컬러는 네이비이고 바꿀 수 없어요. 타겟은 20대 여성이에요. 앱 출시는 3개월 안에 해야 해요."
+        placeholder="예: 이 미션에서는 브랜드 컬러를 네이비로 유지해야 해요. 타겟은 20대 여성이고, 앱 출시는 3개월 안에 해야 해요."
         rows={5}
         className="mt-4 w-full resize-none rounded-xl border border-slate-200 px-3 py-2.5 text-sm leading-relaxed text-slate-700 outline-none placeholder:text-slate-300 focus:border-slate-400"
       />

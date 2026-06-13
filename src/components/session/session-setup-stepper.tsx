@@ -10,8 +10,8 @@ type SessionSetupStepperProps = {
 };
 
 const STEPS = [
-  { id: 1, label: "미션 선택" },
-  { id: 2, label: "정보 입력" },
+  { id: 1, label: "미션 읽기" },
+  { id: 2, label: "사전 정보 입력" },
   { id: 3, label: "세션 시작" },
 ] as const;
 
@@ -20,9 +20,7 @@ export function SessionSetupStepper({
   onBack,
   hideProfileStep = false,
 }: SessionSetupStepperProps) {
-  const steps = hideProfileStep
-    ? STEPS.filter((step) => step.id !== 2)
-    : STEPS;
+  const steps = hideProfileStep ? STEPS.filter((step) => step.id !== 2) : STEPS;
   return (
     <div className="border-b border-slate-100 bg-white px-8 py-4">
       <div className="mx-auto flex max-w-3xl items-center gap-3">

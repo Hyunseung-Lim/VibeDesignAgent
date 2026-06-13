@@ -1538,7 +1538,7 @@ export default function MainScreenPage() {
   const [isMissionContextReady, setIsMissionContextReady] = useState(false);
   const [sessionLoaded, setSessionLoaded] = useState(false);
   const [profileModalConfirmed, setProfileModalConfirmed] = useState(false);
-  const [profileStep, setProfileStep] = useState<2 | 3>(2);
+  const [profileStep, setProfileStep] = useState<1 | 2 | 3>(1);
   const [profileRawMarkdown, setProfileRawMarkdown] = useState("");
   const [profileSaving, setProfileSaving] = useState(false);
   const [parentMissionTitle, setParentMissionTitle] = useState("");
@@ -2302,6 +2302,7 @@ export default function MainScreenPage() {
       autoSelectedOptionRef.current = true;
       void chooseMissionOption(missionOptions[0]);
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     isReadOnly,
     isMissionContextReady,
@@ -2309,7 +2310,7 @@ export default function MainScreenPage() {
     sessionCompleted,
     missionOptions,
     selectedOptionId,
-  ]); // eslint-disable-line react-hooks/exhaustive-deps
+  ]);
 
   useEffect(() => {
     if (!targetSessionUserId || !missionId) {
@@ -5543,14 +5544,49 @@ export default function MainScreenPage() {
           onboarding={isOnboardingMission}
           missionDurationMinutes={missionDurationMinutes}
           onPreviewChange={setActiveOptionPreviewId}
-          onChooseOption={chooseMissionOption}
+          onChooseOption={(option) => {
+            void chooseMissionOption(option);
+            setProfileStep(2);
+          }}
         />
+      ) : !isReadOnly && isMissionContextReady && sessionLoaded && !sessionCompleted && !profileModalConfirmed && !isOnboardingMission && profileStep === 1 ? (
+        /* Step 1: Mission reading (mission selection was removed for single-option missions) */
+        <main className="flex flex-1 flex-col overflow-hidden">
+          <SessionSetupStepper currentStep={1} />
+          <div className="flex-1 overflow-y-auto">
+            <div className="mx-auto max-w-3xl space-y-6 px-8 py-8">
+              <SetupMissionSummaryCard
+                missionTitle={missionTitle}
+                missionBrief={missionBrief}
+                activeOption={activeOption}
+                showOption={missionOptions.length > 1}
+                missionDurationMinutes={missionDurationMinutes}
+              />
+            </div>
+          </div>
+          <div className="border-t border-slate-200 bg-white px-8 py-4">
+            <div className="mx-auto max-w-3xl">
+              <button
+                type="button"
+                onClick={() => setProfileStep(2)}
+                className="w-full rounded-2xl bg-slate-900 py-3.5 text-sm font-semibold text-white transition hover:bg-slate-700"
+              >
+                다음
+              </button>
+            </div>
+          </div>
+        </main>
       ) : !isReadOnly && isMissionContextReady && sessionLoaded && !sessionCompleted && !profileModalConfirmed && !isOnboardingMission && profileStep === 2 ? (
         /* Step 2: Profile input (skipped for onboarding — no before-session memory) */
         <main className="flex flex-1 flex-col overflow-hidden">
           <SessionSetupStepper
             currentStep={2}
-            onBack={() => setSelectedOptionId(null)}
+            onBack={() => {
+              if (missionOptions.length > 1) {
+                setSelectedOptionId(null);
+              }
+              setProfileStep(1);
+            }}
           />
           <div className="flex-1 overflow-y-auto">
             <div className="mx-auto max-w-3xl space-y-6 px-8 py-8">
