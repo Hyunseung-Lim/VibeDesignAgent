@@ -3219,14 +3219,7 @@ export default function MainScreenPage() {
       currentIdeaBoards.at(-1) ??
       null;
     const effectiveMissionTitle =
-      parentMissionTitle &&
-      activeOption &&
-      parentMissionTitle !== activeOption.title
-        ? `${parentMissionTitle} - ${activeOption.title}`
-        : activeOption?.title ||
-          parentMissionTitle ||
-          missionTitle ||
-          undefined;
+      parentMissionTitle || activeOption?.title || missionTitle || undefined;
     const effectiveMissionBrief =
       [
         parentMissionBrief ? `[전체 미션 설명]\n${parentMissionBrief}` : "",
@@ -5587,14 +5580,11 @@ export default function MainScreenPage() {
             로비로 돌아가기
           </button>
           <h1 className="text-xl font-semibold">
-            {parentMissionTitle &&
-            activeOption &&
-            parentMissionTitle !== activeOption.title
-              ? `${parentMissionTitle} - ${activeOption.title}`
-              : activeOption?.title ||
-                parentMissionTitle ||
-                missionTitle ||
-                "미션 제목 없음"}
+            {/* 마이그레이션 후 제목에 옵션명이 이미 포함되므로 옵션명을 따로 덧붙이지 않는다 */}
+            {parentMissionTitle ||
+              activeOption?.title ||
+              missionTitle ||
+              "미션 제목 없음"}
           </h1>
         </div>
         <div className="flex items-center gap-4 text-sm text-slate-500">
