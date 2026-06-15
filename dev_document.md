@@ -89,11 +89,14 @@
 
 - 채팅에서 "레퍼런스 찾아줘" → `[FETCH_REFERENCES: {query}]` 블록 → Serper API로 이미지/웹 검색
 - 검색당 3개씩 누적 표시 (삭제 가능, confirm 팝업)
+- 검색 중에는 해당 assistant chat bubble 안에 작은 로딩 pill을 표시한다
+- 중복 제외/빈 결과/검색 실패 메시지는 Reference 섹션이 아니라 해당 assistant chat bubble의 "레퍼런스 검색 결과"로 표시한다
 - 레퍼런스 선택(인용) 후 메시지 전송 시 이미지를 base64로 서버에서 변환해 chat provider에 전달
 - 인용된 레퍼런스 URL도 시스템 컨텍스트로 전달. OpenAI provider에서는 웹 검색으로 방문 가능
 - **검색 모드 분기**: `inferReferenceMode(query)`로 "style" vs "product" 모드를 분류
-  - **product 모드**: Serper 이미지 검색 × 3 병렬 실행
+  - **product 모드**: OpenAI `web_search_preview` JSON product 검색을 먼저 수행하고, 결과가 없을 때 Serper 이미지 검색 fallback으로 이동
   - **style 모드**: 이미지 검색 × 3 + `searchCurationSites()` 병렬 실행
+- 레퍼런스 카드에는 provider/source 정보만 표시하고, 내부 `style/product` 검색 모드는 중복 배지로 노출하지 않는다
 - **큐레이션 사이트 검색**: Serper `/search` 엔드포인트에 `site:` 연산자를 사용해 9개 큐레이션 도메인에서 웹 결과 검색
   - 대상 도메인: awwwards.com, siteinspire.com, cssdesignawards.com, godly.website, mobbin.com, refero.design, siteofsites.co, craftwork.design, component.gallery
   - 큐레이션 결과는 imageUrl 없이 수집 → `hydrateReferenceMetadata()`로 og:image를 fetch해 썸네일 확보
@@ -2768,3 +2771,111 @@ type ChatPlan = {
   - 2단계 뒤로가기는 단일 옵션 미션에서는 1단계로 돌아가고, 다중 옵션 미션에서는 선택 상태를 해제한 뒤 1단계로 돌아간다.
 - 온보딩: 기존 15.61 정책 유지. 온보딩은 before-session memory를 만들지 않으므로 정보 입력 단계를 숨기고, 선택 후 바로 세션 시작 단계로 간다.
 - 검증: `npm run lint -- 'src/app/main/[missionId]/page.tsx' src/components/session/session-setup-stepper.tsx` 및 `./node_modules/.bin/tsc --noEmit` 통과.
+
+### 15.68 레퍼런스 목적 분류 + OpenAI URL hallucination 차단 `[stale 2026-06-15 → 15.74: 검색 품질 저하로 search engine 변경 rollback]`
+
+- 범위: "편향된 3개"를 줄이는 balancing/slotting 개선은 제외. 이번 변경은 ① 찾은 레퍼런스가 왜 필요한지 목적 분류 표시, ② OpenAI product 검색의 가짜 URL 차단 두 가지로 제한.
+- 목적 분류:
+  - `ReferenceCard` 응답에 `referencePurpose`/`referencePurposeLabel` 추가.
+  - 라벨은 `비주얼 참고`, `구조 참고`, `콘텐츠 참고` 3종. domain과 title/description/rationale의 style/layout/product 신호로 route에서 추론.
+  - 카드 UI에 purpose badge를 표시하고, same-mission reference preference context와 reference memory detail에도 purpose를 포함.
+- URL 검증:
+  - product mode의 OpenAI web search 결과는 Responses API의 `url_citation` annotation URL만 카드 후보로 사용.
+  - 모델이 JSON에 쓴 URL은 citation URL과 canonical match될 때만 title/description/rationale 보강용으로 사용. citation이 없으면 빈 결과로 처리하고 Serper fallback으로 넘어감.
+  - citation URL의 `utm_*` 등 tracking parameter는 카드 저장 전 제거.
+- 프롬프트:
+  - `referenceProductSearchPrompt`를 JSON-only에서 citation-first numbered list로 변경. JSON은 보조 enrichment로만 허용.
+- 검증:
+  - `npm run lint -- src/app/api/references/route.ts src/components/session/reference-card.tsx 'src/app/main/[missionId]/page.tsx' src/lib/prompts.ts` 통과(기존 warning만 유지).
+  - `./node_modules/.bin/tsc --noEmit` 통과.
+  - 로컬 `/api/references`에 `wine mobile app onboarding UI references` 요청 시 App Store의 실제 와인 앱 URL 3개가 반환되고, 각 카드에 `콘텐츠 참고` 라벨이 붙는 것을 확인.
+
+### 15.69 스타일 요청 분기 우선순위 + 선택 이유 중복 수정 `[stale 2026-06-15 → 15.74: 검색 품질 저하로 mode override와 fallback rationale 변경 rollback]`
+
+- 문제:
+  - 사용자가 "디자인 스타일을 정해보려고 하는데 레퍼런스 찾아줘"라고 요청했는데, mission/option context의 앱·서비스·제품 신호가 섞이면서 product mode로 분기되어 콘텐츠 관련 앱/서비스 레퍼런스가 반환됨.
+  - OpenAI product citation 결과가 JSON 보강 없이 내려오면 모든 카드의 rationale이 동일한 fallback 문장으로 표시됨.
+- 수정:
+  - `inferReferenceMode()`에서 현재 사용자 요청의 explicit style signal(`디자인 스타일`, `무드`, `색감`, `톤앤매너`, `typography` 등)을 mission context보다 먼저 판단. 단, `구조 참고`/layout/section structure 요청은 product 우선 유지.
+  - style mode 카드의 purpose는 `비주얼 참고`로 고정해, style 요청에서 layout/case-study 단어 때문에 `구조 참고`로 오분류되는 일을 줄임.
+  - fallback description/rationale 생성 함수를 추가해 source domain/title/mode에 따라 카드별 선택 이유를 다르게 생성.
+- 검증:
+  - `npm run lint -- src/app/api/references/route.ts` 통과.
+  - `./node_modules/.bin/tsc --noEmit` 통과.
+  - 로컬 `/api/references`에 동일 스타일 요청을 보내 `mode: style`과 서로 다른 rationale이 반환되는 것을 확인.
+
+### 15.70 레퍼런스 검색 중 상태 가시성 개선 `[stale 2026-06-15 → 15.71: Reference 섹션 배너 대신 chat bubble 로딩으로 변경]`
+
+- 문제: 채팅에는 "레퍼런스 검색 요청됨" 상태가 잘 보이지만, 실제 검색 대기 중 상태는 Reference 섹션 헤더 오른쪽에 작은 회색 텍스트로만 표시되어 놓치기 쉬웠음.
+- 수정:
+  - `ReferenceSection`의 검색 중 표시를 작은 회색 텍스트에서 emerald 계열 강조 배지로 변경.
+  - 검색 중일 때 섹션 상단에 "디자인 레퍼런스를 찾고 있어요" 상태 배너와 진행 bar를 표시.
+  - `Loader2`, `Search` lucide icon으로 상태를 더 빨리 인지할 수 있게 함.
+- 검증: `npm run lint -- src/components/session/reference-section.tsx` 통과.
+
+### 15.71 레퍼런스 검색 로딩 위치를 chat bubble로 이동 `[implemented 2026-06-15]`
+
+- 문제: 15.70의 Reference 섹션 강조 배지/상태 배너는 화면 비중이 크고, 사용자가 검색을 요청한 채팅 맥락과 떨어져 보여 어색했음.
+- 수정:
+  - `ReferenceSection`의 검색 중 강조 배지와 상태 배너 제거. 검색 중일 때 빈 상태 안내가 뜨지 않도록 `fetching` prop은 유지.
+  - 레퍼런스 검색을 트리거한 assistant message id를 `referenceLoadingMessageId`로 추적.
+  - 해당 `ChatBubble` 안에 `Loader2` 아이콘과 `레퍼런스 검색 중...` pill을 표시하고, 검색 완료 후 자동 제거.
+- 검증:
+  - `npm run lint -- src/components/session/reference-section.tsx src/components/session/chat-bubble.tsx 'src/app/main/[missionId]/page.tsx'` 통과(기존 warning만 유지).
+
+### 15.72 레퍼런스 배지 색상 의미 정리 `[partially stale 2026-06-15 → 15.74: purpose badge는 현행 API에서 내려오지 않음, chat loading 색상만 유지]`
+
+- 문제: 레퍼런스 검색 중 pill과 `콘텐츠 참고` 같은 purpose badge가 emerald/green 계열이라 성공·완료 상태처럼 읽힘.
+- 수정:
+  - chat bubble의 `레퍼런스 검색 중...` pill은 진행 중 상태로 보이도록 indigo 계열로 변경.
+  - Reference card의 purpose badge(`비주얼 참고`, `구조 참고`, `콘텐츠 참고`)는 성공 상태가 아니라 분류 메타 정보이므로 slate 계열로 변경.
+- 검증: `npm run lint -- src/components/session/chat-bubble.tsx src/components/session/reference-card.tsx` 통과.
+
+### 15.73 레퍼런스 카드 중복 모드 배지 제거 `[implemented 2026-06-15]`
+
+- 문제: 카드에 `콘텐츠 참고`와 `product`, 또는 `비주얼 참고`와 `style`이 함께 표시되어 사용자가 같은 의미의 배지로 읽을 수 있었음.
+- 수정:
+  - UI에서는 목적 분류 badge(`비주얼 참고`, `구조 참고`, `콘텐츠 참고`)만 표시.
+  - 내부 `referenceMode`(`style`/`product`)는 검색 파이프라인, preference context, memory 기록용 데이터로 유지하되 카드 배지로는 숨김.
+- 검증: `npm run lint -- src/components/session/reference-card.tsx` 통과.
+
+### 15.74 레퍼런스 검색 엔진 rollback `[implemented 2026-06-15]`
+
+- 문제: 15.68~15.69 이후 실제 인터랙션에서 `Chop Dawg`, `Justinmind`처럼 현재 스타일과 동떨어진 결과가 들어와 검색 품질이 이전보다 나빠짐.
+- 결정: search engine 쪽 변경은 안정성이 떨어지므로 이전 동작으로 rollback. 단, chat bubble loading, mode badge 숨김 같은 UI 정리는 유지.
+- 수정:
+  - `src/app/api/references/route.ts`에서 OpenAI citation URL only product 검색, explicit style mode override, fallback rationale 생성, purpose 추론 wrapping을 제거.
+  - `referenceProductSearchPrompt`를 citation-first numbered list에서 기존 JSON array 반환 방식으로 복구.
+  - Reference card UI의 `style/product` 배지 숨김과 chat bubble loading은 유지.
+- 결과:
+  - 현행 API는 `referencePurpose`를 생성하지 않으므로 `비주얼 참고`/`콘텐츠 참고` purpose badge는 기본 검색 결과에 표시되지 않는다.
+  - `referenceMode`는 내부 데이터로는 유지되지만 사용자 카드에는 표시하지 않는다.
+- 검증:
+  - `npm run lint -- src/app/api/references/route.ts src/lib/prompts.ts src/components/session/reference-card.tsx src/components/session/chat-bubble.tsx 'src/app/main/[missionId]/page.tsx'` 통과(기존 warning만 유지).
+  - `./node_modules/.bin/tsc --noEmit` 통과.
+
+### 15.75 레퍼런스 빈 결과 메시지를 chat bubble로 이동 `[implemented 2026-06-15]`
+
+- 문제: "새로 추가할 레퍼런스를 찾지 못했습니다. 이미 추가했거나 삭제한 사이트는 제외됩니다." 같은 상태 메시지가 Reference 섹션에 표시되어, 사용자가 요청한 chat turn과 맥락이 분리됨.
+- 수정:
+  - `fetchReferences()` 반환값을 `Reference[]`에서 `{ references, message }` 형태로 변경.
+  - 새로 추가할 레퍼런스 없음, 조건에 맞는 레퍼런스 없음, 검색 실패 메시지를 assistant bubble의 `### 레퍼런스 검색 결과` 섹션에 append.
+  - 성공 결과가 있을 때만 기존 `### 레퍼런스 선택 이유`와 memory draft encoding을 수행.
+- 검증:
+  - `npm run lint -- 'src/app/main/[missionId]/page.tsx' src/components/session/reference-section.tsx` 통과(기존 warning만 유지).
+  - `./node_modules/.bin/tsc --noEmit` 통과.
+
+### 15.76 목업 readiness 질문에서 자동 생성 방지 `[implemented 2026-06-15]`
+
+- 문제: 사용자가 "목업 만들기에 충분한 정보가 있니?"처럼 가능 여부만 질문했는데, assistant가 조건부 제안("필요하면...")을 action alias 형태로 출력해 실제 목업 생성이 시작될 수 있었음.
+- 원인:
+  - prompt가 readiness/capability 질문을 `answer`로 고정하라는 규칙이 약했음.
+  - `normalizeActionBlockAliases()`가 `[생성 요청]`, `[목업 생성 요청]`을 실행 가능한 `[GENERATE_MOCKUP]`으로 변환하므로, 조건부 제안이 command로 승격될 수 있었음.
+- 수정:
+  - `CHAT_MOCKUP_GENERATE_ACTION_PROMPT`: "충분한 정보인가/가능한가/준비됐나/무엇이 필요한가" 질문에는 `[GENERATE_MOCKUP]`을 쓰지 말고 plain answer만 하도록 명시.
+  - `chatPlannerPrompt`: readiness/capability 질문은 `generate_mockup`이 아니라 `answer` intent로 분류하도록 명시.
+  - `main/[missionId]/page.tsx`: `isMockupReadinessQuestion()` runtime guard 추가. 현재 user text가 readiness 질문이면 모델이 `[GENERATE_MOCKUP]`/`[EDIT_MOCKUP]`을 출력해도 실행하지 않음.
+  - 차단 시 `stripMockupActionBlocks()`로 action chip을 제거하고, "목업은 아직 생성하지 않았습니다..." 안내를 chat bubble에 남김.
+- 검증:
+  - `npm run lint -- 'src/app/main/[missionId]/page.tsx' src/lib/prompts.ts` 통과(기존 warning만 유지).
+  - `./node_modules/.bin/tsc --noEmit` 통과.

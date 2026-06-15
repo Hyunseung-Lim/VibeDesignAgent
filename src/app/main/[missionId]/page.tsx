@@ -462,6 +462,8 @@ type Reference = {
   imageUrl?: string;
   referenceMode?: "style" | "product";
   searchProvider?: "openai-web" | "serper-image";
+  referencePurpose?: "visual_style" | "page_structure" | "content_components";
+  referencePurposeLabel?: string;
 };
 
 type ReferencePreferenceContext = {
@@ -475,6 +477,8 @@ type ReferencePreferenceContext = {
     url?: string;
     referenceMode?: Reference["referenceMode"];
     searchProvider?: Reference["searchProvider"];
+    referencePurpose?: Reference["referencePurpose"];
+    referencePurposeLabel?: string;
     signal: "weak_kept";
   }>;
   cited: Array<{
@@ -485,6 +489,8 @@ type ReferencePreferenceContext = {
     url?: string;
     referenceMode?: Reference["referenceMode"];
     searchProvider?: Reference["searchProvider"];
+    referencePurpose?: Reference["referencePurpose"];
+    referencePurposeLabel?: string;
     signal: "strong_cited";
   }>;
   deleted: Array<{
@@ -495,6 +501,11 @@ type ReferencePreferenceContext = {
     url?: string;
     signal: "negative_deleted";
   }>;
+};
+
+type ReferenceFetchResult = {
+  references: Reference[];
+  message?: string;
 };
 
 type DesignStyle = {
@@ -623,6 +634,8 @@ function buildReferencePreferenceContext(
       url: reference.url,
       referenceMode: reference.referenceMode,
       searchProvider: reference.searchProvider,
+      referencePurpose: reference.referencePurpose,
+      referencePurposeLabel: reference.referencePurposeLabel,
       signal: "strong_cited" as const,
     }));
   const citedUrls = new Set(cited.map((reference) => reference.url).filter(Boolean));
@@ -637,6 +650,8 @@ function buildReferencePreferenceContext(
       url: reference.url,
       referenceMode: reference.referenceMode,
       searchProvider: reference.searchProvider,
+      referencePurpose: reference.referencePurpose,
+      referencePurposeLabel: reference.referencePurposeLabel,
       signal: "weak_kept" as const,
     }));
   const deleted = activityLog
@@ -1116,6 +1131,32 @@ function isExplicitNewMockupRequest(text: string) {
   );
 }
 
+function isMockupReadinessQuestion(text: string) {
+  const normalized = text.trim().toLowerCase();
+  const mentionsMockup =
+    /(목업|시안|화면|디자인|mockup|screen|design)/i.test(normalized);
+  if (!mentionsMockup) return false;
+
+  const asksReadiness =
+    /(충분|준비|가능|할\s*수\s*있|만들\s*수\s*있|제작할\s*수\s*있|생성할\s*수\s*있|필요한\s*정보|정보가\s*있|더\s*필요|뭐가\s*필요|될까|되니|되나요|있니|있나요|can\s+you|enough|ready|possible|need\s+anything)/i.test(
+      normalized,
+    );
+  if (!asksReadiness) return false;
+
+  const explicitGenerate =
+    /(만들어줘|생성해줘|제작해줘|진행해줘|시작해줘|그려줘|만들자|생성하자|진행하자|바로\s*(만들|생성|제작|진행)|please\s+(make|generate|create|proceed)|go\s+ahead|start\s+generating)/i.test(
+      normalized,
+    );
+  return !explicitGenerate;
+}
+
+function stripMockupActionBlocks(content: string) {
+  return content
+    .replace(/\[(?:GENERATE|EDIT)_MOCKUP(?::[\s\S]*?)?\]/g, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
 function isReferenceSearchRequest(text: string) {
   const explicitReference =
     /(레퍼런스|참고\s*(자료|이미지|사이트|앱|화면)?|벤치마크|inspiration|reference)s?\s*(찾|검색|추천|보여|골라|추가|줘)|(?:찾|검색|추천|보여|골라|추가).{0,12}(레퍼런스|참고\s*(자료|이미지|사이트|앱|화면)?|벤치마크|inspiration|reference)s?/i.test(
@@ -1252,6 +1293,9 @@ function formatReferenceMemoryDetail(reference: Reference, index?: number) {
     reference.imageUrl ? `imageUrl: ${reference.imageUrl}` : "",
     reference.referenceMode ? `mode: ${reference.referenceMode}` : "",
     reference.searchProvider ? `provider: ${reference.searchProvider}` : "",
+    reference.referencePurpose
+      ? `purpose: ${reference.referencePurposeLabel ?? reference.referencePurpose}`
+      : "",
     reference.description ? `card description: ${reference.description}` : "",
     reference.rationale ? `rationale: ${reference.rationale}` : "",
     `agent rationale: ${referenceRationale(reference)}`,
@@ -1560,6 +1604,9 @@ export default function MainScreenPage() {
   const [isOptionExpanded, setIsOptionExpanded] = useState(true);
   const [userId, setUserId] = useState<string | null>(null);
   const [isFetchingRefs, setIsFetchingRefs] = useState(false);
+  const [referenceLoadingMessageId, setReferenceLoadingMessageId] = useState<
+    string | null
+  >(null);
   const [referenceSearchError, setReferenceSearchError] = useState("");
   const [isAdmin, setIsAdmin] = useState(false);
   const [chatResponseProvider, setChatResponseProvider] =
@@ -3458,27 +3505,39 @@ export default function MainScreenPage() {
       const fetchRefMatch = fullText.match(
         /\[FETCH_REFERENCES(?::\s*(.*?))?\]/,
       );
-      const appendReferenceSummary = (newReferences: Reference[]) => {
-        const summary = buildReferenceReasonSummary(newReferences);
-        if (!summary) return;
+      const appendReferenceResult = (result: ReferenceFetchResult) => {
+        const summary = buildReferenceReasonSummary(result.references);
+        const statusMessage = result.message?.trim();
+        if (!summary && !statusMessage) return;
         setMessages((prev) =>
-          prev.map((message) =>
-            message.id === assistantId &&
-            !message.content.includes("### 레퍼런스 선택 이유")
+          prev.map((chatMessage) =>
+            chatMessage.id === assistantId &&
+            !chatMessage.content.includes("### 레퍼런스 선택 이유") &&
+            !chatMessage.content.includes("### 레퍼런스 검색 결과")
               ? {
-                  ...message,
-                  content: `${message.content.trimEnd()}\n${summary}`.trim(),
+                  ...chatMessage,
+                  content: [
+                    chatMessage.content.trimEnd(),
+                    summary,
+                    statusMessage
+                      ? `\n### 레퍼런스 검색 결과\n${statusMessage}`
+                      : "",
+                  ]
+                    .filter(Boolean)
+                    .join("\n")
+                    .trim(),
                 }
-              : message,
+              : chatMessage,
           ),
         );
+        if (!result.references.length) return;
         void encodeMemoryDraft(
           assistantId,
           memoryInput,
           [
             fullText,
             "reference result rationale:",
-            formatReferenceMemoryDetails(newReferences),
+            formatReferenceMemoryDetails(result.references),
           ]
             .filter(Boolean)
             .join("\n\n"),
@@ -3492,12 +3551,19 @@ export default function MainScreenPage() {
           activeOption,
           device,
         );
+        setReferenceLoadingMessageId(assistantId);
         void fetchReferences(
           effectiveMissionTitle ?? "",
           effectiveMissionBrief ?? "",
           customQuery,
           parseRequestedReferenceCount(text),
-        ).then((newReferences) => appendReferenceSummary(newReferences));
+        )
+          .then((result) => appendReferenceResult(result))
+          .finally(() =>
+            setReferenceLoadingMessageId((current) =>
+              current === assistantId ? null : current,
+            ),
+          );
       } else if (isReferenceSearchRequest(text)) {
         const fallbackReferenceQuery = buildReferenceSearchQuery(
           text,
@@ -3505,12 +3571,19 @@ export default function MainScreenPage() {
           activeOption,
           device,
         );
+        setReferenceLoadingMessageId(assistantId);
         void fetchReferences(
           effectiveMissionTitle ?? "",
           effectiveMissionBrief ?? "",
           fallbackReferenceQuery || text,
           parseRequestedReferenceCount(text),
-        ).then((newReferences) => appendReferenceSummary(newReferences));
+        )
+          .then((result) => appendReferenceResult(result))
+          .finally(() =>
+            setReferenceLoadingMessageId((current) =>
+              current === assistantId ? null : current,
+            ),
+          );
       }
 
       const generateMatch = fullText.match(
@@ -3520,7 +3593,25 @@ export default function MainScreenPage() {
         ? fullText.match(/\[EDIT_MOCKUP(?::\s*([\s\S]*?))?\]/)
         : null;
 
-      if (generateMatch || editMatch) {
+      const shouldSuppressMockupAction =
+        (generateMatch || editMatch) && isMockupReadinessQuestion(text);
+      if (shouldSuppressMockupAction) {
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === assistantId
+              ? {
+                  ...m,
+                  content: [
+                    stripMockupActionBlocks(m.content),
+                    "목업은 아직 생성하지 않았습니다. 원하시면 `목업 만들어줘`처럼 명확히 요청해 주세요.",
+                  ]
+                    .filter(Boolean)
+                    .join("\n\n"),
+                }
+              : m,
+          ),
+        );
+      } else if (generateMatch || editMatch) {
         const effectiveIdeas = turnIdeaOverride
           ? ideas.some((idea) => idea.id === turnIdeaOverride?.id)
             ? ideas.map((idea) =>
@@ -3916,8 +4007,8 @@ export default function MainScreenPage() {
       brief: string,
       customQuery?: string | null,
       requestedCount?: number | null,
-    ) => {
-      if (isFetchingRefs || isReadOnly) return [];
+    ): Promise<ReferenceFetchResult> => {
+      if (isFetchingRefs || isReadOnly) return { references: [] };
       setIsFetchingRefs(true);
       setReferenceSearchError("");
       try {
@@ -3972,25 +4063,32 @@ export default function MainScreenPage() {
             });
           });
           if (newRefs.length === 0) {
-            setReferenceSearchError(
-              "새로 추가할 레퍼런스를 찾지 못했습니다. 이미 추가했거나 삭제한 사이트는 제외됩니다.",
-            );
+            return {
+              references: [],
+              message:
+                "새로 추가할 레퍼런스를 찾지 못했습니다. 이미 추가했거나 삭제한 사이트는 제외됩니다.",
+            };
           } else {
             setReferences((prev) => [...prev, ...newRefs]);
-            return newRefs;
+            return { references: newRefs };
           }
         } else {
-          setReferenceSearchError(
-            "조건에 맞는 레퍼런스를 찾지 못했습니다. 검색어를 조금 더 구체적으로 바꿔보세요.",
-          );
+          return {
+            references: [],
+            message:
+              "조건에 맞는 레퍼런스를 찾지 못했습니다. 검색어를 조금 더 구체적으로 바꿔보세요.",
+          };
         }
       } catch (error) {
         console.error("[references] fetch failed", error);
-        setReferenceSearchError("레퍼런스 검색에 실패했습니다.");
+        return {
+          references: [],
+          message: "레퍼런스 검색에 실패했습니다.",
+        };
       } finally {
         setIsFetchingRefs(false);
       }
-      return [];
+      return { references: [] };
     },
     [
       activityLog,
@@ -6383,6 +6481,10 @@ export default function MainScreenPage() {
                         isViewingAsAdmin &&
                         reviewTurn?.rawPrompt != null,
                     )}
+                    isReferenceLoading={
+                      msg.role === "assistant" &&
+                      referenceLoadingMessageId === msg.id
+                    }
                     onToggleChatPhases={() =>
                       isStreamingThis
                         ? setCollapsedChatPhaseIds((prev) => {

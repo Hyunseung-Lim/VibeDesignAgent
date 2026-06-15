@@ -43,6 +43,8 @@ const CHAT_NOTE_ACTION_PROMPT = `Note action rules:
 
 const CHAT_MOCKUP_GENERATE_ACTION_PROMPT = `Mockup generation rules:
 - Use [GENERATE_MOCKUP: ...] when the user asks to generate/run/visualize a mockup or asks for a new design version.
+- Do NOT use [GENERATE_MOCKUP] when the user is only asking whether there is enough information, whether a mockup is possible, whether you are ready, or what is still needed. Answer the assessment in plain prose only.
+- Conditional offers such as "필요하면", "원하시면", "if needed", or "I can..." are not permission to generate. Write them as plain prose and wait for the user to explicitly ask to make/generate/proceed.
 - A 디자인 스타일 is REQUIRED before any mockup. If the active 시안 has no 디자인 스타일 yet, do NOT emit [GENERATE_MOCKUP] — the app will block it. Instead define the visual direction first with [CREATE_DESIGN_SPEC: ...] when the user has given or implied a visual style, or ask the user about color palette, typography, and mood, then generate on a later turn once a 디자인 스타일 exists.
 - If there is also no active note and no concrete product description, ask a clarifying question before doing anything else.
 - The prompt inside [GENERATE_MOCKUP: ...] must be English, 900-1800 characters, and cover target device, layout, sections, components, visible copy, states, and relevant references.
@@ -167,8 +169,24 @@ export function chatCitedRefsNoUrlPrompt(titles: string[]) {
 }
 
 export function chatReferencePreferencePrompt(context: {
-  cited: Array<{ title: string; description?: string; rationale?: string; tag?: string; url?: string }>;
-  kept: Array<{ title: string; description?: string; rationale?: string; tag?: string; url?: string }>;
+  cited: Array<{
+    title: string;
+    description?: string;
+    rationale?: string;
+    tag?: string;
+    url?: string;
+    referencePurpose?: string;
+    referencePurposeLabel?: string;
+  }>;
+  kept: Array<{
+    title: string;
+    description?: string;
+    rationale?: string;
+    tag?: string;
+    url?: string;
+    referencePurpose?: string;
+    referencePurposeLabel?: string;
+  }>;
   deleted: Array<{ title?: string; description?: string; url?: string }>;
 }) {
   const lines: string[] = [
@@ -177,13 +195,19 @@ export function chatReferencePreferencePrompt(context: {
   if (context.cited.length > 0) {
     lines.push("Cited (strong signal):");
     for (const r of context.cited) {
-      lines.push(`- ${r.title}${r.tag ? ` [${r.tag}]` : ""}${r.rationale ? `: ${r.rationale}` : ""}${r.url ? ` (${r.url})` : ""}`);
+      const purpose = r.referencePurposeLabel ?? r.referencePurpose;
+      lines.push(
+        `- ${r.title}${r.tag ? ` [${r.tag}]` : ""}${purpose ? ` [${purpose}]` : ""}${r.rationale ? `: ${r.rationale}` : ""}${r.url ? ` (${r.url})` : ""}`,
+      );
     }
   }
   if (context.kept.length > 0) {
     lines.push("Kept (weak signal):");
     for (const r of context.kept) {
-      lines.push(`- ${r.title}${r.tag ? ` [${r.tag}]` : ""}${r.rationale ? `: ${r.rationale}` : ""}`);
+      const purpose = r.referencePurposeLabel ?? r.referencePurpose;
+      lines.push(
+        `- ${r.title}${r.tag ? ` [${r.tag}]` : ""}${purpose ? ` [${purpose}]` : ""}${r.rationale ? `: ${r.rationale}` : ""}`,
+      );
     }
   }
   if (context.deleted.length > 0) {
@@ -221,6 +245,7 @@ Output shape:
 Rules:
 - Always prefer the smallest useful context.
 - If the user asks to create, define, revise, recommend, or write 디자인 스타일, style guide, design system, design spec, visual style notes, colors, typography, spacing, mood, tone, UI style, brand tone, or avoid-list style constraints, choose intent "create_design_spec", not "create_note" or "generate_mockup".
+- If the user asks whether there is enough information to make a mockup, whether a mockup is possible, whether you are ready, or what is still needed before making one, choose intent "answer", not "generate_mockup".
 - If the current request asks to organize visual direction so it can be inserted into a style/reference section, choose intent "create_design_spec".
 - If the user asks to add, include, or put specific apps, products, brands, sites, or examples into the reference section, list, or panel (e.g. "X랑 Y 레퍼런스에 추가해줘"), choose intent "fetch_references" — they must be searched and added as reference cards, not written into a note.
 - Need mockupHtml for editing, presentation from current mockup, or explicit analysis of the existing mockup.

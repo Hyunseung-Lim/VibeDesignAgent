@@ -11,6 +11,8 @@ export type SessionReference = {
   imageUrl?: string;
   referenceMode?: "style" | "product";
   searchProvider?: "openai-web" | "serper-image";
+  referencePurpose?: "visual_style" | "page_structure" | "content_components";
+  referencePurposeLabel?: string;
 };
 
 type ReferenceCardProps = {
@@ -27,6 +29,13 @@ function providerLabel(provider?: SessionReference["searchProvider"]) {
   return null;
 }
 
+function purposeLabel(purpose?: SessionReference["referencePurpose"]) {
+  if (purpose === "visual_style") return "비주얼 참고";
+  if (purpose === "page_structure") return "구조 참고";
+  if (purpose === "content_components") return "콘텐츠 참고";
+  return null;
+}
+
 export function ReferenceCard({
   reference,
   selected,
@@ -35,6 +44,8 @@ export function ReferenceCard({
   onDelete,
 }: ReferenceCardProps) {
   const provider = providerLabel(reference.searchProvider);
+  const purpose =
+    reference.referencePurposeLabel ?? purposeLabel(reference.referencePurpose);
 
   return (
     <article
@@ -92,9 +103,9 @@ export function ReferenceCard({
                 {provider}
               </span>
             )}
-            {reference.referenceMode && (
-              <span className="rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">
-                {reference.referenceMode}
+            {purpose && (
+              <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-xs font-medium text-slate-600">
+                {purpose}
               </span>
             )}
           </div>

@@ -25,12 +25,6 @@ export function ReferenceSection({
     <div className="rounded-3xl border border-slate-200 bg-white p-6">
       <div className="flex items-center justify-between">
         <p className="text-xl font-semibold text-slate-900">Reference</p>
-        {fetching && (
-          <span className="flex items-center gap-1.5 text-xs text-slate-400">
-            <span className="h-3 w-3 animate-spin rounded-full border-2 border-slate-300 border-t-slate-500" />
-            레퍼런스 검색 중...
-          </span>
-        )}
       </div>
 
       {error && !fetching && (

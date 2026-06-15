@@ -1,6 +1,6 @@
 import ReactMarkdown from "react-markdown";
 import type { ComponentProps } from "react";
-import { Brain, ChevronDown, ChevronUp } from "lucide-react";
+import { Brain, ChevronDown, ChevronUp, Loader2 } from "lucide-react";
 import { ToolActionChip, type ToolActionChipData } from "./tool-action-chip";
 import { RetrievedMemoryBadge } from "@/components/memory/retrieved-memory-badge";
 
@@ -32,6 +32,7 @@ type ChatBubbleProps = {
   adminMemoryCount: number;
   hasTurnMemory: boolean;
   hasRawPrompt: boolean;
+  isReferenceLoading?: boolean;
   onToggleChatPhases: () => void;
   onToggleChip: (key: string) => void;
   onShowRetrievedMemory: () => void;
@@ -71,6 +72,7 @@ export function ChatBubble({
   adminMemoryCount,
   hasTurnMemory,
   hasRawPrompt,
+  isReferenceLoading = false,
   onToggleChatPhases,
   onToggleChip,
   onShowRetrievedMemory,
@@ -205,6 +207,12 @@ export function ChatBubble({
                   onToggle={onToggleChip}
                 />
               ),
+            )}
+            {isReferenceLoading && (
+              <div className="mt-2 inline-flex items-center gap-2 rounded-full border border-indigo-100 bg-indigo-50 px-2.5 py-1 text-xs font-medium text-indigo-700">
+                <Loader2 className="size-3.5 animate-spin" aria-hidden="true" />
+                레퍼런스 검색 중...
+              </div>
             )}
             {isStreaming && <TypingDots />}
           </div>
