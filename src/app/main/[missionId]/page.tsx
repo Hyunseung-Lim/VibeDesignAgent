@@ -1029,6 +1029,11 @@ async function hydrateManualReference(
   }
 }
 
+function extractFirstUrl(text: string): string | null {
+  const match = text.match(/https?:\/\/[^\s)]+/i);
+  return match ? match[0].replace(/[.,]+$/, "") : null;
+}
+
 function formatMemoryInputWithCitations(
   text: string,
   citedReferences: Reference[],
@@ -3089,6 +3094,14 @@ export default function MainScreenPage() {
     // Snapshot the attached style image for this turn; the GENERATE_MOCKUP call
     // happens later in the streaming handler, after we clear the composer chip.
     const styleImageForTurn = attachedStyleImage?.dataUrl ?? null;
+    // Phase 2: if no image is attached, a URL in the message or a cited
+    // reference's URL drives appearance (server screenshots it). Attached image
+    // wins. Snapshotted now because selectedReferences is cleared on send.
+    const styleSourceUrlForTurn = styleImageForTurn
+      ? null
+      : extractFirstUrl(text) ??
+        selectedReferences.find((reference) => reference.url)?.url ??
+        null;
     const userMsg: Message = {
       id: crypto.randomUUID(),
       role: "user",
@@ -3731,7 +3744,8 @@ export default function MainScreenPage() {
         if (
           isNew &&
           !activeIdea?.designStyle?.content?.trim() &&
-          !styleImageForTurn
+          !styleImageForTurn &&
+          !styleSourceUrlForTurn
         ) {
           setMessages((prev) =>
             prev.map((m) =>
@@ -3828,6 +3842,10 @@ export default function MainScreenPage() {
                 styleImage:
                   isNew && styleImageForTurn
                     ? { dataUrl: styleImageForTurn }
+                    : undefined,
+                styleSourceUrl:
+                  isNew && styleSourceUrlForTurn
+                    ? styleSourceUrlForTurn
                     : undefined,
               }),
             });

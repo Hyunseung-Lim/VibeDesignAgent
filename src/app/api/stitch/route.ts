@@ -443,6 +443,43 @@ async function choosePrimaryScreen(
   };
 }
 
+// Screenshot a live URL into a data URL. Abstracted so the engine can be
+// swapped later (managed API with key, self-hosted Playwright, ...). v1 uses
+// Microlink's no-key endpoint. Returns a base64 data URL; throws on failure.
+async function captureScreenshot(rawUrl: string): Promise<string> {
+  let url: URL;
+  try {
+    url = new URL(rawUrl);
+  } catch {
+    throw new Error(`Invalid style source URL: ${rawUrl}`);
+  }
+  if (!["http:", "https:"].includes(url.protocol)) {
+    throw new Error("Style source URL must be http(s).");
+  }
+  const api = `https://api.microlink.io/?url=${encodeURIComponent(url.toString())}&screenshot=true&meta=false`;
+  const res = await fetch(api, {
+    headers: { Accept: "application/json" },
+    signal: AbortSignal.timeout(45_000),
+  });
+  if (!res.ok) {
+    throw new Error(`Screenshot service returned ${res.status}.`);
+  }
+  const json = (await res.json()) as {
+    data?: { screenshot?: { url?: string } };
+  };
+  const shotUrl = json?.data?.screenshot?.url;
+  if (!shotUrl) {
+    throw new Error("Screenshot service did not return an image.");
+  }
+  const imgRes = await fetch(shotUrl, { signal: AbortSignal.timeout(20_000) });
+  if (!imgRes.ok) {
+    throw new Error(`Failed to fetch captured screenshot: ${imgRes.status}.`);
+  }
+  const buf = Buffer.from(await imgRes.arrayBuffer());
+  const mime = imgRes.headers.get("content-type")?.split(";")[0] || "image/png";
+  return `data:${mime};base64,${buf.toString("base64")}`;
+}
+
 const STYLE_IMAGE_EXT: Record<string, string> = {
   "image/png": ".png",
   "image/jpeg": ".jpg",
@@ -533,6 +570,7 @@ export async function POST(request: Request) {
     designSystemId,
     appliedDesignStyleHash,
     styleImage,
+    styleSourceUrl,
   } = (await request.json()) as {
     prompt?: string;
     device?: string;
@@ -542,6 +580,7 @@ export async function POST(request: Request) {
     designSystemId?: string | null;
     appliedDesignStyleHash?: string | null;
     styleImage?: { dataUrl?: string } | null;
+    styleSourceUrl?: string | null;
   };
 
   if (!prompt) {
@@ -549,8 +588,9 @@ export async function POST(request: Request) {
   }
   const deviceType: DeviceType = device === "mobile" ? "MOBILE" : "DESKTOP";
   // Image-led generation: a reference screenshot drives appearance via
-  // upload→edit. Only for new screens (not edits of an existing artboard).
-  const isImageLed = Boolean(styleImage?.dataUrl) && !screenId;
+  // upload→edit. Source is an attached image or a URL we screenshot. Only for
+  // new screens (not edits of an existing artboard).
+  const isImageLed = Boolean(styleImage?.dataUrl || styleSourceUrl) && !screenId;
 
   try {
     const { client, sdk } = createStitchClient();
@@ -572,6 +612,9 @@ export async function POST(request: Request) {
     // repeated generations within one style free of extra calls.
     let resolvedDesignSystemId: string | null = designSystemId ?? null;
     let resolvedStyleHash: string | null = appliedDesignStyleHash ?? null;
+    // Set when image-led generation screenshots a URL, so the client can show
+    // which page was actually captured (it may differ from the intended page).
+    let capturedUrl: string | null = null;
     // For image-led generation we do NOT pre-apply the existing (possibly stale)
     // design style — it would fight the screenshot. We derive a fresh style from
     // the reconstructed result instead (see below).
@@ -594,11 +637,21 @@ export async function POST(request: Request) {
     let screen;
 
     if (isImageLed) {
-      console.log("[stitch] image-led generation from uploaded style image...");
       try {
+        // Attached image wins; otherwise screenshot the provided URL.
+        let styleImageDataUrl = styleImage?.dataUrl ?? null;
+        if (!styleImageDataUrl && styleSourceUrl) {
+          console.log("[stitch] capturing screenshot of style source URL...");
+          styleImageDataUrl = await captureScreenshot(styleSourceUrl);
+          capturedUrl = styleSourceUrl;
+        }
+        if (!styleImageDataUrl) {
+          throw new Error("No style image or capturable URL was provided.");
+        }
+        console.log("[stitch] image-led generation from style image...");
         screen = await generateScreenFromStyleImage(
           project,
-          styleImage!.dataUrl!,
+          styleImageDataUrl,
           prompt,
           deviceType,
         );
@@ -699,6 +752,7 @@ export async function POST(request: Request) {
       designSystemId: resolvedDesignSystemId,
       appliedDesignStyleHash: resolvedStyleHash,
       derivedDesignStyle,
+      capturedUrl: capturedUrl ?? undefined,
     });
   } catch (err) {
     const message = errorMessage(err);

@@ -117,7 +117,7 @@
 - **생성 흐름**: 채팅 모델이 `[GENERATE_MOCKUP: {prompt}]` 출력 → Google Stitch API 호출 → HTML 반환 → 캔버스에 표시
 - **채팅 컨텍스트**: 미션 제목/브리핑, 현재 아이디어 내용, 기존 목업 HTML, 선택된 UI 요소, 인용 레퍼런스, 대화 히스토리
 - **missionBrief 보완 주입**: 신규 목업 생성 시 아이디어 내용이 300자 미만으로 빈약하면 `missionBrief`를 `buildMockupPrompt`에 직접 주입해 제품 데이터가 Stitch에 전달되도록 보장 (수정 시에는 주입 안 함)
-- **이미지 주도 생성(Phase 1)**: 사용자가 참고 이미지를 첨부/붙여넣고 신규 목업을 요청하면, 텍스트 design.md 단계 없이 그 이미지를 Stitch에 `upload`→`edit`로 재구성해 목업을 만들고 결과에서 design.md를 역추출·저장한다. 이미지가 있으면 "디자인 스타일 필수" 게이트를 우회한다. `src/app/api/stitch/route.ts`의 `isImageLed` 분기 참고 `[현행 2026-06-15 → 15.81]`
+- **이미지 주도 생성**: 사용자가 참고 이미지를 첨부/붙여넣거나(Phase 1) 신규 목업 요청에 URL을 주면(Phase 2 — 채팅 메시지 내 URL 또는 인용 레퍼런스의 URL), 텍스트 design.md 단계 없이 그 화면을 Stitch에 `upload`→`edit`로 재구성해 목업을 만들고 결과에서 design.md를 역추출·저장한다. URL은 서버가 스크린샷(Microlink 무키, `captureScreenshot` 추상화)으로 캡처하며 첨부 이미지가 우선. 이미지/URL이 있으면 "디자인 스타일 필수" 게이트를 우회한다. `src/app/api/stitch/route.ts`의 `isImageLed` 분기 참고 `[현행 2026-06-15 → 15.81]`
 - **캔버스**: 드래그 패닝, 휠 줌, Fit 버튼, 확대(fullscreen) 모드. 선택 스크립트는 iframe HTML에 항상 주입하고, 편집 모드 토글은 pointer event와 선택 해제 메시지로 제어해 iframe `srcDoc` reload를 피한다 `[현행 2026-06-15 → 15.78]`
 - **편집 모드**: 특정 UI 요소 클릭 선택 → `[EDIT_MOCKUP: {prompt}]`로 수정. 선택 요소가 있는 상태에서 "크게/색/문구/삭제" 등 짧은 타깃 편집 요청이 오면 planner 판단과 무관하게 현재 목업 HTML과 선택 요소 컨텍스트를 함께 주입한다 `[현행 2026-06-15 → 15.77]`
 - Stitch edit가 기존 screen을 mutate하지 않고 새 screen을 만들면 기존 artboard를 덮어쓰지 않고 새 artboard로 추가한 뒤 active로 전환한다 `[현행 2026-06-15 → 15.79]`
@@ -2937,7 +2937,7 @@ type ChatPlan = {
   - `npm run lint -- 'src/app/main/[missionId]/page.tsx'` 통과(기존 warning만 유지).
   - `./node_modules/.bin/tsc --noEmit` 통과.
 
-### 15.81 레퍼런스→목업 외형 충실도: 이미지 주도 생성 설계 `[Phase 1 구현 2026-06-15 — 정적 검증(tsc/lint) 통과, 런타임 미검증 · Phase 2(URL 자동 스크린샷) 미구현]`
+### 15.81 레퍼런스→목업 외형 충실도: 이미지 주도 생성 설계 `[Phase 1·2 구현·검증 2026-06-15 — 서버 isImageLed(첨부+URL 캡처) end-to-end 검증 + Phase 1 GUI 사용자 확인]`
 
 - 배경/문제: 사용자가 레퍼런스의 디자인 스타일을 좋아한다고 해도, 현재는 레퍼런스가 채팅 모델에 텍스트(제목/URL/브랜드 사전지식)로만 들어가 design.md를 작문한다 — 레퍼런스 이미지가 픽셀로 모델에 들어가지 않고, 카드의 imageUrl도 og:image라 사용자가 실제로 본 페이지와 다르다. 그 결과 흰색 에디토리얼 레퍼런스가 "딥 차콜/블랙" 스타일로 반전됐고, Stitch는 그 스타일을 충실히 다크로 생성했다. 즉 생성기는 정상이고 오염은 상류 reference→design.md 단계.
 
@@ -2956,7 +2956,7 @@ type ChatPlan = {
 
 - 빌드 순서:
   - Phase 1 (외부 인프라 0): 사용자 첨부 → upload→edit → artboard + 결과에서 글 추출. 오늘 버그를 끝까지 해결.
-  - Phase 2: URL 자동 스크린샷. 미정 결정 = 캡처 엔진(매니지드 스크린샷 API 추천 vs 자체 Playwright)과 키.
+  - Phase 2(구현됨): URL 자동 스크린샷. 결정 = 캡처 엔진은 무키 Microlink로 시작하되 `captureScreenshot(url)` 함수 하나로 추상화해 나중에 매니지드 API(키)나 자체 Playwright로 교체 가능. URL 진입점은 둘 다 — 채팅 메시지 내 URL 감지 + 인용 레퍼런스의 URL. 첨부 이미지 > URL 우선순위. 응답에 `capturedUrl`을 실어 어떤 페이지를 캡처했는지 추적 가능(클라 UI 노출은 후속).
 
 - 닿는 코드(구현 시): `src/app/main/[missionId]/page.tsx`(첨부 UI + POST 본문 + `derivedDesignStyle` 저장), `src/app/api/stitch/route.ts`(이미지 분기 + 글 추출). 구현 완료 시 1~9장(레퍼런스/디자인 스타일/목업 생성 서술)과 같은 커밋에서 동기화 필요.
 
@@ -2964,3 +2964,5 @@ type ChatPlan = {
   - 그대로 재사용: 레퍼런스 검색/패널(`/api/references`), 인용(`citedReferences`), keep·delete preference, 태그, URL. 카드 og:image도 패널 썸네일로는 유지. 인용은 오히려 더 중요해짐 — 어느 레퍼런스의 픽셀을 가져올지 가리키는 포인터이자 Phase 2 URL 스크린샷의 입력.
   - 바뀌는 것: 카드 og:image를 스타일의 권위 소스로는 쓰지 않음. 폐기되는 로직은 거의 없고, 스타일 의도일 때만 `chatCitedRefsWithUrlPrompt`의 "web_search로 읽어라"를 픽셀 우선으로 조정(개념/텍스트 참고 용도일 땐 유효).
 - 의도별 픽셀 소스(추가 결정): "레퍼런스처럼 목업" → `GENERATE_MOCKUP` → upload→edit. "레퍼런스처럼 디자인 시스템/스타일만" → `CREATE_DESIGN_SPEC` → 올바른 스크린샷을 비전에 넣어 design.md 작성(Stitch 왕복 불필요). 후자는 Phase 1에 자동 포함 아님 — 같은 이미지 그라운딩을 `CREATE_DESIGN_SPEC` 경로에 별도 배선 필요.
+- Phase 1 검증(2026-06-15): 실행 중인 dev 서버 `/api/stitch`에 라이트/다크 테스트 PNG를 직접 POST. 라이트는 `bg-white text-black`로, 다크는 다크 팔레트(seed `#0a0a0a`)로 반전 없이 재구성됨. `allScreenIds`가 업로드 IMAGE 스크린을 제외(len 1)하고, `derivedDesignStyle`가 결과 기반(seed/모드/타이포)으로 역추출됨. 잘못된 styleImage는 HTTP 500 + 명확 메시지로 처리. GUI(첨부/붙여넣기·버블·게이트 우회)는 인증 뒤라 사용자가 직접 확인.
+- Phase 2 검증(2026-06-15): `/api/stitch`에 `styleSourceUrl: https://example.com`로 POST → Microlink 캡처→재구성 성공(HTTP 200), `capturedUrl` 에코, `allScreenIds` len 1, `derivedDesignStyle` seed `#f0f0f2`(example.com 실제 오프화이트 그대로). 잘못된 URL(`notaurl`, `ftp://`)은 HTTP 500 + 명확 메시지. 클라 URL 진입점(메시지/인용 레퍼런스)·게이트 우회는 코드 완료+tsc/lint 통과이나 GUI 런타임은 미구동(인증). 한계: 인용 레퍼런스 URL이 메인 페이지일 수 있어 `capturedUrl` UI 노출은 후속 권장.
