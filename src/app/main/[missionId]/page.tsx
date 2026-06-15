@@ -1560,6 +1560,7 @@ export default function MainScreenPage() {
     useState<SelectedElement | null>(null);
   const [selectedReferences, setSelectedReferences] = useState<Reference[]>([]);
   const [citedTexts, setCitedTexts] = useState<string[]>([]);
+  const mockupFrameRefs = useRef(new Map<string, HTMLIFrameElement>());
   const missionPanelRef = useRef<HTMLElement>(null);
   const citeMenuRef = useRef<HTMLDivElement>(null);
   const pendingCiteTextRef = useRef<string>("");
@@ -3021,6 +3022,21 @@ export default function MainScreenPage() {
     stitchAbortControllerRef.current?.abort();
   }, []);
 
+  const clearIframeSelections = useCallback((artboardId?: string | null) => {
+    mockupFrameRefs.current.forEach((frame, id) => {
+      if (artboardId && id !== artboardId) return;
+      frame.contentWindow?.postMessage(
+        { type: "vda-clear-selection", artboardId: artboardId ?? id },
+        "*",
+      );
+    });
+  }, []);
+
+  const clearSelectedElement = useCallback(() => {
+    clearIframeSelections(selectedElement?.artboardId ?? null);
+    setSelectedElement(null);
+  }, [clearIframeSelections, selectedElement?.artboardId]);
+
   const sendMessage = useCallback(async () => {
     const text = inputText.trim();
     if (!text || !isMissionContextReady || isLoading || isGeneratingMockup)
@@ -3078,6 +3094,10 @@ export default function MainScreenPage() {
     setMessages((prev) => [...prev, userMsg, assistantMsg]);
     setInputText("");
     if (textareaRef.current) textareaRef.current.style.height = "auto";
+    if (selectedElement) {
+      clearIframeSelections(selectedElement.artboardId);
+      setSelectedElement(null);
+    }
     setSelectedReferences([]);
     setCitedTexts([]);
 
@@ -3735,13 +3755,15 @@ export default function MainScreenPage() {
             () => stitchController.abort(),
             175_000,
           );
+          const editTargetBoard = !isNew
+            ? (activeArtboardId
+                ? artboards.find((a) => a.id === activeArtboardId)
+                : currentIdeaBoards.at(-1)) ?? null
+            : null;
+          const editTargetId = editTargetBoard?.id;
+          const editScreenId = editTargetBoard?.stitchScreenId || undefined;
           let res: Response;
           try {
-            const editScreenId = !isNew
-              ? (activeArtboardId
-                  ? artboards.find((a) => a.id === activeArtboardId)?.stitchScreenId
-                  : currentIdeaBoards.at(-1)?.stitchScreenId) ?? undefined
-              : undefined;
             res = await fetch("/api/stitch", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
@@ -3862,20 +3884,78 @@ export default function MainScreenPage() {
                 .catch(() => {});
             });
           } else {
-            const targetId = activeArtboardId ?? currentIdeaBoards.at(-1)?.id;
-            setArtboards((prev) =>
-              prev.map((a) =>
-                a.id === targetId
-                  ? {
-                      ...a,
-                      html: data.html,
-                      stitchScreenId: data.screenId,
-                      htmlUpdatedAt: Date.now(),
-                    }
-                  : a,
-              ),
-            );
-            if (data.htmlPending && targetId) {
+            const targetId =
+              editTargetId ?? activeArtboardId ?? currentIdeaBoards.at(-1)?.id;
+            const editCreatedNewScreen =
+              Boolean(data.screenId) &&
+              Boolean(editScreenId) &&
+              data.screenId !== editScreenId;
+            const existingEditBoard = editCreatedNewScreen
+              ? artboards.find((a) => a.stitchScreenId === data.screenId)
+              : null;
+            const createdEditBoardId =
+              editCreatedNewScreen && !existingEditBoard
+                ? crypto.randomUUID()
+                : null;
+
+            setArtboards((prev) => {
+              if (!editCreatedNewScreen) {
+                return prev.map((a) =>
+                  a.id === targetId
+                    ? {
+                        ...a,
+                        html: data.html || a.html,
+                        stitchScreenId: data.screenId,
+                        htmlUpdatedAt: data.html ? Date.now() : a.htmlUpdatedAt,
+                      }
+                    : a,
+                );
+              }
+
+              if (existingEditBoard) {
+                return prev.map((a) =>
+                  a.id === existingEditBoard.id
+                    ? {
+                        ...a,
+                        html: data.html || a.html,
+                        htmlUpdatedAt: data.html ? Date.now() : a.htmlUpdatedAt,
+                      }
+                    : a,
+                );
+              }
+
+              const ideaId = effectiveActiveIdeaId ?? editTargetBoard?.ideaId ?? "";
+              const ideaBoards = prev.filter((a) => a.ideaId === ideaId);
+              const targetBoard =
+                prev.find((a) => a.id === targetId) ??
+                editTargetBoard ??
+                ideaBoards.at(-1);
+              const x = targetBoard
+                ? targetBoard.x +
+                  DEVICE_SIZE[targetBoard.device ?? "desktop"].width +
+                  ARTBOARD_GAP
+                : 0;
+              const board: Artboard = {
+                id: createdEditBoardId ?? crypto.randomUUID(),
+                html: data.html || editTargetBoard?.html || "",
+                label: `Design ${ideaBoards.length + 1}`,
+                createdAt: Date.now(),
+                x,
+                y: targetBoard?.y ?? 0,
+                device: targetBoard?.device ?? device,
+                stitchScreenId: data.screenId,
+                ideaId,
+                htmlUpdatedAt: data.html ? Date.now() : undefined,
+              };
+              return [...prev, board];
+            });
+
+            const htmlTargetId =
+              existingEditBoard?.id ?? createdEditBoardId ?? targetId;
+            if (editCreatedNewScreen && htmlTargetId) {
+              setActiveArtboardId(htmlTargetId);
+            }
+            if (data.htmlPending && htmlTargetId) {
               fetch(
                 `/api/stitch/html?projectId=${data.projectId}&screenId=${data.screenId}`,
               )
@@ -3884,7 +3964,9 @@ export default function MainScreenPage() {
                   if (d.html) {
                     setArtboards((prev) =>
                       prev.map((a) =>
-                        a.id === targetId ? { ...a, html: d.html } : a,
+                        a.id === htmlTargetId
+                          ? { ...a, html: d.html, htmlUpdatedAt: Date.now() }
+                          : a,
                       ),
                     );
                   }
@@ -3990,6 +4072,7 @@ export default function MainScreenPage() {
     parentMissionBrief,
     appendActivityLog,
     encodeMemoryDraft,
+    clearIframeSelections,
   ]);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -3998,8 +4081,6 @@ export default function MainScreenPage() {
       sendMessage();
     }
   };
-
-  const clearSelectedElement = () => setSelectedElement(null);
 
   const fetchReferences = useCallback(
     async (
@@ -4580,7 +4661,7 @@ export default function MainScreenPage() {
       onClick={(e) => {
         if (e.target !== e.currentTarget) return;
         setActiveArtboardId(null);
-        setSelectedElement(null);
+        clearSelectedElement();
         setDesignContextMenu(null);
       }}
     >
@@ -4628,11 +4709,7 @@ export default function MainScreenPage() {
           const isActive = artboard.id === activeArtboardId;
           const artboardHeight = getArtboardRenderHeight(artboard);
           const artboardHtml = injectHeightReporter(
-            injectNoNavigation(
-              editMode
-                ? injectSelectionScript(artboard.html, artboard.id)
-                : artboard.html,
-            ),
+            injectNoNavigation(injectSelectionScript(artboard.html, artboard.id)),
             artboard.id,
           );
           return (
@@ -4684,6 +4761,10 @@ export default function MainScreenPage() {
               >
                 <iframe
                   key={`${artboard.id}-${artboard.htmlUpdatedAt ?? artboard.createdAt ?? 0}`}
+                  ref={(node) => {
+                    if (node) mockupFrameRefs.current.set(artboard.id, node);
+                    else mockupFrameRefs.current.delete(artboard.id);
+                  }}
                   srcDoc={artboardHtml}
                   sandbox="allow-scripts"
                   scrolling="no"
@@ -5880,7 +5961,7 @@ export default function MainScreenPage() {
                 canvas={renderMockupCanvas()}
                 onToggleEditMode={() => {
                   setEditMode((p) => {
-                    if (p) setSelectedElement(null);
+                    if (p) clearSelectedElement();
                     return !p;
                   });
                 }}
@@ -6604,7 +6685,7 @@ export default function MainScreenPage() {
                 <button
                   onClick={() => {
                     setEditMode((prev) => {
-                      if (prev) setSelectedElement(null);
+                      if (prev) clearSelectedElement();
                       return !prev;
                     });
                   }}

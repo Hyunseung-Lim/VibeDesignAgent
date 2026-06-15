@@ -117,8 +117,10 @@
 - **생성 흐름**: 채팅 모델이 `[GENERATE_MOCKUP: {prompt}]` 출력 → Google Stitch API 호출 → HTML 반환 → 캔버스에 표시
 - **채팅 컨텍스트**: 미션 제목/브리핑, 현재 아이디어 내용, 기존 목업 HTML, 선택된 UI 요소, 인용 레퍼런스, 대화 히스토리
 - **missionBrief 보완 주입**: 신규 목업 생성 시 아이디어 내용이 300자 미만으로 빈약하면 `missionBrief`를 `buildMockupPrompt`에 직접 주입해 제품 데이터가 Stitch에 전달되도록 보장 (수정 시에는 주입 안 함)
-- **캔버스**: 드래그 패닝, 휠 줌, Fit 버튼, 확대(fullscreen) 모드
-- **편집 모드**: 특정 UI 요소 클릭 선택 → `[EDIT_MOCKUP: {prompt}]`로 수정
+- **캔버스**: 드래그 패닝, 휠 줌, Fit 버튼, 확대(fullscreen) 모드. 선택 스크립트는 iframe HTML에 항상 주입하고, 편집 모드 토글은 pointer event와 선택 해제 메시지로 제어해 iframe `srcDoc` reload를 피한다 `[현행 2026-06-15 → 15.78]`
+- **편집 모드**: 특정 UI 요소 클릭 선택 → `[EDIT_MOCKUP: {prompt}]`로 수정. 선택 요소가 있는 상태에서 "크게/색/문구/삭제" 등 짧은 타깃 편집 요청이 오면 planner 판단과 무관하게 현재 목업 HTML과 선택 요소 컨텍스트를 함께 주입한다 `[현행 2026-06-15 → 15.77]`
+- Stitch edit가 기존 screen을 mutate하지 않고 새 screen을 만들면 기존 artboard를 덮어쓰지 않고 새 artboard로 추가한 뒤 active로 전환한다 `[현행 2026-06-15 → 15.79]`
+- 선택 요소를 인용해 chat에 전송하면 해당 turn의 `citedElement`에는 포함하되, 입력 UI와 iframe outline에서는 즉시 선택 해제한다 `[현행 2026-06-15 → 15.80]`
 - 아이디어 탭 전환 시 해당 아이디어의 목업만 표시
 - HTML Export 지원
 - Stitch 프로젝트 ID Firestore 저장 (재연결/수정 지원)
@@ -924,7 +926,7 @@ type ChatPlan = {
   - activeIdea: note 생성/수정/mockup 관련 intent에서만 주입
   - designSpec: mockup generate/edit/design spec 관련 intent에서만 주입
   - mockupHtml: edit/현재 화면 분석 intent에서만 주입. generate intent에서는 사용자가 기존 mockup 기반 변형을 요구한 경우에만 주입
-  - selectedElement: selectedElement가 있고 edit intent일 때 우선 주입
+  - selectedElement: selectedElement가 있으면 우선 주입. 선택 요소가 있는 상태의 타깃 편집 요청은 planner가 놓쳐도 `edit_mockup` intent와 `mockupHtml`/`selectedElement` 컨텍스트를 강제한다 `[현행 2026-06-15 → 15.77]`
   - citedTexts/citedReferences: 사용자가 현재 turn에서 인용했거나 planner가 reference/design inspiration intent로 판단한 경우만 주입
 - MVP 구현 순서:
   1. [x] planner prompt/function을 `src/lib/prompts.ts`에 추가
@@ -2878,4 +2880,58 @@ type ChatPlan = {
   - 차단 시 `stripMockupActionBlocks()`로 action chip을 제거하고, "목업은 아직 생성하지 않았습니다..." 안내를 chat bubble에 남김.
 - 검증:
   - `npm run lint -- 'src/app/main/[missionId]/page.tsx' src/lib/prompts.ts` 통과(기존 warning만 유지).
+  - `./node_modules/.bin/tsc --noEmit` 통과.
+
+### 15.77 선택 요소 기반 목업 편집 컨텍스트 강제 `[implemented 2026-06-15]`
+
+- 문제: 사용자가 목업 캔버스에서 요소를 선택한 뒤 "이거 크게", "색 바꿔", "문구 수정"처럼 짧게 요청하면, planner가 `selectedElement`/`mockupHtml` 컨텍스트 필요성을 놓치거나 `edit_mockup` intent로 분류하지 못해 선택 편집이 일반 답변 또는 전체 목업 편집처럼 동작할 수 있었음.
+- 수정:
+  - `/api/chat`의 `forceIntentFromUserText()`에 선택 요소 + 현재 목업 + 편집성 키워드 조합을 감지하는 deterministic guard 추가.
+  - 조건에 맞으면 intent를 `edit_mockup`으로 강제하고, `mission`, `activeIdea`, `designSpec`, `mockupHtml`, `selectedElement` 컨텍스트를 켠다.
+  - `shouldIncludePlannedContext()`에서 selectedElement가 있으면 reliable planner가 false를 내려도 `selectedElement`와 `mockupHtml`을 반드시 포함한다.
+  - "뭐야/왜/가능/충분" 같은 질문형 요청은 편집 강제에서 제외하되, 한국어 명령형 질문에 흔한 물음표만으로는 제외하지 않는다.
+- 검증:
+  - `npm run lint -- src/app/api/chat/route.ts` 통과.
+  - `./node_modules/.bin/tsc --noEmit` 통과.
+
+### 15.78 편집 모드 토글 시 목업 iframe 깜빡임 제거 `[implemented 2026-06-15]`
+
+- 문제: 목업 toolbar의 편집 버튼을 누르면 캔버스의 목업이 잠깐 사라졌다가 다시 보였음.
+- 원인:
+  - `renderMockupCanvas()`가 `editMode`일 때만 `injectSelectionScript()`를 적용했다.
+  - 편집 모드 토글마다 iframe `srcDoc` 문자열이 바뀌어 브라우저가 iframe 문서를 reload했고, 그 순간 빈 화면이 보였음.
+- 수정:
+  - `injectSelectionScript()`를 항상 적용해 `editMode` 토글로 `srcDoc`이 바뀌지 않게 함.
+  - 실제 편집 가능 여부는 기존처럼 iframe `pointerEvents`로 제어.
+  - parent가 iframe refs를 보관하고, 선택 해제/편집 Off/캔버스 빈 영역 클릭 시 `vda-clear-selection` postMessage를 보내 iframe 내부 `data-vda-selected` outline을 제거.
+  - iframe selection script에 `vda-clear-selection` message listener와 공용 `clearVdaSelection()` 추가.
+- 검증:
+  - `npm run lint -- 'src/app/main/[missionId]/page.tsx' src/lib/session/mockup-html.ts` 통과(기존 warning만 유지).
+  - `./node_modules/.bin/tsc --noEmit` 통과.
+
+### 15.79 목업 수정 pending 응답과 새 Stitch screen 처리 `[implemented 2026-06-15]`
+
+- 문제: 목업 수정 요청 후 로딩은 떴지만 수정된 화면이 보이지 않거나 화면이 빈 것처럼 보일 수 있었음. Stitch 로그에는 새 screen이 생성됐는데 canvas에는 나타나지 않는 케이스도 포함.
+- 원인:
+  - `/api/stitch`가 `htmlPending: true`와 빈 `html`을 반환하면, edit branch가 기존 artboard HTML을 즉시 빈 문자열로 덮어썼음.
+  - edit 요청 대상은 요청 직전에 계산했지만, 응답 후 업데이트 대상은 다시 `activeArtboardId ?? last`로 계산해 비동기 중 active artboard가 바뀌면 다른 board를 업데이트할 여지가 있었음.
+  - Stitch `edit_screens`가 기존 screen을 mutate하지 않고 새 screen을 생성하는 경우가 있는데, 클라이언트는 edit 결과를 항상 기존 artboard 덮어쓰기로만 처리했음.
+- 수정:
+  - edit 요청 시작 시 `editTargetBoard`, `editTargetId`, `editScreenId`를 고정.
+  - edit 응답이 pending이면 기존 HTML을 유지하고, lazy `/api/stitch/html` fetch가 실제 HTML을 반환할 때만 교체.
+  - lazy fetch 성공 시 `htmlUpdatedAt`도 갱신해 iframe이 새 HTML을 확실히 렌더링하게 함.
+  - edit 응답의 `screenId`가 요청한 `editScreenId`와 다르면 새 screen 생성으로 보고 새 artboard를 추가한 뒤 active artboard로 전환. pending이면 우선 기존 target HTML을 임시로 보여주고 lazy fetch 완료 시 새 HTML로 교체.
+- 검증:
+  - `npm run lint -- 'src/app/main/[missionId]/page.tsx'` 통과(기존 warning만 유지).
+  - `./node_modules/.bin/tsc --noEmit` 통과.
+
+### 15.80 선택 요소 citation 전송 후 선택 상태 해제 `[implemented 2026-06-15]`
+
+- 문제: 선택된 목업 요소를 인용해 chat에 보낸 뒤에도 입력창과 캔버스 outline에 선택 상태가 남아 다음 메시지까지 같은 요소가 계속 인용될 수 있었음.
+- 수정:
+  - `sendMessage()`에서 `userMsg.citedElement`와 memory input을 만든 뒤, UI state의 `selectedElement`를 비운다.
+  - iframe 내부 `data-vda-selected` outline도 `vda-clear-selection` postMessage로 함께 제거한다.
+  - `clearIframeSelections`/`clearSelectedElement` helper를 `sendMessage`보다 앞에 배치해 전송 흐름과 toolbar/chat input 해제가 같은 동작을 공유하게 함.
+- 검증:
+  - `npm run lint -- 'src/app/main/[missionId]/page.tsx'` 통과(기존 warning만 유지).
   - `./node_modules/.bin/tsc --noEmit` 통과.

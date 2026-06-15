@@ -583,6 +583,8 @@ function forceIntentFromUserText(
   plan: ChatPlan,
   latestUserText: string,
   hasDesignSpec: boolean,
+  hasMockupHtml: boolean,
+  hasSelectedElement: boolean,
 ) {
   const text = latestUserText.toLowerCase();
 
@@ -613,6 +615,33 @@ function forceIntentFromUserText(
         conversationHistory: plan.needs.conversationHistory ?? "minimal",
       },
       reason: `${plan.reason ? `${plan.reason} ` : ""}Forced fetch_references because the user asked to find references.`,
+    };
+  }
+
+  const selectedElementEditRequest =
+    hasMockupHtml &&
+    hasSelectedElement &&
+    /(edit|modify|change|revise|resize|move|remove|delete|replace|make|bigger|smaller|larger|shorter|wider|narrower|darker|lighter|수정|변경|바꿔|바꾸|고쳐|편집|키워|크게|줄여|작게|넓게|좁게|진하게|연하게|밝게|어둡게|옮겨|이동|올려|내려|왼쪽|오른쪽|위로|아래로|삭제|제거|없애|빼|추가|넣어|교체|대체|색|컬러|폰트|문구|텍스트|카피|간격|여백|정렬|모서리|둥글|버튼|이미지|아이콘)/i.test(
+      text,
+    ) &&
+    !/(?:뭐야|무엇|어떤|왜|가능|충분|해도\s*돼|can\s+i|should\s+i|what|why|how)/i.test(
+      text,
+    );
+  if (selectedElementEditRequest) {
+    return {
+      ...plan,
+      intent: "edit_mockup" as const,
+      confidence: Math.max(plan.confidence, 0.9),
+      needs: {
+        ...plan.needs,
+        mission: true,
+        activeIdea: true,
+        designSpec: true,
+        mockupHtml: true,
+        selectedElement: true,
+        conversationHistory: plan.needs.conversationHistory ?? "recent",
+      },
+      reason: `${plan.reason ? `${plan.reason} ` : ""}Forced edit_mockup because a selected element exists and the user requested a targeted visual or copy change.`,
     };
   }
 
@@ -768,6 +797,8 @@ export async function POST(request: Request) {
     rawPromptPlan,
     latestUserText,
     Boolean(designSpec),
+    Boolean(mockupHtml),
+    Boolean(selectedElement),
   );
   const promptPlanReliable =
     !promptPlanFallback && promptPlan.confidence >= 0.55;
@@ -778,6 +809,8 @@ export async function POST(request: Request) {
       lowerLatestUserText,
     );
   const shouldIncludePlannedContext = (key: keyof ChatPlanNeeds) => {
+    if (key === "selectedElement" && selectedElement) return true;
+    if (key === "mockupHtml" && selectedElement) return true;
     if (promptPlanFallback) return true;
     if (promptPlanReliable) return Boolean(promptPlan.needs[key]);
     if (key === "mockupHtml") return lowConfidenceNeedsMockup;

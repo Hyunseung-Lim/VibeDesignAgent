@@ -107,6 +107,16 @@ export function injectSelectionScript(html: string, artboardId: string): string 
   [data-vda-selected] { outline: 2px solid #6366f1 !important; outline-offset: 2px; }
 </style>
 <script>
+  function clearVdaSelection() {
+    document.querySelectorAll('[data-vda-selected]').forEach(function(el) {
+      el.removeAttribute('data-vda-selected');
+    });
+  }
+  window.addEventListener('message', function(e) {
+    if (!e.data || e.data.type !== 'vda-clear-selection') return;
+    if (e.data.artboardId && e.data.artboardId !== '${artboardId}') return;
+    clearVdaSelection();
+  });
   document.addEventListener('wheel', function(e) {
     e.preventDefault();
     e.stopPropagation();
@@ -142,9 +152,7 @@ export function injectSelectionScript(html: string, artboardId: string): string 
   document.addEventListener('click', function(e) {
     e.preventDefault();
     e.stopPropagation();
-    document.querySelectorAll('[data-vda-selected]').forEach(function(el) {
-      el.removeAttribute('data-vda-selected');
-    });
+    clearVdaSelection();
     var el = e.target;
     el.setAttribute('data-vda-selected', 'true');
 
