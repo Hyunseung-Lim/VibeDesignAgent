@@ -13,6 +13,7 @@ export type ChatBubbleMessage = {
   } | null;
   citedReferences?: { id: string; title: string; imageUrl?: string }[] | null;
   citedTexts?: string[] | null;
+  styleImage?: { dataUrl: string; name?: string } | null;
 };
 
 export type ChatContentPart =
@@ -94,6 +95,15 @@ export function ChatBubble({
       >
         {isUser ? (
           <div className="space-y-1.5">
+            {message.styleImage && (
+              <div className="flex justify-end">
+                <img
+                  src={message.styleImage.dataUrl}
+                  alt={message.styleImage.name || "첨부 이미지"}
+                  className="max-h-44 max-w-full rounded-lg object-contain"
+                />
+              </div>
+            )}
             {message.citedElement && (
               <div className="flex justify-end">
                 <span className="flex items-center gap-1.5 rounded-full bg-white/20 px-2.5 py-0.5 text-xs text-white/80">

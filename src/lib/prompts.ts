@@ -543,6 +543,40 @@ ROUNDNESS:
 - Return JSON only, no commentary.`;
 
 // ────────────────────────────────────────────────────────────
+// Style image — 레퍼런스 스크린샷을 그대로 재구성 (이미지 주도 목업)
+// 사용처: src/app/api/stitch/route.ts (project.upload → screen.edit)
+// ────────────────────────────────────────────────────────────
+
+export function styleImageReconstructPrompt(
+  productPrompt: string,
+  deviceLabel: string,
+) {
+  return [
+    `Faithfully rebuild the uploaded screenshot as a working, responsive ${deviceLabel}.`,
+    `Treat the uploaded image as the single source of truth for visual style. Preserve its EXACT background lightness (never invert light to dark or dark to light), color palette, typography feel, spacing/density, corner rounding, and overall layout structure.`,
+    `Do not substitute a generic theme or rely on outside brand knowledge — only reproduce what is visible in the image.`,
+    productPrompt
+      ? `Use this product/content brief to populate the screen with real, on-brief content:\n${productPrompt}`
+      : "",
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+}
+
+// 이미 생성된(올바른) 화면의 HTML에서 디자인 스타일 마크다운을 역으로 추출.
+// 레퍼런스가 아니라 결과에 grounding하므로 명도 반전 같은 사전지식 오염이 없다.
+export const DERIVE_DESIGN_MD_FROM_HTML_PROMPT = `You are given the HTML of a generated UI screen. Write a concise 디자인 스타일 (design style) note in Korean markdown capturing ONLY this screen's concrete, CSS-level visual style so future screens can match it.
+
+Include:
+- A single explicit line "Primary brand seed color: #rrggbb" — the dominant surface/brand hue actually used (light or dark exactly as observed; never invert).
+- Color mode (light/dark) with background and text colors.
+- Typography (serif vs sans, weights, relative sizing).
+- Spacing/density, border radius, and notable component styling (cards, buttons, nav).
+- A short avoid-list if obvious.
+
+Rules: derive every value strictly from the provided HTML; never invent values or use outside brand knowledge. Output Korean markdown only — no preamble, no code fences.`;
+
+// ────────────────────────────────────────────────────────────
 // Presentation — 슬라이드 이미지 생성
 // 사용처: src/app/api/presentation/route.ts
 // ────────────────────────────────────────────────────────────

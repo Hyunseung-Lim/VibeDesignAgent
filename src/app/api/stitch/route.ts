@@ -1,10 +1,16 @@
 import { Stitch, StitchToolClient } from "@google/stitch-sdk";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import { writeFile, unlink } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import sharp from "sharp";
 import OpenAI from "openai";
 import {
   DESIGN_SYSTEM_EXTRACT_PROMPT,
+  DERIVE_DESIGN_MD_FROM_HTML_PROMPT,
   STITCH_DESIGN_FONTS,
   STITCH_DESIGN_ROUNDNESS,
+  styleImageReconstructPrompt,
 } from "@/lib/prompts";
 
 export const maxDuration = 180;
@@ -437,6 +443,86 @@ async function choosePrimaryScreen(
   };
 }
 
+const STYLE_IMAGE_EXT: Record<string, string> = {
+  "image/png": ".png",
+  "image/jpeg": ".jpg",
+  "image/webp": ".webp",
+};
+
+// Decode a style-image data URL, downscale, and write a temp file for
+// project.upload() (which reads from disk). Caller must unlink the path.
+async function writeStyleImageTmp(dataUrl: string): Promise<string> {
+  const match = /^data:([^;]+);base64,([\s\S]*)$/.exec(dataUrl);
+  if (!match) throw new Error("Invalid style image data URL.");
+  const mime = match[1].toLowerCase();
+  const raw = Buffer.from(match[2], "base64");
+  if (raw.length > 12 * 1024 * 1024) {
+    throw new Error("Style image is too large (max 12MB).");
+  }
+  let bytes: Buffer = raw;
+  let ext = STYLE_IMAGE_EXT[mime] ?? "";
+  try {
+    bytes = await sharp(raw)
+      .resize({ width: 1600, height: 1600, fit: "inside", withoutEnlargement: true })
+      .png()
+      .toBuffer();
+    ext = ".png";
+  } catch (err) {
+    if (!ext) throw new Error(`Unsupported style image type: ${mime}`);
+    console.warn("[stitch] sharp normalize failed, using raw image:", errorMessage(err));
+  }
+  const tmpPath = path.join(os.tmpdir(), `vda-style-${randomUUID()}${ext}`);
+  await writeFile(tmpPath, bytes);
+  return tmpPath;
+}
+
+// Image-led generation: upload the reference screenshot as a Stitch screen,
+// then edit() it into a working UI grounded in the actual pixels. Verified to
+// preserve the source's light/dark palette and layout (dev_document 15.81).
+async function generateScreenFromStyleImage(
+  project: StitchProject,
+  styleImageDataUrl: string,
+  productPrompt: string,
+  deviceType: DeviceType,
+): Promise<StitchScreenHandle> {
+  const tmpPath = await writeStyleImageTmp(styleImageDataUrl);
+  let refScreen:
+    | { id: string; edit: (p: string, d?: DeviceType) => Promise<StitchScreenHandle> }
+    | undefined;
+  try {
+    const uploaded = await project.upload(tmpPath, { title: "Style reference" });
+    refScreen = Array.isArray(uploaded) ? uploaded[0] : undefined;
+  } finally {
+    await unlink(tmpPath).catch(() => {});
+  }
+  if (!refScreen) {
+    throw new Error("Stitch did not return a screen for the uploaded style image.");
+  }
+  const deviceLabel =
+    deviceType === "MOBILE" ? "mobile app screen" : "desktop website";
+  const reconstructPrompt = styleImageReconstructPrompt(productPrompt, deviceLabel);
+  return refScreen.edit(reconstructPrompt, deviceType);
+}
+
+// Reverse-extract a 디자인 스타일 note from the reconstructed (correct) HTML so
+// later screens in the 시안 stay consistent. Grounded in the result, not the
+// reference or brand priors. Best-effort: returns "" on failure.
+async function deriveDesignStyleFromHtml(html: string): Promise<string> {
+  try {
+    const completion = await openai.chat.completions.create({
+      model: "gpt-5.4-mini",
+      messages: [
+        { role: "system", content: DERIVE_DESIGN_MD_FROM_HTML_PROMPT },
+        { role: "user", content: html.slice(0, 14000) },
+      ],
+    });
+    return completion.choices[0]?.message?.content?.trim() ?? "";
+  } catch (err) {
+    console.warn("[stitch] derive design style failed:", errorMessage(err));
+    return "";
+  }
+}
+
 export async function POST(request: Request) {
   const {
     prompt,
@@ -446,6 +532,7 @@ export async function POST(request: Request) {
     designStyle,
     designSystemId,
     appliedDesignStyleHash,
+    styleImage,
   } = (await request.json()) as {
     prompt?: string;
     device?: string;
@@ -454,12 +541,16 @@ export async function POST(request: Request) {
     designStyle?: { content?: string } | null;
     designSystemId?: string | null;
     appliedDesignStyleHash?: string | null;
+    styleImage?: { dataUrl?: string } | null;
   };
 
   if (!prompt) {
     return Response.json({ error: "prompt is required" }, { status: 400 });
   }
   const deviceType: DeviceType = device === "mobile" ? "MOBILE" : "DESKTOP";
+  // Image-led generation: a reference screenshot drives appearance via
+  // upload→edit. Only for new screens (not edits of an existing artboard).
+  const isImageLed = Boolean(styleImage?.dataUrl) && !screenId;
 
   try {
     const { client, sdk } = createStitchClient();
@@ -481,7 +572,10 @@ export async function POST(request: Request) {
     // repeated generations within one style free of extra calls.
     let resolvedDesignSystemId: string | null = designSystemId ?? null;
     let resolvedStyleHash: string | null = appliedDesignStyleHash ?? null;
-    const styleContent = designStyle?.content?.trim() ?? "";
+    // For image-led generation we do NOT pre-apply the existing (possibly stale)
+    // design style — it would fight the screenshot. We derive a fresh style from
+    // the reconstructed result instead (see below).
+    const styleContent = isImageLed ? "" : designStyle?.content?.trim() ?? "";
     if (styleContent) {
       const hash = styleHash(styleContent);
       if (hash !== appliedDesignStyleHash || !designSystemId) {
@@ -499,7 +593,23 @@ export async function POST(request: Request) {
     const beforeScreenIds = new Set(beforeScreens.map((candidate) => candidate.id).filter(Boolean));
     let screen;
 
-    if (screenId) {
+    if (isImageLed) {
+      console.log("[stitch] image-led generation from uploaded style image...");
+      try {
+        screen = await generateScreenFromStyleImage(
+          project,
+          styleImage!.dataUrl!,
+          prompt,
+          deviceType,
+        );
+      } catch (imgErr) {
+        console.warn(
+          "[stitch] image-led generation failed:",
+          errorMessage(imgErr),
+        );
+        return stitchErrorResponse(imgErr, "Style image mockup generation failed");
+      }
+    } else if (screenId) {
       console.log("[stitch] editing screen:", screenId);
       try {
         screen = await editScreen(client, project, screenId, prompt, deviceType, beforeScreenIds);
@@ -530,17 +640,18 @@ export async function POST(request: Request) {
     const freshScreens = allScreens.filter(
       (candidate) => candidate.id && !beforeScreenIds.has(candidate.id),
     );
-    const { selected, allScreenIds } = screenId
-      ? {
-          selected: {
-            screen,
-            html: await materializeHtml(await waitForScreenHtml(project, screen)),
-            htmlPending: false,
-            score: 0,
-          },
-          allScreenIds: [screen.id],
-        }
-      : await choosePrimaryScreen(project, freshScreens, screen, prompt);
+    const { selected, allScreenIds } =
+      screenId || isImageLed
+        ? {
+            selected: {
+              screen,
+              html: await materializeHtml(await waitForScreenHtml(project, screen)),
+              htmlPending: false,
+              score: 0,
+            },
+            allScreenIds: [screen.id],
+          }
+        : await choosePrimaryScreen(project, freshScreens, screen, prompt);
     screen = selected.screen;
     console.log("[stitch] selected primary screen id:", screen.id);
 
@@ -564,6 +675,22 @@ export async function POST(request: Request) {
     console.log("[stitch] selected html length:", html.length);
     console.log("[stitch] new screens this generation:", allScreenIds.length);
 
+    // Image-led: derive a 디자인 스타일 from the (correct) result and apply it so
+    // subsequent screens stay consistent, and return it for the client to store.
+    let derivedDesignStyle: { content: string } | undefined;
+    if (isImageLed && html) {
+      const derivedContent = await deriveDesignStyleFromHtml(html);
+      if (derivedContent) {
+        derivedDesignStyle = { content: derivedContent };
+        resolvedDesignSystemId = await applyDesignSystem(
+          project,
+          derivedContent,
+          resolvedDesignSystemId,
+        );
+        resolvedStyleHash = styleHash(derivedContent);
+      }
+    }
+
     return Response.json({
       html,
       projectId: actualProjectId,
@@ -571,6 +698,7 @@ export async function POST(request: Request) {
       allScreenIds,
       designSystemId: resolvedDesignSystemId,
       appliedDesignStyleHash: resolvedStyleHash,
+      derivedDesignStyle,
     });
   } catch (err) {
     const message = errorMessage(err);

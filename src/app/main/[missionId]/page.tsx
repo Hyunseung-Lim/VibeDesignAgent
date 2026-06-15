@@ -131,6 +131,7 @@ type Message = {
   } | null;
   citedReferences?: { id: string; title: string; imageUrl?: string }[] | null;
   citedTexts?: string[] | null;
+  styleImage?: { dataUrl: string; name?: string } | null;
   reviewTurnId?: string | null;
   chatPhases?: string[];
 };
@@ -1549,6 +1550,10 @@ export default function MainScreenPage() {
 
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputText, setInputText] = useState("");
+  const [attachedStyleImage, setAttachedStyleImage] = useState<{
+    dataUrl: string;
+    name?: string;
+  } | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [artboards, setArtboards] = useState<Artboard[]>([]);
   const [activeArtboardId, setActiveArtboardId] = useState<string | null>(null);
@@ -3037,10 +3042,53 @@ export default function MainScreenPage() {
     setSelectedElement(null);
   }, [clearIframeSelections, selectedElement?.artboardId]);
 
+  const handleAttachStyleImage = useCallback((file: File) => {
+    if (!file.type.startsWith("image/")) return;
+    if (file.size > 12 * 1024 * 1024) {
+      alert("이미지가 너무 큽니다 (최대 12MB).");
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result !== "string") return;
+      const original = reader.result;
+      // Downscale before keeping it: the same dataURL is sent to Stitch (which
+      // re-caps at 1600px anyway), shown in the chat bubble, and persisted with
+      // the session — so a full-res base64 would bloat the Firestore doc.
+      const img = new Image();
+      img.onload = () => {
+        const maxDim = 1280;
+        const scale = Math.min(1, maxDim / Math.max(img.width, img.height));
+        const w = Math.max(1, Math.round(img.width * scale));
+        const h = Math.max(1, Math.round(img.height * scale));
+        const canvas = document.createElement("canvas");
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) {
+          setAttachedStyleImage({ dataUrl: original, name: file.name });
+          return;
+        }
+        ctx.drawImage(img, 0, 0, w, h);
+        setAttachedStyleImage({
+          dataUrl: canvas.toDataURL("image/jpeg", 0.85),
+          name: file.name,
+        });
+      };
+      img.onerror = () =>
+        setAttachedStyleImage({ dataUrl: original, name: file.name });
+      img.src = original;
+    };
+    reader.readAsDataURL(file);
+  }, []);
+
   const sendMessage = useCallback(async () => {
     const text = inputText.trim();
     if (!text || !isMissionContextReady || isLoading || isGeneratingMockup)
       return;
+    // Snapshot the attached style image for this turn; the GENERATE_MOCKUP call
+    // happens later in the streaming handler, after we clear the composer chip.
+    const styleImageForTurn = attachedStyleImage?.dataUrl ?? null;
     const userMsg: Message = {
       id: crypto.randomUUID(),
       role: "user",
@@ -3062,6 +3110,7 @@ export default function MainScreenPage() {
             }))
           : null,
       citedTexts: citedTexts.length > 0 ? [...citedTexts] : null,
+      styleImage: attachedStyleImage,
     };
     const assistantId = crypto.randomUUID();
     const assistantMsg: Message = {
@@ -3100,6 +3149,7 @@ export default function MainScreenPage() {
     }
     setSelectedReferences([]);
     setCitedTexts([]);
+    setAttachedStyleImage(null);
 
     if (manualReference) {
       const alreadyExists = references.some((reference) =>
@@ -3685,7 +3735,11 @@ export default function MainScreenPage() {
           return;
         }
 
-        if (isNew && !activeIdea?.designStyle?.content?.trim()) {
+        if (
+          isNew &&
+          !activeIdea?.designStyle?.content?.trim() &&
+          !styleImageForTurn
+        ) {
           setMessages((prev) =>
             prev.map((m) =>
               m.id === assistantId
@@ -3778,6 +3832,10 @@ export default function MainScreenPage() {
                   : null,
                 designSystemId: stitchDesignSystemId,
                 appliedDesignStyleHash,
+                styleImage:
+                  isNew && styleImageForTurn
+                    ? { dataUrl: styleImageForTurn }
+                    : undefined,
               }),
             });
           } finally {
@@ -3797,6 +3855,25 @@ export default function MainScreenPage() {
             setStitchDesignSystemId(data.designSystemId);
           if (data.appliedDesignStyleHash !== undefined)
             setAppliedDesignStyleHash(data.appliedDesignStyleHash);
+          // Image-led generation derives a design style from the reconstructed
+          // result — persist it on the idea so it shows and stays reusable.
+          if (data.derivedDesignStyle?.content && mockupIdeaId) {
+            setIdeas((prev) =>
+              prev.map((idea) =>
+                idea.id === mockupIdeaId
+                  ? {
+                      ...idea,
+                      designStyle: {
+                        id: idea.designStyle?.id ?? crypto.randomUUID(),
+                        title: "디자인 스타일",
+                        content: data.derivedDesignStyle.content,
+                        createdAt: idea.designStyle?.createdAt ?? Date.now(),
+                      },
+                    }
+                  : idea,
+              ),
+            );
+          }
           if (isNew) {
             const primaryId = crypto.randomUUID();
             // Collect extra screens Stitch created (excluding the primary one)
@@ -4056,6 +4133,7 @@ export default function MainScreenPage() {
     selectedElement,
     selectedReferences,
     citedTexts,
+    attachedStyleImage,
     ideas,
     references,
     device,
@@ -6631,6 +6709,7 @@ export default function MainScreenPage() {
               selectedElement={selectedElement}
               citedTexts={citedTexts}
               selectedReferences={selectedReferences}
+              styleImage={attachedStyleImage}
               textareaRef={textareaRef}
               inputText={inputText}
               missionContextReady={isMissionContextReady}
@@ -6649,6 +6728,8 @@ export default function MainScreenPage() {
                   prev.filter((reference) => reference.id !== id),
                 )
               }
+              onAttachStyleImage={handleAttachStyleImage}
+              onClearStyleImage={() => setAttachedStyleImage(null)}
               onInputChange={handleTextareaChange}
               onKeyDown={handleKeyDown}
               onCancelMockupGeneration={cancelMockupGeneration}

@@ -1,7 +1,7 @@
 "use client";
 
 import type { ChangeEvent, KeyboardEvent, RefObject } from "react";
-import { X } from "lucide-react";
+import { ImagePlus, X } from "lucide-react";
 
 export type ChatInputSelectedElement = {
   selector: string;
@@ -18,6 +18,7 @@ type ChatInputProps = {
   selectedElement: ChatInputSelectedElement | null;
   citedTexts: string[];
   selectedReferences: ChatInputReference[];
+  styleImage: { dataUrl: string; name?: string } | null;
   textareaRef: RefObject<HTMLTextAreaElement | null>;
   inputText: string;
   missionContextReady: boolean;
@@ -30,6 +31,8 @@ type ChatInputProps = {
   onRemoveCitedText: (index: number) => void;
   onClearSelectedReferences: () => void;
   onRemoveSelectedReference: (id: string) => void;
+  onAttachStyleImage: (file: File) => void;
+  onClearStyleImage: () => void;
   onInputChange: (event: ChangeEvent<HTMLTextAreaElement>) => void;
   onKeyDown: (event: KeyboardEvent<HTMLTextAreaElement>) => void;
   onCancelMockupGeneration: () => void;
@@ -42,6 +45,7 @@ export function ChatInput({
   selectedElement,
   citedTexts,
   selectedReferences,
+  styleImage,
   textareaRef,
   inputText,
   missionContextReady,
@@ -54,6 +58,8 @@ export function ChatInput({
   onRemoveCitedText,
   onClearSelectedReferences,
   onRemoveSelectedReference,
+  onAttachStyleImage,
+  onClearStyleImage,
   onInputChange,
   onKeyDown,
   onCancelMockupGeneration,
@@ -162,6 +168,29 @@ export function ChatInput({
         </div>
       )}
 
+      {!readOnly && styleImage && (
+        <div className="mb-2 flex items-center justify-between rounded-xl bg-slate-50 px-3 py-2 text-xs">
+          <span className="flex items-center gap-2 font-medium text-slate-700">
+            <img
+              src={styleImage.dataUrl}
+              alt=""
+              className="h-8 w-8 shrink-0 rounded object-cover"
+            />
+            <span className="max-w-40 truncate">
+              {styleImage.name || "스타일 참고 이미지"}
+            </span>
+            <span className="text-slate-400">· 이 이미지처럼 목업 생성</span>
+          </span>
+          <button
+            type="button"
+            onClick={onClearStyleImage}
+            className="text-slate-400 hover:text-slate-600"
+          >
+            <X size={12} />
+          </button>
+        </div>
+      )}
+
       {!readOnly && (
         <div className="flex items-start gap-3 rounded-3xl border border-slate-200 bg-white px-4 py-3 transition-colors focus-within:border-slate-400">
           <textarea
@@ -170,6 +199,21 @@ export function ChatInput({
             value={inputText}
             onChange={onInputChange}
             onKeyDown={onKeyDown}
+            onPaste={(event) => {
+              const items = event.clipboardData?.items;
+              if (!items) return;
+              for (let i = 0; i < items.length; i += 1) {
+                const item = items[i];
+                if (item.kind === "file" && item.type.startsWith("image/")) {
+                  const file = item.getAsFile();
+                  if (file) {
+                    event.preventDefault();
+                    onAttachStyleImage(file);
+                  }
+                  break;
+                }
+              }
+            }}
             disabled={!missionContextReady}
             placeholder={
               missionContextReady
@@ -178,6 +222,27 @@ export function ChatInput({
             }
             className="max-h-24 flex-1 resize-none bg-transparent text-sm text-slate-700 outline-none focus-visible:outline-none placeholder:text-slate-400"
           />
+          <label
+            title="스타일 참고 이미지 첨부 (이 이미지처럼 목업 생성)"
+            className={`flex shrink-0 cursor-pointer items-center self-center rounded-full p-1.5 transition ${
+              styleImage
+                ? "text-slate-700 hover:bg-slate-100"
+                : "text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+            } ${!missionContextReady ? "pointer-events-none opacity-40" : ""}`}
+          >
+            <ImagePlus size={18} />
+            <input
+              type="file"
+              accept="image/png,image/jpeg,image/webp"
+              className="hidden"
+              disabled={!missionContextReady}
+              onChange={(event) => {
+                const file = event.target.files?.[0];
+                if (file) onAttachStyleImage(file);
+                event.target.value = "";
+              }}
+            />
+          </label>
           {generatingMockup ? (
             <button
               type="button"
