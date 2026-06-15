@@ -585,6 +585,7 @@ function forceIntentFromUserText(
   hasDesignSpec: boolean,
   hasMockupHtml: boolean,
   hasSelectedElement: boolean,
+  citedReferenceCount: number,
 ) {
   const text = latestUserText.toLowerCase();
 
@@ -642,6 +643,34 @@ function forceIntentFromUserText(
         conversationHistory: plan.needs.conversationHistory ?? "recent",
       },
       reason: `${plan.reason ? `${plan.reason} ` : ""}Forced edit_mockup because a selected element exists and the user requested a targeted visual or copy change.`,
+    };
+  }
+
+  const styleRemakeGenerateRequest =
+    hasDesignSpec &&
+    (citedReferenceCount > 0 ||
+      /(레퍼런스|참고|reference|스타일|느낌|무드|톤|방향|style|mood|direction)/i.test(
+        text,
+      )) &&
+    /(아예\s*(새|새로운|다른)|다른\s*(스타일|느낌|무드|톤|방향|레퍼런스)|새로운\s*(스타일|느낌|무드|톤|방향|버전|시안)|새\s*(버전|시안|디자인|목업)|다시\s*(만들|생성|제작)|새로\s*(만들|생성|제작)|레퍼런스\s*(처럼|기반|따라|맞춰).{0,20}(만들|생성|제작)|완전(히)?\s*(새|다른)|remake|recreate|regenerate|redo|new\s+(version|design|mockup|style|mood|direction)|different\s+(style|mood|direction)|based\s+on\s+(this|the)\s+reference)/i.test(
+      text,
+    );
+  if (styleRemakeGenerateRequest) {
+    return {
+      ...plan,
+      intent: "generate_mockup" as const,
+      confidence: Math.max(plan.confidence, 0.9),
+      needs: {
+        ...plan.needs,
+        mission: true,
+        activeIdea: true,
+        designSpec: true,
+        mockupHtml: false,
+        selectedElement: false,
+        citedReferences: citedReferenceCount > 0,
+        conversationHistory: plan.needs.conversationHistory ?? "recent",
+      },
+      reason: `${plan.reason ? `${plan.reason} ` : ""}Forced generate_mockup because the user asked to remake as a new style/reference direction; the client will fork a new idea.`,
     };
   }
 
@@ -799,6 +828,7 @@ export async function POST(request: Request) {
     Boolean(designSpec),
     Boolean(mockupHtml),
     Boolean(selectedElement),
+    Array.isArray(citedReferences) ? citedReferences.length : 0,
   );
   const promptPlanReliable =
     !promptPlanFallback && promptPlan.confidence >= 0.55;

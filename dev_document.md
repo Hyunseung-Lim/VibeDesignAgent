@@ -117,11 +117,12 @@
 - **생성 흐름**: 채팅 모델이 `[GENERATE_MOCKUP: {prompt}]` 출력 → Google Stitch API 호출 → HTML 반환 → 캔버스에 표시
 - **채팅 컨텍스트**: 미션 제목/브리핑, 현재 아이디어 내용, 기존 목업 HTML, 선택된 UI 요소, 인용 레퍼런스, 대화 히스토리
 - **missionBrief 보완 주입**: 신규 목업 생성 시 아이디어 내용이 300자 미만으로 빈약하면 `missionBrief`를 `buildMockupPrompt`에 직접 주입해 제품 데이터가 Stitch에 전달되도록 보장 (수정 시에는 주입 안 함)
-- **이미지 주도 생성**: 사용자가 참고 이미지를 첨부/붙여넣거나(Phase 1) 신규 목업 요청에 URL을 주면(Phase 2 — 채팅 메시지 내 URL 또는 인용 레퍼런스의 URL), 텍스트 design.md 단계 없이 그 화면을 Stitch에 `upload`→`edit`로 재구성해 목업을 만들고 결과에서 design.md를 역추출·저장한다. URL은 서버가 스크린샷(Microlink 무키, `captureScreenshot` 추상화)으로 캡처하며 첨부 이미지가 우선. 이미지/URL이 있으면 "디자인 스타일 필수" 게이트를 우회한다. `src/app/api/stitch/route.ts`의 `isImageLed` 분기 참고 `[현행 2026-06-15 → 15.81]`
+- **이미지 주도 생성**: 사용자가 참고 이미지를 첨부/붙여넣거나(Phase 1) 신규 목업 요청에 URL을 주면(Phase 2 — 채팅 메시지 내 URL 또는 인용 레퍼런스의 URL), 텍스트 design.md 단계 없이 그 화면을 Stitch에 `upload`→`edit`로 재구성해 목업을 만들고 결과에서 design.md를 역추출·저장한다. URL은 서버가 스크린샷(Microlink 무키, `captureScreenshot` 추상화)으로 캡처하며 첨부 이미지가 우선. 모바일 목업이면 URL 캡처도 390×844 모바일 viewport, 데스크톱이면 1280×900 viewport로 찍는다. 이미지/URL이 있으면 "디자인 스타일 필수" 게이트를 우회한다. `src/app/api/stitch/route.ts`의 `isImageLed` 분기 참고 `[현행 2026-06-15 → 15.81/15.83]`
 - **캔버스**: 드래그 패닝, 휠 줌, Fit 버튼, 확대(fullscreen) 모드. 선택 스크립트는 iframe HTML에 항상 주입하고, 편집 모드 토글은 pointer event와 선택 해제 메시지로 제어해 iframe `srcDoc` reload를 피한다 `[현행 2026-06-15 → 15.78]`
 - **편집 모드**: 특정 UI 요소 클릭 선택 → `[EDIT_MOCKUP: {prompt}]`로 수정. 선택 요소가 있는 상태에서 "크게/색/문구/삭제" 등 짧은 타깃 편집 요청이 오면 planner 판단과 무관하게 현재 목업 HTML과 선택 요소 컨텍스트를 함께 주입한다 `[현행 2026-06-15 → 15.77]`
 - Stitch edit가 기존 screen을 mutate하지 않고 새 screen을 만들면 기존 artboard를 덮어쓰지 않고 새 artboard로 추가한 뒤 active로 전환한다 `[현행 2026-06-15 → 15.79]`
 - 선택 요소를 인용해 chat에 전송하면 해당 turn의 `citedElement`에는 포함하되, 입력 UI와 iframe outline에서는 즉시 선택 해제한다 `[현행 2026-06-15 → 15.80]`
+- 현재 시안에 디자인 스타일이 이미 있을 때 사용자가 다른 스타일/무드/레퍼런스 방향으로 다시 만들라고 요청하면 기존 디자인 스타일을 덮어쓰지 않고 새 시안으로 fork한다. 새 시안은 기존 brief에서 제품/UX 요구사항만 유지하고 기존 시각 스타일·레이아웃·무드 제약은 제거하며, 인용 레퍼런스/URL/첨부 이미지를 새 디자인 스타일 근거로 기록한다. Stitch 이미지 주도 생성에서는 제품 brief와 스크린샷이 충돌할 때 스크린샷의 레이아웃·밀도·배경·타입·무드가 우선한다 `[현행 2026-06-15 → 15.82/15.85]`
 - 아이디어 탭 전환 시 해당 아이디어의 목업만 표시
 - HTML Export 지원
 - Stitch 프로젝트 ID Firestore 저장 (재연결/수정 지원)
@@ -2966,3 +2967,68 @@ type ChatPlan = {
 - 의도별 픽셀 소스(추가 결정): "레퍼런스처럼 목업" → `GENERATE_MOCKUP` → upload→edit. "레퍼런스처럼 디자인 시스템/스타일만" → `CREATE_DESIGN_SPEC` → 올바른 스크린샷을 비전에 넣어 design.md 작성(Stitch 왕복 불필요). 후자는 Phase 1에 자동 포함 아님 — 같은 이미지 그라운딩을 `CREATE_DESIGN_SPEC` 경로에 별도 배선 필요.
 - Phase 1 검증(2026-06-15): 실행 중인 dev 서버 `/api/stitch`에 라이트/다크 테스트 PNG를 직접 POST. 라이트는 `bg-white text-black`로, 다크는 다크 팔레트(seed `#0a0a0a`)로 반전 없이 재구성됨. `allScreenIds`가 업로드 IMAGE 스크린을 제외(len 1)하고, `derivedDesignStyle`가 결과 기반(seed/모드/타이포)으로 역추출됨. 잘못된 styleImage는 HTTP 500 + 명확 메시지로 처리. GUI(첨부/붙여넣기·버블·게이트 우회)는 인증 뒤라 사용자가 직접 확인.
 - Phase 2 검증(2026-06-15): `/api/stitch`에 `styleSourceUrl: https://example.com`로 POST → Microlink 캡처→재구성 성공(HTTP 200), `capturedUrl` 에코, `allScreenIds` len 1, `derivedDesignStyle` seed `#f0f0f2`(example.com 실제 오프화이트 그대로). 잘못된 URL(`notaurl`, `ftp://`)은 HTTP 500 + 명확 메시지. 클라 URL 진입점(메시지/인용 레퍼런스)·게이트 우회는 코드 완료+tsc/lint 통과이나 GUI 런타임은 미구동(인증). 한계: 인용 레퍼런스 URL이 메인 페이지일 수 있어 `capturedUrl` UI 노출은 후속 권장.
+
+### 15.82 다른 스타일 레퍼런스로 다시 만들기 → 새 시안 fork `[implemented 2026-06-15]`
+
+- 문제: 현재 시안에 디자인 스타일이 이미 지정된 상태에서 사용자가 아예 다른 스타일 레퍼런스를 인용하고 "다시 만들어줘"라고 하면, 기존 디자인 스타일이 강한 제약으로 남아 새 레퍼런스 방향으로 충분히 변하지 않았음. 기존 스타일을 단순 교체하면 레거시 디자인 스타일 기록이 사라지는 문제도 있음.
+- 정책:
+  - 작은 스타일 보정은 기존 시안의 디자인 스타일을 업데이트할 수 있다.
+  - "다른 스타일/무드/레퍼런스처럼 다시", "새 버전", "아예 다른 느낌"처럼 방향 전환 신호가 있고 현재 시안에 디자인 스타일이 있으면 기존 시안을 보존하고 새 시안으로 분리한다.
+  - 새 시안은 기존 제품/UX brief를 복사하되, 시각 스타일은 새 레퍼런스/URL/첨부 이미지에 귀속한다.
+- 구현:
+  - `prompts.ts`: note/mockup/designSpec/planner prompt에 "다른 스타일 재생성은 기존 스타일 overwrite가 아니라 새 시안" 규칙 추가.
+  - `/api/chat`: `forceIntentFromUserText()`가 현재 디자인 스타일이 있는 상태의 스타일/레퍼런스 기반 재생성 요청을 `generate_mockup` intent로 강제해 `create_design_spec`로만 빠지는 것을 줄임.
+  - `main/[missionId]/page.tsx`: `shouldForkIdeaForStyleReference()` 휴리스틱 추가. 현재 시안에 designStyle이 있고, 사용자가 다른 스타일/무드/레퍼런스 기반 재생성을 요청하면 새 시안을 생성하고 active로 전환.
+  - 모델이 `CREATE_DESIGN_SPEC`를 내면 새 시안에 붙이고, 내지 않으면 `fallbackDesignStyleFromStyleReference()`로 인용 레퍼런스/URL/첨부 이미지 기반의 최소 디자인 스타일 기록을 남김.
+  - 모델이 새 note를 만들지 않고 바로 `GENERATE_MOCKUP`만 내도 runtime이 기존 제품 brief를 복사한 새 시안 shell을 만들어 목업을 거기에 생성한다.
+- 검증:
+  - `npm run lint -- 'src/app/main/[missionId]/page.tsx' src/app/api/chat/route.ts src/lib/prompts.ts` 통과(기존 warning만 유지).
+  - `./node_modules/.bin/tsc --noEmit` 통과.
+
+### 15.83 URL 레퍼런스 캡처 viewport를 target device에 맞춤 `[implemented 2026-06-15]`
+
+- 문제: 모바일 스크린 작업에서 URL 레퍼런스를 캡처할 때도 Microlink 기본 viewport를 사용해 데스크톱 화면 기준으로 캡처되는 문제가 있었음. 모바일 UI 레퍼런스는 breakpoint가 달라 색/레이아웃/밀도 신호가 달라질 수 있음.
+- 수정:
+  - `/api/stitch`의 `captureScreenshot()`에 `deviceType` 파라미터 추가.
+  - `deviceType === MOBILE`이면 Microlink 요청에 `viewport.width=390`, `viewport.height=844`, `viewport.isMobile=true`, `viewport.deviceScaleFactor=3`을 전달.
+  - 데스크톱은 `1280×900`, `isMobile=false`, `deviceScaleFactor=1`.
+  - image-led URL 캡처 호출부에서 현재 목업 `device`로 계산한 `deviceType`을 넘김.
+- 검증:
+  - `npm run lint -- src/app/api/stitch/route.ts` 통과.
+  - `./node_modules/.bin/tsc --noEmit` 통과.
+
+### 15.84 새 스타일 레퍼런스 fork 턴의 malformed action 보정 `[implemented 2026-06-15]`
+
+- 문제: `https://www.bbcicecream.com/collections/mens-tops 이런 느낌 괜찮은 거 같은데 아예 새로운 시안으로 다시 만들어볼래?` 턴에서 다음 문제가 동시에 발생.
+  - chat bubble은 `디자인 스타일 작성 중...`으로 멈췄지만 실제 시안에는 디자인 스타일이 저장됨.
+  - 노트 본문에 `제목=시안 2; 내용=# 제품 리스트 페이지 시안 노트` 같은 action payload 메타가 그대로 포함됨.
+  - 새 시안의 디자인 스타일이 시안 1과 같게 저장됨.
+  - 모델이 새 시안/스타일 설명만 하고 `GENERATE_MOCKUP` 액션을 내지 않아 Stitch 호출이 일어나지 않음.
+- 원인:
+  - `CREATE_NOTE` plain payload가 `제목=...; 내용=...` 형태일 때 note parser가 key/value를 분리하지 않고 전체를 본문으로 저장.
+  - `CREATE_DESIGN_SPEC`가 JSON 완료 형태가 아니면 UI chip parser는 partial로 남지만, runtime fallback은 디자인 스타일을 저장해 UI와 데이터 상태가 어긋남.
+  - "새로운 시안으로 다시 만들어볼래"처럼 생성 의도가 명확해도 모델이 `GENERATE_MOCKUP`을 누락하면 클라이언트는 목업 생성을 시작하지 않았음.
+- 수정:
+  - `parsePlainNotePayload()` 추가: plain `CREATE_NOTE` payload의 `제목/title`과 `내용/content/description` key를 분리해 본문에는 실제 내용만 저장.
+  - `stripDesignSpecActionBlocks()` 추가: malformed `CREATE_DESIGN_SPEC` partial block을 화면에서 제거해 `디자인 스타일 작성 중...` 칩이 남지 않게 함.
+  - style fork 시 모델이 기존 디자인 스타일과 동일한 내용을 내면 `fallbackDesignStyleFromStyleReference()`로 새 레퍼런스/URL/첨부 이미지 기반 스타일 기록을 대신 저장. 이미지 주도 생성이 성공하면 이후 `/api/stitch`의 `derivedDesignStyle`가 결과 기반 스타일로 다시 덮어씀.
+  - `shouldAutoGenerateForkedStyleMockup`: 다른 스타일 레퍼런스로 새 시안을 다시 만드는 요청에서 모델이 `GENERATE_MOCKUP`을 누락해도 클라이언트가 새 목업 생성 action을 합성하고 Stitch를 호출.
+- 검증:
+  - `npm run lint -- 'src/app/main/[missionId]/page.tsx'` 통과(기존 warning만 유지).
+  - `./node_modules/.bin/tsc --noEmit` 통과.
+
+### 15.85 새 스타일 fork에서 이전 시각 brief가 레퍼런스를 덮는 문제 수정 `[implemented 2026-06-15]`
+
+- 문제: 새 시안 fork와 URL/이미지 주도 생성은 동작했지만, WTAPS 같은 밝고 성긴 상품 리스트 레퍼런스를 줘도 결과가 기존 Mixtape 시안의 다크 톤, 2열 고밀도 그리드, 스트릿 무드를 계속 따랐음.
+- 원인:
+  - 새 시안 shell을 만들 때 기존 아이디어 description을 거의 그대로 복사해 제품/UX 요구사항뿐 아니라 기존 시각 스타일·레이아웃·무드 제약까지 함께 들어감.
+  - Stitch 이미지 재구성 prompt에서 제품/content brief가 스크린샷과 충돌할 때 어떤 쪽이 우선인지 명시가 약해, 이전 brief의 다크/2열 제약이 레퍼런스 스크린샷의 흰 배경/희소 레이아웃 신호를 누를 수 있었음.
+- 수정:
+  - `productBriefForStyleFork()` 추가: style fork용 새 시안 description은 기존 description에서 제품/UX 요구사항만 남기고, 비주얼/스타일/무드/톤/컬러/타이포/레이아웃/그리드/밀도/브랜드 레퍼런스 관련 줄은 제거.
+  - style fork shell 생성 시 전체 description 복사 대신 `productBriefForStyleFork(activeIdea.description)`을 사용.
+  - `styleImageReconstructPrompt()`에 충돌 우선순위 추가: 레이아웃, 밀도, grid columns, navigation, filter UI, card structure, background, typography, mood는 업로드된 스크린샷이 항상 우선이고, brief는 상품명/필수 필드/카테고리/미션 카피에만 사용.
+- 기대 효과:
+  - 새 레퍼런스가 WTAPS처럼 white background, 큰 wordmark/header, checkbox filter, item/image toggle, 1열 큰 이미지 중심이면 기존 dark/2-column 스타일보다 해당 화면 구조가 우선 반영됨.
+- 검증:
+  - `npm run lint -- 'src/app/main/[missionId]/page.tsx' src/lib/prompts.ts` 통과(기존 warning만 유지).
+  - `./node_modules/.bin/tsc --noEmit` 통과.

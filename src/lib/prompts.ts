@@ -37,12 +37,14 @@ const CHAT_NOTE_ACTION_PROMPT = `Note action rules:
 - High-level concept, mood direction, and product positioning BELONG in notes. Only concrete CSS-level style constraints belong in 디자인 스타일: color tokens/palettes, typography specs, spacing/sizing values, border radius, shadows, component styling rules, and style "avoid" lists.
 - Never include sections such as "Colors", "Typography", "UI Style", or "Avoid" inside [CREATE_NOTE] or [UPDATE_NOTE].
 - If the user asks for both a 시안/idea and visual direction, output the product/UX idea in [CREATE_NOTE] and output the visual direction separately with [CREATE_DESIGN_SPEC: {"content":"markdown content"}].
+- If the active 시안 already has a 디자인 스타일 and the user asks to remake/recreate as a different style, new mood, new version, or newly cited reference direction, create a NEW 시안 instead of overwriting the active 시안's 디자인 스타일. Preserve the product/UX brief but separate the new visual direction into [CREATE_DESIGN_SPEC].
 - The app preserves 시안 N titles, so keep title empty or omit it unless the user explicitly asks for a title.
 - Output only the note action ([CREATE_NOTE] or [UPDATE_NOTE]) this turn. Do NOT also emit [GENERATE_MOCKUP] or [EDIT_MOCKUP] — including their Korean aliases such as [목업 생성 요청], [생성 요청], or [목업 수정 요청] — unless the user explicitly asked for both a note and a mockup in the same message.
 - After the note you may suggest a mockup as a possible next step, but write that suggestion as plain prose only (e.g. "원하시면 이 시안으로 목업을 만들어 드릴게요"). Never wrap such a suggestion in brackets or any action tag: any bracketed action phrase is executed immediately as a command. Wait for the user to confirm before generating a mockup.`;
 
 const CHAT_MOCKUP_GENERATE_ACTION_PROMPT = `Mockup generation rules:
 - Use [GENERATE_MOCKUP: ...] when the user asks to generate/run/visualize a mockup or asks for a new design version.
+- If the active 시안 already has a 디자인 스타일 and the user asks to remake/recreate using a different style, new mood, new version, or newly cited reference direction, treat it as a new 시안 direction rather than an edit of the current 시안. The new 시안 needs its own [CREATE_NOTE] and [CREATE_DESIGN_SPEC] before or along with [GENERATE_MOCKUP] when the user explicitly asked to make it.
 - Do NOT use [GENERATE_MOCKUP] when the user is only asking whether there is enough information, whether a mockup is possible, whether you are ready, or what is still needed. Answer the assessment in plain prose only.
 - Conditional offers such as "필요하면", "원하시면", "if needed", or "I can..." are not permission to generate. Write them as plain prose and wait for the user to explicitly ask to make/generate/proceed.
 - A 디자인 스타일 is REQUIRED before any mockup. If the active 시안 has no 디자인 스타일 yet, do NOT emit [GENERATE_MOCKUP] — the app will block it. Instead define the visual direction first with [CREATE_DESIGN_SPEC: ...] when the user has given or implied a visual style, or ask the user about color palette, typography, and mood, then generate on a later turn once a 디자인 스타일 exists.
@@ -134,7 +136,7 @@ export function chatInteractionMemoryPrompt(compactMemoryJson: string) {
 }
 
 export function chatDesignSpecPrompt(designSpec: string) {
-  return `Applied 디자인 스타일 for the current 시안:\n${designSpec}\n\nAlways follow these constraints when generating or editing mockups for this 시안. If the user asks to change the style, update this single note-level 디자인 스타일 with [CREATE_DESIGN_SPEC: {...}].`;
+  return `Applied 디자인 스타일 for the current 시안:\n${designSpec}\n\nAlways follow these constraints when generating or editing mockups for this 시안. If the user asks for small refinements to this 시안's current style, update this single note-level 디자인 스타일 with [CREATE_DESIGN_SPEC: {...}]. If the user asks to remake/recreate with a different style, new mood, new version, or newly cited reference direction, preserve the current 시안 and create a separate new 시안 with its own 디자인 스타일 instead of overwriting this one.`;
 }
 
 export function chatCitedTextsPrompt(citedTexts: string[]) {
@@ -246,6 +248,7 @@ Rules:
 - Always prefer the smallest useful context.
 - If the user asks to create, define, revise, recommend, or write 디자인 스타일, style guide, design system, design spec, visual style notes, colors, typography, spacing, mood, tone, UI style, brand tone, or avoid-list style constraints, choose intent "create_design_spec", not "create_note" or "generate_mockup".
 - If the user asks whether there is enough information to make a mockup, whether a mockup is possible, whether you are ready, or what is still needed before making one, choose intent "answer", not "generate_mockup".
+- If the active idea already has a design style and the current request asks to remake/recreate as a different style, new mood, new version, or newly cited reference direction, choose "generate_mockup" when the user explicitly asks to make it now, and require activeIdea/designSpec/citedReferences as needed. The app will fork this into a new idea; do not treat it as a normal edit of the active idea.
 - If the current request asks to organize visual direction so it can be inserted into a style/reference section, choose intent "create_design_spec".
 - If the user asks to add, include, or put specific apps, products, brands, sites, or examples into the reference section, list, or panel (e.g. "X랑 Y 레퍼런스에 추가해줘"), choose intent "fetch_references" — they must be searched and added as reference cards, not written into a note.
 - Need mockupHtml for editing, presentation from current mockup, or explicit analysis of the existing mockup.
@@ -555,6 +558,7 @@ export function styleImageReconstructPrompt(
     `Faithfully rebuild the uploaded screenshot as a working, responsive ${deviceLabel}.`,
     `Treat the uploaded image as the single source of truth for visual style. Preserve its EXACT background lightness (never invert light to dark or dark to light), color palette, typography feel, spacing/density, corner rounding, and overall layout structure.`,
     `Do not substitute a generic theme or rely on outside brand knowledge — only reproduce what is visible in the image.`,
+    `If the product/content brief conflicts with the uploaded screenshot about layout, density, grid columns, navigation, filter UI, card structure, background, typography, or mood, the uploaded screenshot ALWAYS wins. Use the brief only for product names, required fields, category/content, and mission-specific copy.`,
     productPrompt
       ? `Use this product/content brief to populate the screen with real, on-brief content:\n${productPrompt}`
       : "",

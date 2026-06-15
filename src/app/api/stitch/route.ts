@@ -443,10 +443,19 @@ async function choosePrimaryScreen(
   };
 }
 
+function screenshotViewport(deviceType: DeviceType) {
+  return deviceType === "MOBILE"
+    ? { width: 390, height: 844, isMobile: true, deviceScaleFactor: 3 }
+    : { width: 1280, height: 900, isMobile: false, deviceScaleFactor: 1 };
+}
+
 // Screenshot a live URL into a data URL. Abstracted so the engine can be
 // swapped later (managed API with key, self-hosted Playwright, ...). v1 uses
 // Microlink's no-key endpoint. Returns a base64 data URL; throws on failure.
-async function captureScreenshot(rawUrl: string): Promise<string> {
+async function captureScreenshot(
+  rawUrl: string,
+  deviceType: DeviceType,
+): Promise<string> {
   let url: URL;
   try {
     url = new URL(rawUrl);
@@ -456,8 +465,19 @@ async function captureScreenshot(rawUrl: string): Promise<string> {
   if (!["http:", "https:"].includes(url.protocol)) {
     throw new Error("Style source URL must be http(s).");
   }
-  const api = `https://api.microlink.io/?url=${encodeURIComponent(url.toString())}&screenshot=true&meta=false`;
-  const res = await fetch(api, {
+  const viewport = screenshotViewport(deviceType);
+  const apiUrl = new URL("https://api.microlink.io/");
+  apiUrl.searchParams.set("url", url.toString());
+  apiUrl.searchParams.set("screenshot", "true");
+  apiUrl.searchParams.set("meta", "false");
+  apiUrl.searchParams.set("viewport.width", String(viewport.width));
+  apiUrl.searchParams.set("viewport.height", String(viewport.height));
+  apiUrl.searchParams.set("viewport.isMobile", String(viewport.isMobile));
+  apiUrl.searchParams.set(
+    "viewport.deviceScaleFactor",
+    String(viewport.deviceScaleFactor),
+  );
+  const res = await fetch(apiUrl.toString(), {
     headers: { Accept: "application/json" },
     signal: AbortSignal.timeout(45_000),
   });
@@ -642,7 +662,7 @@ export async function POST(request: Request) {
         let styleImageDataUrl = styleImage?.dataUrl ?? null;
         if (!styleImageDataUrl && styleSourceUrl) {
           console.log("[stitch] capturing screenshot of style source URL...");
-          styleImageDataUrl = await captureScreenshot(styleSourceUrl);
+          styleImageDataUrl = await captureScreenshot(styleSourceUrl, deviceType);
           capturedUrl = styleSourceUrl;
         }
         if (!styleImageDataUrl) {

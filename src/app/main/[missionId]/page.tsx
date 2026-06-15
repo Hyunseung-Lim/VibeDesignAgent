@@ -815,6 +815,31 @@ function extractPlainNoteContent(text: string, tag: "CREATE_NOTE" | "UPDATE_NOTE
   return text.slice(contentStart, i - 1).trim();
 }
 
+function parsePlainNotePayload(payload: string): {
+  title?: string;
+  description: string;
+} {
+  const trimmed = payload.trim();
+  const keyValue = trimmed.match(
+    /^(?:제목|title)\s*[:=]\s*([^;\n]+)\s*[;\n]\s*(?:내용|본문|description|content|body|note)\s*[:=]\s*([\s\S]+)$/i,
+  );
+  if (keyValue) {
+    return {
+      title: keyValue[1]?.trim() || undefined,
+      description: keyValue[2]?.trim() ?? "",
+    };
+  }
+
+  const contentOnly = trimmed.match(
+    /^(?:내용|본문|description|content|body|note)\s*[:=]\s*([\s\S]+)$/i,
+  );
+  if (contentOnly) {
+    return { description: contentOnly[1]?.trim() ?? "" };
+  }
+
+  return { description: trimmed };
+}
+
 // Models sometimes emit the note body under a non-standard key. Accept the
 // common aliases so a populated note doesn't get dropped as "empty".
 const NOTE_CONTENT_KEYS = [
@@ -879,7 +904,9 @@ function parseNoteBlock(
   }
 
   const plain = extractPlainNoteContent(text, tag);
-  return { description: plain && !plain.startsWith("{") ? plain : "" };
+  return plain && !plain.startsWith("{")
+    ? parsePlainNotePayload(plain)
+    : { description: "" };
 }
 
 function parseCreateNoteBlock(text: string): CreateNoteData | null {
@@ -929,6 +956,21 @@ function parseCreateDesignSpecBlock(
     }
   }
   return null;
+}
+
+function stripDesignSpecActionBlocks(content: string) {
+  return content
+    .replace(/\[CREATE_DESIGN_SPEC:[\s\S]*?(?:\](?=\s|$)|$)/g, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function isSameDesignStyle(a?: string | null, b?: string | null) {
+  const normalize = (value?: string | null) =>
+    (value ?? "").replace(/\s+/g, " ").trim().toLowerCase();
+  const left = normalize(a);
+  const right = normalize(b);
+  return Boolean(left && right && left === right);
 }
 
 function defaultMockupPromptForIdea(idea: Idea | null, targetDevice: Device) {
@@ -1134,6 +1176,78 @@ function nextDraftTitle(ideas: Idea[]) {
 function isExplicitNewMockupRequest(text: string) {
   return /아예\s*(새|새로운|다른)|새(로운|로)?\s*(목업|디자인|버전|시안|화면|캔버스|레이아웃|구조|컨셉|콘셉트)|새\s*레이아웃|다른\s*(목업|디자인|버전|시안|화면|캔버스|레이아웃|구조|컨셉|콘셉트)|처음부터|다시\s*(만들|생성)|완전(히)?\s*(새|다른)|another\s+(mockup|version|design|layout|concept)|new\s+(mockup|version|design|layout|concept)|fresh\s+(mockup|canvas|design|layout|concept)/i.test(
     text,
+  );
+}
+
+function shouldForkIdeaForStyleReference(
+  text: string,
+  activeIdea?: Idea | null,
+  citedReferenceCount = 0,
+) {
+  if (!activeIdea?.designStyle?.content?.trim()) return false;
+  const normalized = text.trim().toLowerCase();
+  const remakeIntent =
+    isExplicitNewMockupRequest(normalized) ||
+    /(다시|새로|새롭게|재생성|재구성|리메이크|갈아엎|바꿔서|바꾸고|만들어줘|생성해줘|제작해줘|버전|version|remake|recreate|regenerate|redo|from scratch)/i.test(
+      normalized,
+    );
+  const styleShift =
+    /(다른\s*(스타일|느낌|무드|톤|방향|레퍼런스)|새로운\s*(스타일|느낌|무드|톤|방향)|아예\s*다른|완전(히)?\s*다른|레퍼런스\s*(처럼|느낌|기반|따라|맞춰)|참고\s*(해서|해서는|느낌|기반)|스타일\s*(바꿔|변경|전환)|무드\s*(바꿔|변경|전환)|톤\s*(바꿔|변경|전환)|different\s+(style|mood|direction|reference)|new\s+(style|mood|direction)|like\s+(this|the)\s+reference|based\s+on\s+(this|the)\s+reference)/i.test(
+      normalized,
+    );
+  const citedStyleRemake =
+    citedReferenceCount > 0 &&
+    remakeIntent &&
+    /(레퍼런스|참고|reference|스타일|느낌|무드|톤|방향|처럼|기반|따라|맞춰)/i.test(
+      normalized,
+    );
+  return (remakeIntent && styleShift) || citedStyleRemake;
+}
+
+function fallbackDesignStyleFromStyleReference(
+  references: Reference[],
+  styleSourceUrl: string | null,
+  hasStyleImage: boolean,
+) {
+  const lines = [
+    "Use the newly cited reference direction as this 시안's visual source of truth.",
+  ];
+  if (references.length > 0) {
+    lines.push(
+      `Cited references: ${references
+        .slice(0, 3)
+        .map((reference) =>
+          [reference.title, reference.url].filter(Boolean).join(" - "),
+        )
+        .join("; ")}`,
+    );
+  } else if (styleSourceUrl) {
+    lines.push(`Reference URL: ${styleSourceUrl}`);
+  } else if (hasStyleImage) {
+    lines.push("Reference image attached in the chat turn.");
+  }
+  lines.push(
+    "Translate the reference into concrete palette, typography, density, component styling, and visual hierarchy for this 시안.",
+  );
+  return lines.join("\n");
+}
+
+function productBriefForStyleFork(description: string) {
+  const lines = description
+    .split(/\n+/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .filter(
+      (line) =>
+        !/(비주얼|스타일|디자인\s*스타일|무드|톤|톤앤매너|컬러|색상|색감|팔레트|타이포|폰트|서체|간격|여백|밀도|다크|라이트|어둡|밝|레트로|스트릿|힙합|Represent|BBC|WTAPS|레이아웃|그리드|2열|1열|카드\s*구분|이미지\s*중심|절제|강한\s*이미지)/i.test(
+          line,
+        ),
+    );
+
+  const cleaned = lines.join("\n").trim();
+  return (
+    cleaned ||
+    "제품 리스트 페이지. 기존 시안의 제품/UX 요구사항, 상품 카드 필수 정보, 필터/정렬 기능, 카테고리 맥락은 유지하되 시각 스타일과 레이아웃은 새 레퍼런스를 따른다."
   );
 }
 
@@ -3359,6 +3473,13 @@ export default function MainScreenPage() {
       fullText = normalizeActionBlockAliases(
         extractChatPhases(fullText).visibleText,
       );
+      const activeIdeaAtTurnStart =
+        ideas.find((idea) => idea.id === activeIdeaId) ?? null;
+      const shouldForkStyleDirection = shouldForkIdeaForStyleReference(
+        text,
+        activeIdeaAtTurnStart,
+        selectedReferences.length,
+      );
 
       // Convert web search citation domains (domain.com) to clickable markdown links
       fullText = fullText.replace(
@@ -3412,7 +3533,7 @@ export default function MainScreenPage() {
           activeIdea &&
           activeIdea.designStyle &&
           !activeIdea.description.trim();
-        if (shouldFillStyleShell) {
+        if (shouldFillStyleShell && !shouldForkStyleDirection) {
           turnIdeaOverride = {
             ...activeIdea,
             description: createNoteDescription,
@@ -3522,6 +3643,47 @@ export default function MainScreenPage() {
       }
 
       const designSpecBlock = parseCreateDesignSpecBlock(fullText);
+      if (
+        shouldForkStyleDirection &&
+        !turnIdeaOverride &&
+        activeIdeaAtTurnStart
+      ) {
+        const forkedIdea: Idea = {
+          id: crypto.randomUUID(),
+          title: nextDraftTitle(ideas),
+          description: productBriefForStyleFork(activeIdeaAtTurnStart.description),
+          createdAt: Date.now(),
+        };
+        turnIdeaOverride = forkedIdea;
+        appendActivityLog({
+          section: "note",
+          action: "create",
+          input: text,
+          output: forkedIdea.description,
+          outputTitle: forkedIdea.title,
+        });
+        setIdeas((prev) => [...prev, forkedIdea]);
+        setActiveIdeaId(forkedIdea.id);
+        setActiveArtboardId(null);
+        setIsIdeaExpanded(false);
+        setActiveIdeaTab("idea");
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === assistantId &&
+            !m.content.includes("새 시안으로 분리")
+              ? {
+                  ...m,
+                  content: [
+                    m.content.trimEnd(),
+                    "기존 디자인 스타일은 유지하고, 새 레퍼런스 방향은 새 시안으로 분리해 진행합니다.",
+                  ]
+                    .filter(Boolean)
+                    .join("\n\n"),
+                }
+              : m,
+          ),
+        );
+      }
       if (designSpecBlock?.content) {
         let targetIdeaId = turnIdeaOverride?.id ?? activeIdeaId;
         let targetIdea =
@@ -3550,10 +3712,22 @@ export default function MainScreenPage() {
           setIsIdeaExpanded(false);
           setActiveIdeaTab("style");
         }
+        const designSpecContent =
+          shouldForkStyleDirection &&
+          isSameDesignStyle(
+            designSpecBlock.content,
+            activeIdeaAtTurnStart?.designStyle?.content,
+          )
+            ? fallbackDesignStyleFromStyleReference(
+                selectedReferences,
+                styleSourceUrlForTurn,
+                Boolean(styleImageForTurn),
+              )
+            : designSpecBlock.content;
         const newSpec: DesignStyle = {
           id: targetIdea?.designStyle?.id ?? crypto.randomUUID(),
           title: "디자인 스타일",
-          content: designSpecBlock.content,
+          content: designSpecContent,
           createdAt: targetIdea?.designStyle?.createdAt ?? Date.now(),
         };
         if (targetIdeaId) {
@@ -3575,6 +3749,35 @@ export default function MainScreenPage() {
             designStyle: newSpec,
           };
         }
+        setIsDesignSpecOpen(true);
+      }
+      if (
+        shouldForkStyleDirection &&
+        turnIdeaOverride &&
+        !turnIdeaOverride.designStyle?.content?.trim() &&
+        !designSpecBlock?.content
+      ) {
+        const fallbackSpec: DesignStyle = {
+          id: crypto.randomUUID(),
+          title: "디자인 스타일",
+          content: fallbackDesignStyleFromStyleReference(
+            selectedReferences,
+            styleSourceUrlForTurn,
+            Boolean(styleImageForTurn),
+          ),
+          createdAt: Date.now(),
+        };
+        turnIdeaOverride = {
+          ...turnIdeaOverride,
+          designStyle: fallbackSpec,
+        };
+        setIdeas((prev) =>
+          prev.map((idea) =>
+            idea.id === turnIdeaOverride?.id
+              ? { ...idea, designStyle: fallbackSpec }
+              : idea,
+          ),
+        );
         setIsDesignSpecOpen(true);
       }
 
@@ -3668,9 +3871,44 @@ export default function MainScreenPage() {
       const editMatch = !generateMatch
         ? fullText.match(/\[EDIT_MOCKUP(?::\s*([\s\S]*?))?\]/)
         : null;
+      const shouldAutoGenerateForkedStyleMockup =
+        shouldForkStyleDirection &&
+        !generateMatch &&
+        !editMatch &&
+        isExplicitNewMockupRequest(text);
+
+      if (shouldAutoGenerateForkedStyleMockup) {
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === assistantId
+              ? {
+                  ...m,
+                  content: [
+                    stripDesignSpecActionBlocks(m.content),
+                    "[GENERATE_MOCKUP: Create a new high-fidelity UI mockup for the forked idea using the newly cited reference direction as the visual source. Preserve the product requirements and required product-list information from the copied brief, but reinterpret the visual language, layout density, typography, palette, image scale, filters, sorting controls, and product cards from the cited reference. Do not reuse the previous 시안's visual style.]",
+                  ]
+                    .filter(Boolean)
+                    .join("\n\n"),
+                }
+              : m,
+          ),
+        );
+      } else if (shouldForkStyleDirection && !designSpecBlock?.content) {
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === assistantId
+              ? {
+                  ...m,
+                  content: stripDesignSpecActionBlocks(m.content),
+                }
+              : m,
+          ),
+        );
+      }
 
       const shouldSuppressMockupAction =
-        (generateMatch || editMatch) && isMockupReadinessQuestion(text);
+        (generateMatch || editMatch || shouldAutoGenerateForkedStyleMockup) &&
+        isMockupReadinessQuestion(text);
       if (shouldSuppressMockupAction) {
         setMessages((prev) =>
           prev.map((m) =>
@@ -3687,7 +3925,7 @@ export default function MainScreenPage() {
               : m,
           ),
         );
-      } else if (generateMatch || editMatch) {
+      } else if (generateMatch || editMatch || shouldAutoGenerateForkedStyleMockup) {
         const effectiveIdeas = turnIdeaOverride
           ? ideas.some((idea) => idea.id === turnIdeaOverride?.id)
             ? ideas.map((idea) =>
@@ -3701,7 +3939,10 @@ export default function MainScreenPage() {
           ideas.find((i) => i.id === effectiveActiveIdeaId) ??
           null;
         const parsedPrompt = normalizeMockupActionPrompt(
-          (generateMatch ?? editMatch)?.[1] ?? "",
+          (generateMatch ?? editMatch)?.[1] ??
+            (shouldAutoGenerateForkedStyleMockup
+              ? "Create a new high-fidelity UI mockup for the forked idea using the newly cited reference direction as the visual source. Preserve the product requirements and required product-list information from the copied brief, but reinterpret the visual language, layout density, typography, palette, image scale, filters, sorting controls, and product cards from the cited reference. Do not reuse the previous 시안's visual style."
+              : ""),
         );
         const prompt =
           parsedPrompt ||
@@ -3709,7 +3950,7 @@ export default function MainScreenPage() {
             ? defaultMockupPromptForIdea(activeIdea, device)
             : "Refine the current mockup according to the latest user request while preserving the existing structure.");
         const mockupIdeaId = effectiveActiveIdeaId;
-        const isNew = Boolean(generateMatch);
+        const isNew = Boolean(generateMatch || shouldAutoGenerateForkedStyleMockup);
         const stitchPrompt = buildMockupPrompt(
           prompt,
           activeIdea,
