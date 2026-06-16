@@ -22,7 +22,10 @@ export function IdeaTabs({
   onDelete,
 }: IdeaTabsProps) {
   return (
-    <div className="flex gap-2 overflow-x-auto pb-4 mb-6 border-b border-slate-100">
+    <div
+      data-tour="idea-tabs"
+      className="flex gap-2 overflow-x-auto pb-4 mb-6 border-b border-slate-100"
+    >
       {ideas.map((idea) => {
         const active = activeIdeaId === idea.id;
         return (

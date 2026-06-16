@@ -74,7 +74,11 @@ export function DesignStyleSection({
   onToggle,
 }: DesignStyleSectionProps) {
   return (
-    <section ref={sectionRef} className="space-y-3 scroll-mt-4">
+    <section
+      ref={sectionRef}
+      data-tour="idea-style"
+      className="space-y-3 scroll-mt-4"
+    >
       <div className="overflow-hidden rounded-2xl border border-indigo-100 bg-indigo-50/40">
         <button
           type="button"

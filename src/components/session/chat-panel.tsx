@@ -26,7 +26,10 @@ export function ChatPanel({
   children,
 }: ChatPanelProps) {
   return (
-    <aside className="relative flex h-full w-full max-w-md flex-col overflow-hidden border-l border-slate-200 bg-white">
+    <aside
+      data-tour="chat-panel"
+      className="relative flex h-full w-full max-w-md flex-col overflow-hidden border-l border-slate-200 bg-white"
+    >
       {showReviewTabs && (
         <div className="flex shrink-0 border-b border-slate-200">
           <button

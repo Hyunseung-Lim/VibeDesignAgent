@@ -44,6 +44,7 @@ export function FinalDesignSelector({
   return (
     <div
       ref={sectionRef}
+      data-tour="final-design"
       className="space-y-4 rounded-3xl border border-slate-200 bg-white p-6"
     >
       <div className="flex items-center justify-between">

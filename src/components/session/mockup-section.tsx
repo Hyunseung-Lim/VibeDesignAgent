@@ -58,7 +58,11 @@ export function MockupSection({
   onCancelGeneration,
 }: MockupSectionProps) {
   return (
-    <section ref={sectionRef} className="space-y-3 scroll-mt-4">
+    <section
+      ref={sectionRef}
+      data-tour="idea-mockup"
+      className="space-y-3 scroll-mt-4"
+    >
       <div className="flex items-center justify-between">
         <p className="text-base font-semibold text-slate-900">Mockup</p>
         {hasArtboards && (

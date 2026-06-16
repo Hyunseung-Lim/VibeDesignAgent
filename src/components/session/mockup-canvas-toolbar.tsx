@@ -103,6 +103,7 @@ export function MockupCanvasToolbar({
           variant={editMode ? "secondary" : "outline"}
           size="sm"
           onClick={onToggleEditMode}
+          data-tour="mockup-edit-button"
           className={cn(
             "bg-white",
             editMode && "border-slate-300 bg-slate-100 text-slate-900",

@@ -72,7 +72,10 @@ export function MissionBriefSection({
   onToggleOption,
 }: MissionBriefSectionProps) {
   return (
-    <div className="rounded-3xl border border-slate-200 bg-white p-6">
+    <div
+      data-tour="mission-brief"
+      className="rounded-3xl border border-slate-200 bg-white p-6"
+    >
       <div className="flex items-center justify-between">
         <p className="text-xl font-semibold text-slate-900">Mission</p>
         <div className="flex items-center gap-2">

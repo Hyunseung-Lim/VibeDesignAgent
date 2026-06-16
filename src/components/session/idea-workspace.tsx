@@ -34,7 +34,10 @@ export function IdeaWorkspace({
   onSelectSection,
 }: IdeaWorkspaceProps) {
   return (
-    <div className="rounded-3xl border border-slate-200 bg-white p-6">
+    <div
+      data-tour="idea-workspace"
+      className="rounded-3xl border border-slate-200 bg-white p-6"
+    >
       {ideas.length === 0 ? (
         <div className="flex flex-col items-center gap-4 rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-8 text-center text-sm text-slate-400">
           <p>에이전트에게 시안을 작성해달라고 요청하세요.</p>
@@ -50,7 +53,10 @@ export function IdeaWorkspace({
           />
 
           <div className="flex gap-4">
-            <div className="sticky top-4 flex flex-col space-y-2 self-start text-sm text-slate-600">
+            <div
+              data-tour="idea-section-nav"
+              className="sticky top-4 flex flex-col space-y-2 self-start text-sm text-slate-600"
+            >
               {sections.map((section) => (
                 <button
                   key={section.id}

@@ -29,6 +29,7 @@ import {
   DownloadSimpleIcon,
   XIcon,
 } from "@phosphor-icons/react";
+import { HelpCircleIcon } from "lucide-react";
 import { toast } from "sonner";
 import { isAdminEmail } from "@/lib/admin";
 import {
@@ -69,6 +70,7 @@ import {
   SetupMissionSummaryCard,
 } from "@/components/session/session-setup-cards";
 import { SessionSetupStepper } from "@/components/session/session-setup-stepper";
+import { SessionProductTour } from "@/components/session/session-product-tour";
 import { MemoryScoreBar } from "@/components/memory/memory-score-bar";
 import { MemoryCard } from "@/components/memory/memory-card";
 import { SessionMemoryDiff } from "@/components/memory/session-memory-diff";
@@ -1710,6 +1712,8 @@ export default function MainScreenPage() {
   const [profileStep, setProfileStep] = useState<1 | 2 | 3>(1);
   const [profileRawMarkdown, setProfileRawMarkdown] = useState("");
   const [profileSaving, setProfileSaving] = useState(false);
+  const [isProductTourOpen, setIsProductTourOpen] = useState(false);
+  const [productTourAutoChecked, setProductTourAutoChecked] = useState(false);
   const [parentMissionTitle, setParentMissionTitle] = useState("");
   const [parentMissionBrief, setParentMissionBrief] = useState("");
   const [missionOptions, setMissionOptions] = useState<MissionOption[]>([]);
@@ -1835,6 +1839,36 @@ export default function MainScreenPage() {
       references.length > 0 ||
       activityLog.length > 0,
   );
+  const canShowProductTour =
+    !isReadOnly && Boolean(selectedOptionId) && profileModalConfirmed;
+
+  const handleProductTourOpenChange = useCallback(
+    (open: boolean) => {
+      setIsProductTourOpen(open);
+    },
+    [],
+  );
+
+  useEffect(() => {
+    if (
+      productTourAutoChecked ||
+      !isOnboardingMission ||
+      !canShowProductTour ||
+      !isMissionContextReady ||
+      !sessionLoaded
+    ) {
+      return;
+    }
+    setProductTourAutoChecked(true);
+    setIsProductTourOpen(true);
+  }, [
+    canShowProductTour,
+    isOnboardingMission,
+    isMissionContextReady,
+    productTourAutoChecked,
+    sessionLoaded,
+  ]);
+
   const targetSessionUserId = isViewingAsAdmin ? viewAs : userId;
   const reviewMemoryIds = useMemo(
     () =>
@@ -5785,6 +5819,11 @@ export default function MainScreenPage() {
           onClose={() => setRawPromptModal(null)}
         />
       )}
+      <SessionProductTour
+        open={isProductTourOpen}
+        hasIdeas={ideas.length > 0}
+        onOpenChange={handleProductTourOpenChange}
+      />
       {/* Read-only banner */}
       {isReadOnly && (
         <div className="flex items-center justify-between bg-amber-50 border-b border-amber-200 px-6 py-2 text-xs text-amber-700">
@@ -5847,6 +5886,17 @@ export default function MainScreenPage() {
           </h1>
         </div>
         <div className="flex items-center gap-4 text-sm text-slate-500">
+          {canShowProductTour && (
+            <button
+              type="button"
+              onClick={() => setIsProductTourOpen(true)}
+              data-tour="tutorial-button"
+              className="inline-flex items-center gap-1.5 rounded-full border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700 transition hover:border-slate-400 hover:bg-slate-50"
+            >
+              <HelpCircleIcon size={15} />
+              튜토리얼
+            </button>
+          )}
           {isAdmin && !isReadOnly && (
             <label className="flex items-center gap-2 text-xs font-semibold text-slate-500">
               <span>LLM</span>
@@ -5876,6 +5926,7 @@ export default function MainScreenPage() {
           )}
           {timerDisplay && (
             <span
+              data-tour="session-timer"
               className={`font-mono text-lg font-semibold tabular-nums ${timerDisplay === "시간 종료" ? "text-red-500" : missionDurationMinutes && timerStartedAt && missionDurationMinutes * 60 * 1000 - (Date.now() - timerStartedAt) < 60000 ? "text-red-500" : "text-slate-900"}`}
             >
               {missionDurationMinutes
@@ -5884,7 +5935,7 @@ export default function MainScreenPage() {
             </span>
           )}
           {!isReadOnly && selectedOptionId && (
-            <div className="flex items-center gap-2">
+            <div data-tour="session-finish" className="flex items-center gap-2">
               {showFinalDesignWarning && (
                 <>
                   <span className="text-xs text-amber-600">

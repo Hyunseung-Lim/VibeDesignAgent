@@ -20,7 +20,11 @@ export function IdeaNoteSection({
   onToggleExpanded,
 }: IdeaNoteSectionProps) {
   return (
-    <section ref={sectionRef} className="space-y-4 scroll-mt-4">
+    <section
+      ref={sectionRef}
+      data-tour="idea-brief"
+      className="space-y-4 scroll-mt-4"
+    >
       <div className="flex items-center justify-between">
         <div className="space-y-1">
           <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">

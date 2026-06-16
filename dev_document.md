@@ -65,6 +65,7 @@
 
 - 좌측 패널 (스크롤 가능): Mission → Reference → 아이디어 탭 (Idea/Mockup)
 - 우측 패널 (고정): AI 에이전트 채팅
+- 작업 화면에는 실제 화면 영역을 하이라이트하는 제품 투어가 있다. 온보딩 미션에서는 작업 화면 진입 시 자동으로 열리고, 일반 미션에서는 헤더의 `튜토리얼` 버튼을 눌러야 열린다. 튜토리얼은 미션 설명 공간, 채팅 공간, 시안을 여러 개 만들 수 있다는 점, 각 시안이 Design Brief/디자인 스타일/Mockup으로 구성된다는 점, 목업 편집 버튼 사용, Final Design 선택, 타이머와 세션 종료 버튼을 안내한 뒤 마지막에 튜토리얼 버튼 위치를 다시 안내한다 `[현행 2026-06-16 → 15.88]`
 
 ### `/agent` — Agent Manage
 
@@ -3068,4 +3069,19 @@ type ChatPlan = {
   - LLM prompt의 산출물 개념을 `design brief`로 정리하되, 내부 명령어는 기존 action tag를 그대로 사용하도록 유지.
 - 검증:
   - `npm run lint -- src/lib/session/chat-content.ts src/components/session/idea-note-section.tsx 'src/app/main/[missionId]/page.tsx' src/lib/prompts.ts src/app/api/chat/route.ts src/components/onboarding/onboarding-steps.tsx src/app/onboarding/page.tsx src/app/lobby/page.tsx` 통과.
+  - `./node_modules/.bin/tsc --noEmit` 통과.
+
+### 15.88 시안 구조 제품 투어 추가 `[implemented 2026-06-16]`
+
+- 요청: QA Note `튜토리얼 추가하기`.
+- Notion 기준:
+  - Intercom/Mobbin 예시처럼 실제 화면을 어둡게 깔고 특정 UI 영역을 하이라이트하는 제품 투어 형태.
+  - 특히 디자인 시안 안에 Design Brief, 디자인 스타일, Mockup이 있다는 점과 시안을 여러 개 만들 수 있다는 점을 알려야 함.
+  - 미션 설명, 채팅 공간, 목업 편집 버튼, Final Design 선택, 타이머와 세션 종료 버튼까지 작업 흐름으로 안내하고, 마지막에 튜토리얼 버튼 위치를 리마인드.
+- 구현:
+  - `SessionProductTour` 추가: 실제 시안 작업 영역을 `data-tour` target으로 찾아 spotlight overlay와 coachmark를 표시.
+  - 시안이 없을 때는 미션 설명 → 채팅 공간 → 시안 작업 공간 중심 안내 → Final Design → 타이머 → 세션 종료 → 튜토리얼 버튼 순서로 진행, 시안이 있으면 미션 설명 → 채팅 공간 → 시안 작업 공간 → 시안 탭 → Brief/Style/Mockup → 목업 편집 버튼 → Final Design → 타이머 → 세션 종료 → 튜토리얼 버튼 순서로 진행.
+  - `/main/onboarding` 작업 화면 진입 후 read-only가 아니면 자동 표시. 그 외 미션은 자동 표시하지 않고 헤더의 `튜토리얼` 버튼으로만 열 수 있음.
+- 검증:
+  - `npm run lint -- 'src/app/main/[missionId]/page.tsx' src/components/session/session-product-tour.tsx` 통과(기존 warning만 유지).
   - `./node_modules/.bin/tsc --noEmit` 통과.
