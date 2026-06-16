@@ -249,7 +249,7 @@ export default function LobbyPage() {
     id: ONBOARDING_MISSION_ID,
     title: "온보딩 미션",
     description:
-      "자유주제로 PC 또는 모바일 화면을 선택해 노트, 목업, 프레젠테이션 생성 흐름을 연습합니다.",
+      "자유주제로 PC 또는 모바일 화면을 선택해 Design Brief, 목업, 프레젠테이션 생성 흐름을 연습합니다.",
     durationMinutes: onboardingSettings.durationMinutes,
     options: [
       {

@@ -926,7 +926,7 @@ type ChatPlan = {
   - mission: 기본 포함하되 brief는 planner가 `mission=true`일 때만 긴 버전 사용. 아니면 title + 1~2줄 summary만 사용
   - profile input: 14.4 이후 `/api/memory/profile`에서 derived memory로 분해되어 interaction memory와 같은 retrieval/context path를 사용
   - interactionMemory: planner가 `interactionMemory=true`일 때만 주입. prompt compact JSON은 `episodic[].episodic`과 `semantic[].semantic`만 포함
-  - activeIdea: note 생성/수정/mockup 관련 intent에서만 주입
+  - activeIdea: Design Brief 생성/수정/mockup 관련 intent에서만 주입. 내부 action id는 기존 계약 때문에 `create_note`/`update_note`를 유지한다 `[현행 2026-06-16 → 15.87]`
   - designSpec: mockup generate/edit/design spec 관련 intent에서만 주입
   - mockupHtml: edit/현재 화면 분석 intent에서만 주입. generate intent에서는 사용자가 기존 mockup 기반 변형을 요구한 경우에만 주입
   - selectedElement: selectedElement가 있으면 우선 주입. 선택 요소가 있는 상태의 타깃 편집 요청은 planner가 놓쳐도 `edit_mockup` intent와 `mockupHtml`/`selectedElement` 컨텍스트를 강제한다 `[현행 2026-06-15 → 15.77]`
@@ -3050,4 +3050,22 @@ type ChatPlan = {
   - 이번 변경은 일반 사용자 본인 `/agent` 화면만 공개 실험으로 연다. `/admin` 타인 memory 진단 API/UI는 기존 graph clustering 경로를 유지한다.
 - 검증:
   - `npm run lint -- src/app/agent/page.tsx src/app/api/memory/clusters/route.ts src/lib/server/memoryClustering.ts` 통과.
+  - `./node_modules/.bin/tsc --noEmit` 통과.
+
+### 15.87 디자인 노트 → Design Brief 명칭 변경 `[implemented 2026-06-16]`
+
+- 요청: QA Note `디자인 노트 → 디자인 브리프로 이름 바꾸기`, 이후 사용자 노출 명칭은 영어 `Design Brief`로 조정.
+- 정책:
+  - 사용자에게 보이는 산출물 명칭은 `Design Brief`로 통일한다.
+  - 내부 action/protocol은 기존 `[CREATE_NOTE]`, `[UPDATE_NOTE]`, `note_create`, `note_update`를 유지한다. 이 값들은 chat parser, memory action, 기존 저장 데이터와 연결된 계약이므로 rename하지 않는다.
+- 수정:
+  - `IdeaNoteSection` 섹션 라벨과 empty state를 `Design Brief`로 변경.
+  - `IdeaWorkspace` 섹션 탭 label을 `Brief`로 변경.
+  - assistant action chip 문구를 `Design Brief 생성됨/작성 중/수정됨`으로 변경.
+  - mockup 생성 가드와 Stitch product/UX prompt에서 `active note` 표현을 `active design brief`로 변경.
+  - chat planner 진행 문구를 `Reading design brief rules...`, `Reading current design brief...`로 변경.
+  - onboarding/lobby의 안내 문구에서 `노트`를 `Design Brief`로 변경.
+  - LLM prompt의 산출물 개념을 `design brief`로 정리하되, 내부 명령어는 기존 action tag를 그대로 사용하도록 유지.
+- 검증:
+  - `npm run lint -- src/lib/session/chat-content.ts src/components/session/idea-note-section.tsx 'src/app/main/[missionId]/page.tsx' src/lib/prompts.ts src/app/api/chat/route.ts src/components/onboarding/onboarding-steps.tsx src/app/onboarding/page.tsx src/app/lobby/page.tsx` 통과.
   - `./node_modules/.bin/tsc --noEmit` 통과.

@@ -22,15 +22,15 @@ export type ContentPart =
 const NOTE_RULES = [
   {
     tag: "CREATE_NOTE",
-    doneLabel: "노트 생성됨",
-    pendingLabel: "노트 작성 중...",
-    failedLabel: "노트 작성 실패",
-    failedMarker: "⚠️ 노트를 먼저 저장해야",
+    doneLabel: "Design Brief 생성됨",
+    pendingLabel: "Design Brief 작성 중...",
+    failedLabel: "Design Brief 작성 실패",
+    failedMarker: "⚠️ Design Brief를 먼저 저장해야",
   },
   {
     tag: "UPDATE_NOTE",
-    doneLabel: "노트 수정됨",
-    pendingLabel: "노트 수정 중...",
+    doneLabel: "Design Brief 수정됨",
+    pendingLabel: "Design Brief 수정 중...",
   },
 ] as const;
 
@@ -275,8 +275,8 @@ export function normalizeActionBlockAliases(content: string) {
 
 export function cleanMessageContentForModel(content: string) {
   return content
-    .replace(/\[CREATE_NOTE:\s*\{[\s\S]*?\}\]/g, "[노트 생성]")
-    .replace(/\[UPDATE_NOTE:\s*\{[\s\S]*?\}\]/g, "[노트 수정]")
+    .replace(/\[CREATE_NOTE:\s*\{[\s\S]*?\}\]/g, "[Design Brief 생성]")
+    .replace(/\[UPDATE_NOTE:\s*\{[\s\S]*?\}\]/g, "[Design Brief 수정]")
     .replace(
       /\[GENERATE_MOCKUP:[\s\S]*?\]/g,
       "이전 액션: mockup generation requested.",

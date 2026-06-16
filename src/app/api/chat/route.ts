@@ -542,7 +542,7 @@ function parseChatPlan(text: string): ChatPlan | null {
 function promptStatusLabel(plan: ChatPlan, fallback: boolean) {
   if (fallback && plan.intent === "answer") return "";
   if (plan.intent === "create_note" || plan.intent === "update_note") {
-    return "Reading note rules...";
+    return "Reading design brief rules...";
   }
   if (plan.intent === "generate_mockup") return "Reading mockup generation rules...";
   if (plan.intent === "edit_mockup") return "Reading mockup edit rules...";
@@ -563,7 +563,7 @@ function promptPhaseLabels(
   const contextLabels: Array<[string, string]> = [
     ["mission", "Reading mission context..."],
     ["missionPreview", "Reading mission summary..."],
-    ["activeIdea", "Reading current note..."],
+    ["activeIdea", "Reading current design brief..."],
     ["designSpec", "Reading design style..."],
     ["mockupHtml", "Reading current mockup..."],
     ["selectedElement", "Reading selected element..."],

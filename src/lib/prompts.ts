@@ -20,27 +20,27 @@ When reference images are provided, analyze the visible UI directly instead of r
 
 const CHAT_ACTION_ROUTER_PROMPT = `Action routing:
 - Plain answer: reply normally.
-- New note/draft/시안: use [CREATE_NOTE: {"title":"optional title","description":"markdown note content"}].
-- Update active note/draft/시안: use [UPDATE_NOTE: {"title":"optional title","description":"full replacement markdown note content"}].
+- New design brief/draft/시안: use [CREATE_NOTE: {"title":"optional title","description":"markdown design brief content"}].
+- Update active design brief/draft/시안: use [UPDATE_NOTE: {"title":"optional title","description":"full replacement markdown design brief content"}].
 - Generate a mockup: use [GENERATE_MOCKUP: detailed English prompt].
 - Edit current mockup: use [EDIT_MOCKUP: detailed English edit instruction].
 - Search references: use [FETCH_REFERENCES: query].
 - Create or revise 디자인 스타일: use [CREATE_DESIGN_SPEC: {"content":"markdown content"}].
 - Presentation: output a JSON structure inside a presentation code block.`;
 
-const CHAT_NOTE_ACTION_PROMPT = `Note action rules:
-- Create a note only when the user explicitly asks for a new 시안, draft, or idea.
-- Update a note when the user asks to revise, improve, expand, shorten, rewrite, or directly edit the selected note.
-- Notes are markdown briefs about WHAT to build: the product idea, high-level design concept and direction, target user, key screen/section direction, and must-have requirements for the current mission.
-- Write the actual brief content. Never output a meta description of the task itself (e.g. "X 기준으로 분석 노트 작성" is a task statement, not a note — write the analysis/brief content instead).
-- Keep notes focused but self-contained: a designer should be able to start working from the note alone. Simple drafts can be a few sentences; complex flows may use short bullets. Avoid long background or decorative rationale, but never compress the note into a single task-like sentence.
-- High-level concept, mood direction, and product positioning BELONG in notes. Only concrete CSS-level style constraints belong in 디자인 스타일: color tokens/palettes, typography specs, spacing/sizing values, border radius, shadows, component styling rules, and style "avoid" lists.
+const CHAT_NOTE_ACTION_PROMPT = `Design brief action rules:
+- Create a design brief only when the user explicitly asks for a new 시안, draft, or idea.
+- Update a design brief when the user asks to revise, improve, expand, shorten, rewrite, or directly edit the selected design brief.
+- Design briefs are markdown briefs about WHAT to build: the product idea, high-level design concept and direction, target user, key screen/section direction, and must-have requirements for the current mission.
+- Write the actual brief content. Never output a meta description of the task itself (e.g. "X 기준으로 분석 노트 작성" is a task statement, not a design brief — write the analysis/brief content instead).
+- Keep design briefs focused but self-contained: a designer should be able to start working from the brief alone. Simple drafts can be a few sentences; complex flows may use short bullets. Avoid long background or decorative rationale, but never compress the brief into a single task-like sentence.
+- High-level concept, mood direction, and product positioning BELONG in the design brief. Only concrete CSS-level style constraints belong in 디자인 스타일: color tokens/palettes, typography specs, spacing/sizing values, border radius, shadows, component styling rules, and style "avoid" lists.
 - Never include sections such as "Colors", "Typography", "UI Style", or "Avoid" inside [CREATE_NOTE] or [UPDATE_NOTE].
 - If the user asks for both a 시안/idea and visual direction, output the product/UX idea in [CREATE_NOTE] and output the visual direction separately with [CREATE_DESIGN_SPEC: {"content":"markdown content"}].
 - If the active 시안 already has a 디자인 스타일 and the user asks to remake/recreate as a different style, new mood, new version, or newly cited reference direction, create a NEW 시안 instead of overwriting the active 시안's 디자인 스타일. Preserve the product/UX brief but separate the new visual direction into [CREATE_DESIGN_SPEC].
 - The app preserves 시안 N titles, so keep title empty or omit it unless the user explicitly asks for a title.
-- Output only the note action ([CREATE_NOTE] or [UPDATE_NOTE]) this turn. Do NOT also emit [GENERATE_MOCKUP] or [EDIT_MOCKUP] — including their Korean aliases such as [목업 생성 요청], [생성 요청], or [목업 수정 요청] — unless the user explicitly asked for both a note and a mockup in the same message.
-- After the note you may suggest a mockup as a possible next step, but write that suggestion as plain prose only (e.g. "원하시면 이 시안으로 목업을 만들어 드릴게요"). Never wrap such a suggestion in brackets or any action tag: any bracketed action phrase is executed immediately as a command. Wait for the user to confirm before generating a mockup.`;
+- Output only the design brief action ([CREATE_NOTE] or [UPDATE_NOTE]) this turn. Do NOT also emit [GENERATE_MOCKUP] or [EDIT_MOCKUP] — including their Korean aliases such as [목업 생성 요청], [생성 요청], or [목업 수정 요청] — unless the user explicitly asked for both a design brief and a mockup in the same message.
+- After the design brief you may suggest a mockup as a possible next step, but write that suggestion as plain prose only (e.g. "원하시면 이 시안으로 목업을 만들어 드릴게요"). Never wrap such a suggestion in brackets or any action tag: any bracketed action phrase is executed immediately as a command. Wait for the user to confirm before generating a mockup.`;
 
 const CHAT_MOCKUP_GENERATE_ACTION_PROMPT = `Mockup generation rules:
 - Use [GENERATE_MOCKUP: ...] when the user asks to generate/run/visualize a mockup or asks for a new design version.
@@ -48,7 +48,7 @@ const CHAT_MOCKUP_GENERATE_ACTION_PROMPT = `Mockup generation rules:
 - Do NOT use [GENERATE_MOCKUP] when the user is only asking whether there is enough information, whether a mockup is possible, whether you are ready, or what is still needed. Answer the assessment in plain prose only.
 - Conditional offers such as "필요하면", "원하시면", "if needed", or "I can..." are not permission to generate. Write them as plain prose and wait for the user to explicitly ask to make/generate/proceed.
 - A 디자인 스타일 is REQUIRED before any mockup. If the active 시안 has no 디자인 스타일 yet, do NOT emit [GENERATE_MOCKUP] — the app will block it. Instead define the visual direction first with [CREATE_DESIGN_SPEC: ...] when the user has given or implied a visual style, or ask the user about color palette, typography, and mood, then generate on a later turn once a 디자인 스타일 exists.
-- If there is also no active note and no concrete product description, ask a clarifying question before doing anything else.
+- If there is also no active design brief and no concrete product description, ask a clarifying question before doing anything else.
 - The prompt inside [GENERATE_MOCKUP: ...] must be English, 900-1800 characters, and cover target device, layout, sections, components, visible copy, states, and relevant references.
 - Follow provided 디자인 스타일 exactly; do not invent style tokens when a style spec exists.`;
 
@@ -63,7 +63,7 @@ const CHAT_DESIGN_SPEC_ACTION_PROMPT = `Design spec rules:
 - Use [CREATE_DESIGN_SPEC: {"content":"markdown content"}] when the user asks to define or revise 디자인 스타일, design system, style rules, colors, typography, spacing, components, or brand tone.
 - The app stores exactly one 디자인 스타일 for the active 시안, so this replaces the previous style.
 - 디자인 스타일 must contain ONLY constraints that map directly to CSS or concrete UI styling: colors, typography, spacing/sizing, border radius, shadows, layout density, component styling rules, and explicit style "avoid" lists.
-- Do not put high-level concept, product positioning, target user, or abstract mood narration in 디자인 스타일. Those belong in the note (시안). Express mood only as concrete visual constraints (e.g. specific palette, contrast, type weight), not as adjectives alone.
+- Do not put high-level concept, product positioning, target user, or abstract mood narration in 디자인 스타일. Those belong in the design brief (시안). Express mood only as concrete visual constraints (e.g. specific palette, contrast, type weight), not as adjectives alone.
 - The generator derives the entire palette from ONE seed color, so always declare a single explicit primary brand seed color as a hex (e.g. "Primary brand seed color: #2E3A59"). Pick the dominant brand/surface hue, not a small accent. If a color is reserved for limited use such as CTAs only, call it a secondary accent and never make it the seed.
 - Keep the content concise and immediately useful for this mission's mockup. Do not always enumerate main color, brand tone, typography, spacing, and components; include only the style constraints that materially guide the current design.
 - Prefer 2-5 focused lines for simple style direction. Use short bullets only when the mission needs multiple concrete constraints.`;
@@ -144,7 +144,7 @@ export function chatCitedTextsPrompt(citedTexts: string[]) {
 }
 
 export function chatActiveIdeaPrompt(title: string, description: string) {
-  return `The user is currently working on this note:\nTitle: ${title}\nContent: ${description}\n\nAll mockups and presentations generated in this conversation should be designed for this note.\n\nFor [GENERATE_MOCKUP], treat the Content above as a binding product/UX brief only. Do not treat note content as the visual style source; visual style constraints must come from the separate 디자인 스타일 context. Include the most important product, structure, and requirement details directly in the generated mockup prompt so the downstream design generator receives them.`;
+  return `The user is currently working on this design brief:\nTitle: ${title}\nContent: ${description}\n\nAll mockups and presentations generated in this conversation should be designed for this design brief.\n\nFor [GENERATE_MOCKUP], treat the Content above as a binding product/UX brief only. Do not treat design brief content as the visual style source; visual style constraints must come from the separate 디자인 스타일 context. Include the most important product, structure, and requirement details directly in the generated mockup prompt so the downstream design generator receives them.`;
 }
 
 export function chatCurrentRequestPrompt() {
@@ -253,7 +253,7 @@ Rules:
 - If the user asks to add, include, or put specific apps, products, brands, sites, or examples into the reference section, list, or panel (e.g. "X랑 Y 레퍼런스에 추가해줘"), choose intent "fetch_references" — they must be searched and added as reference cards, not written into a note.
 - Need mockupHtml for editing, presentation from current mockup, or explicit analysis of the existing mockup.
 - Need selectedElement when the user is editing a selected element.
-- Need activeIdea for note updates, mockup generation from the current note, presentations, or design spec work tied to the note.
+- Need activeIdea for design brief updates, mockup generation from the current design brief, presentations, or design spec work tied to the brief.
 - Need designSpec for mockup generation/editing or design spec revision.
 - Need citedTexts or citedReferences only when the current request refers to selected/cited material, examples, references, or inspiration.
 - Need interactionMemory when during-session memory could help continue or reference past design decisions, revise previous work, or generate/edit a mockup. Skip for standalone queries: reference searches, simple factual questions, or first-turn clarifications with no prior context.
@@ -538,8 +538,8 @@ ROUNDNESS:
 
 # Rules
 
-- customColor is the seed the generator expands into the whole palette, so it must be the dominant brand/surface color, not a small accent. If the note declares an explicit primary/brand/seed color, use that (its hex if given, else the closest hex). Never pick a color the note reserves for limited use such as CTA-only accents. If the note only names colors without a declared seed, choose the dominant brand/surface hue; if no color is stated, pick a tasteful hex that fits the described mood.
-- colorMode is DARK only when the note clearly describes a dark/black/night theme; otherwise LIGHT.
+- customColor is the seed the generator expands into the whole palette, so it must be the dominant brand/surface color, not a small accent. If the design style declares an explicit primary/brand/seed color, use that (its hex if given, else the closest hex). Never pick a color the design style reserves for limited use such as CTA-only accents. If the design style only names colors without a declared seed, choose the dominant brand/surface hue; if no color is stated, pick a tasteful hex that fits the described mood.
+- colorMode is DARK only when the design style clearly describes a dark/black/night theme; otherwise LIGHT.
 - headlineFont and bodyFont may be the same. Match the described typography mood (serif vs sans, editorial vs technical, playful vs neutral).
 - roundness: map the described shape language; default to ROUND_EIGHT when unspecified.
 - Every field is required. Never return null, empty strings, or values outside the allowed lists.

@@ -720,7 +720,7 @@ function createDefaultOnboardingMissionData() {
   return {
     title: "온보딩 미션",
     description:
-      "자유주제로 PC 또는 모바일 화면을 선택해 노트, 목업, 프레젠테이션 생성 흐름을 연습합니다.",
+      "자유주제로 PC 또는 모바일 화면을 선택해 Design Brief, 목업, 프레젠테이션 생성 흐름을 연습합니다.",
     durationMinutes: 20,
     options: [
       {
@@ -977,9 +977,9 @@ function defaultMockupPromptForIdea(idea: Idea | null, targetDevice: Device) {
   const deviceLabel =
     targetDevice === "mobile" ? "mobile app screen" : "desktop web page";
   return [
-    `Create a high-fidelity ${deviceLabel} UI mockup based on the active note.`,
-    idea?.title ? `Note title: ${idea.title}` : "",
-    idea?.description ? `Note content:\n${idea.description}` : "",
+    `Create a high-fidelity ${deviceLabel} UI mockup based on the active design brief.`,
+    idea?.title ? `Design brief title: ${idea.title}` : "",
+    idea?.description ? `Design brief content:\n${idea.description}` : "",
     "Use polished visual hierarchy, realistic content, strong spacing, and a complete usable first screen.",
   ]
     .filter(Boolean)
@@ -1147,16 +1147,16 @@ function buildMockupPrompt(
   if (idea?.description?.trim()) {
     parts.push(
       "",
-      "Use the following active note as the current idea brief. It describes what to build for this specific 시안.",
-      `Note title: ${idea.title}`,
-      `Note content:\n${idea.description.slice(0, 8000)}`,
+      "Use the following active design brief. It describes what to build for this specific 시안.",
+      `Design brief title: ${idea.title}`,
+      `Design brief content:\n${idea.description.slice(0, 8000)}`,
     );
   }
-  // Fallback: if note is thin, inject full mission content so Stitch has the product details
+  // Fallback: if the design brief is thin, inject full mission content so Stitch has the product details
   if (missionBrief?.trim() && (idea?.description?.length ?? 0) < 300) {
     parts.push(
       "",
-      "Mission content (use as product/content reference since the note above is sparse):",
+      "Mission content (use as product/content reference since the design brief above is sparse):",
       missionBrief.slice(0, 6000),
     );
   }
@@ -3974,7 +3974,7 @@ export default function MainScreenPage() {
                     ...m,
                     content:
                       m.content +
-                      "\n\n⚠️ 노트를 먼저 저장해야 목업을 생성할 수 있습니다. 노트를 정리한 후 다시 시도해 주세요.",
+                      "\n\n⚠️ Design Brief를 먼저 저장해야 목업을 생성할 수 있습니다. Design Brief를 정리한 후 다시 시도해 주세요.",
                   }
                 : m,
             ),
@@ -6240,7 +6240,7 @@ export default function MainScreenPage() {
               activeSectionId={activeIdeaTab}
               readOnly={isReadOnly}
               sections={[
-                { id: "idea", label: "Note", ref: ideaSectionRef },
+                { id: "idea", label: "Brief", ref: ideaSectionRef },
                 { id: "style", label: "Style", ref: styleSectionRef },
                 { id: "mockup", label: "Mockup", ref: mockupSectionRef },
               ]}

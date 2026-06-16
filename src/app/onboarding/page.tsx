@@ -88,7 +88,7 @@ export default function OnboardingPage() {
             {isCompleted ? "나의 온보딩" : "Vibe Design Agent 시작하기"}
           </h1>
           <p className="mt-3 text-sm leading-6 text-pretty text-muted-foreground">
-            이 워크스페이스에서는 에이전트와 대화하며 레퍼런스를 찾고, 노트를
+            이 워크스페이스에서는 에이전트와 대화하며 레퍼런스를 찾고, Design Brief를
             만들고, 목업과 프레젠테이션을 생성합니다. 온보딩을 완료하면 오늘의
             미션을 시작할 수 있습니다.
           </p>
