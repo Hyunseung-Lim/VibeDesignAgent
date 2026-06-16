@@ -165,16 +165,14 @@
 
 #### 메모리 클러스터링
 
-- 경로: `POST /api/admin/users/[uid]/memory/clusters`
-- 입력: 현재 admin filter에 걸린 semantic memory items
-- 1단계: semantic memory를 `text-embedding-3-large`로 embedding
-- 2단계: `K=1..12` 범위에서 k-means를 실행하고 inertia를 계산해 Elbow K 산출
-- 3단계: semantic memory pair를 샘플링하고 LLM에게 "같은 category로 묶어야 하는가"를 질문
-- 4단계: 각 K의 cluster assignment가 LLM pairwise 판단과 얼마나 일치하는지 agreement score 계산
-- 최종 K: LLM agreement가 가장 높은 K. 동률이면 Elbow K에 가까운 K 선택
-- LLM은 cluster membership을 바꾸지 않고, 최종 cluster label/summary 생성에도 사용
-- Admin UI에는 Elbow K, K별 inertia, LLM K, K별 agreement를 표시
-- 캐시 키는 memory version + item signature + clustering method version으로 분리해 이전 방식 결과와 충돌하지 않게 관리
+- 경로: 일반 사용자 본인 memory는 `GET/POST /api/memory/clusters`, admin의 타인 memory 진단은 `GET/POST /api/admin/users/[uid]/memory/clusters`
+- 입력 variant: `/agent`에서 `semantic-only`, `compact-context`(keyword+episodic+semantic), `full-context`(기존 keyword+episodic+semantic+originalInteractionContent+link)를 선택할 수 있다. 기본값은 `full-context`
+- 1단계: 선택한 variant별 텍스트를 `text-embedding-3-large`로 embedding
+- 2단계: cosine similarity graph 생성. 강한 유사도 edge와 node별 KNN edge를 함께 사용
+- 3단계: similarity graph에서 label propagation으로 community를 찾고, community가 너무 많으면 centroid similarity 기준으로 최대 16개까지 merge
+- 4단계: LLM은 cluster membership을 바꾸지 않고, 최종 cluster label/summary만 생성
+- `/agent` UI에는 팀원이 자기 memory에 대해 3가지 입력 variant를 바꿔가며 클러스터를 생성·비교할 수 있는 테스트 컨트롤을 표시한다
+- 캐시 키는 memory version + item signature + clustering method version + input variant로 분리해 서로 다른 입력 실험 결과가 덮어쓰이지 않게 관리한다 `[현행 2026-06-16 → 15.86]`
 
 ---
 
@@ -214,14 +212,17 @@ itemSignature
 memoryVersion
 sourceItemCount
 clusters: MemoryCluster[]
+graphClusters: MemoryCluster[]
+graphEdges: ClusterGraphEdge[]
+clusteringInputVariant
+clusteringMethodVersion
 diagnostics: {
   method
   embeddingModel
   labelModel
   requestedClusterCount
   actualClusterCount
-  elbow: { selectedK, points[] }
-  granularity: { selectedK, fallbackK, pairCount, scores[] }
+  graph: { minSimilarity, strongSimilarity, knnEdges, nodeCount, edgeCount, ... }
 }
 generatedAt, generatedBy
 ```
@@ -2687,7 +2688,7 @@ type ChatPlan = {
 - **P1 — 사용자 이해 요약**
   - 요구 D: B의 payoff(재미/insight), 사용자 친화 기능. 중간 규모.
 - **P2 — clustering 비교 분석 도구**
-  - 요구 C: 연구 방법론 비교. 누적 데이터 필요, 빌드 규모 최대·즉시 사용자 가치 최소라 마지막.
+  - [x] 요구 C: 15.86에서 `/agent` 본인 memory 화면의 3가지 clustering input variant 비교로 구현. admin 전용 분석이 아니라 팀원 공개 테스트 컨트롤로 제공.
 
 근거: A는 실험 자체를 돌리기 위한 선행조건, B는 5분짜리 프롬프트 변경이지만 C·D가 먹는 데이터 성격을 바꾸므로 같은 P0에서 함께 처리. D는 B의 결과를 사용자에게 바로 보여주는 기능이라 P1. C는 가장 빌드가 크고(3버전 파라미터화+비교 UI) 누적 데이터가 쌓여야 비교가 의미 있어 P2.
 
@@ -3031,4 +3032,22 @@ type ChatPlan = {
   - 새 레퍼런스가 WTAPS처럼 white background, 큰 wordmark/header, checkbox filter, item/image toggle, 1열 큰 이미지 중심이면 기존 dark/2-column 스타일보다 해당 화면 구조가 우선 반영됨.
 - 검증:
   - `npm run lint -- 'src/app/main/[missionId]/page.tsx' src/lib/prompts.ts` 통과(기존 warning만 유지).
+  - `./node_modules/.bin/tsc --noEmit` 통과.
+
+### 15.86 팀원 공개용 `/agent` 클러스터링 입력 3버전 비교 `[implemented 2026-06-16]`
+
+- 배경: `클러스터링 3가지 버전 비교`는 연구자/admin만 보는 진단보다 팀원 각자가 자기 memory를 보며 어떤 묶음이 납득되는지 판단하는 실험에 가까움. 따라서 타인 memory 접근 권한을 넓히지 않고 `/agent`의 본인 memory 화면에 테스트 컨트롤로 노출.
+- 입력 variant:
+  - `semantic-only`: semantic insight만 embedding. legacy item은 episodic/input 등으로 fallback.
+  - `compact-context`: keyword + episodic + semantic. interaction 원문 로그는 제외.
+  - `full-context`: 기존 기준. keyword + episodic + semantic + originalInteractionContent + link.
+- 구현:
+  - `src/lib/server/memoryClustering.ts`: `ClusteringInputVariant`, `normalizeClusteringInputVariant()`, `clusteringMethodVersion()` 추가. `embeddingText()`를 variant별로 분기하고, `embedItems()`/`generateAndStoreClusters()`가 variant를 받도록 변경.
+  - cluster cache id hash에 `similarity-graph-v2:{variant}`를 포함해 같은 item signature라도 variant별 결과가 공존하도록 변경. 저장 문서에는 `clusteringInputVariant`, `clusteringMethodVersion` 기록.
+  - `GET /api/memory/clusters?variant=...`, `POST /api/memory/clusters { variant }` 지원. variant 미지정 시 기존 동작인 `full-context`.
+  - `/agent` 상단에 `Semantic only`, `Semantic + Episode`, `Full context` segmented control 추가. 선택 시 해당 variant cache를 로드하고, 없으면 그 variant로 클러스터 생성 가능.
+- 범위:
+  - 이번 변경은 일반 사용자 본인 `/agent` 화면만 공개 실험으로 연다. `/admin` 타인 memory 진단 API/UI는 기존 graph clustering 경로를 유지한다.
+- 검증:
+  - `npm run lint -- src/app/agent/page.tsx src/app/api/memory/clusters/route.ts src/lib/server/memoryClustering.ts` 통과.
   - `./node_modules/.bin/tsc --noEmit` 통과.

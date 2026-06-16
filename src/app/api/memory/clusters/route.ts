@@ -11,6 +11,7 @@ import {
   generateAndStoreClusters,
   clusterDocumentPath,
   memoryClusterItemSignature,
+  normalizeClusteringInputVariant,
   parseStoredGraphEdges,
   type ClusterInputItem,
 } from "@/lib/server/memoryClustering";
@@ -58,6 +59,8 @@ async function loadMemoryItems(uid: string, token: string): Promise<ClusterInput
 export async function GET(request: Request) {
   const user = await verifyFirebaseIdToken(request);
   if (!user) return Response.json({ error: "unauthorized" }, { status: 401 });
+  const url = new URL(request.url);
+  const variant = normalizeClusteringInputVariant(url.searchParams.get("variant"));
 
   try {
     const token = await getFirebaseAccessToken();
@@ -67,6 +70,7 @@ export async function GET(request: Request) {
         clusters: [],
         edges: [],
         found: false,
+        variant,
         memoryVersion: MEMORY_VERSION,
         itemSignature: null,
         generatedAt: null,
@@ -75,7 +79,7 @@ export async function GET(request: Request) {
 
     const itemSignature = memoryClusterItemSignature(items);
     const data = (await getFirestoreDocument(
-      clusterDocumentPath(user.localId, MEMORY_VERSION, itemSignature),
+      clusterDocumentPath(user.localId, MEMORY_VERSION, itemSignature, variant),
       token,
     )) as Record<string, unknown> | null;
 
@@ -84,6 +88,7 @@ export async function GET(request: Request) {
         clusters: [],
         edges: [],
         found: false,
+        variant,
         memoryVersion: MEMORY_VERSION,
         itemSignature,
         generatedAt: null,
@@ -98,6 +103,7 @@ export async function GET(request: Request) {
       clusters,
       edges: parseStoredGraphEdges(data.graphEdges),
       found: clusters.length > 0,
+      variant,
       memoryVersion: typeof data.memoryVersion === "string"
         ? data.memoryVersion
         : MEMORY_VERSION,
@@ -115,6 +121,8 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   const user = await verifyFirebaseIdToken(request);
   if (!user) return Response.json({ error: "unauthorized" }, { status: 401 });
+  const body = (await request.json().catch(() => ({}))) as { variant?: unknown };
+  const variant = normalizeClusteringInputVariant(body.variant);
 
   try {
     const token = await getFirebaseAccessToken();
@@ -132,12 +140,14 @@ export async function POST(request: Request) {
       items,
       token,
       user.email ?? user.localId,
+      variant,
     );
 
     return Response.json({
       clusters: graphClusters,
       edges: graphEdges,
       found: graphClusters.length > 0,
+      variant,
       memoryVersion: MEMORY_VERSION,
       generatedAt: Date.now(),
     });

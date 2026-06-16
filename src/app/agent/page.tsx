@@ -21,6 +21,24 @@ import type {
 
 const NO_SESSION_KEY = "__no_session__";
 const ONBOARDING_MISSION_ID = "onboarding";
+const CLUSTER_VARIANTS = [
+  {
+    value: "semantic-only",
+    label: "Semantic only",
+    description: "해석 메모리만",
+  },
+  {
+    value: "compact-context",
+    label: "Semantic + Episode",
+    description: "원문 로그 제외",
+  },
+  {
+    value: "full-context",
+    label: "Full context",
+    description: "현재 기준",
+  },
+] as const;
+type ClusterVariant = (typeof CLUSTER_VARIANTS)[number]["value"];
 
 // Chronological rank for cumulative memory views. Mission ids are
 // `mission-YYYYMMDD-HHmmss`, so plain string compare = time order. Onboarding is
@@ -75,7 +93,10 @@ export default function AgentMemoryPage() {
   const [clusters, setClusters] = useState<MemoryCluster[]>([]);
   const [clusterEdges, setClusterEdges] = useState<ClusterGraphEdge[]>([]);
   const [loading, setLoading] = useState(true);
+  const [isLoadingClusters, setIsLoadingClusters] = useState(false);
   const [isRegenerating, setIsRegenerating] = useState(false);
+  const [clusterVariant, setClusterVariant] =
+    useState<ClusterVariant>("full-context");
   const [selectedClusterId, setSelectedClusterId] = useState<string | null>(
     null,
   );
@@ -90,35 +111,75 @@ export default function AgentMemoryPage() {
     null,
   );
 
-  const loadData = (user: import("firebase/auth").User) =>
+  const applyClusterData = (clusterData: {
+    clusters?: unknown;
+    edges?: unknown;
+    generatedAt?: unknown;
+  } | null) => {
+    const cls: MemoryCluster[] = Array.isArray(clusterData?.clusters)
+      ? clusterData.clusters
+      : [];
+    const edges: ClusterGraphEdge[] = Array.isArray(clusterData?.edges)
+      ? clusterData.edges
+      : [];
+    setClusters(cls);
+    setClusterEdges(edges);
+    setSelectedClusterId(cls[0]?.id ?? null);
+    setSelectedMemoryId(null);
+    setSelectedSessionKey(null);
+    setClustersGeneratedAt(
+      typeof clusterData?.generatedAt === "number"
+        ? clusterData.generatedAt
+        : null,
+    );
+  };
+
+  const loadClusters = (
+    user: import("firebase/auth").User,
+    variant: ClusterVariant,
+  ) =>
+    getIdToken(user)
+      .then((token) =>
+        fetch(`/api/memory/clusters?variant=${variant}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        }),
+      )
+      .then((r) => (r.ok ? r.json() : null))
+      .then(applyClusterData);
+
+  const loadData = (user: import("firebase/auth").User, variant: ClusterVariant) =>
     getIdToken(user).then((token) => {
       const headers = { Authorization: `Bearer ${token}` };
       return Promise.all([
         fetch("/api/memory/all", { headers }).then((r) =>
           r.ok ? r.json() : null,
         ),
-        fetch("/api/memory/clusters", { headers }).then((r) =>
-          r.ok ? r.json() : null,
+        fetch(`/api/memory/clusters?variant=${variant}`, { headers }).then(
+          (r) => (r.ok ? r.json() : null),
         ),
       ]).then(([memData, clusterData]) => {
         const mems: MemoryItem[] = Array.isArray(memData?.memories)
           ? memData.memories
           : [];
         setMemories(mems);
-        const cls: MemoryCluster[] = Array.isArray(clusterData?.clusters)
-          ? clusterData.clusters
-          : [];
-        const edges: ClusterGraphEdge[] = Array.isArray(clusterData?.edges)
-          ? clusterData.edges
-          : [];
-        setClusters(cls);
-        setClusterEdges(edges);
-        setSelectedClusterId(cls[0]?.id ?? null);
-        setSelectedMemoryId(null);
-        setSelectedSessionKey(null);
-        setClustersGeneratedAt(clusterData?.generatedAt ?? null);
+        applyClusterData(clusterData);
       });
     });
+
+  const handleSelectClusterVariant = async (variant: ClusterVariant) => {
+    if (clusterVariant === variant) return;
+    setClusterVariant(variant);
+    if (!currentUser) return;
+    setIsLoadingClusters(true);
+    try {
+      await loadClusters(currentUser, variant);
+    } catch (err) {
+      console.error("[agent] cluster variant load failed", err);
+      toast.error("클러스터를 불러오지 못했어요.");
+    } finally {
+      setIsLoadingClusters(false);
+    }
+  };
 
   const handleRegenerate = async () => {
     if (!currentUser || isRegenerating) return;
@@ -127,7 +188,11 @@ export default function AgentMemoryPage() {
       const token = await getIdToken(currentUser);
       const res = await fetch("/api/memory/clusters", {
         method: "POST",
-        headers: { Authorization: `Bearer ${token}` },
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ variant: clusterVariant }),
       });
       const data = await res.json().catch(() => null);
       if (!res.ok) throw new Error(data?.error ?? "생성 실패");
@@ -161,7 +226,7 @@ export default function AgentMemoryPage() {
       }
       setCurrentUser(user);
       setLoading(true);
-      loadData(user)
+      loadData(user, clusterVariant)
         .catch((err) => {
           console.error("[agent] load failed", err);
         })
@@ -300,6 +365,45 @@ export default function AgentMemoryPage() {
       )
     : [];
 
+  const clusterVariantControls = (
+    <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-border bg-card px-4 py-3">
+      <div>
+        <p className="text-xs font-semibold text-muted-foreground">
+          클러스터링 입력 비교
+        </p>
+        <p className="text-[11px] text-muted-foreground/70">
+          같은 기억을 어떤 텍스트로 임베딩할지 바꿔봅니다.
+        </p>
+      </div>
+      <div className="flex rounded-lg border border-border bg-muted/40 p-1">
+        {CLUSTER_VARIANTS.map((variant) => {
+          const selected = clusterVariant === variant.value;
+          return (
+            <button
+              key={variant.value}
+              type="button"
+              onClick={() => handleSelectClusterVariant(variant.value)}
+              disabled={isLoadingClusters || isRegenerating}
+              className={cn(
+                "min-w-32 rounded-md px-3 py-1.5 text-left transition",
+                selected
+                  ? "bg-background text-foreground shadow-sm"
+                  : "text-muted-foreground hover:text-foreground",
+              )}
+            >
+              <span className="block text-xs font-semibold">
+                {variant.label}
+              </span>
+              <span className="block text-[10px] leading-tight opacity-70">
+                {variant.description}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+
   return (
     <div className="min-h-screen bg-background">
       {/* Header */}
@@ -326,14 +430,25 @@ export default function AgentMemoryPage() {
         <div className="flex items-center justify-center py-24 text-sm text-muted-foreground">
           불러오는 중...
         </div>
+      ) : isLoadingClusters ? (
+        <div>
+          {clusterVariantControls}
+          <div className="flex items-center justify-center py-24 text-sm text-muted-foreground">
+            클러스터를 불러오는 중...
+          </div>
+        </div>
       ) : clusters.length === 0 ? (
-        <MemoryClusterEmptyState
-          canGenerate={memories.length >= 3}
-          isRegenerating={isRegenerating}
-          onGenerate={handleRegenerate}
-        />
+        <div>
+          {clusterVariantControls}
+          <MemoryClusterEmptyState
+            canGenerate={memories.length >= 3}
+            isRegenerating={isRegenerating}
+            onGenerate={handleRegenerate}
+          />
+        </div>
       ) : (
         <div className="flex h-[calc(100vh-57px)] flex-col overflow-hidden">
+          {clusterVariantControls}
           {sessionFilterOptions.length > 1 ? (
             <div className="flex shrink-0 items-center gap-2 overflow-x-auto border-b border-border bg-card px-4 py-2.5">
               <span className="shrink-0 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
@@ -385,7 +500,7 @@ export default function AgentMemoryPage() {
               selectedClusterId={selectedClusterId}
               generatedAt={clustersGeneratedAt}
               hasStaleCache={hasStaleCache}
-              isRegenerating={isRegenerating}
+              isRegenerating={isRegenerating || isLoadingClusters}
               onSelectCluster={(clusterId) => {
                 setSelectedClusterId(clusterId);
                 setSelectedMemoryId(null);
