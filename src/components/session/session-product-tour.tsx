@@ -27,6 +27,7 @@ type SessionProductTourProps = {
   open: boolean;
   hasIdeas: boolean;
   onOpenChange: (open: boolean) => void;
+  onStepTargetChange?: (target: string) => void;
 };
 
 const EMPTY_IDEA_STEPS: TourStep[] = [
@@ -39,6 +40,11 @@ const EMPTY_IDEA_STEPS: TourStep[] = [
     target: "chat-panel",
     title: "채팅 공간",
     body: "오른쪽 채팅에서 에이전트에게 레퍼런스 탐색, 시안 작성, 디자인 스타일 정리, 목업 생성을 요청합니다. 선택한 레퍼런스나 화면 요소도 여기로 보낼 수 있어요.",
+  },
+  {
+    target: "reference-section",
+    title: "레퍼런스",
+    body: "찾아온 레퍼런스는 여기 쌓입니다. 마음에 드는 레퍼런스를 선택한 뒤 채팅에 함께 보내면 시안과 디자인 스타일, 목업 방향에 반영할 수 있어요.",
   },
   {
     target: "idea-workspace",
@@ -84,6 +90,11 @@ const IDEA_STEPS: TourStep[] = [
     target: "chat-panel",
     title: "채팅 공간",
     body: "오른쪽 채팅에서 에이전트에게 레퍼런스 탐색, 시안 작성, 디자인 스타일 정리, 목업 생성을 요청합니다. 선택한 레퍼런스나 화면 요소도 여기로 보낼 수 있어요.",
+  },
+  {
+    target: "reference-section",
+    title: "레퍼런스",
+    body: "찾아온 레퍼런스는 여기 쌓입니다. 마음에 드는 레퍼런스를 선택한 뒤 채팅에 함께 보내면 시안과 디자인 스타일, 목업 방향에 반영할 수 있어요.",
   },
   {
     target: "idea-workspace",
@@ -145,13 +156,18 @@ const IDEA_STEPS: TourStep[] = [
   },
 ];
 
-function getTargetRect(target: string, fallbackTarget?: string) {
-  const element =
+function findTourElement(target: string, fallbackTarget?: string) {
+  return (
     document.querySelector<HTMLElement>(`[data-tour="${target}"]`) ??
     (fallbackTarget
       ? document.querySelector<HTMLElement>(`[data-tour="${fallbackTarget}"]`)
       : null) ??
-    document.querySelector<HTMLElement>('[data-tour="idea-workspace"]');
+    document.querySelector<HTMLElement>('[data-tour="idea-workspace"]')
+  );
+}
+
+function getTargetRect(target: string, fallbackTarget?: string) {
+  const element = findTourElement(target, fallbackTarget);
   if (!element) return null;
 
   const rect = element.getBoundingClientRect();
@@ -161,6 +177,21 @@ function getTargetRect(target: string, fallbackTarget?: string) {
     width: Math.min(window.innerWidth - 24, rect.width + 16),
     height: Math.min(window.innerHeight - 24, rect.height + 16),
   };
+}
+
+function rectsEqual(a: Rect, b: Rect) {
+  return (
+    Math.round(a.top) === Math.round(b.top) &&
+    Math.round(a.left) === Math.round(b.left) &&
+    Math.round(a.width) === Math.round(b.width) &&
+    Math.round(a.height) === Math.round(b.height)
+  );
+}
+
+function rectSignature(rect: Rect | null) {
+  return rect
+    ? `${Math.round(rect.top)}:${Math.round(rect.left)}:${Math.round(rect.width)}:${Math.round(rect.height)}`
+    : "none";
 }
 
 function popoverStyle(rect: Rect | null): CSSProperties {
@@ -200,6 +231,7 @@ export function SessionProductTour({
   open,
   hasIdeas,
   onOpenChange,
+  onStepTargetChange,
 }: SessionProductTourProps) {
   const steps = useMemo(
     () => (hasIdeas ? IDEA_STEPS : EMPTY_IDEA_STEPS),
@@ -216,23 +248,67 @@ export function SessionProductTour({
   const measure = useCallback(() => {
     if (!open) return;
     const nextRect = getTargetRect(step.target, step.fallbackTarget);
-    setMeasuredRect(nextRect ? { key: stepKey, rect: nextRect } : null);
+    setMeasuredRect((prev) => {
+      if (!nextRect) return prev?.key === stepKey ? prev : null;
+      if (prev && prev.key === stepKey && rectsEqual(prev.rect, nextRect)) {
+        return prev;
+      }
+      return { key: stepKey, rect: nextRect };
+    });
   }, [open, step.fallbackTarget, step.target, stepKey]);
 
   useEffect(() => {
     if (!open) return;
-    const target =
-      document.querySelector<HTMLElement>(`[data-tour="${step.target}"]`) ??
-      (step.fallbackTarget
-        ? document.querySelector<HTMLElement>(
-            `[data-tour="${step.fallbackTarget}"]`,
-          )
-        : null) ??
-      document.querySelector<HTMLElement>('[data-tour="idea-workspace"]');
-    target?.scrollIntoView({ behavior: "smooth", block: "center" });
-    const id = window.setTimeout(measure, 180);
-    return () => window.clearTimeout(id);
-  }, [measure, open, step.fallbackTarget, step.target]);
+    onStepTargetChange?.(step.target);
+  }, [onStepTargetChange, open, step.target]);
+
+  // Scroll the target into view and re-measure until its rect settles. Two
+  // async layout changes race on the first step: the parent collapses the
+  // option panel (in response to onStepTargetChange) and scrollIntoView. If we
+  // scroll before the panel collapses, the scroll is computed against the taller
+  // pre-collapse layout and over-scrolls — pushing mission-brief partly above the
+  // viewport so its clamped rect spills down over the reference section. So we
+  // first poll until the layout settles, THEN scroll, THEN settle again.
+  useEffect(() => {
+    if (!open) return;
+
+    let raf = 0;
+    let scrolled = false;
+    let stableFrames = 0;
+    let prevSignature = "__init__";
+    const start = performance.now();
+
+    const tick = () => {
+      measure();
+      const signature = rectSignature(
+        getTargetRect(step.target, step.fallbackTarget),
+      );
+      stableFrames = signature === prevSignature ? stableFrames + 1 : 0;
+      prevSignature = signature;
+      const elapsed = performance.now() - start;
+
+      if (!scrolled) {
+        // Wait for the post-collapse layout to settle before scrolling.
+        if (stableFrames >= 2 || elapsed > 400) {
+          findTourElement(step.target, step.fallbackTarget)?.scrollIntoView({
+            behavior: "smooth",
+            block: "center",
+          });
+          scrolled = true;
+          stableFrames = 0;
+          prevSignature = "__scrolling__";
+        }
+        raf = requestAnimationFrame(tick);
+        return;
+      }
+
+      if (stableFrames >= 3 || elapsed > 1400) return;
+      raf = requestAnimationFrame(tick);
+    };
+
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [measure, open, step.fallbackTarget, step.target, stepKey]);
 
   useEffect(() => {
     if (!open) return;
@@ -253,7 +329,7 @@ export function SessionProductTour({
   };
 
   return (
-    <div className="fixed inset-0 z-[80]">
+    <div className="fixed inset-0 z-80">
       {rect ? (
         <>
           <div

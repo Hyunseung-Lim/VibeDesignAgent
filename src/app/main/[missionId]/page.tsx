@@ -5823,6 +5823,11 @@ export default function MainScreenPage() {
         open={isProductTourOpen}
         hasIdeas={ideas.length > 0}
         onOpenChange={handleProductTourOpenChange}
+        onStepTargetChange={(target) => {
+          if (target === "mission-brief") {
+            setIsOptionExpanded(false);
+          }
+        }}
       />
       {/* Read-only banner */}
       {isReadOnly && (
