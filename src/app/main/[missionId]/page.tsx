@@ -1751,6 +1751,9 @@ export default function MainScreenPage() {
   const [timerStartedAt, setTimerStartedAt] = useState<number | null>(null);
   const [timerEndedAt, setTimerEndedAt] = useState<number | null>(null);
   const [timerDisplay, setTimerDisplay] = useState<string>("");
+  const [activeLeftPanelSection, setActiveLeftPanelSection] = useState<
+    "mission" | "reference" | "workspace" | "final"
+  >("mission");
   const [activeIdeaTab, setActiveIdeaTab] = useState("idea");
   const [activeIdeaId, setActiveIdeaId] = useState<string | null>(null);
   const [isIdeaExpanded, setIsIdeaExpanded] = useState(false);
@@ -1908,6 +1911,52 @@ export default function MainScreenPage() {
     },
     [],
   );
+
+  useEffect(() => {
+    const panel = missionPanelRef.current;
+    if (!panel) return;
+
+    const sections: Array<{
+      id: "mission" | "reference" | "workspace" | "final";
+      ref: React.RefObject<HTMLDivElement | null>;
+    }> = [
+      { id: "mission", ref: missionSectionRef },
+      { id: "reference", ref: referenceSectionRef },
+      { id: "workspace", ref: workspaceSectionRef },
+      { id: "final", ref: finalSectionRef },
+    ];
+
+    const updateActiveSection = () => {
+      if (Date.now() < leftPanelSectionLockUntilRef.current) return;
+      const panelTop = panel.getBoundingClientRect().top;
+      const threshold = panelTop + 120;
+      let next: "mission" | "reference" | "workspace" | "final" = "mission";
+      for (const section of sections) {
+        const element = section.ref.current;
+        if (!element) continue;
+        if (element.getBoundingClientRect().top <= threshold) {
+          next = section.id;
+        }
+      }
+      setActiveLeftPanelSection((prev) => (prev === next ? prev : next));
+    };
+
+    updateActiveSection();
+    panel.addEventListener("scroll", updateActiveSection, { passive: true });
+    window.addEventListener("resize", updateActiveSection);
+    return () => {
+      panel.removeEventListener("scroll", updateActiveSection);
+      window.removeEventListener("resize", updateActiveSection);
+    };
+  }, [
+    ideas.length,
+    references.length,
+    artboards.length,
+    activeIdeaId,
+    isDesignSpecOpen,
+    isIdeaExpanded,
+    isOptionExpanded,
+  ]);
 
   useEffect(() => {
     if (
@@ -2128,6 +2177,11 @@ export default function MainScreenPage() {
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
 
   const sessionCompletionTimeoutsRef = useRef<number[]>([]);
+  const leftPanelSectionLockUntilRef = useRef(0);
+  const missionSectionRef = useRef<HTMLDivElement>(null);
+  const referenceSectionRef = useRef<HTMLDivElement>(null);
+  const workspaceSectionRef = useRef<HTMLDivElement>(null);
+  const finalSectionRef = useRef<HTMLDivElement>(null);
   const ideaSectionRef = useRef<HTMLElement>(null);
   const styleSectionRef = useRef<HTMLElement>(null);
   const mockupSectionRef = useRef<HTMLElement>(null);
@@ -6338,47 +6392,103 @@ export default function MainScreenPage() {
             ref={missionPanelRef}
             className="flex-1 space-y-6 overflow-y-auto pb-32 pt-8 pl-10 pr-6"
           >
-            <MissionBriefSection
-              title={parentMissionTitle || missionTitle}
-              brief={parentMissionBrief || (!activeOption ? missionBrief : "")}
-              option={activeOption}
-              device={device}
-              optionExpanded={isOptionExpanded}
-              onToggleOption={() => setIsOptionExpanded((expanded) => !expanded)}
-            />
+            <div className="sticky top-0 z-10 pb-3">
+              <div className="inline-flex rounded-xl border border-slate-200 bg-white p-1 shadow-sm">
+                {[
+                  { id: "mission", label: "Mission", ref: missionSectionRef },
+                  {
+                    id: "reference",
+                    label: "Reference",
+                    ref: referenceSectionRef,
+                  },
+                  {
+                    id: "workspace",
+                    label: "Workspace",
+                    ref: workspaceSectionRef,
+                  },
+                  { id: "final", label: "Final", ref: finalSectionRef },
+                ].map((section) => (
+                  <button
+                    key={section.id}
+                    type="button"
+                    onClick={() => {
+                      leftPanelSectionLockUntilRef.current = Date.now() + 500;
+                      setActiveLeftPanelSection(
+                        section.id as
+                          | "mission"
+                          | "reference"
+                          | "workspace"
+                          | "final",
+                      );
+                      const panel = missionPanelRef.current;
+                      const target = section.ref.current;
+                      if (!panel || !target) return;
+                      panel.scrollTo({
+                        top: Math.max(target.offsetTop - 12, 0),
+                        behavior: "smooth",
+                      });
+                    }}
+                    className={`rounded-lg px-3 py-1.5 text-xs font-medium transition ${
+                      activeLeftPanelSection === section.id
+                        ? "bg-slate-900 text-white"
+                        : "text-slate-500 hover:bg-slate-50 hover:text-slate-700"
+                    }`}
+                  >
+                    {section.label}
+                  </button>
+                ))}
+              </div>
+            </div>
 
-            <ReferenceSection
-              references={references}
-              selectedReferenceIds={
-                new Set(selectedReferences.map((reference) => reference.id))
-              }
-              fetching={isFetchingRefs}
-              error={referenceSearchError}
-              readOnly={isReadOnly}
-              onToggleReference={(reference) => {
-                setSelectedReferences((prev) =>
-                  prev.some((selected) => selected.id === reference.id)
-                    ? prev.filter((selected) => selected.id !== reference.id)
-                    : [...prev, reference],
-                );
-              }}
-              onDeleteReference={requestDeleteReference}
-            />
+            <div ref={missionSectionRef} className="scroll-mt-16">
+              <MissionBriefSection
+                title={parentMissionTitle || missionTitle}
+                brief={parentMissionBrief || (!activeOption ? missionBrief : "")}
+                option={activeOption}
+                device={device}
+                optionExpanded={isOptionExpanded}
+                onToggleOption={() =>
+                  setIsOptionExpanded((expanded) => !expanded)
+                }
+              />
+            </div>
 
-            <IdeaWorkspace
-              ideas={ideas}
-              activeIdeaId={activeIdeaId}
-              activeSectionId={activeIdeaTab}
-              readOnly={isReadOnly}
-              sections={[
-                { id: "idea", label: "Brief", ref: ideaSectionRef },
-                { id: "style", label: "Style", ref: styleSectionRef },
-                { id: "mockup", label: "Mockup", ref: mockupSectionRef },
-              ]}
-              onSwitchIdea={switchIdea}
-              onDeleteIdea={requestDeleteIdea}
-              onSelectSection={setActiveIdeaTab}
-            >
+            <div ref={referenceSectionRef} className="scroll-mt-16">
+              <ReferenceSection
+                references={references}
+                selectedReferenceIds={
+                  new Set(selectedReferences.map((reference) => reference.id))
+                }
+                fetching={isFetchingRefs}
+                error={referenceSearchError}
+                readOnly={isReadOnly}
+                onToggleReference={(reference) => {
+                  setSelectedReferences((prev) =>
+                    prev.some((selected) => selected.id === reference.id)
+                      ? prev.filter((selected) => selected.id !== reference.id)
+                      : [...prev, reference],
+                  );
+                }}
+                onDeleteReference={requestDeleteReference}
+              />
+            </div>
+
+            <div ref={workspaceSectionRef} className="scroll-mt-16">
+              <IdeaWorkspace
+                title="Design Workspace"
+                ideas={ideas}
+                activeIdeaId={activeIdeaId}
+                activeSectionId={activeIdeaTab}
+                readOnly={isReadOnly}
+                sections={[
+                  { id: "idea", label: "Brief", ref: ideaSectionRef },
+                  { id: "style", label: "Style", ref: styleSectionRef },
+                  { id: "mockup", label: "Mockup", ref: mockupSectionRef },
+                ]}
+                onSwitchIdea={switchIdea}
+                onDeleteIdea={requestDeleteIdea}
+                onSelectSection={setActiveIdeaTab}
+              >
               {(() => {
                 const idea = ideas.find((i) => i.id === activeIdeaId) ?? null;
                 if (!idea) return null;
@@ -6451,31 +6561,34 @@ export default function MainScreenPage() {
                 onExpand={() => setIsMockupExpanded(true)}
                 onCancelGeneration={cancelMockupGeneration}
               />
-            </IdeaWorkspace>
+              </IdeaWorkspace>
+            </div>
 
-            <FinalDesignSelector
-              sectionRef={finalDesignSectionRef}
-              ideas={ideas}
-              artboards={artboards}
-              finalArtboardId={finalArtboardId}
-              readOnly={isReadOnly}
-              onSelect={(board, idea) => {
-                const next = board.id === finalArtboardId ? null : board.id;
-                setFinalArtboardId(next);
-                if (next) {
-                  void encodeMemoryDraft(
-                    `final-design-${board.id}`,
-                    `최종 디자인 선택: ${board.label}`,
-                    `시안: ${idea.title} / 생성일: ${
-                      board.createdAt
-                        ? new Date(board.createdAt).toLocaleString("ko-KR")
-                        : "미상"
-                    }`,
-                    Date.now(),
-                  );
-                }
-              }}
-            />
+            <div ref={finalSectionRef} className="scroll-mt-16">
+              <FinalDesignSelector
+                sectionRef={finalDesignSectionRef}
+                ideas={ideas}
+                artboards={artboards}
+                finalArtboardId={finalArtboardId}
+                readOnly={isReadOnly}
+                onSelect={(board, idea) => {
+                  const next = board.id === finalArtboardId ? null : board.id;
+                  setFinalArtboardId(next);
+                  if (next) {
+                    void encodeMemoryDraft(
+                      `final-design-${board.id}`,
+                      `최종 디자인 선택: ${board.label}`,
+                      `시안: ${idea.title} / 생성일: ${
+                        board.createdAt
+                          ? new Date(board.createdAt).toLocaleString("ko-KR")
+                          : "미상"
+                      }`,
+                      Date.now(),
+                    );
+                  }
+                }}
+              />
+            </div>
           </section>
 
           {/* Memory detail side panel */}

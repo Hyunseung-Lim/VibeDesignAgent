@@ -30,9 +30,9 @@ function providerLabel(provider?: SessionReference["searchProvider"]) {
 }
 
 function purposeLabel(purpose?: SessionReference["referencePurpose"]) {
-  if (purpose === "visual_style") return "비주얼 참고";
-  if (purpose === "page_structure") return "구조 참고";
-  if (purpose === "content_components") return "콘텐츠 참고";
+  if (purpose === "visual_style") return "비주얼";
+  if (purpose === "page_structure") return "레이아웃";
+  if (purpose === "content_components") return "컴포넌트";
   return null;
 }
 
@@ -93,51 +93,52 @@ export function ReferenceCard({
           )}
         </div>
 
-        <div className="mt-auto flex items-end justify-between gap-2">
-          <div className="flex min-w-0 flex-wrap items-center gap-1">
-            <span className="rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">
+        <div className="mt-auto space-y-2">
+          <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+            <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-600">
               {reference.tag}
             </span>
-            {provider && (
-              <span className="rounded-full border border-border bg-white px-2 py-0.5 text-xs font-medium text-slate-600">
-                {provider}
-              </span>
-            )}
             {purpose && (
-              <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-xs font-medium text-slate-600">
+              <span className="rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[11px] font-medium text-slate-600">
                 {purpose}
               </span>
             )}
           </div>
 
-          <div className="flex shrink-0 items-center gap-1">
-            {reference.url && (
-              <a
-                href={reference.url}
-                target="_blank"
-                rel="noopener noreferrer"
-                onClick={(event) => event.stopPropagation()}
-                className="inline-flex size-7 items-center justify-center rounded-md border border-border text-muted-foreground transition hover:bg-muted hover:text-foreground"
-                aria-label={`${reference.title} 새 탭에서 열기`}
-                title="새 탭에서 열기"
-              >
-                <ExternalLink className="size-3.5" aria-hidden="true" />
-              </a>
-            )}
-            {!readOnly && (
-              <button
-                type="button"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  onDelete(reference);
-                }}
-                className="inline-flex size-7 items-center justify-center rounded-md border border-transparent text-muted-foreground transition hover:border-rose-100 hover:bg-rose-50 hover:text-rose-600"
-                aria-label={`${reference.title} 삭제`}
-                title="삭제"
-              >
-                <Trash2 className="size-3.5" aria-hidden="true" />
-              </button>
-            )}
+          <div className="flex items-center justify-between gap-2">
+            <div className="min-w-0 text-[11px] text-slate-400">
+              {provider ?? ""}
+            </div>
+
+            <div className="flex shrink-0 items-center gap-1">
+              {reference.url && (
+                <a
+                  href={reference.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  onClick={(event) => event.stopPropagation()}
+                  className="inline-flex size-7 items-center justify-center rounded-md border border-border text-muted-foreground transition hover:bg-muted hover:text-foreground"
+                  aria-label={`${reference.title} 새 탭에서 열기`}
+                  title="새 탭에서 열기"
+                >
+                  <ExternalLink className="size-3.5" aria-hidden="true" />
+                </a>
+              )}
+              {!readOnly && (
+                <button
+                  type="button"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onDelete(reference);
+                  }}
+                  className="inline-flex size-7 items-center justify-center rounded-md border border-transparent text-muted-foreground transition hover:border-rose-100 hover:bg-rose-50 hover:text-rose-600"
+                  aria-label={`${reference.title} 삭제`}
+                  title="삭제"
+                >
+                  <Trash2 className="size-3.5" aria-hidden="true" />
+                </button>
+              )}
+            </div>
           </div>
         </div>
       </div>

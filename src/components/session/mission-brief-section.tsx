@@ -1,6 +1,6 @@
 "use client";
 
-import { Monitor, Smartphone } from "lucide-react";
+import { ChevronDown, Monitor, Smartphone } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 
 type MissionBriefDevice = "desktop" | "mobile";
@@ -9,6 +9,11 @@ export type MissionBriefOption = {
   title: string;
   description?: string;
   content?: string;
+  assetImages?: Array<{
+    url: string;
+    path?: string;
+    note?: string;
+  }>;
 };
 
 type MissionBriefSectionProps = {
@@ -78,30 +83,32 @@ export function MissionBriefSection({
     >
       <div className="flex items-center justify-between">
         <p className="text-xl font-semibold text-slate-900">Mission</p>
-        <div className="flex items-center gap-2">
-          <span className="rounded-full bg-slate-100 px-3 py-1 text-xs text-slate-500">
-            {device === "mobile" ? (
-              <>
-                <Smartphone className="mr-1 inline size-3" aria-hidden="true" />
-                모바일
-              </>
-            ) : (
-              <>
-                <Monitor className="mr-1 inline size-3" aria-hidden="true" />
-                PC
-              </>
-            )}
-          </span>
-        </div>
       </div>
 
       <div className="mt-4 space-y-4">
         <div className="space-y-3">
-          <p className="rounded-2xl border border-slate-100 bg-slate-50 px-4 py-3 text-base font-semibold text-slate-900">
-            {title || (
-              <span className="font-normal text-slate-400">미션 제목 없음</span>
-            )}
-          </p>
+          <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
+            <p className="min-w-0 flex-1 text-base font-semibold text-slate-900">
+              {title || (
+                <span className="font-normal text-slate-400">
+                  미션 제목 없음
+                </span>
+              )}
+            </p>
+            <span className="inline-flex shrink-0 items-center gap-1 rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-medium text-slate-600">
+              {device === "mobile" ? (
+                <>
+                  <Smartphone className="size-3" aria-hidden="true" />
+                  모바일 기준
+                </>
+              ) : (
+                <>
+                  <Monitor className="size-3" aria-hidden="true" />
+                  PC 기준
+                </>
+              )}
+            </span>
+          </div>
 
           {brief ? (
             <div className="space-y-2 rounded-2xl border border-slate-100 bg-slate-50 px-4 py-3 text-sm text-slate-700">
@@ -119,22 +126,33 @@ export function MissionBriefSection({
 
         {option && (
           <div className="border-t border-slate-100 pt-4">
-            <div className="overflow-hidden rounded-2xl border border-slate-100 bg-white">
+            <div className="overflow-hidden rounded-2xl border border-slate-100 bg-slate-50/70">
               <button
                 type="button"
                 onClick={onToggleOption}
-                className="flex w-full items-center justify-between px-4 py-3 text-left transition hover:bg-slate-50"
+                className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left transition hover:bg-slate-50"
               >
-                <span className="text-sm font-semibold text-slate-800">
-                  선택된 옵션: {option.title}
-                </span>
-                <span className="text-xs font-semibold text-slate-500">
-                  {optionExpanded ? "▲" : "▼"}
+                <div className="min-w-0">
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-400">
+                    Selected Option
+                  </p>
+                  <p className="truncate text-sm font-semibold text-slate-800">
+                    {option.title}
+                  </p>
+                </div>
+                <span className="flex size-7 shrink-0 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500">
+                  <ChevronDown
+                    size={14}
+                    className={`transition-transform ${
+                      optionExpanded ? "rotate-180" : ""
+                    }`}
+                    aria-hidden="true"
+                  />
                 </span>
               </button>
 
               {optionExpanded && (
-                <div className="space-y-4 border-t border-slate-100 px-4 py-3">
+                <div className="space-y-4 border-t border-slate-100 bg-white px-4 py-3">
                   {option.description && (
                     <p className="whitespace-pre-wrap text-sm leading-relaxed text-slate-600">
                       {option.description}
@@ -145,6 +163,36 @@ export function MissionBriefSection({
                       <ReactMarkdown components={markdownComponents}>
                         {option.content}
                       </ReactMarkdown>
+                    </div>
+                  )}
+                  {(option.assetImages?.length ?? 0) > 0 && (
+                    <div className="space-y-2">
+                      <p className="text-xs font-semibold text-slate-500">
+                        콘텐츠 이미지
+                      </p>
+                      <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
+                        {option.assetImages?.map((image, index) => (
+                          <a
+                            key={image.path || image.url || index}
+                            href={image.url}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="group overflow-hidden rounded-2xl border border-slate-100 bg-slate-50 transition hover:border-slate-200"
+                          >
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img
+                              src={image.url}
+                              alt={image.note?.trim() || `미션 콘텐츠 이미지 ${index + 1}`}
+                              className="aspect-square w-full object-cover"
+                            />
+                            {image.note?.trim() && (
+                              <p className="line-clamp-2 border-t border-slate-100 px-3 py-2 text-xs text-slate-500">
+                                {image.note}
+                              </p>
+                            )}
+                          </a>
+                        ))}
+                      </div>
                     </div>
                   )}
                 </div>

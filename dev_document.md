@@ -54,7 +54,7 @@
 
 - 어드민 이메일 화이트리스트로 접근 제한
 - 미션 CRUD (생성/수정/삭제)
-- 미션 콘텐츠는 Firestore `missions/{id}.options[0]`에 저장(제목/설명/마크다운 content). 옵션에는 어드민이 올린 콘텐츠 이미지 `assetImages[{url, path, note}]`도 담긴다 — Firebase Storage `mission-assets/`에 업로드하고 URL/path를 저장하며, 목업 생성 시 asset-led 경로로 그대로 주입된다(위 "콘텐츠 자산 주도 생성" 참고) `[현행 2026-06-17 → 15.89]`
+- 미션 콘텐츠는 Firestore `missions/{id}.options[0]`에 저장(제목/설명/마크다운 content). 옵션에는 어드민이 올린 콘텐츠 이미지 `assetImages[{url, path, note}]`도 담긴다. 이 이미지는 `/admin/new`뿐 아니라 `/admin` 기존 미션 편집에서도 Firebase Storage `mission-assets/`에 업로드/삭제할 수 있고, main 세션의 Mission 섹션에서 썸네일로 바로 확인할 수 있다. 저장된 URL/path는 목업 생성 시 asset-led 경로로 그대로 주입된다(위 "콘텐츠 자산 주도 생성" 참고) `[현행 2026-06-17 → 15.91]`
 - 미션 ID: `mission-YYYYMMDD-HHmmss` 형식 (사람이 읽기 쉬운 구조)
 - 참여자 목록 조회 및 세션 열람 (읽기 전용 뷰)
 - 참여자 카드의 X는 해당 미션 세션과 하위 `memoryDrafts`/`reviewTurns`만 삭제하며, 유저 정보/장기 메모리/다른 미션 기록은 유지
@@ -3097,7 +3097,23 @@ type ChatPlan = {
   - 스키마: 미션 옵션에 `assetImages[{url, path, note}]` 추가. 어드민 `/admin/new`에서 Firebase Storage `mission-assets/`로 업로드 → URL/path 저장(썸네일·삭제 UI, 최대 12장). `POST /api/admin/missions`가 http(s) URL만 검증해 저장.
   - 생성: 세션에서 신규 목업(`isNew`)이고 그 턴에 스타일 이미지/URL 첨부가 없을 때 활성 옵션의 `assetImages` URL들을 `/api/stitch`로 전달. 서버 `isAssetLed` 분기가 각 URL을 `fetchImageAsDataUrl`로 받아 `writeStyleImageTmp`(다운스케일) → `project.upload` → 첫 스크린을 `assetImageEmbedPrompt`로 `edit`. 업로드 IMAGE 스크린은 artboard에서 제외(`allScreenIds` len 1), 결과 기반 design.md 역추출은 하지 않음(콘텐츠 사진이 스타일을 오염시키지 않도록).
   - 우선순위: 사용자가 그 턴에 스타일 이미지/URL을 붙이면 `isImageLed`가 우선, asset-led는 비활성.
-  - 한계: SDK가 generate 프롬프트에 이미지를 직접 첨부하는 API가 없어, 여러 장을 한 화면에 그대로 박는 신뢰도는 미검증(첫 이미지를 edit하는 경로). 다중 이미지 임베드 충실도는 라이브에서 튜닝 필요. Firebase Storage `mission-assets/` 쓰기 규칙이 어드민에 열려 있어야 업로드 동작.
+- 한계: SDK가 generate 프롬프트에 이미지를 직접 첨부하는 API가 없어, 여러 장을 한 화면에 그대로 박는 신뢰도는 미검증(첫 이미지를 edit하는 경로). 다중 이미지 임베드 충실도는 라이브에서 튜닝 필요. Firebase Storage `mission-assets/` 쓰기 규칙이 어드민에 열려 있어야 업로드 동작.
+
+### 15.90 기존 미션 편집에서도 콘텐츠 이미지 관리 `[implemented 2026-06-17]`
+
+- 문제: 15.89에서 asset-led 생성 경로는 이미 붙어 있었지만, 어드민 GUI는 신규 미션 생성 `/admin/new`에만 콘텐츠 이미지 업로드 UI가 있고 기존 미션 수정 `/admin`에는 빠져 있었다. 그래서 생성 후 자산을 보강하거나 교체할 수 없었다.
+- 구현: `/admin` 편집 카드의 미션 콘텐츠 영역에 `/admin/new`와 같은 수준의 콘텐츠 이미지 섹션을 추가했다. 기존 미션에서도 이미지 업로드, 썸네일 미리보기, 삭제가 가능하고, 저장 시 `options[0].assetImages`가 그대로 Firestore에 유지된다.
+- 세부:
+  - `MissionOption` normalize 단계에서 `assetImages`를 정규화해 편집 상태에 포함
+  - Firebase Storage `mission-assets/` 업로드 후 `{url, path}`를 편집 상태에 반영
+  - 썸네일 우상단 삭제 버튼으로 Storage object와 편집 상태를 함께 정리
+  - 업로드 중에는 저장 버튼과 파일 input을 잠시 막아 부분 저장 꼬임을 줄임
+
+### 15.91 main Mission 섹션에 콘텐츠 이미지 노출 `[implemented 2026-06-17]`
+
+- 문제: 미션 콘텐츠 이미지가 stitch asset-led 생성에는 쓰이지만, 사용자는 main 화면에서 어떤 이미지가 미션에 연결돼 있는지 확인할 수 없었다.
+- 구현: `MissionBriefSection`의 선택된 옵션 펼침 영역에 콘텐츠 이미지 그리드를 추가했다. `activeOption.assetImages`를 그대로 받아 썸네일로 표시하고, 클릭하면 원본 URL을 새 탭으로 연다.
+- 의도: 사용자가 목업 생성 전에 실제 상품 사진이나 UI 캡쳐가 제대로 연결돼 있는지 눈으로 확인할 수 있게 한다.
 - 검증: `tsc --noEmit` 통과, 변경 파일 eslint 0 error(기존 warning만). 인증·Stitch 키 필요한 업로드/생성 end-to-end는 사용자 라이브 확인 필요.
 
 ### 15.90 에이전트 능력 카탈로그 — 예시 요청 안내 `[implemented 2026-06-17]`

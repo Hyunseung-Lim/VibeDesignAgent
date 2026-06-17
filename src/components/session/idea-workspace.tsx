@@ -11,6 +11,7 @@ export type IdeaWorkspaceSection = {
 };
 
 type IdeaWorkspaceProps = {
+  title?: string;
   ideas: SessionIdeaTab[];
   activeIdeaId: string | null;
   activeSectionId: string;
@@ -23,6 +24,7 @@ type IdeaWorkspaceProps = {
 };
 
 export function IdeaWorkspace({
+  title = "Design Workspace",
   ideas,
   activeIdeaId,
   activeSectionId,
@@ -38,6 +40,10 @@ export function IdeaWorkspace({
       data-tour="idea-workspace"
       className="rounded-3xl border border-slate-200 bg-white p-6"
     >
+      <div className="mb-5 flex items-start justify-between gap-4 border-b border-slate-100 pb-4">
+        <p className="text-base font-semibold text-slate-900">{title}</p>
+      </div>
+
       {ideas.length === 0 ? (
         <div className="flex flex-col items-center gap-4 rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-8 text-center text-sm text-slate-400">
           <p>에이전트에게 시안을 작성해달라고 요청하세요.</p>
@@ -52,10 +58,10 @@ export function IdeaWorkspace({
             onDelete={onDeleteIdea}
           />
 
-          <div className="flex gap-4">
+          <div className="flex gap-5">
             <div
               data-tour="idea-section-nav"
-              className="sticky top-4 flex flex-col space-y-2 self-start text-sm text-slate-600"
+              className="sticky top-6 flex flex-col space-y-2 self-start text-sm text-slate-600"
             >
               {sections.map((section) => (
                 <button
@@ -73,7 +79,7 @@ export function IdeaWorkspace({
                     );
                   }}
                   className={cn(
-                    "rounded-xl border px-4 py-2 text-left transition",
+                    "rounded-xl border px-3 py-2 text-left text-xs font-medium transition",
                     activeSectionId === section.id
                       ? "border-slate-900 bg-slate-900 text-white"
                       : "border-slate-200 bg-white hover:bg-slate-50",
@@ -84,7 +90,7 @@ export function IdeaWorkspace({
               ))}
             </div>
 
-            <div className="min-w-0 flex-1 space-y-10">{children}</div>
+            <div className="min-w-0 flex-1 space-y-8">{children}</div>
           </div>
         </>
       )}

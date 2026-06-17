@@ -26,7 +26,13 @@ import {
   orderBy,
   getDocs,
 } from "firebase/firestore";
-import { firebaseAuth, db } from "@/lib/firebase";
+import {
+  deleteObject,
+  getDownloadURL,
+  ref as storageRef,
+  uploadBytes,
+} from "firebase/storage";
+import { firebaseAuth, db, storage } from "@/lib/firebase";
 import { isAdminEmail } from "@/lib/admin";
 import { cn } from "@/lib/utils";
 import {
@@ -174,11 +180,18 @@ type MemoryGraphClusterDiagnostics = {
   };
 };
 
+type AssetImage = {
+  url: string;
+  path: string;
+  note?: string;
+};
+
 type MissionOption = {
   id: string;
   title: string;
   description: string;
   content: string;
+  assetImages?: AssetImage[];
 };
 
 type Mission = {
@@ -200,7 +213,13 @@ function defaultOnboardingSettings(): OnboardingSettings {
 }
 
 function createEmptyOption(): MissionOption {
-  return { id: crypto.randomUUID(), title: "", description: "", content: "" };
+  return {
+    id: crypto.randomUUID(),
+    title: "",
+    description: "",
+    content: "",
+    assetImages: [],
+  };
 }
 
 function normalizeOptions(options?: MissionOption[]) {
@@ -209,6 +228,16 @@ function normalizeOptions(options?: MissionOption[]) {
     title: option.title ?? "",
     description: option.description ?? "",
     content: option.content ?? "",
+    assetImages: Array.isArray(option.assetImages)
+      ? option.assetImages
+          .map((image) => ({
+            url: typeof image?.url === "string" ? image.url : "",
+            path: typeof image?.path === "string" ? image.path : "",
+            note: typeof image?.note === "string" ? image.note : "",
+          }))
+          .filter((image) => /^https?:\/\//i.test(image.url))
+          .slice(0, 12)
+      : [],
   }));
 }
 
@@ -331,6 +360,8 @@ export default function AdminPage() {
   const [missions, setMissions] = useState<Mission[]>([]);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editFields, setEditFields] = useState<Partial<Mission>>({});
+  const [isUploadingMissionAssets, setIsUploadingMissionAssets] =
+    useState(false);
   const [participantsMissionId, setParticipantsMissionId] = useState<
     string | null
   >(null);
@@ -982,6 +1013,73 @@ export default function AdminPage() {
         ),
       };
     });
+  };
+
+  const uploadMissionAssetImages = async (
+    optionId: string,
+    files: FileList | null,
+  ) => {
+    if (!files || files.length === 0) return;
+    setIsUploadingMissionAssets(true);
+    try {
+      const uploaded: AssetImage[] = [];
+      for (const file of Array.from(files)) {
+        if (!file.type.startsWith("image/")) continue;
+        const path = `mission-assets/${crypto.randomUUID()}-${file.name}`;
+        const objectRef = storageRef(storage, path);
+        await uploadBytes(objectRef, file, { contentType: file.type });
+        const url = await getDownloadURL(objectRef);
+        uploaded.push({ url, path });
+      }
+      if (uploaded.length === 0) return;
+      setEditFields((prev) => {
+        const options = normalizeOptions(prev.options as MissionOption[]);
+        return {
+          ...prev,
+          options: options.map((option) =>
+            option.id === optionId
+              ? {
+                  ...option,
+                  assetImages: [...(option.assetImages ?? []), ...uploaded].slice(
+                    0,
+                    12,
+                  ),
+                }
+              : option,
+          ),
+        };
+      });
+      toast.success("콘텐츠 이미지를 추가했어요.");
+    } catch (error) {
+      console.error("[admin] mission asset upload failed", error);
+      toast.error("콘텐츠 이미지 업로드에 실패했습니다.");
+    } finally {
+      setIsUploadingMissionAssets(false);
+    }
+  };
+
+  const removeMissionAssetImage = async (optionId: string, image: AssetImage) => {
+    setEditFields((prev) => {
+      const options = normalizeOptions(prev.options as MissionOption[]);
+      return {
+        ...prev,
+        options: options.map((option) =>
+          option.id === optionId
+            ? {
+                ...option,
+                assetImages: (option.assetImages ?? []).filter(
+                  (item) => item.path !== image.path || item.url !== image.url,
+                ),
+              }
+            : option,
+        ),
+      };
+    });
+    if (image.path) {
+      await deleteObject(storageRef(storage, image.path)).catch((error) => {
+        console.warn("[admin] mission asset delete failed", error);
+      });
+    }
   };
 
 
@@ -2200,6 +2298,69 @@ export default function AdminPage() {
                                       className="resize-y font-mono text-xs"
                                     />
                                   </div>
+                                  <div className="space-y-2">
+                                    <p className="text-xs font-semibold text-muted-foreground">
+                                      콘텐츠 이미지
+                                    </p>
+                                    <p className="text-xs text-muted-foreground">
+                                      실제 상품 사진이나 UI 캡쳐를 넣어두면 Stitch 목업
+                                      생성 시 콘텐츠 자산으로 활용합니다.
+                                    </p>
+                                    {(opt.assetImages?.length ?? 0) > 0 && (
+                                      <div className="flex flex-wrap gap-2">
+                                        {(opt.assetImages ?? []).map((image) => (
+                                          <div
+                                            key={image.path || image.url}
+                                            className="group relative h-20 w-20 overflow-hidden rounded-xl border border-border bg-background"
+                                          >
+                                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                                            <img
+                                              src={image.url}
+                                              alt="콘텐츠 이미지"
+                                              className="h-full w-full object-cover"
+                                            />
+                                            <button
+                                              type="button"
+                                              onClick={() =>
+                                                void removeMissionAssetImage(
+                                                  opt.id,
+                                                  image,
+                                                )
+                                              }
+                                              className="absolute right-1 top-1 rounded-full bg-background/90 p-1 text-foreground opacity-0 shadow-sm transition group-hover:opacity-100"
+                                              aria-label="콘텐츠 이미지 삭제"
+                                            >
+                                              <XIcon size={12} />
+                                            </button>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    )}
+                                    <label className="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-dashed border-border px-3 py-2 text-xs font-medium text-muted-foreground transition hover:bg-background">
+                                      {isUploadingMissionAssets ? (
+                                        <>
+                                          <Spinner className="size-3" />
+                                          업로드 중...
+                                        </>
+                                      ) : (
+                                        <>이미지 추가</>
+                                      )}
+                                      <input
+                                        type="file"
+                                        accept="image/*"
+                                        multiple
+                                        className="hidden"
+                                        disabled={isUploadingMissionAssets}
+                                        onChange={(e) => {
+                                          void uploadMissionAssetImages(
+                                            opt.id,
+                                            e.target.files,
+                                          );
+                                          e.target.value = "";
+                                        }}
+                                      />
+                                    </label>
+                                  </div>
                                 </div>
                               );
                             })()}
@@ -2208,6 +2369,7 @@ export default function AdminPage() {
                                 type="button"
                                 size="sm"
                                 onClick={() => saveEdit(mission.id)}
+                                disabled={isUploadingMissionAssets}
                                 className="rounded-xl px-4 text-xs"
                               >
                                 저장

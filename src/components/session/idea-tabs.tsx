@@ -24,7 +24,7 @@ export function IdeaTabs({
   return (
     <div
       data-tour="idea-tabs"
-      className="flex gap-2 overflow-x-auto pb-4 mb-6 border-b border-slate-100"
+      className="mb-5 flex gap-2 overflow-x-auto border-b border-slate-100 pb-4"
     >
       {ideas.map((idea) => {
         const active = activeIdeaId === idea.id;
