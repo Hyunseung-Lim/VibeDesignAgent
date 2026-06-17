@@ -567,6 +567,31 @@ export function styleImageReconstructPrompt(
     .join("\n\n");
 }
 
+// 미션이 미리 제공한 실제 콘텐츠 이미지(상품 사진, UI 캡쳐 등)를 목업에 "그대로"
+// 박아 넣게 하는 프롬프트. styleImageReconstructPrompt가 이미지를 스타일 소스로
+// 재구성하는 것과 달리, 여기서는 이미지를 콘텐츠 자산으로 보존하고 레이아웃만 브리프를
+// 따른다. 업로드된 이미지 스크린을 edit하는 경로에서 사용한다.
+export function assetImageEmbedPrompt(
+  productPrompt: string,
+  deviceLabel: string,
+  imageCount: number,
+) {
+  const imagesPhrase =
+    imageCount > 1
+      ? `The ${imageCount} uploaded reference images are`
+      : "The uploaded reference image is";
+  return [
+    `Design a working, responsive ${deviceLabel} for the brief below.`,
+    `${imagesPhrase} real content assets supplied by the mission (product photos, UI captures, or brand imagery). Place them into the layout EXACTLY as provided — do not redraw, restyle, recolor, heavily crop, or swap them for generated or placeholder imagery. Keep their natural aspect ratio and put them in the appropriate content slots (e.g. product card thumbnails, hero, gallery).`,
+    `Everything else — overall layout, navigation, typography, spacing, and supporting copy — follows the brief and the project's design system. Only the supplied images are fixed; the surrounding UI is yours to design.`,
+    productPrompt
+      ? `Use this brief to drive the layout and real, on-brief copy:\n${productPrompt}`
+      : "",
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+}
+
 // 이미 생성된(올바른) 화면의 HTML에서 디자인 스타일 마크다운을 역으로 추출.
 // 레퍼런스가 아니라 결과에 grounding하므로 명도 반전 같은 사전지식 오염이 없다.
 export const DERIVE_DESIGN_MD_FROM_HTML_PROMPT = `You are given the HTML of a generated UI screen. Write a concise 디자인 스타일 (design style) note in Korean markdown capturing ONLY this screen's concrete, CSS-level visual style so future screens can match it.

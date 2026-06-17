@@ -42,6 +42,12 @@ const EMPTY_IDEA_STEPS: TourStep[] = [
     body: "오른쪽 채팅에서 에이전트에게 레퍼런스 탐색, 시안 작성, 디자인 스타일 정리, 목업 생성을 요청합니다. 선택한 레퍼런스나 화면 요소도 여기로 보낼 수 있어요.",
   },
   {
+    target: "chat-capability-catalog",
+    fallbackTarget: "chat-panel",
+    title: "부탁할 수 있는 것들",
+    body: "무엇을 어떻게 요청할지 막히면 입력창의 이 버튼을 누르세요. 레퍼런스, 시안, 디자인 스타일, 목업, 요소 수정까지 예시 문구를 보여주고, 누르면 입력창에 채워집니다.",
+  },
+  {
     target: "reference-section",
     title: "레퍼런스",
     body: "찾아온 레퍼런스는 여기 쌓입니다. 마음에 드는 레퍼런스를 선택한 뒤 채팅에 함께 보내면 시안과 디자인 스타일, 목업 방향에 반영할 수 있어요.",
@@ -90,6 +96,12 @@ const IDEA_STEPS: TourStep[] = [
     target: "chat-panel",
     title: "채팅 공간",
     body: "오른쪽 채팅에서 에이전트에게 레퍼런스 탐색, 시안 작성, 디자인 스타일 정리, 목업 생성을 요청합니다. 선택한 레퍼런스나 화면 요소도 여기로 보낼 수 있어요.",
+  },
+  {
+    target: "chat-capability-catalog",
+    fallbackTarget: "chat-panel",
+    title: "부탁할 수 있는 것들",
+    body: "무엇을 어떻게 요청할지 막히면 입력창의 이 버튼을 누르세요. 레퍼런스, 시안, 디자인 스타일, 목업, 요소 수정까지 예시 문구를 보여주고, 누르면 입력창에 채워집니다.",
   },
   {
     target: "reference-section",

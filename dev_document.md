@@ -54,6 +54,7 @@
 
 - 어드민 이메일 화이트리스트로 접근 제한
 - 미션 CRUD (생성/수정/삭제)
+- 미션 콘텐츠는 Firestore `missions/{id}.options[0]`에 저장(제목/설명/마크다운 content). 옵션에는 어드민이 올린 콘텐츠 이미지 `assetImages[{url, path, note}]`도 담긴다 — Firebase Storage `mission-assets/`에 업로드하고 URL/path를 저장하며, 목업 생성 시 asset-led 경로로 그대로 주입된다(위 "콘텐츠 자산 주도 생성" 참고) `[현행 2026-06-17 → 15.89]`
 - 미션 ID: `mission-YYYYMMDD-HHmmss` 형식 (사람이 읽기 쉬운 구조)
 - 참여자 목록 조회 및 세션 열람 (읽기 전용 뷰)
 - 참여자 카드의 X는 해당 미션 세션과 하위 `memoryDrafts`/`reviewTurns`만 삭제하며, 유저 정보/장기 메모리/다른 미션 기록은 유지
@@ -120,6 +121,7 @@
 - **채팅 컨텍스트**: 미션 제목/브리핑, 현재 아이디어 내용, 기존 목업 HTML, 선택된 UI 요소, 인용 레퍼런스, 대화 히스토리
 - **missionBrief 보완 주입**: 신규 목업 생성 시 아이디어 내용이 300자 미만으로 빈약하면 `missionBrief`를 `buildMockupPrompt`에 직접 주입해 제품 데이터가 Stitch에 전달되도록 보장 (수정 시에는 주입 안 함)
 - **이미지 주도 생성**: 사용자가 참고 이미지를 첨부/붙여넣거나(Phase 1) 신규 목업 요청에 URL을 주면(Phase 2 — 채팅 메시지 내 URL 또는 인용 레퍼런스의 URL), 텍스트 design.md 단계 없이 그 화면을 Stitch에 `upload`→`edit`로 재구성해 목업을 만들고 결과에서 design.md를 역추출·저장한다. URL은 서버가 스크린샷(Microlink 무키, `captureScreenshot` 추상화)으로 캡처하며 첨부 이미지가 우선. 모바일 목업이면 URL 캡처도 390×844 모바일 viewport, 데스크톱이면 1280×900 viewport로 찍는다. 이미지/URL이 있으면 "디자인 스타일 필수" 게이트를 우회한다. `src/app/api/stitch/route.ts`의 `isImageLed` 분기 참고 `[현행 2026-06-15 → 15.81/15.83]`
+- **콘텐츠 자산 주도 생성(asset-led)**: 미션 옵션에 어드민이 등록한 콘텐츠 이미지(`assetImages`, 실제 상품 사진·UI 캡쳐)가 있으면 신규 목업 생성 시 그 URL들을 `/api/stitch`로 넘겨, 서버가 다운로드→`upload`→`edit`하면서 "이 이미지들을 그대로 콘텐츠로 박아 넣어라"(`assetImageEmbedPrompt`)로 생성한다. 이미지 주도 생성과 달리 이미지를 스타일로 재구성하지 않고 콘텐츠 자산으로 보존하며, 레이아웃·스타일은 brief와 디자인 시스템을 따른다. 그래서 디자인 스타일을 미리 적용하고 결과 기반 design.md 역추출은 하지 않는다. 사용자가 그 턴에 스타일 이미지/URL을 첨부하면 그쪽(isImageLed)이 우선. `src/app/api/stitch/route.ts`의 `isAssetLed` 분기 참고 `[현행 2026-06-17 → 15.89]`
 - **캔버스**: 드래그 패닝, 휠 줌, Fit 버튼, 확대(fullscreen) 모드. 선택 스크립트는 iframe HTML에 항상 주입하고, 편집 모드 토글은 pointer event와 선택 해제 메시지로 제어해 iframe `srcDoc` reload를 피한다 `[현행 2026-06-15 → 15.78]`
 - **편집 모드**: 특정 UI 요소 클릭 선택 → `[EDIT_MOCKUP: {prompt}]`로 수정. 선택 요소가 있는 상태에서 "크게/색/문구/삭제" 등 짧은 타깃 편집 요청이 오면 planner 판단과 무관하게 현재 목업 HTML과 선택 요소 컨텍스트를 함께 주입한다 `[현행 2026-06-15 → 15.77]`
 - Stitch edit가 기존 screen을 mutate하지 않고 새 screen을 만들면 기존 artboard를 덮어쓰지 않고 새 artboard로 추가한 뒤 active로 전환한다 `[현행 2026-06-15 → 15.79]`
@@ -3086,3 +3088,29 @@ type ChatPlan = {
 - 검증:
   - `npm run lint -- 'src/app/main/[missionId]/page.tsx' src/components/session/session-product-tour.tsx` 통과(기존 warning만 유지).
   - `./node_modules/.bin/tsc --noEmit` 통과.
+
+### 15.89 미션 콘텐츠 이미지 → 목업 asset-led 생성 `[implemented 2026-06-17 — 서버/GUI 라이브 미검증]`
+
+- 배경(QA Note "stitch 목업 만들 때 이미지 파일 추가하기"): 이커머스 상품 리스트·랜딩 같은 미션에서 목업이 placeholder 이미지 대신 실제 상품 사진/UI 캡쳐를 쓰게 하고 싶다. 스타일 참고 이미지(레퍼런스 캡쳐/사용자 캡쳐)는 이미 15.81 이미지 주도 생성으로 처리됨. 남은 건 미션이 미리 주는 "콘텐츠" 이미지.
+- 결정(사용자): 어드민이 미션별로 이미지를 등록한다. Stitch `upload`로 올린 뒤 생성 프롬프트에 "이 이미지를 그대로 넣어달라"고 명시한다(스타일 재구성이 아니라 콘텐츠 보존).
+- 구현:
+  - 스키마: 미션 옵션에 `assetImages[{url, path, note}]` 추가. 어드민 `/admin/new`에서 Firebase Storage `mission-assets/`로 업로드 → URL/path 저장(썸네일·삭제 UI, 최대 12장). `POST /api/admin/missions`가 http(s) URL만 검증해 저장.
+  - 생성: 세션에서 신규 목업(`isNew`)이고 그 턴에 스타일 이미지/URL 첨부가 없을 때 활성 옵션의 `assetImages` URL들을 `/api/stitch`로 전달. 서버 `isAssetLed` 분기가 각 URL을 `fetchImageAsDataUrl`로 받아 `writeStyleImageTmp`(다운스케일) → `project.upload` → 첫 스크린을 `assetImageEmbedPrompt`로 `edit`. 업로드 IMAGE 스크린은 artboard에서 제외(`allScreenIds` len 1), 결과 기반 design.md 역추출은 하지 않음(콘텐츠 사진이 스타일을 오염시키지 않도록).
+  - 우선순위: 사용자가 그 턴에 스타일 이미지/URL을 붙이면 `isImageLed`가 우선, asset-led는 비활성.
+  - 한계: SDK가 generate 프롬프트에 이미지를 직접 첨부하는 API가 없어, 여러 장을 한 화면에 그대로 박는 신뢰도는 미검증(첫 이미지를 edit하는 경로). 다중 이미지 임베드 충실도는 라이브에서 튜닝 필요. Firebase Storage `mission-assets/` 쓰기 규칙이 어드민에 열려 있어야 업로드 동작.
+- 검증: `tsc --noEmit` 통과, 변경 파일 eslint 0 error(기존 warning만). 인증·Stitch 키 필요한 업로드/생성 end-to-end는 사용자 라이브 확인 필요.
+
+### 15.90 에이전트 능력 카탈로그 — 예시 요청 안내 `[implemented 2026-06-17]`
+
+- 배경(QA Note "에이전트 능력 카탈로그 (예시 요청 안내)"): 사용자가 처음에 "무엇을, 어떻게 요청해야 하는지"(예: 목업을 보려면 뭐라고 입력하나)를 몰라 막힌다. 본질은 발견성 문제 — 그 능력과 표현법이 화면에 안 보인다. 기존 채팅 빈 화면 예시 칩은 (1) 첫 메시지 후 사라지고 (2) 일부만 노출하며 (3) 목업 생성 전 디자인 스타일 의존성을 안 알려줬다.
+- 결정(사용자):
+  - 톤은 "능력 카탈로그" — 부탁할 수 있는 것들을 보여주고 예문엔 "예:" 프리픽스로 정해진 명령어가 아님을 드러낸다(라우터는 LLM 의도 분류라 정확한 문구 불필요).
+  - 노출 위치는 입력 툴바 아이콘 + 팝오버 — 대화 중에도 상시 접근, 세로 공간 상시 점유 없음. 같은 카탈로그 데이터를 빈 화면에도 펼쳐 재사용.
+- 구현:
+  - 신규 `ChatCapabilityCatalog`(`src/components/session/chat-capability-catalog.tsx`): 워크플로 순서 5종(레퍼런스→시안→디자인 스타일→목업 생성→요소 수정) 데이터와 리스트 UI를 한 벌로 갖고 `onPick(text)` 콜백만 받는다. 입력 툴바 팝오버와 빈 화면이 동일 렌더를 공유. 단계 번호 + 3단계 타입 램프(캡션/라벨/예문 칩)로 순서를 드러냄. 발표(presentation)는 플로우에서 제외돼 카탈로그에도 넣지 않음.
+  - `ChatInput`: 이미지 첨부 아이콘 옆에 카탈로그 트리거 아이콘 추가, 클릭 시 입력창 위로 팝오버(우상단 X 닫기 버튼 + 바깥 클릭 닫힘). 항목/예문 클릭 → 입력창에 텍스트 채우고 포커스(자동 전송 안 함). `readOnly`면 트리거 숨김. 새 prop `onPickCatalogExample`.
+  - `page.tsx`: 채팅 빈 화면의 인라인 예시 칩 배열을 카탈로그 펼침형으로 교체(기존 `setInputText` 패턴 유지). 목업 생성 항목엔 "디자인 스타일 먼저 필요" 의존성 노트 표기.
+  - 색상 slate/indigo/violet 유지.
+  - 위치 논의 결론: 카탈로그는 헤더 튜토리얼 버튼 옆이 아니라 입력 툴바에 둔다. 근거는 동작-결과 co-location(예문 클릭 → 바로 아래 입력창이 채워짐)과 역할 분리(튜토리얼=공간 안내 1회성, 카탈로그=입력 직전 반복 참조). 대신 발견성 보완으로 프로덕트 투어에 "부탁할 수 있는 것들" 스텝 추가: `chat-capability-catalog` 버튼을 highlight(fallback `chat-panel`), EMPTY/IDEA 두 시나리오의 "채팅 공간" 다음에 삽입.
+  - 입력창 레이아웃을 Claude식 세로 구조로 변경(`ChatInput`): 위는 full-width textarea, 아래 행 좌측은 ✨ 카탈로그 + 이미지 첨부 아이콘, 우측은 보내기/중단 버튼. 보내기 버튼은 "Send" 텍스트 → 원형 `ArrowUp` 아이콘 버튼(bg-slate-900)으로 교체. 색/상태(disabled, 생성 취소, 중단)는 기존 유지.
+- 검증: `./node_modules/.bin/tsc --noEmit` 통과, 변경 파일 eslint 0 error(기존 warning만).

@@ -3,22 +3,45 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { ArrowLeftIcon, DeviceMobileIcon, MonitorIcon } from "@phosphor-icons/react";
+import {
+  ArrowLeftIcon,
+  DeviceMobileIcon,
+  MonitorIcon,
+  XIcon,
+} from "@phosphor-icons/react";
 import { getIdToken, onAuthStateChanged } from "firebase/auth";
-import { firebaseAuth } from "@/lib/firebase";
+import {
+  deleteObject,
+  getDownloadURL,
+  ref as storageRef,
+  uploadBytes,
+} from "firebase/storage";
+import { firebaseAuth, storage } from "@/lib/firebase";
 import { isAdminEmail } from "@/lib/admin";
 
 type Device = "desktop" | "mobile";
+
+type AssetImage = {
+  url: string;
+  path: string;
+};
 
 type MissionContent = {
   id: string;
   title: string;
   description: string;
   content: string;
+  assetImages: AssetImage[];
 };
 
 function createEmptyContent(): MissionContent {
-  return { id: crypto.randomUUID(), title: "", description: "", content: "" };
+  return {
+    id: crypto.randomUUID(),
+    title: "",
+    description: "",
+    content: "",
+    assetImages: [],
+  };
 }
 
 const EMPTY_FORM = {
@@ -34,6 +57,7 @@ export default function NewMissionPage() {
   const [ready, setReady] = useState(false);
   const [form, setForm] = useState(EMPTY_FORM);
   const [isCreating, setIsCreating] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
   const [error, setError] = useState("");
 
   useEffect(() => {
@@ -53,8 +77,62 @@ export default function NewMissionPage() {
     }));
   };
 
+  const uploadAssetImages = async (files: FileList | null) => {
+    if (!files || files.length === 0) return;
+    setError("");
+    setIsUploading(true);
+    try {
+      const uploaded: AssetImage[] = [];
+      for (const file of Array.from(files)) {
+        if (!file.type.startsWith("image/")) continue;
+        const path = `mission-assets/${crypto.randomUUID()}-${file.name}`;
+        const objectRef = storageRef(storage, path);
+        await uploadBytes(objectRef, file, { contentType: file.type });
+        const url = await getDownloadURL(objectRef);
+        uploaded.push({ url, path });
+      }
+      if (uploaded.length > 0) {
+        setForm((prev) => ({
+          ...prev,
+          contentBlock: {
+            ...prev.contentBlock,
+            assetImages: [...prev.contentBlock.assetImages, ...uploaded].slice(
+              0,
+              12,
+            ),
+          },
+        }));
+      }
+    } catch (err) {
+      console.error("[admin/new] asset image upload failed", err);
+      setError(
+        err instanceof Error ? err.message : "이미지 업로드에 실패했습니다.",
+      );
+    } finally {
+      setIsUploading(false);
+    }
+  };
+
+  const removeAssetImage = async (image: AssetImage) => {
+    setForm((prev) => ({
+      ...prev,
+      contentBlock: {
+        ...prev.contentBlock,
+        assetImages: prev.contentBlock.assetImages.filter(
+          (item) => item.path !== image.path,
+        ),
+      },
+    }));
+    if (image.path) {
+      await deleteObject(storageRef(storage, image.path)).catch((err) => {
+        console.warn("[admin/new] asset image delete failed", err);
+      });
+    }
+  };
+
   const hasContentTitle = form.contentBlock.title.trim();
-  const canSubmit = form.title.trim() && hasContentTitle && !isCreating;
+  const canSubmit =
+    form.title.trim() && hasContentTitle && !isCreating && !isUploading;
 
   const createMission = async () => {
     if (!canSubmit) return;
@@ -82,6 +160,7 @@ export default function NewMissionPage() {
               ...form.contentBlock,
               title: form.contentBlock.title.trim(),
               description: form.contentBlock.description.trim(),
+              assetImages: form.contentBlock.assetImages,
             },
           ],
         }),
@@ -213,6 +292,55 @@ export default function NewMissionPage() {
                 rows={6}
                 className="w-full resize-y rounded-xl border border-slate-200 bg-white px-3 py-2 font-mono text-sm outline-none focus:border-slate-400"
               />
+            </div>
+
+            <div className="space-y-2">
+              <p className="text-xs font-semibold text-slate-400">
+                콘텐츠 이미지 (선택)
+              </p>
+              <p className="text-xs text-slate-400">
+                실제 상품 사진이나 UI 캡쳐를 올리면 목업 생성 시 이 이미지를 그대로
+                넣어 만듭니다.
+              </p>
+              {form.contentBlock.assetImages.length > 0 && (
+                <div className="flex flex-wrap gap-2">
+                  {form.contentBlock.assetImages.map((image) => (
+                    <div
+                      key={image.path || image.url}
+                      className="group relative h-20 w-20 overflow-hidden rounded-xl border border-slate-200 bg-white"
+                    >
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={image.url}
+                        alt="콘텐츠 이미지"
+                        className="h-full w-full object-cover"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => removeAssetImage(image)}
+                        className="absolute right-1 top-1 rounded-full bg-slate-900/70 p-1 text-white opacity-0 transition group-hover:opacity-100"
+                        aria-label="이미지 삭제"
+                      >
+                        <XIcon size={12} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <label className="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-dashed border-slate-300 px-3 py-2 text-sm font-semibold text-slate-600 transition hover:bg-slate-50">
+                <input
+                  type="file"
+                  accept="image/*"
+                  multiple
+                  disabled={isUploading}
+                  onChange={(e) => {
+                    void uploadAssetImages(e.target.files);
+                    e.target.value = "";
+                  }}
+                  className="hidden"
+                />
+                {isUploading ? "업로드 중..." : "이미지 추가"}
+              </label>
             </div>
           </div>
         </div>

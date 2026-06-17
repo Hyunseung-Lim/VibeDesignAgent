@@ -11,6 +11,7 @@ import {
   STITCH_DESIGN_FONTS,
   STITCH_DESIGN_ROUNDNESS,
   styleImageReconstructPrompt,
+  assetImageEmbedPrompt,
 } from "@/lib/prompts";
 
 export const maxDuration = 180;
@@ -561,6 +562,64 @@ async function generateScreenFromStyleImage(
   return refScreen.edit(reconstructPrompt, deviceType);
 }
 
+// Download a remote image (e.g. a Firebase Storage asset URL) into a base64 data
+// URL so it can flow through the same temp-file + upload path as attached images.
+async function fetchImageAsDataUrl(rawUrl: string): Promise<string> {
+  let url: URL;
+  try {
+    url = new URL(rawUrl);
+  } catch {
+    throw new Error(`Invalid asset image URL: ${rawUrl}`);
+  }
+  if (!["http:", "https:"].includes(url.protocol)) {
+    throw new Error("Asset image URL must be http(s).");
+  }
+  const res = await fetch(url.toString(), { signal: AbortSignal.timeout(20_000) });
+  if (!res.ok) {
+    throw new Error(`Failed to fetch asset image: ${res.status}.`);
+  }
+  const buf = Buffer.from(await res.arrayBuffer());
+  const mime = res.headers.get("content-type")?.split(";")[0] || "image/png";
+  return `data:${mime};base64,${buf.toString("base64")}`;
+}
+
+// Content-led generation: the mission supplies real content images (product
+// photos, UI captures) that must appear in the mockup as-is. We upload them to
+// the project and edit the first into a working UI, instructing the model to
+// embed the uploaded images verbatim (see assetImageEmbedPrompt). Distinct from
+// the style-image path, which treats an image as a look to reconstruct.
+async function generateScreenFromAssetImages(
+  project: StitchProject,
+  assetImageDataUrls: string[],
+  productPrompt: string,
+  deviceType: DeviceType,
+): Promise<StitchScreenHandle> {
+  let baseRefScreen:
+    | { id: string; edit: (p: string, d?: DeviceType) => Promise<StitchScreenHandle> }
+    | undefined;
+  for (const dataUrl of assetImageDataUrls) {
+    const tmpPath = await writeStyleImageTmp(dataUrl);
+    try {
+      const uploaded = await project.upload(tmpPath, { title: "Mission asset" });
+      const screen = Array.isArray(uploaded) ? uploaded[0] : undefined;
+      if (screen && !baseRefScreen) baseRefScreen = screen;
+    } finally {
+      await unlink(tmpPath).catch(() => {});
+    }
+  }
+  if (!baseRefScreen) {
+    throw new Error("Stitch did not return a screen for the uploaded asset images.");
+  }
+  const deviceLabel =
+    deviceType === "MOBILE" ? "mobile app screen" : "desktop website";
+  const embedPrompt = assetImageEmbedPrompt(
+    productPrompt,
+    deviceLabel,
+    assetImageDataUrls.length,
+  );
+  return baseRefScreen.edit(embedPrompt, deviceType);
+}
+
 // Reverse-extract a 디자인 스타일 note from the reconstructed (correct) HTML so
 // later screens in the 시안 stay consistent. Grounded in the result, not the
 // reference or brand priors. Best-effort: returns "" on failure.
@@ -591,6 +650,7 @@ export async function POST(request: Request) {
     appliedDesignStyleHash,
     styleImage,
     styleSourceUrl,
+    assetImages,
   } = (await request.json()) as {
     prompt?: string;
     device?: string;
@@ -601,6 +661,7 @@ export async function POST(request: Request) {
     appliedDesignStyleHash?: string | null;
     styleImage?: { dataUrl?: string } | null;
     styleSourceUrl?: string | null;
+    assetImages?: { url?: string }[] | null;
   };
 
   if (!prompt) {
@@ -611,6 +672,13 @@ export async function POST(request: Request) {
   // upload→edit. Source is an attached image or a URL we screenshot. Only for
   // new screens (not edits of an existing artboard).
   const isImageLed = Boolean(styleImage?.dataUrl || styleSourceUrl) && !screenId;
+  // Asset-led generation: the mission supplies real content images to embed
+  // as-is. Only for new screens, and only when no style image is driving the
+  // look (style image takes precedence as it defines the whole appearance).
+  const assetImageUrls = (assetImages ?? [])
+    .map((image) => (typeof image?.url === "string" ? image.url.trim() : ""))
+    .filter(Boolean);
+  const isAssetLed = assetImageUrls.length > 0 && !screenId && !isImageLed;
 
   try {
     const { client, sdk } = createStitchClient();
@@ -682,6 +750,32 @@ export async function POST(request: Request) {
         );
         return stitchErrorResponse(imgErr, "Style image mockup generation failed");
       }
+    } else if (isAssetLed) {
+      try {
+        console.log(
+          "[stitch] asset-led generation from",
+          assetImageUrls.length,
+          "mission image(s)...",
+        );
+        const assetDataUrls = await Promise.all(
+          assetImageUrls.map((url) => fetchImageAsDataUrl(url)),
+        );
+        screen = await generateScreenFromAssetImages(
+          project,
+          assetDataUrls,
+          prompt,
+          deviceType,
+        );
+      } catch (assetErr) {
+        console.warn(
+          "[stitch] asset-led generation failed:",
+          errorMessage(assetErr),
+        );
+        return stitchErrorResponse(
+          assetErr,
+          "Mission asset image mockup generation failed",
+        );
+      }
     } else if (screenId) {
       console.log("[stitch] editing screen:", screenId);
       try {
@@ -714,7 +808,7 @@ export async function POST(request: Request) {
       (candidate) => candidate.id && !beforeScreenIds.has(candidate.id),
     );
     const { selected, allScreenIds } =
-      screenId || isImageLed
+      screenId || isImageLed || isAssetLed
         ? {
             selected: {
               screen,

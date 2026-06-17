@@ -50,6 +50,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { ChatBubble } from "@/components/session/chat-bubble";
+import { ChatCapabilityCatalog } from "@/components/session/chat-capability-catalog";
 import { ChatInput } from "@/components/session/chat-input";
 import { ChatPanel } from "@/components/session/chat-panel";
 import { DesignStyleSection } from "@/components/session/design-style-section";
@@ -529,12 +530,19 @@ type Idea = {
 
 type Device = "desktop" | "mobile";
 
+type AssetImage = {
+  url: string;
+  path?: string;
+  note?: string;
+};
+
 type MissionOption = {
   id: string;
   title: string;
   description: string;
   content: string;
   device?: Device;
+  assetImages?: AssetImage[];
 };
 
 type Artboard = {
@@ -693,6 +701,12 @@ function normalizeMissionOptions(
       description: option.description ?? "",
       device: option.device,
       content: option.content ?? "",
+      assetImages: Array.isArray(option.assetImages)
+        ? option.assetImages.filter(
+            (image): image is AssetImage =>
+              typeof image?.url === "string" && image.url.length > 0,
+          )
+        : [],
     }));
   if (options.length > 0) return options;
   if (mission?.title || mission?.description) {
@@ -4122,6 +4136,18 @@ export default function MainScreenPage() {
                   isNew && styleSourceUrlForTurn
                     ? styleSourceUrlForTurn
                     : undefined,
+                // Mission-supplied content images embed as-is on a new mockup,
+                // unless the user attached a style image/URL this turn (that
+                // drives the whole look and takes precedence server-side).
+                assetImages:
+                  isNew &&
+                  !styleImageForTurn &&
+                  !styleSourceUrlForTurn &&
+                  activeOption?.assetImages?.length
+                    ? activeOption.assetImages.map((image) => ({
+                        url: image.url,
+                      }))
+                    : undefined,
               }),
             });
           } finally {
@@ -6820,26 +6846,18 @@ export default function MainScreenPage() {
               }`}
             >
               {messages.length === 0 && (
-                <div className="flex h-full flex-col items-center justify-center gap-2 text-center text-sm text-slate-400">
-                  <p className="font-medium text-slate-500">디자인 에이전트</p>
-                  <p>레퍼런스 탐색, 목업 생성, 요소 수정을 도와드립니다.</p>
-                  <div className="mt-4 flex flex-col gap-2 text-xs">
-                    {(ideas.length > 0
-                      ? [
-                          "레퍼런스 찾아줘",
-                          "목업 만들어줘",
-                          "이 버튼 색상 바꿔줘",
-                        ]
-                      : ["레퍼런스 찾아줘", "목업에 쓸 레퍼런스 찾아줘"]
-                    ).map((hint) => (
-                      <button
-                        key={hint}
-                        onClick={() => setInputText(hint)}
-                        className="rounded-full border border-slate-200 px-3 py-1.5 text-slate-600 hover:bg-slate-50"
-                      >
-                        {hint}
-                      </button>
-                    ))}
+                <div className="flex h-full flex-col items-center justify-center gap-4 text-center text-sm text-slate-400">
+                  <div className="flex flex-col gap-1">
+                    <p className="font-medium text-slate-500">디자인 에이전트</p>
+                    <p>레퍼런스 탐색, 시안, 디자인 스타일, 목업, 발표까지 도와드립니다.</p>
+                  </div>
+                  <div className="w-full max-w-sm rounded-2xl border border-slate-200 bg-white p-4 text-left">
+                    <ChatCapabilityCatalog
+                      onPick={(example) => {
+                        setInputText(example);
+                        textareaRef.current?.focus();
+                      }}
+                    />
                   </div>
                 </div>
               )}
@@ -7040,6 +7058,10 @@ export default function MainScreenPage() {
               onCancelMockupGeneration={cancelMockupGeneration}
               onCancelMessage={cancelMessage}
               onSendMessage={sendMessage}
+              onPickCatalogExample={(example) => {
+                setInputText(example);
+                textareaRef.current?.focus();
+              }}
             />
           </ChatPanel>
         </main>

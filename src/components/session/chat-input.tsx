@@ -1,7 +1,9 @@
 "use client";
 
 import type { ChangeEvent, KeyboardEvent, RefObject } from "react";
-import { ImagePlus, X } from "lucide-react";
+import { useState } from "react";
+import { ArrowUp, ImagePlus, Sparkles, X } from "lucide-react";
+import { ChatCapabilityCatalog } from "./chat-capability-catalog";
 
 export type ChatInputSelectedElement = {
   selector: string;
@@ -38,6 +40,7 @@ type ChatInputProps = {
   onCancelMockupGeneration: () => void;
   onCancelMessage: () => void;
   onSendMessage: () => void;
+  onPickCatalogExample: (example: string) => void;
 };
 
 export function ChatInput({
@@ -65,7 +68,9 @@ export function ChatInput({
   onCancelMockupGeneration,
   onCancelMessage,
   onSendMessage,
+  onPickCatalogExample,
 }: ChatInputProps) {
+  const [catalogOpen, setCatalogOpen] = useState(false);
   return (
     <div className="border-t border-slate-200 bg-white/95 p-4">
       {readOnly && (
@@ -179,7 +184,6 @@ export function ChatInput({
             <span className="max-w-40 truncate">
               {styleImage.name || "스타일 참고 이미지"}
             </span>
-            <span className="text-slate-400">· 이 이미지처럼 목업 생성</span>
           </span>
           <button
             type="button"
@@ -192,7 +196,33 @@ export function ChatInput({
       )}
 
       {!readOnly && (
-        <div className="flex items-start gap-3 rounded-3xl border border-slate-200 bg-white px-4 py-3 transition-colors focus-within:border-slate-400">
+        <div className="relative flex flex-col gap-2 rounded-3xl border border-slate-200 bg-white px-4 py-3 transition-colors focus-within:border-slate-400">
+          {catalogOpen && (
+            <>
+              <button
+                type="button"
+                aria-label="능력 카탈로그 닫기"
+                onClick={() => setCatalogOpen(false)}
+                className="fixed inset-0 z-10 cursor-default"
+              />
+              <div className="absolute bottom-full left-0 z-20 mb-2 w-80 max-w-[calc(100%-1rem)] rounded-2xl border border-slate-200 bg-white p-4 shadow-lg">
+                <button
+                  type="button"
+                  aria-label="닫기"
+                  onClick={() => setCatalogOpen(false)}
+                  className="absolute right-3 top-3 rounded-full p-1 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600"
+                >
+                  <X size={14} />
+                </button>
+                <ChatCapabilityCatalog
+                  onPick={(example) => {
+                    onPickCatalogExample(example);
+                    setCatalogOpen(false);
+                  }}
+                />
+              </div>
+            </>
+          )}
           <textarea
             ref={textareaRef}
             rows={1}
@@ -220,58 +250,77 @@ export function ChatInput({
                 ? "에이전트에게 메시지를 입력하세요..."
                 : "미션 정보를 불러오는 중입니다..."
             }
-            className="max-h-24 flex-1 resize-none bg-transparent text-sm text-slate-700 outline-none focus-visible:outline-none placeholder:text-slate-400"
+            className="max-h-40 w-full resize-none bg-transparent px-1 text-sm text-slate-700 outline-none focus-visible:outline-none placeholder:text-slate-400"
           />
-          <label
-            title="스타일 참고 이미지 첨부 (이 이미지처럼 목업 생성)"
-            className={`flex shrink-0 cursor-pointer items-center self-center rounded-full p-1.5 transition ${
-              styleImage
-                ? "text-slate-700 hover:bg-slate-100"
-                : "text-slate-400 hover:bg-slate-100 hover:text-slate-600"
-            } ${!missionContextReady ? "pointer-events-none opacity-40" : ""}`}
-          >
-            <ImagePlus size={18} />
-            <input
-              type="file"
-              accept="image/png,image/jpeg,image/webp"
-              className="hidden"
-              disabled={!missionContextReady}
-              onChange={(event) => {
-                const file = event.target.files?.[0];
-                if (file) onAttachStyleImage(file);
-                event.target.value = "";
-              }}
-            />
-          </label>
-          {generatingMockup ? (
-            <button
-              type="button"
-              onClick={onCancelMockupGeneration}
-              className="flex items-center gap-1.5 rounded-full bg-red-500 px-4 py-2 text-xs font-semibold text-white transition hover:bg-red-600"
-            >
-              <span className="h-2 w-2 animate-spin rounded-full border border-white/60 border-t-transparent" />
-              {generatingCurrentIdeaMockup
-                ? `${mockupOperation === "edit" ? "수정" : "생성"} 취소`
-                : "작업 취소"}
-            </button>
-          ) : loading ? (
-            <button
-              type="button"
-              onClick={onCancelMessage}
-              className="rounded-full bg-red-500 px-4 py-2 text-xs font-semibold text-white transition hover:bg-red-600"
-            >
-              중단
-            </button>
-          ) : (
-            <button
-              type="button"
-              onClick={onSendMessage}
-              disabled={!inputText.trim() || !missionContextReady}
-              className="rounded-full bg-slate-900 px-4 py-2 text-xs font-semibold text-white transition disabled:cursor-not-allowed disabled:opacity-40"
-            >
-              Send
-            </button>
-          )}
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-0.5">
+              <button
+                type="button"
+                data-tour="chat-capability-catalog"
+                title="부탁할 수 있는 것들 보기"
+                onClick={() => setCatalogOpen((prev) => !prev)}
+                disabled={!missionContextReady}
+                className={`flex shrink-0 items-center rounded-full p-1.5 transition ${
+                  catalogOpen
+                    ? "text-indigo-600 hover:bg-indigo-50"
+                    : "text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+                } ${!missionContextReady ? "pointer-events-none opacity-40" : ""}`}
+              >
+                <Sparkles size={18} />
+              </button>
+              <label
+                title="스타일 참고 이미지 첨부 (이 이미지처럼 목업 생성)"
+                className={`flex shrink-0 cursor-pointer items-center rounded-full p-1.5 transition ${
+                  styleImage
+                    ? "text-slate-700 hover:bg-slate-100"
+                    : "text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+                } ${!missionContextReady ? "pointer-events-none opacity-40" : ""}`}
+              >
+                <ImagePlus size={18} />
+                <input
+                  type="file"
+                  accept="image/png,image/jpeg,image/webp"
+                  className="hidden"
+                  disabled={!missionContextReady}
+                  onChange={(event) => {
+                    const file = event.target.files?.[0];
+                    if (file) onAttachStyleImage(file);
+                    event.target.value = "";
+                  }}
+                />
+              </label>
+            </div>
+            {generatingMockup ? (
+              <button
+                type="button"
+                onClick={onCancelMockupGeneration}
+                className="flex items-center gap-1.5 rounded-full bg-red-500 px-4 py-2 text-xs font-semibold text-white transition hover:bg-red-600"
+              >
+                <span className="h-2 w-2 animate-spin rounded-full border border-white/60 border-t-transparent" />
+                {generatingCurrentIdeaMockup
+                  ? `${mockupOperation === "edit" ? "수정" : "생성"} 취소`
+                  : "작업 취소"}
+              </button>
+            ) : loading ? (
+              <button
+                type="button"
+                onClick={onCancelMessage}
+                className="rounded-full bg-red-500 px-4 py-2 text-xs font-semibold text-white transition hover:bg-red-600"
+              >
+                중단
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={onSendMessage}
+                disabled={!inputText.trim() || !missionContextReady}
+                aria-label="보내기"
+                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-slate-900 text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                <ArrowUp size={18} />
+              </button>
+            )}
+          </div>
         </div>
       )}
     </div>

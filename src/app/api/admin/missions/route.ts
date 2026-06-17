@@ -12,10 +12,33 @@ type MissionOptionInput = {
   title?: unknown;
   description?: unknown;
   content?: unknown;
+  assetImages?: unknown;
 };
 
 function text(value: unknown) {
   return String(value ?? "").trim();
+}
+
+// Mission content images supplied by the admin. Stored as { url, path } so the
+// session can feed them to Stitch and the admin can later delete them from
+// Storage. Silently drops malformed entries instead of failing the whole save.
+function assetImages(value: unknown) {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((entry) => {
+      const record = (entry ?? {}) as Record<string, unknown>;
+      const url = text(record.url);
+      if (!/^https?:\/\//i.test(url)) return null;
+      return {
+        url,
+        path: text(record.path),
+        note: text(record.note),
+      };
+    })
+    .filter((entry): entry is { url: string; path: string; note: string } =>
+      Boolean(entry),
+    )
+    .slice(0, 12);
 }
 
 function missionIdFromDate(now: Date) {
@@ -50,6 +73,7 @@ export async function POST(request: Request) {
       title: text(option.title),
       description: text(option.description),
       content: text(option.content),
+      assetImages: assetImages(option.assetImages),
     }))
     .filter((option) => option.title);
 
