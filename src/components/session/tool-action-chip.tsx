@@ -1,4 +1,4 @@
-import { CaretDownIcon, CaretUpIcon } from "@phosphor-icons/react";
+import { ChevronDownIcon, ChevronUpIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export type ToolActionChipData = {
@@ -51,9 +51,9 @@ export function ToolActionChip({
         </span>
         {hasCode &&
           (expanded ? (
-            <CaretUpIcon size={12} className="text-muted-foreground" />
+            <ChevronUpIcon size={12} className="text-muted-foreground" />
           ) : (
-            <CaretDownIcon size={12} className="text-muted-foreground" />
+            <ChevronDownIcon size={12} className="text-muted-foreground" />
           ))}
       </button>
       {expanded && hasCode && (

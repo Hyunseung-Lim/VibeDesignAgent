@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
-import { XIcon } from "@phosphor-icons/react";
+import { XIcon } from "lucide-react";
 
 interface PromptViewerProps {
   turnId: string;

@@ -10,6 +10,7 @@ import {
 import { firebaseAuth, googleProvider } from "@/lib/firebase";
 import { GoogleLogoIcon } from "@phosphor-icons/react";
 import { Button } from "@/components/ui/button";
+import { Spinner } from "@/components/ui/spinner";
 
 export default function Home() {
   const router = useRouter();
@@ -79,7 +80,7 @@ export default function Home() {
           className="w-full bg-surface-panel text-base"
         >
           {isLoading ? (
-            <span className="h-5 w-5 animate-spin rounded-full border-2 border-foreground border-t-transparent" />
+            <Spinner className="size-5" />
           ) : (
             <GoogleLogoIcon size={20} />
           )}

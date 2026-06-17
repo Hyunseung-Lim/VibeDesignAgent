@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, type ReactNode } from "react";
-import { XIcon } from "@phosphor-icons/react";
+import { XIcon } from "lucide-react";
 
 interface SessionMemoryDiffProps {
   /** before/after phase toggle control rendered in the header. */

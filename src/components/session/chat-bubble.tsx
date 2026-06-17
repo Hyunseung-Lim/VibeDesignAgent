@@ -1,14 +1,9 @@
 import ReactMarkdown from "react-markdown";
 import type { ComponentProps } from "react";
-import {
-  Brain,
-  ChevronDown,
-  ChevronUp,
-  Loader2,
-  TriangleAlert,
-} from "lucide-react";
+import { Brain, ChevronDown, ChevronUp, TriangleAlert } from "lucide-react";
 import { ToolActionChip, type ToolActionChipData } from "./tool-action-chip";
 import { RetrievedMemoryBadge } from "@/components/memory/retrieved-memory-badge";
+import { Spinner } from "@/components/ui/spinner";
 
 export type ChatBubbleMessage = {
   id: string;
@@ -239,7 +234,7 @@ export function ChatBubble({
             )}
             {isReferenceLoading && (
               <div className="mt-2 inline-flex items-center gap-2 rounded-full border border-indigo-100 bg-indigo-50 px-2.5 py-1 text-xs font-medium text-indigo-700">
-                <Loader2 className="size-3.5 animate-spin" aria-hidden="true" />
+                <Spinner className="size-3.5" />
                 레퍼런스 검색 중...
               </div>
             )}

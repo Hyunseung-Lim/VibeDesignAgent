@@ -7,12 +7,13 @@ import { useEffect, useMemo, useState } from "react";
 import {
   ArrowLeftIcon,
   ArrowRightIcon,
-  DeviceMobileIcon,
+  SmartphoneIcon,
   MonitorIcon,
   XIcon,
-  PencilSimpleIcon,
-  UsersThreeIcon,
-} from "@phosphor-icons/react";
+  PencilIcon,
+  UsersIcon,
+} from "lucide-react";
+import { Spinner } from "@/components/ui/spinner";
 import { toast } from "sonner";
 import { getIdToken, onAuthStateChanged } from "firebase/auth";
 import {
@@ -334,6 +335,12 @@ export default function AdminPage() {
     string | null
   >(null);
   const [participants, setParticipants] = useState<Participant[]>([]);
+  const [isLoadingParticipants, setIsLoadingParticipants] = useState(false);
+  // Google profile photos (lh3.googleusercontent.com) intermittently 403/429,
+  // so track loads that fail and fall back to the initial-letter badge.
+  const [failedAvatarIds, setFailedAvatarIds] = useState<Set<string>>(
+    () => new Set(),
+  );
   const [adminUsers, setAdminUsers] = useState<AdminUser[]>([]);
   const [isLoadingUsers, setIsLoadingUsers] = useState(false);
   const [memoryModal, setMemoryModal] = useState<{
@@ -502,27 +509,33 @@ export default function AdminPage() {
   const openParticipants = async (missionId: string) => {
     setParticipantsMissionId(missionId);
     setParticipants([]);
-    const snap = await getDocs(
-      collection(db, "missions", missionId, "participants"),
-    );
-    const participantRows = snap.docs.map((d) => {
-      const participant = { id: d.id, ...d.data() } as Participant;
-      participant.isAdmin = isAdminEmail(participant.email);
-      return participant;
-    });
-    const statuses = await fetchOnboardingStatuses(
-      participantRows.map((participant) => participant.id),
-    );
-    participantRows.forEach((participant) => {
-      participant.onboardingStatus =
-        statuses[participant.id]?.onboardingStatus ?? "unknown";
-    });
-    setParticipants(participantRows);
+    setIsLoadingParticipants(true);
+    try {
+      const snap = await getDocs(
+        collection(db, "missions", missionId, "participants"),
+      );
+      const participantRows = snap.docs.map((d) => {
+        const participant = { id: d.id, ...d.data() } as Participant;
+        participant.isAdmin = isAdminEmail(participant.email);
+        return participant;
+      });
+      const statuses = await fetchOnboardingStatuses(
+        participantRows.map((participant) => participant.id),
+      );
+      participantRows.forEach((participant) => {
+        participant.onboardingStatus =
+          statuses[participant.id]?.onboardingStatus ?? "unknown";
+      });
+      setParticipants(participantRows);
+    } finally {
+      setIsLoadingParticipants(false);
+    }
   };
 
   const openOnboardingParticipants = () => {
     setParticipantsMissionId(ONBOARDING_MISSION_ID);
     setParticipants(adminUsers);
+    setIsLoadingParticipants(false);
   };
 
   const requestDeleteUserData = (participant: Participant) => {
@@ -956,6 +969,7 @@ export default function AdminPage() {
   const closeParticipants = () => {
     setParticipantsMissionId(null);
     setParticipants([]);
+    setIsLoadingParticipants(false);
   };
 
   const updateEditOption = (id: string, changes: Partial<MissionOption>) => {
@@ -2019,7 +2033,7 @@ export default function AdminPage() {
                 title="온보딩 유저 보기"
                 aria-label="온보딩 유저 보기"
               >
-                <UsersThreeIcon size={16} />
+                <UsersIcon size={16} />
               </Button>
             </div>
             <div className="flex flex-wrap items-end gap-3">
@@ -2223,7 +2237,7 @@ export default function AdminPage() {
                                   </>
                                 ) : (
                                   <>
-                                    <DeviceMobileIcon
+                                    <SmartphoneIcon
                                       size={12}
                                       className="inline"
                                     />{" "}
@@ -2255,7 +2269,7 @@ export default function AdminPage() {
                             title="참여자 보기"
                             aria-label="참여자 보기"
                           >
-                            <UsersThreeIcon size={16} />
+                            <UsersIcon size={16} />
                           </Button>
                           <Button
                             type="button"
@@ -2266,7 +2280,7 @@ export default function AdminPage() {
                             title="수정"
                             aria-label="미션 수정"
                           >
-                            <PencilSimpleIcon size={16} />
+                            <PencilIcon size={16} />
                           </Button>
                           <Button
                             type="button"
@@ -2318,10 +2332,15 @@ export default function AdminPage() {
               </Button>
             </div>
             <div className="mt-4 space-y-2">
-              {participants.length === 0 ? (
-                <p className="text-sm text-muted-foreground">
+              {isLoadingParticipants ? (
+                <div className="flex items-center justify-center gap-2 py-8 text-sm text-muted-foreground">
+                  <Spinner className="size-4" />
+                  참여자 불러오는 중...
+                </div>
+              ) : participants.length === 0 ? (
+                <div className="flex items-center justify-center py-8 text-sm text-muted-foreground">
                   아직 유저 데이터가 없습니다.
-                </p>
+                </div>
               ) : (
                 participants.map((p) => {
                   const badge = onboardingBadge(p.onboardingStatus);
@@ -2330,10 +2349,18 @@ export default function AdminPage() {
                       key={p.id}
                       className="flex items-center gap-3 rounded-2xl border border-border px-4 py-3"
                     >
-                      {p.photoURL ? (
+                      {p.photoURL && !failedAvatarIds.has(p.id) ? (
                         <img
                           src={p.photoURL}
                           alt=""
+                          referrerPolicy="no-referrer"
+                          onError={() =>
+                            setFailedAvatarIds((prev) => {
+                              const next = new Set(prev);
+                              next.add(p.id);
+                              return next;
+                            })
+                          }
                           className="h-8 w-8 rounded-full object-cover"
                         />
                       ) : (

@@ -5,10 +5,10 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import {
   ArrowLeftIcon,
-  DeviceMobileIcon,
+  SmartphoneIcon,
   MonitorIcon,
   XIcon,
-} from "@phosphor-icons/react";
+} from "lucide-react";
 import { getIdToken, onAuthStateChanged } from "firebase/auth";
 import {
   deleteObject,
@@ -258,7 +258,7 @@ export default function NewMissionPage() {
                 >
                   {d === "desktop"
                     ? <><MonitorIcon size={14} className="inline mr-1" />PC</>
-                    : <><DeviceMobileIcon size={14} className="inline mr-1" />모바일</>}
+                    : <><SmartphoneIcon size={14} className="inline mr-1" />모바일</>}
                 </button>
               ))}
             </div>

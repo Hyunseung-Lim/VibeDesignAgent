@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import Link from "next/link";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -54,6 +55,9 @@ export function AdminUserCard({
   onBackupAndDeleteSessions,
 }: AdminUserCardProps) {
   const badge = onboardingBadge(user.onboardingStatus);
+  // Google profile photos (lh3.googleusercontent.com) intermittently 403/429;
+  // fall back to the initial-letter badge when the image fails to load.
+  const [avatarFailed, setAvatarFailed] = useState(false);
   const missionIds = Array.from(
     new Set([
       ...(user.onboardingStatus === "completed" ? [onboardingMissionId] : []),
@@ -63,11 +67,13 @@ export function AdminUserCard({
   return (
     <div className="rounded-3xl border border-border bg-card p-5 shadow-sm">
       <div className="flex items-start gap-3">
-        {user.photoURL ? (
+        {user.photoURL && !avatarFailed ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img
             src={user.photoURL}
             alt=""
+            referrerPolicy="no-referrer"
+            onError={() => setAvatarFailed(true)}
             className="h-10 w-10 rounded-full object-cover"
           />
         ) : (

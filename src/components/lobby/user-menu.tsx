@@ -1,10 +1,10 @@
 import Image from "next/image";
 import Link from "next/link";
 import {
-  CaretDownIcon,
-  SignOutIcon,
+  ChevronDownIcon,
+  LogOutIcon,
   ShieldCheckIcon,
-} from "@phosphor-icons/react";
+} from "lucide-react";
 
 type UserMenuProps = {
   userEmail: string;
@@ -53,9 +53,8 @@ export function UserMenu({
             {userInitial}
           </span>
         )}
-        <CaretDownIcon
+        <ChevronDownIcon
           size={14}
-          weight="bold"
           className={`transition-transform ${isOpen ? "rotate-180" : ""}`}
           aria-hidden
         />
@@ -104,7 +103,7 @@ export function UserMenu({
               onClick={onLogout}
               className="flex h-9 w-full items-center gap-2 rounded-lg px-2.5 text-left text-sm font-medium text-foreground transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >
-              <SignOutIcon size={16} aria-hidden />
+              <LogOutIcon size={16} aria-hidden />
               로그아웃
             </button>
           </div>

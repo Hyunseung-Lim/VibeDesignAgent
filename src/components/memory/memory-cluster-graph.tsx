@@ -8,7 +8,7 @@ import {
   useState,
   type PointerEvent,
 } from "react";
-import { MagnifyingGlassMinusIcon, MagnifyingGlassPlusIcon, CornersOutIcon } from "@phosphor-icons/react";
+import { ZoomOutIcon, ZoomInIcon, MaximizeIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { memoryClusterColor } from "@/components/memory/memory-cluster-colors";
 import type { ClusterGraphEdge } from "@/components/memory/memory-cluster-types";
@@ -800,7 +800,7 @@ export default function MemoryClusterGraph({
           aria-label="Zoom in graph"
           title="Zoom in"
         >
-          <MagnifyingGlassPlusIcon size={14} />
+          <ZoomInIcon size={14} />
         </Button>
         <Button
           type="button"
@@ -811,7 +811,7 @@ export default function MemoryClusterGraph({
           aria-label="Zoom out graph"
           title="Zoom out"
         >
-          <MagnifyingGlassMinusIcon size={14} />
+          <ZoomOutIcon size={14} />
         </Button>
         <Button
           type="button"
@@ -822,7 +822,7 @@ export default function MemoryClusterGraph({
           aria-label="Fit graph view"
           title="Fit"
         >
-          <CornersOutIcon size={14} />
+          <MaximizeIcon size={14} />
         </Button>
         <span className="px-2 text-[10px] font-semibold tabular-nums text-slate-400">
           {Math.round(view.zoom * 100)}%

@@ -3133,3 +3133,10 @@ type ChatPlan = {
   - 목업 생성/수정 실패: content append 대신 `error`에 "목업 생성 실패/목업 수정 실패: …" 설정 + `toast.error`. 사용자 취소(`wasCanceled`)는 에러가 아니라 평문 "목업 작업을 취소했습니다."로 유지.
   - 일반 요청 실패: `error`에 "요청을 처리하지 못했습니다…" + toast. 타임아웃/AbortError는 사용자 취소일 수 있어 기존대로 content 안내 메시지만(콜아웃/toast 미발사).
 - 검증: `tsc --noEmit` 통과, 변경 파일 eslint 0 error(기존 warning만).
+
+### 15.93 아이콘 라이브러리 lucide로 통일 `[implemented 2026-06-17]`
+
+- 결정(사용자): 아이콘을 한 라이브러리로 통일. lucide 채택 — shadcn 정합성 때문(프리미티브 dialog/select/dropdown/sheet/sonner가 lucide를 import하고, `components.json` `iconLibrary: lucide`라 CLI가 컴포넌트 추가/업데이트 시 lucide를 재생성한다. phosphor로 통일하면 그 재생성과 영구 충돌). 단 lucide는 브랜드 로고를 제공하지 않으므로 `GoogleLogoIcon`(랜딩 로그인 버튼)만 phosphor 유지.
+- 구현: 기존 @phosphor-icons/react 사용 14개 파일을 lucide로 교체. 이름 매핑(suffix Icon 유지) — DeviceMobile→Smartphone, PencilSimple→Pencil, UsersThree→Users, ArrowsOut→Maximize2, ArrowsIn→Minimize2, DownloadSimple→Download, MagnifyingGlassPlus/Minus→ZoomIn/ZoomOut, CornersOut→Maximize, CaretDown/Up→ChevronDown/Up, CheckCircle→CircleCheck, LockSimple→Lock, SignOut→LogOut, Trash→Trash2. phosphor 전용 prop `weight`는 lucide에 없어 제거(mission-card, user-menu).
+- 컨벤션: 앞으로 신규 아이콘은 lucide에서 가져온다. 브랜드/로고가 필요한 예외만 phosphor.
+- 검증: `tsc --noEmit` 통과, 변경 파일 eslint 0 error(기존 warning만). phosphor 잔존 참조는 page.tsx GoogleLogo 1건뿐임을 grep으로 확인.

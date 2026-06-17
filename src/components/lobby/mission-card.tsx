@@ -1,9 +1,9 @@
 import {
-  CheckCircleIcon,
-  DeviceMobileIcon,
-  LockSimpleIcon,
+  CircleCheckIcon,
+  SmartphoneIcon,
+  LockIcon,
   MonitorIcon,
-} from "@phosphor-icons/react";
+} from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { StatusBadge, type MissionStatus } from "@/components/lobby/status-badge";
@@ -41,7 +41,7 @@ function DeviceBadge({ device }: { device?: "desktop" | "mobile" }) {
   if (device === "mobile") {
     return (
       <Badge variant="secondary" className="gap-1 font-medium">
-        <DeviceMobileIcon size={12} className="inline" /> 모바일
+        <SmartphoneIcon size={12} className="inline" /> 모바일
       </Badge>
     );
   }
@@ -57,7 +57,7 @@ function DeviceBadge({ device }: { device?: "desktop" | "mobile" }) {
   return (
     <Badge variant="secondary" className="gap-1 font-medium">
       <MonitorIcon size={12} className="inline" /> PC ·{" "}
-      <DeviceMobileIcon size={12} className="inline" /> 모바일
+      <SmartphoneIcon size={12} className="inline" /> 모바일
     </Badge>
   );
 }
@@ -88,17 +88,15 @@ export function MissionCard({
       <div className="flex flex-wrap items-start gap-3">
         <p className="flex flex-1 items-center gap-1.5 text-base font-semibold leading-snug text-card-foreground text-balance">
           {isLocked && (
-            <LockSimpleIcon
+            <LockIcon
               size={15}
-              weight="fill"
               className="shrink-0 text-muted-foreground"
               aria-hidden
             />
           )}
           {isCompleted && (
-            <CheckCircleIcon
+            <CircleCheckIcon
               size={16}
-              weight="fill"
               className="shrink-0 text-emerald-500"
               aria-hidden
             />
@@ -129,7 +127,7 @@ export function MissionCard({
       </p>
       {isLocked && lockReason && (
         <p className="mt-3 flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
-          <LockSimpleIcon size={12} aria-hidden />
+          <LockIcon size={12} aria-hidden />
           {lockReason}
         </p>
       )}

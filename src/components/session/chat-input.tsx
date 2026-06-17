@@ -4,6 +4,7 @@ import type { ChangeEvent, KeyboardEvent, RefObject } from "react";
 import { useState } from "react";
 import { ArrowUp, ImagePlus, Sparkles, X } from "lucide-react";
 import { ChatCapabilityCatalog } from "./chat-capability-catalog";
+import { Spinner } from "@/components/ui/spinner";
 
 export type ChatInputSelectedElement = {
   selector: string;
@@ -296,7 +297,7 @@ export function ChatInput({
                 onClick={onCancelMockupGeneration}
                 className="flex items-center gap-1.5 rounded-full bg-red-500 px-4 py-2 text-xs font-semibold text-white transition hover:bg-red-600"
               >
-                <span className="h-2 w-2 animate-spin rounded-full border border-white/60 border-t-transparent" />
+                <Spinner className="size-3" />
                 {generatingCurrentIdeaMockup
                   ? `${mockupOperation === "edit" ? "수정" : "생성"} 취소`
                   : "작업 취소"}

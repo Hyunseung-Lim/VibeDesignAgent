@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { TrashIcon } from "@phosphor-icons/react";
+import { Trash2Icon } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import type {
   ClusterGraphItem,
@@ -201,7 +201,7 @@ export function MemoryClusterSidePanel({
                           className="absolute right-2 top-2 z-10 hidden rounded-full p-1 text-slate-400 transition hover:bg-red-50 hover:text-red-500 group-hover:flex"
                           aria-label="메모리 삭제"
                         >
-                          <TrashIcon size={12} />
+                          <Trash2Icon size={12} />
                         </button>
                       ) : null}
                     <button

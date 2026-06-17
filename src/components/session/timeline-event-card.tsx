@@ -1,4 +1,4 @@
-import { BrainIcon } from "@phosphor-icons/react";
+import { BrainIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 type TimelineActivityEventCardProps = {

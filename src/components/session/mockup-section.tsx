@@ -2,6 +2,7 @@
 
 import type { ReactNode, RefObject } from "react";
 import { MockupCanvasToolbar } from "@/components/session/mockup-canvas-toolbar";
+import { Spinner } from "@/components/ui/spinner";
 
 export type MockupSectionSelectedElement = {
   selector: string;
@@ -94,7 +95,7 @@ export function MockupSection({
         <div className="flex h-64 flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-slate-300 bg-white/70 text-sm text-slate-400">
           {generating ? (
             <>
-              <div className="h-7 w-7 animate-spin rounded-full border-2 border-slate-300 border-t-slate-600" />
+              <Spinner className="size-7 text-slate-500" />
               <p className="text-slate-500">
                 Stitch로 목업 {mockupOperation === "edit" ? "수정" : "생성"} 중...
               </p>

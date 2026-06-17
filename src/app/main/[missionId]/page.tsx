@@ -22,14 +22,14 @@ import {
 } from "firebase/firestore";
 import {
   ArrowLeftIcon,
-  ArrowsOutIcon,
-  ArrowsInIcon,
+  Maximize2Icon,
+  Minimize2Icon,
   BrainIcon,
   EyeIcon,
-  DownloadSimpleIcon,
+  DownloadIcon,
   XIcon,
-} from "@phosphor-icons/react";
-import { HelpCircleIcon } from "lucide-react";
+  HelpCircleIcon,
+} from "lucide-react";
 import { toast } from "sonner";
 import { isAdminEmail } from "@/lib/admin";
 import {
@@ -52,6 +52,7 @@ import {
 import { ChatBubble } from "@/components/session/chat-bubble";
 import { ChatCapabilityCatalog } from "@/components/session/chat-capability-catalog";
 import { ChatInput } from "@/components/session/chat-input";
+import { Spinner } from "@/components/ui/spinner";
 import { ChatPanel } from "@/components/session/chat-panel";
 import { DesignStyleSection } from "@/components/session/design-style-section";
 import { FinalDesignSelector } from "@/components/session/final-design-selector";
@@ -5114,7 +5115,7 @@ export default function MainScreenPage() {
       `}</style>
       {isGeneratingCurrentIdeaMockup && (
         <div className="pointer-events-none absolute left-1/2 top-4 z-20 flex -translate-x-1/2 items-center gap-3 rounded-full border border-white/10 bg-black/75 px-4 py-2 text-white shadow-lg backdrop-blur">
-          <div className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
+          <Spinner className="size-4 text-white" />
           <p className="text-xs font-medium text-white/85">
             Stitch로 목업 {mockupOperation === "edit" ? "수정" : "생성"} 중...
           </p>
@@ -5928,7 +5929,7 @@ export default function MainScreenPage() {
               className="inline-flex items-center gap-1.5 rounded-full border border-amber-200 bg-white/70 px-3 py-1 font-semibold text-amber-700 transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-45"
               title="로그 CSV 내보내기"
             >
-              <DownloadSimpleIcon size={14} />
+              <DownloadIcon size={14} />
               로그 CSV
             </button>
             {isViewingAsAdmin ? (
@@ -6093,10 +6094,10 @@ export default function MainScreenPage() {
                 className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full ${
                   sessionCompletionReady
                     ? "bg-slate-900 text-white"
-                    : "animate-spin border-2 border-slate-200 border-t-slate-900"
+                    : "bg-slate-100 text-slate-900"
                 }`}
               >
-                {sessionCompletionReady ? "✓" : null}
+                {sessionCompletionReady ? "✓" : <Spinner className="size-5" />}
               </div>
               <div>
                 <p className="text-sm font-semibold text-slate-900">
@@ -6169,7 +6170,7 @@ export default function MainScreenPage() {
       {isInitialSessionContextPending ? (
         <main className="flex flex-1 items-center justify-center overflow-hidden">
           <div className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-white px-5 py-4 text-sm text-slate-500 shadow-sm">
-            <span className="h-4 w-4 animate-spin rounded-full border-2 border-slate-200 border-t-slate-700" />
+            <Spinner className="size-4 text-slate-700" />
             미션 정보를 불러오는 중...
           </div>
         </main>
@@ -6318,10 +6319,7 @@ export default function MainScreenPage() {
               >
                 {profileSaving ? (
                   <>
-                    <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none">
-                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                    </svg>
+                    <Spinner className="size-4" />
                     세션 준비 중…
                   </>
                 ) : missionDurationMinutes ? (
@@ -6856,7 +6854,7 @@ export default function MainScreenPage() {
                     onClick={() => setIsMemoryDiffOpen(true)}
                     className="mt-3 flex w-full items-center justify-center gap-2 rounded-lg bg-slate-900 px-3 py-2 text-xs font-semibold text-white transition hover:bg-slate-700"
                   >
-                    <ArrowsOutIcon size={14} />
+                    <Maximize2Icon size={14} />
                     전체 메모리 변화 보기
                   </button>
                 </section>
@@ -7199,7 +7197,7 @@ export default function MainScreenPage() {
               onClick={() => setIsMockupExpanded(false)}
               className="flex items-center gap-1.5 rounded-full bg-white/10 px-3 py-1.5 text-xs text-white hover:bg-white/20"
             >
-              <ArrowsInIcon size={14} /> 축소
+              <Minimize2Icon size={14} /> 축소
             </button>
           </div>
 
