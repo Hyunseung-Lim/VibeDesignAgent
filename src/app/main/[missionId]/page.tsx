@@ -143,6 +143,9 @@ type Message = {
   styleImage?: { dataUrl: string; name?: string } | null;
   reviewTurnId?: string | null;
   chatPhases?: string[];
+  // Explicit, prominent error surfaced in the chat bubble (red callout),
+  // independent of the collapsible phase toggle. See QA: 목업/요청 에러 명시.
+  error?: string;
 };
 
 type ChatResponseProvider = "openai" | "anthropic";
@@ -4424,20 +4427,23 @@ export default function MainScreenPage() {
           const wasCanceled = stitchCancelRequestedRef.current;
           const errMsg =
             err instanceof Error ? err.message : "Stitch 생성 실패";
+          const failureLabel =
+            mockupOperation === "edit" ? "목업 수정 실패" : "목업 생성 실패";
           setMessages((prev) =>
             prev.map((m) =>
               m.id === assistantId
-                ? {
-                    ...m,
-                    content:
-                      m.content +
-                      (wasCanceled
-                        ? "\n\n목업 작업을 취소했습니다."
-                        : `\n\n⚠️ 목업 생성 실패: ${errMsg}`),
-                  }
+                ? wasCanceled
+                  ? {
+                      ...m,
+                      content: `${m.content}\n\n목업 작업을 취소했습니다.`,
+                    }
+                  : { ...m, error: `${failureLabel}: ${errMsg}` }
                 : m,
             ),
           );
+          if (!wasCanceled) {
+            toast.error(`${failureLabel}: ${errMsg}`);
+          }
         } finally {
           stitchAbortControllerRef.current = null;
           stitchCancelRequestedRef.current = false;
@@ -4456,15 +4462,18 @@ export default function MainScreenPage() {
       setMessages((prev) =>
         prev.map((m) =>
           m.id === assistantId
-            ? {
-                ...m,
-                content: isTimeout
-                  ? "응답 시간이 초과되었습니다. 다시 시도해주세요."
-                  : "오류가 발생했습니다. 다시 시도해주세요.",
-              }
+            ? isTimeout
+              ? {
+                  ...m,
+                  content: "응답 시간이 초과되었습니다. 다시 시도해주세요.",
+                }
+              : { ...m, error: "요청을 처리하지 못했습니다. 다시 시도해주세요." }
             : m,
         ),
       );
+      if (!isTimeout) {
+        toast.error("요청을 처리하지 못했습니다. 다시 시도해주세요.");
+      }
     } finally {
       clearTimeout(timeoutId);
       abortControllerRef.current = null;

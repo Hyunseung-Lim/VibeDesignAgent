@@ -1,6 +1,12 @@
 import ReactMarkdown from "react-markdown";
 import type { ComponentProps } from "react";
-import { Brain, ChevronDown, ChevronUp, Loader2 } from "lucide-react";
+import {
+  Brain,
+  ChevronDown,
+  ChevronUp,
+  Loader2,
+  TriangleAlert,
+} from "lucide-react";
 import { ToolActionChip, type ToolActionChipData } from "./tool-action-chip";
 import { RetrievedMemoryBadge } from "@/components/memory/retrieved-memory-badge";
 
@@ -14,6 +20,7 @@ export type ChatBubbleMessage = {
   citedReferences?: { id: string; title: string; imageUrl?: string }[] | null;
   citedTexts?: string[] | null;
   styleImage?: { dataUrl: string; name?: string } | null;
+  error?: string;
 };
 
 export type ChatContentPart =
@@ -148,7 +155,7 @@ export function ChatBubble({
             )}
             <div>{message.content}</div>
           </div>
-        ) : message.content || visibleChatPhases.length > 0 ? (
+        ) : message.content || visibleChatPhases.length > 0 || message.error ? (
           <div className="space-y-2">
             {visibleChatPhases.length > 0 && (
               <div className="border-b border-slate-200 pb-2 text-xs">
@@ -217,6 +224,18 @@ export function ChatBubble({
                   onToggle={onToggleChip}
                 />
               ),
+            )}
+            {message.error && (
+              <div
+                role="alert"
+                className="flex items-start gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-600"
+              >
+                <TriangleAlert
+                  className="mt-0.5 size-3.5 shrink-0"
+                  aria-hidden="true"
+                />
+                <span className="flex-1">{message.error}</span>
+              </div>
             )}
             {isReferenceLoading && (
               <div className="mt-2 inline-flex items-center gap-2 rounded-full border border-indigo-100 bg-indigo-50 px-2.5 py-1 text-xs font-medium text-indigo-700">

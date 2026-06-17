@@ -3123,3 +3123,13 @@ type ChatPlan = {
   - `page.tsx`: `chatWidth` 상태(localStorage `vda-chat-width` 영속, 범위 `CHAT_MIN_WIDTH`360~`CHAT_MAX_WIDTH`720, 기본 448=기존 max-w-md). content 섹션과 ChatPanel 사이에 `cursor-col-resize` 핸들 추가, pointer 드래그로 `window.innerWidth - clientX`를 clamp해 갱신.
   - 목업 확장 오버레이의 우측 오프셋을 고정 `md:right-112` → `md:right-[var(--chat-w,28rem)]`로 변경. `chatWidth` 변경 시 `document.documentElement`의 `--chat-w` CSS 변수를 effect로 동기화해 오버레이가 채팅 폭을 따라간다. SSR/첫 페인트는 28rem fallback.
 - 검증: `tsc --noEmit` 통과, 변경 파일 eslint 0 error(기존 warning만).
+
+### 15.92 요청 에러를 채팅에서 명시적으로 노출 `[implemented 2026-06-17]`
+
+- 배경(QA Note "목업 생성하다가 에러가 나면 (...) 좀 더 채팅창에서 명시적으로 알려줘야할듯?", P2 Bug/UI): 에러/경고가 접히는 "처리 과정" 토글 근처 평문으로 들어가 사용자가 모르고 지나친다. 노출 방식도 경로별로 제각각이었다(레퍼런스 실패만 toast, 목업 실패는 `m.content`에 ⚠️ 평문 append, 일반 오류는 content 교체).
+- 결정(사용자): 추천대로 (1) 채팅 버블에 토글과 독립된 빨간 콜아웃으로 항상 노출 + (2) 실패 시 toast 동시 발사.
+- 구현:
+  - `Message`/`ChatBubbleMessage`에 `error?` 필드 추가. 버블은 phase 토글/콘텐츠와 무관하게 `error`가 있으면 `role=alert` 빨간 콜아웃(TriangleAlert)을 렌더. 콘텐츠가 비어도 콜아웃이 보이도록 분기 조건에 `message.error` 포함.
+  - 목업 생성/수정 실패: content append 대신 `error`에 "목업 생성 실패/목업 수정 실패: …" 설정 + `toast.error`. 사용자 취소(`wasCanceled`)는 에러가 아니라 평문 "목업 작업을 취소했습니다."로 유지.
+  - 일반 요청 실패: `error`에 "요청을 처리하지 못했습니다…" + toast. 타임아웃/AbortError는 사용자 취소일 수 있어 기존대로 content 안내 메시지만(콜아웃/toast 미발사).
+- 검증: `tsc --noEmit` 통과, 변경 파일 eslint 0 error(기존 warning만).
