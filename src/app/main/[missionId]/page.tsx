@@ -93,6 +93,12 @@ import {
 
 const ONBOARDING_MISSION_ID = "onboarding";
 
+// Resizable chat panel bounds (px). Default mirrors the previous fixed width
+// (max-w-md / md:right-112 = 28rem) so the mockup overlay stays aligned.
+const CHAT_MIN_WIDTH = 360;
+const CHAT_MAX_WIDTH = 720;
+const CHAT_DEFAULT_WIDTH = 448;
+
 // A memory belongs to the cumulative set for the selected mission when it is the
 // onboarding base, or was created in a mission at/before the selected one in the
 // user's per-user mission order. Mission order is randomized per user, so we
@@ -1774,6 +1780,42 @@ export default function MainScreenPage() {
     string | null
   >(null);
   const [isMockupExpanded, setIsMockupExpanded] = useState(false);
+  // Resizable chat panel width (drag handle between content and chat).
+  const [chatWidth, setChatWidth] = useState<number>(() => {
+    if (typeof window === "undefined") return CHAT_DEFAULT_WIDTH;
+    const saved = Number(window.localStorage.getItem("vda-chat-width"));
+    return saved >= CHAT_MIN_WIDTH && saved <= CHAT_MAX_WIDTH
+      ? saved
+      : CHAT_DEFAULT_WIDTH;
+  });
+  const isResizingChatRef = useRef(false);
+  useEffect(() => {
+    document.documentElement.style.setProperty("--chat-w", `${chatWidth}px`);
+    window.localStorage.setItem("vda-chat-width", String(chatWidth));
+  }, [chatWidth]);
+  const startChatResize = useCallback((event: React.PointerEvent) => {
+    event.preventDefault();
+    isResizingChatRef.current = true;
+    const onMove = (ev: PointerEvent) => {
+      if (!isResizingChatRef.current) return;
+      const next = Math.min(
+        CHAT_MAX_WIDTH,
+        Math.max(CHAT_MIN_WIDTH, window.innerWidth - ev.clientX),
+      );
+      setChatWidth(next);
+    };
+    const onUp = () => {
+      isResizingChatRef.current = false;
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      document.body.style.userSelect = "";
+      document.body.style.cursor = "";
+    };
+    document.body.style.userSelect = "none";
+    document.body.style.cursor = "col-resize";
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+  }, []);
   const [designContextMenu, setDesignContextMenu] = useState<{
     artboardId: string;
     x: number;
@@ -6603,8 +6645,20 @@ export default function MainScreenPage() {
             </div>
           )}
 
+          {/* Resize handle between content and chat */}
+          <div
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="채팅 창 크기 조절"
+            onPointerDown={startChatResize}
+            className="group relative w-1 shrink-0 cursor-col-resize bg-slate-100 transition-colors hover:bg-indigo-300"
+          >
+            <span className="absolute inset-y-0 -left-1 -right-1" />
+          </div>
+
           {/* Right panel: agent chat */}
           <ChatPanel
+            width={chatWidth}
             showReviewTabs={showReviewAnnotations}
             activeTab={rightPanelTab}
             messageCount={messages.length}
@@ -7079,7 +7133,7 @@ export default function MainScreenPage() {
       {/* Mockup expanded canvas: keep the chat panel visible */}
       {isMockupExpanded && (
         <div
-          className="fixed inset-y-0 left-0 right-0 z-40 flex flex-col bg-[#1a1a1a] md:right-112"
+          className="fixed inset-y-0 left-0 right-0 z-40 flex flex-col bg-[#1a1a1a] md:right-[var(--chat-w,28rem)]"
           style={{
             backgroundImage:
               "radial-gradient(circle, #383838 1px, transparent 1px)",

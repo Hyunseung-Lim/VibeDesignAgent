@@ -3112,5 +3112,14 @@ type ChatPlan = {
   - `page.tsx`: 채팅 빈 화면의 인라인 예시 칩 배열을 카탈로그 펼침형으로 교체(기존 `setInputText` 패턴 유지). 목업 생성 항목엔 "디자인 스타일 먼저 필요" 의존성 노트 표기.
   - 색상 slate/indigo/violet 유지.
   - 위치 논의 결론: 카탈로그는 헤더 튜토리얼 버튼 옆이 아니라 입력 툴바에 둔다. 근거는 동작-결과 co-location(예문 클릭 → 바로 아래 입력창이 채워짐)과 역할 분리(튜토리얼=공간 안내 1회성, 카탈로그=입력 직전 반복 참조). 대신 발견성 보완으로 프로덕트 투어에 "부탁할 수 있는 것들" 스텝 추가: `chat-capability-catalog` 버튼을 highlight(fallback `chat-panel`), EMPTY/IDEA 두 시나리오의 "채팅 공간" 다음에 삽입.
-  - 입력창 레이아웃을 Claude식 세로 구조로 변경(`ChatInput`): 위는 full-width textarea, 아래 행 좌측은 ✨ 카탈로그 + 이미지 첨부 아이콘, 우측은 보내기/중단 버튼. 보내기 버튼은 "Send" 텍스트 → 원형 `ArrowUp` 아이콘 버튼(bg-slate-900)으로 교체. 색/상태(disabled, 생성 취소, 중단)는 기존 유지.
+  - 입력창 레이아웃을 Claude식 세로 구조로 변경(`ChatInput`): 위는 full-width textarea, 아래 행 좌측은 ✨ 카탈로그 + 이미지 첨부 아이콘, 우측은 보내기/중단 버튼. 보내기 버튼은 "Send" 텍스트 → 원형 `ArrowUp` 아이콘 버튼(bg-slate-900)으로 교체. 색/상태(disabled, 생성 취소, 중단)는 기존 유지. 스타일 이미지 첨부 칩의 "· 이 이미지처럼 목업 생성" 안내 문구 제거(첨부 버튼 title 툴팁에는 유지).
 - 검증: `./node_modules/.bin/tsc --noEmit` 통과, 변경 파일 eslint 0 error(기존 warning만).
+
+### 15.91 채팅 패널 너비 드래그 리사이즈 `[implemented 2026-06-17]`
+
+- 요청: 채팅 창 크기 조절.
+- 구현:
+  - `ChatPanel`에 `width?` prop 추가. 값이 있으면 `style.width` + `shrink-0`, 없으면 기존 `w-full max-w-md` 유지(하위 호환).
+  - `page.tsx`: `chatWidth` 상태(localStorage `vda-chat-width` 영속, 범위 `CHAT_MIN_WIDTH`360~`CHAT_MAX_WIDTH`720, 기본 448=기존 max-w-md). content 섹션과 ChatPanel 사이에 `cursor-col-resize` 핸들 추가, pointer 드래그로 `window.innerWidth - clientX`를 clamp해 갱신.
+  - 목업 확장 오버레이의 우측 오프셋을 고정 `md:right-112` → `md:right-[var(--chat-w,28rem)]`로 변경. `chatWidth` 변경 시 `document.documentElement`의 `--chat-w` CSS 변수를 effect로 동기화해 오버레이가 채팅 폭을 따라간다. SSR/첫 페인트는 28rem fallback.
+- 검증: `tsc --noEmit` 통과, 변경 파일 eslint 0 error(기존 warning만).

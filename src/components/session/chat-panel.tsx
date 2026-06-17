@@ -9,6 +9,8 @@ type ChatPanelProps = {
   memoryChangeCount: number;
   beforeMemoryCount: number;
   showScrollToBottom: boolean;
+  /** Explicit width in px (resizable). Falls back to w-full max-w-md when unset. */
+  width?: number;
   onTabChange: (tab: ChatPanelTab) => void;
   onScrollToBottom: () => void;
   children: ReactNode;
@@ -21,6 +23,7 @@ export function ChatPanel({
   memoryChangeCount,
   beforeMemoryCount,
   showScrollToBottom,
+  width,
   onTabChange,
   onScrollToBottom,
   children,
@@ -28,7 +31,10 @@ export function ChatPanel({
   return (
     <aside
       data-tour="chat-panel"
-      className="relative flex h-full w-full max-w-md flex-col overflow-hidden border-l border-slate-200 bg-white"
+      style={width ? { width } : undefined}
+      className={`relative flex h-full flex-col overflow-hidden border-l border-slate-200 bg-white ${
+        width ? "shrink-0" : "w-full max-w-md"
+      }`}
     >
       {showReviewTabs && (
         <div className="flex shrink-0 border-b border-slate-200">
