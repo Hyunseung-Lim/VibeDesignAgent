@@ -10,13 +10,7 @@ import {
   XIcon,
 } from "lucide-react";
 import { getIdToken, onAuthStateChanged } from "firebase/auth";
-import {
-  deleteObject,
-  getDownloadURL,
-  ref as storageRef,
-  uploadBytes,
-} from "firebase/storage";
-import { firebaseAuth, storage } from "@/lib/firebase";
+import { firebaseAuth } from "@/lib/firebase";
 import { isAdminEmail } from "@/lib/admin";
 
 type Device = "desktop" | "mobile";
@@ -52,6 +46,36 @@ const EMPTY_FORM = {
   contentBlock: createEmptyContent(),
 };
 
+async function uploadMissionAsset(file: File, token: string): Promise<AssetImage> {
+  const form = new FormData();
+  form.append("file", file);
+  const res = await fetch("/api/admin/mission-assets", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: form,
+  });
+  const data = await res.json().catch(() => null);
+  if (!res.ok) {
+    throw new Error(data?.error ?? "이미지 업로드에 실패했습니다.");
+  }
+  return data as AssetImage;
+}
+
+async function deleteMissionAsset(path: string, token: string) {
+  const res = await fetch("/api/admin/mission-assets", {
+    method: "DELETE",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ path }),
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => null);
+    throw new Error(data?.error ?? "이미지 삭제에 실패했습니다.");
+  }
+}
+
 export default function NewMissionPage() {
   const router = useRouter();
   const [ready, setReady] = useState(false);
@@ -77,19 +101,18 @@ export default function NewMissionPage() {
     }));
   };
 
-  const uploadAssetImages = async (files: FileList | null) => {
-    if (!files || files.length === 0) return;
+  const uploadAssetImages = async (files: File[]) => {
+    if (files.length === 0) return;
     setError("");
     setIsUploading(true);
     try {
+      const user = firebaseAuth.currentUser;
+      if (!user) throw new Error("로그인이 필요합니다.");
+      const token = await getIdToken(user);
       const uploaded: AssetImage[] = [];
-      for (const file of Array.from(files)) {
+      for (const file of files) {
         if (!file.type.startsWith("image/")) continue;
-        const path = `mission-assets/${crypto.randomUUID()}-${file.name}`;
-        const objectRef = storageRef(storage, path);
-        await uploadBytes(objectRef, file, { contentType: file.type });
-        const url = await getDownloadURL(objectRef);
-        uploaded.push({ url, path });
+        uploaded.push(await uploadMissionAsset(file, token));
       }
       if (uploaded.length > 0) {
         setForm((prev) => ({
@@ -124,7 +147,10 @@ export default function NewMissionPage() {
       },
     }));
     if (image.path) {
-      await deleteObject(storageRef(storage, image.path)).catch((err) => {
+      const user = firebaseAuth.currentUser;
+      const token = user ? await getIdToken(user) : null;
+      if (!token) return;
+      await deleteMissionAsset(image.path, token).catch((err) => {
         console.warn("[admin/new] asset image delete failed", err);
       });
     }
@@ -334,7 +360,8 @@ export default function NewMissionPage() {
                   multiple
                   disabled={isUploading}
                   onChange={(e) => {
-                    void uploadAssetImages(e.target.files);
+                    const files = Array.from(e.currentTarget.files ?? []);
+                    void uploadAssetImages(files);
                     e.target.value = "";
                   }}
                   className="hidden"

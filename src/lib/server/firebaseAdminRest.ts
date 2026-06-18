@@ -1,4 +1,4 @@
-import { createSign } from "crypto";
+import { createSign, randomUUID } from "crypto";
 import { readFile } from "fs/promises";
 import path from "path";
 
@@ -123,6 +123,92 @@ export async function getGoogleAccessToken(scope: string) {
 
 export async function getFirebaseAccessToken() {
   return getGoogleAccessToken("https://www.googleapis.com/auth/datastore");
+}
+
+export async function getFirebaseStorageAccessToken() {
+  return getGoogleAccessToken("https://www.googleapis.com/auth/devstorage.full_control");
+}
+
+export function storageBucketName() {
+  const bucket = process.env.FIREBASE_STORAGE_BUCKET;
+  if (!bucket) throw new Error("FIREBASE_STORAGE_BUCKET missing");
+  return bucket;
+}
+
+export function firebaseStorageDownloadUrl(
+  bucket: string,
+  objectName: string,
+  downloadToken: string,
+) {
+  return `https://firebasestorage.googleapis.com/v0/b/${bucket}/o/${encodeURIComponent(
+    objectName,
+  )}?alt=media&token=${downloadToken}`;
+}
+
+export async function uploadPublicStorageObject(
+  objectName: string,
+  contentType: string,
+  bodyBuffer: Buffer,
+  token: string,
+) {
+  const bucket = storageBucketName();
+  const downloadToken = randomUUID();
+  const boundary = `storage-${randomUUID()}`;
+  const metadata = {
+    name: objectName,
+    contentType,
+    cacheControl: "public, max-age=31536000",
+    metadata: { firebaseStorageDownloadTokens: downloadToken },
+  };
+  const body = Buffer.concat([
+    Buffer.from(
+      `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(
+        metadata,
+      )}\r\n`,
+    ),
+    Buffer.from(`--${boundary}\r\nContent-Type: ${contentType}\r\n\r\n`),
+    bodyBuffer,
+    Buffer.from(`\r\n--${boundary}--`),
+  ]);
+
+  const res = await fetch(
+    `https://storage.googleapis.com/upload/storage/v1/b/${bucket}/o?uploadType=multipart`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": `multipart/related; boundary=${boundary}`,
+        "Content-Length": String(body.length),
+      },
+      body,
+    },
+  );
+
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Storage upload failed: ${res.status} ${text.slice(0, 200)}`);
+  }
+
+  return {
+    path: objectName,
+    url: firebaseStorageDownloadUrl(bucket, objectName, downloadToken),
+  };
+}
+
+export async function deleteStorageObject(objectName: string, token: string) {
+  const bucket = storageBucketName();
+  const res = await fetch(
+    `https://storage.googleapis.com/storage/v1/b/${bucket}/o/${encodeURIComponent(
+      objectName,
+    )}`,
+    {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${token}` },
+    },
+  );
+  if (!res.ok && res.status !== 404) {
+    throw new Error(`Delete storage ${objectName} failed: ${res.status}`);
+  }
 }
 
 export async function verifyFirebaseIdToken(request: Request) {

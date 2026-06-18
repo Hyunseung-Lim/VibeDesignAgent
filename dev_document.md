@@ -3097,7 +3097,7 @@ type ChatPlan = {
   - 스키마: 미션 옵션에 `assetImages[{url, path, note}]` 추가. 어드민 `/admin/new`에서 Firebase Storage `mission-assets/`로 업로드 → URL/path 저장(썸네일·삭제 UI, 최대 12장). `POST /api/admin/missions`가 http(s) URL만 검증해 저장.
   - 생성: 세션에서 신규 목업(`isNew`)이고 그 턴에 스타일 이미지/URL 첨부가 없을 때 활성 옵션의 `assetImages` URL들을 `/api/stitch`로 전달. 서버 `isAssetLed` 분기가 각 URL을 `fetchImageAsDataUrl`로 받아 `writeStyleImageTmp`(다운스케일) → `project.upload` → 첫 스크린을 `assetImageEmbedPrompt`로 `edit`. 업로드 IMAGE 스크린은 artboard에서 제외(`allScreenIds` len 1), 결과 기반 design.md 역추출은 하지 않음(콘텐츠 사진이 스타일을 오염시키지 않도록).
   - 우선순위: 사용자가 그 턴에 스타일 이미지/URL을 붙이면 `isImageLed`가 우선, asset-led는 비활성.
-- 한계: SDK가 generate 프롬프트에 이미지를 직접 첨부하는 API가 없어, 여러 장을 한 화면에 그대로 박는 신뢰도는 미검증(첫 이미지를 edit하는 경로). 다중 이미지 임베드 충실도는 라이브에서 튜닝 필요. Firebase Storage `mission-assets/` 쓰기 규칙이 어드민에 열려 있어야 업로드 동작.
+- 한계: SDK가 generate 프롬프트에 이미지를 직접 첨부하는 API가 없어, 여러 장을 한 화면에 그대로 박는 신뢰도는 미검증(첫 이미지를 edit하는 경로). 다중 이미지 임베드 충실도는 라이브에서 튜닝 필요. Firebase Storage `mission-assets/` 쓰기 규칙이 어드민에 열려 있어야 업로드 동작. `[stale 2026-06-18 → 15.92: 클라이언트 직접 Storage 업로드 대신 admin 서버 API가 service account로 업로드/삭제]`
 
 ### 15.90 기존 미션 편집에서도 콘텐츠 이미지 관리 `[implemented 2026-06-17]`
 
@@ -3115,6 +3115,14 @@ type ChatPlan = {
 - 구현: `MissionBriefSection`의 선택된 옵션 펼침 영역에 콘텐츠 이미지 그리드를 추가했다. `activeOption.assetImages`를 그대로 받아 썸네일로 표시하고, 클릭하면 원본 URL을 새 탭으로 연다.
 - 의도: 사용자가 목업 생성 전에 실제 상품 사진이나 UI 캡쳐가 제대로 연결돼 있는지 눈으로 확인할 수 있게 한다.
 - 검증: `tsc --noEmit` 통과, 변경 파일 eslint 0 error(기존 warning만). 인증·Stitch 키 필요한 업로드/생성 end-to-end는 사용자 라이브 확인 필요.
+
+### 15.92 미션 콘텐츠 이미지 업로드를 admin 서버 API로 우회 `[implemented 2026-06-18]`
+
+- 문제: `/admin`/`/admin/new`가 브라우저 Firebase Storage SDK로 `mission-assets/*`에 직접 업로드해서, Storage Rules가 해당 경로 쓰기를 허용하지 않으면 admin 사용자도 `storage/unauthorized`로 막혔다.
+- 수정: `POST /api/admin/mission-assets`와 `DELETE /api/admin/mission-assets` 추가. Firebase ID token으로 admin email을 확인한 뒤 service account `devstorage.full_control` 토큰으로 Storage object를 생성/삭제한다. 업로드 시 Firebase download token metadata를 붙여 기존 `firebasestorage.googleapis.com/...token=...` URL 계약을 유지한다.
+- 클라이언트: 신규 미션 생성과 기존 미션 편집의 콘텐츠 이미지 업로드/삭제가 Storage SDK 직접 호출 대신 admin API를 호출한다.
+- 후속 수정: file input을 비우기 전에 선택 파일을 `File[]`로 고정한다. `FileList`를 그대로 async 함수에 넘기면 `getIdToken()` 대기 중 input reset으로 목록이 비어, 파일 선택 후 아무 반응 없이 업로드가 0건으로 끝날 수 있었다.
+- 검증: `npm run lint -- src/app/api/admin/mission-assets/route.ts src/app/admin/new/page.tsx src/app/admin/page.tsx` 통과(기존 admin warning만 유지), `./node_modules/.bin/tsc --noEmit` 통과. 실제 업로드 smoke test는 인증된 admin 브라우저에서 재확인 필요.
 
 ### 15.90 에이전트 능력 카탈로그 — 예시 요청 안내 `[implemented 2026-06-17]`
 
