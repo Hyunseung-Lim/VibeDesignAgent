@@ -6253,6 +6253,8 @@ export default function MainScreenPage() {
               <SetupMissionSummaryCard
                 missionTitle={missionTitle}
                 missionBrief={missionBrief}
+                parentMissionTitle={parentMissionTitle}
+                parentMissionBrief={parentMissionBrief}
                 activeOption={activeOption}
                 showOption={missionOptions.length > 1}
                 missionDurationMinutes={missionDurationMinutes}
@@ -6285,15 +6287,18 @@ export default function MainScreenPage() {
           />
           <div className="flex-1 overflow-y-auto">
             <div className="mx-auto max-w-3xl space-y-6 px-8 py-8">
-              <ProfileInputCard
-                value={profileRawMarkdown}
-                onChange={setProfileRawMarkdown}
-              />
               <SetupMissionSummaryCard
                 missionTitle={missionTitle}
                 missionBrief={missionBrief}
+                parentMissionTitle={parentMissionTitle}
+                parentMissionBrief={parentMissionBrief}
                 activeOption={activeOption}
                 showOption={missionOptions.length > 1}
+                missionDurationMinutes={missionDurationMinutes}
+              />
+              <ProfileInputCard
+                value={profileRawMarkdown}
+                onChange={setProfileRawMarkdown}
               />
             </div>
           </div>
@@ -6323,16 +6328,18 @@ export default function MainScreenPage() {
           />
           <div className="flex-1 overflow-y-auto">
             <div className="mx-auto max-w-3xl space-y-6 px-8 py-8">
-              {!isOnboardingMission && (
-                <ProfileReviewCard value={profileRawMarkdown} />
-              )}
               <SetupMissionSummaryCard
                 missionTitle={missionTitle}
                 missionBrief={missionBrief}
+                parentMissionTitle={parentMissionTitle}
+                parentMissionBrief={parentMissionBrief}
                 activeOption={activeOption}
                 showOption={missionOptions.length > 1}
                 missionDurationMinutes={missionDurationMinutes}
               />
+              {!isOnboardingMission && (
+                <ProfileReviewCard value={profileRawMarkdown} />
+              )}
             </div>
           </div>
           {/* Session start button */}

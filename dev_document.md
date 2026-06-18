@@ -85,7 +85,7 @@
 - 관리자가 설정한 제목/브리핑/기간/디바이스가 읽기 전용으로 표시
 - 수정은 어드민 페이지에서만 가능
 - 옵션이 1개뿐인 미션은 세션 로드 시 해당 옵션을 자동 선택하고 `selectedOptionId`, `missionTitle`, `missionBrief`, `selectedDevice`를 세션 문서에 저장. 다중 옵션 선택 화면은 `options.length > 1`일 때만 노출되며 현재 미션엔 해당 없음
-- 일반 미션의 세션 시작 전 setup은 `미션 읽기` → `사전 정보` → `세션 시작` 3단계다. 2단계에서는 미션을 진행할 때 에이전트가 미리 알아야 할 정보를 자유 입력한다. 온보딩은 before-session memory를 만들지 않으므로 정보 입력 단계를 건너뜀 `[현행 2026-06-13 → 15.67]`
+- 일반 미션의 세션 시작 전 setup은 `미션 읽기` → `사전 정보` → `세션 시작` 3단계다. 1/2/3단계의 미션 요약 카드는 공통 컴포넌트로, `전체 미션 설명` → `제한 시간` → `해당 옵션 brief` → `제공 이미지/설명(assetImages[].note)` 순서로 표시한다. 2단계에서는 미션을 진행할 때 에이전트가 미리 알아야 할 정보를 자유 입력한다. 온보딩은 before-session memory를 만들지 않으므로 정보 입력 단계를 건너뜀 `[현행 2026-06-18 → 15.67/15.95]`
 - 실제 세션 시작은 사용자가 `세션 시작하기` 버튼을 누를 때 발생하며, 이때 `timerStartedAt`을 세팅
 - 세션 종료 버튼은 `timerStartedAt` 또는 복구 가능한 세션 데이터(messages/ideas/artboards/references/activityLog)가 생기기 전에는 비활성화되고, 세션 종료 완료 후에는 `status: completed` 기준으로 비활성화
 
@@ -3140,6 +3140,16 @@ type ChatPlan = {
 - 수정: `POST /api/admin/users/[uid]/sessions`의 백업 데이터에 기존 메모리뿐 아니라 `memoryClusters`, `memoryRetrievalLogs`를 포함하고, 삭제 단계에서 `memories_0_1_2`, `memoryClusters`, `memoryRetrievalLogs`를 함께 삭제한다.
 - UI: 확인 모달 설명에서 장기 메모리/클러스터 캐시도 삭제된다고 명시하고, 성공 toast에 삭제된 메모리/클러스터 개수를 표시한다.
 - 의도: 이 버튼은 사용자 세션 리셋/관리자 테스트 데이터 삭제 용도이므로, `/agent`에서 보이는 장기 메모리 상태도 같이 초기화한다. 개별 미션 기록 삭제(`recordsOnly`)도 해당 미션의 `source.missionId`를 가진 장기 메모리를 삭제하고 cluster cache를 비운다. 이미 세션 문서가 지워진 경우에도 `DELETE /api/admin/users/{uid}/memory?missionId={missionId}`로 같은 cleanup을 실행할 수 있다.
+
+### 15.95 세션 시작 전 미션 설명/이미지 설명 노출 `[implemented 2026-06-18]`
+
+- 문제: 일반 미션의 3단계 setup 화면은 활성 옵션 brief만 보여줘서, 전체 미션 설명(`missions/{id}.description`)과 어드민이 붙인 콘텐츠 이미지 설명(`assetImages[].note`)을 사용자가 세션 시작 전에 확인할 수 없었다.
+- 수정:
+  - `SetupMissionSummaryCard`가 전체 미션 설명과 활성 옵션의 제공 이미지 목록을 함께 렌더한다. 이미지는 썸네일 + `note` 텍스트로 표시하고 원본 URL을 새 탭으로 열 수 있다.
+  - 카드 내부 순서는 `전체 미션 설명` → `제한 시간` → `해당 옵션 brief` → `제공 이미지/설명`으로 통일한다.
+  - 여러 옵션 선택 화면(`MissionOptionSelection`)도 별도 부모/콘텐츠/이미지 카드 대신 같은 `SetupMissionSummaryCard`를 재사용해 활성 preview 옵션의 콘텐츠 이미지와 설명을 보여준다.
+  - `/main/[missionId]`는 setup 1/2/3단계의 요약 카드에 `parentMissionTitle`, `parentMissionBrief`, `activeOption.assetImages`를 전달한다.
+- 의도: 사용자가 세션을 시작하기 전에 “이 미션이 무엇인지”와 “어떤 이미지가 어떤 상품/작품/인물인지”를 한 화면에서 확인하게 하고, 이후 asset-led Stitch 생성에서 쓰이는 manifest와 사용자가 본 정보가 어긋나지 않게 한다.
 
 ### 15.90 에이전트 능력 카탈로그 — 예시 요청 안내 `[implemented 2026-06-17]`
 
