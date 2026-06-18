@@ -2,6 +2,13 @@ import { createSign } from "crypto";
 import { readFile } from "fs/promises";
 import path from "path";
 import { isAdminEmail } from "@/lib/admin";
+import {
+  ADMIN_MEMORY_CLUSTER_COLLECTION,
+  ADMIN_MEMORY_COLLECTION,
+  ADMIN_MEMORY_RETRIEVAL_LOG_COLLECTION,
+  deleteMissionScopedMemoryData,
+  deleteUserCollection,
+} from "@/lib/server/adminMemoryCleanup";
 
 export const runtime = "nodejs";
 
@@ -254,11 +261,12 @@ export async function DELETE(
       return Response.json({ error: "missionId required" }, { status: 400 });
     }
 
-    const [deletedSubcollections] = await Promise.all([
+    const [deletedSubcollections, deletedMemoryData] = await Promise.all([
       deleteSessionDocument(
         `sessions/${uid}/missions/${targetMissionId}`,
         token,
       ),
+      deleteMissionScopedMemoryData(uid, targetMissionId, token),
       targetMissionId === "onboarding"
         ? resetOnboardingRecord(uid, token)
         : deleteDocument(
@@ -274,6 +282,9 @@ export async function DELETE(
       deletedParticipantRecords: targetMissionId === "onboarding" ? 0 : 1,
       deletedMemoryDrafts: deletedSubcollections.memoryDrafts,
       deletedReviewTurns: deletedSubcollections.reviewTurns,
+      deletedMemories: deletedMemoryData.deletedMemories,
+      deletedMemoryClusters: deletedMemoryData.deletedMemoryClusters,
+      deletedMemoryRetrievalLogs: deletedMemoryData.deletedMemoryRetrievalLogs,
     });
   }
 
@@ -307,6 +318,9 @@ export async function DELETE(
     ...missionIds.map((missionId) =>
       deleteDocument(`missions/${missionId}/participants/${uid}`, token),
     ),
+    deleteUserCollection(uid, ADMIN_MEMORY_COLLECTION, token),
+    deleteUserCollection(uid, ADMIN_MEMORY_CLUSTER_COLLECTION, token),
+    deleteUserCollection(uid, ADMIN_MEMORY_RETRIEVAL_LOG_COLLECTION, token),
     deleteDocument(`sessions/${uid}`, token),
     deleteDocument(`users/${uid}`, token),
   ]);

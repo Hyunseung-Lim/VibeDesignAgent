@@ -6,10 +6,16 @@ import {
   verifyFirebaseIdToken,
 } from "@/lib/server/firebaseAdminRest";
 import { isAdminEmail } from "@/lib/admin";
+import {
+  ADMIN_MEMORY_CLUSTER_COLLECTION,
+  ADMIN_MEMORY_COLLECTION,
+  deleteMissionScopedMemoryData,
+  deleteUserCollection,
+} from "@/lib/server/adminMemoryCleanup";
 
 export const runtime = "nodejs";
 
-const MEMORY_COLLECTION = "memories_0_1_2";
+const MEMORY_COLLECTION = ADMIN_MEMORY_COLLECTION;
 
 function jsonArray(value: unknown) {
   if (Array.isArray(value)) return value.map(String).filter(Boolean);
@@ -71,6 +77,7 @@ export async function DELETE(
   const { uid } = await params;
   const url = new URL(request.url);
   const memoryId = url.searchParams.get("memoryId");
+  const missionId = url.searchParams.get("missionId")?.trim();
   const token = await getFirebaseAccessToken();
 
   if (memoryId) {
@@ -79,6 +86,16 @@ export async function DELETE(
       token,
     );
     return Response.json({ ok: true, deleted: 1 });
+  }
+
+  if (missionId) {
+    const result = await deleteMissionScopedMemoryData(uid, missionId, token);
+    return Response.json({
+      ok: true,
+      missionId,
+      deleted: result.deletedMemories,
+      ...result,
+    });
   }
 
   const ids = await listFirestoreDocumentIds(
@@ -90,7 +107,12 @@ export async function DELETE(
       deleteFirestoreDocument(`users/${uid}/${MEMORY_COLLECTION}/${id}`, token),
     ),
   );
-  return Response.json({ ok: true, deleted: ids.length });
+  const deletedMemoryClusters = await deleteUserCollection(
+    uid,
+    ADMIN_MEMORY_CLUSTER_COLLECTION,
+    token,
+  );
+  return Response.json({ ok: true, deleted: ids.length, deletedMemoryClusters });
 }
 
 export async function GET(

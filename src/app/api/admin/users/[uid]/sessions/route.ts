@@ -16,6 +16,11 @@ export const runtime = "nodejs";
 const STORAGE_BUCKET =
   process.env.FIREBASE_STORAGE_BUCKET || "vibedesignagent.firebasestorage.app";
 const SESSION_SUBCOLLECTIONS = ["memoryDrafts", "reviewTurns"] as const;
+const USER_MEMORY_COLLECTIONS = [
+  "memories_0_1_2",
+  "memoryClusters",
+  "memoryRetrievalLogs",
+] as const;
 
 function safeName(value: string, fallback: string) {
   const cleaned = (value.trim() || fallback).replace(/[<>:"/\\|?*\x00-\x1f]/g, "_");
@@ -99,11 +104,16 @@ async function loadSessions(uid: string, token: string) {
 }
 
 async function loadMemories(uid: string, token: string) {
-  const memories_0_1_2 = await loadCollection(
-    `users/${uid}/memories_0_1_2`,
-    token,
+  const entries = await Promise.all(
+    USER_MEMORY_COLLECTIONS.map(async (collection) => [
+      collection,
+      await loadCollection(`users/${uid}/${collection}`, token),
+    ]),
   );
-  return { memories_0_1_2 };
+  return Object.fromEntries(entries) as Record<
+    (typeof USER_MEMORY_COLLECTIONS)[number],
+    Array<Record<string, unknown>>
+  >;
 }
 
 async function loadParticipantRecords(uid: string, token: string) {
@@ -263,6 +273,24 @@ async function deleteStorage(uid: string, token: string) {
   return objects.length;
 }
 
+async function deleteMemoryData(uid: string, token: string) {
+  const entries = await Promise.all(
+    USER_MEMORY_COLLECTIONS.map(async (collection) => {
+      const ids = await listFirestoreDocumentIds(`users/${uid}/${collection}`, token);
+      await Promise.all(
+        ids.map((id) =>
+          deleteFirestoreDocument(`users/${uid}/${collection}/${id}`, token),
+        ),
+      );
+      return [collection, ids.length] as const;
+    }),
+  );
+  return Object.fromEntries(entries) as Record<
+    (typeof USER_MEMORY_COLLECTIONS)[number],
+    number
+  >;
+}
+
 async function resetOnboardingRecord(uid: string, token: string) {
   await patchFirestoreDocument(
     `users/${uid}`,
@@ -333,6 +361,7 @@ export async function POST(
   );
 
   const sessionDeleteResult = await deleteSessions(uid, firestoreToken);
+  const deletedMemoryData = await deleteMemoryData(uid, firestoreToken);
   const deletedParticipantRecords = await deleteParticipantRecords(uid, firestoreToken);
   const deletedStorageFiles = await deleteStorage(uid, storageToken);
   await resetOnboardingRecord(uid, firestoreToken);
@@ -341,6 +370,9 @@ export async function POST(
     ok: true,
     backupPath: path.relative(process.cwd(), backupDir),
     ...sessionDeleteResult,
+    deletedMemories: deletedMemoryData.memories_0_1_2,
+    deletedMemoryClusters: deletedMemoryData.memoryClusters,
+    deletedMemoryRetrievalLogs: deletedMemoryData.memoryRetrievalLogs,
     deletedParticipantRecords,
     deletedStorageFiles,
   });
