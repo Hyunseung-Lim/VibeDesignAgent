@@ -18,6 +18,7 @@ type Device = "desktop" | "mobile";
 type AssetImage = {
   url: string;
   path: string;
+  note?: string;
 };
 
 type MissionContent = {
@@ -98,6 +99,18 @@ export default function NewMissionPage() {
     setForm((prev) => ({
       ...prev,
       contentBlock: { ...prev.contentBlock, ...changes },
+    }));
+  };
+
+  const updateAssetImage = (path: string, changes: Partial<AssetImage>) => {
+    setForm((prev) => ({
+      ...prev,
+      contentBlock: {
+        ...prev.contentBlock,
+        assetImages: prev.contentBlock.assetImages.map((image) =>
+          image.path === path ? { ...image, ...changes } : image,
+        ),
+      },
     }));
   };
 
@@ -329,26 +342,37 @@ export default function NewMissionPage() {
                 넣어 만듭니다.
               </p>
               {form.contentBlock.assetImages.length > 0 && (
-                <div className="flex flex-wrap gap-2">
+                <div className="space-y-2">
                   {form.contentBlock.assetImages.map((image) => (
                     <div
                       key={image.path || image.url}
-                      className="group relative h-20 w-20 overflow-hidden rounded-xl border border-slate-200 bg-white"
+                      className="flex flex-col gap-2 rounded-xl border border-slate-200 bg-white p-2 sm:flex-row"
                     >
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img
-                        src={image.url}
-                        alt="콘텐츠 이미지"
-                        className="h-full w-full object-cover"
+                      <div className="group relative h-24 w-full shrink-0 overflow-hidden rounded-lg bg-slate-50 sm:w-24">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={image.url}
+                          alt={image.note?.trim() || "콘텐츠 이미지"}
+                          className="h-full w-full object-cover"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => removeAssetImage(image)}
+                          className="absolute right-1 top-1 rounded-full bg-slate-900/70 p-1 text-white opacity-0 transition group-hover:opacity-100"
+                          aria-label="이미지 삭제"
+                        >
+                          <XIcon size={12} />
+                        </button>
+                      </div>
+                      <textarea
+                        value={image.note ?? ""}
+                        onChange={(e) =>
+                          updateAssetImage(image.path, { note: e.target.value })
+                        }
+                        placeholder="이미지 설명: 예) 린넨 셔츠 대표 상품 사진, 상품 카드에 사용"
+                        rows={2}
+                        className="min-h-24 w-full resize-none rounded-lg border border-slate-200 px-2 py-1.5 text-xs outline-none focus:border-slate-400"
                       />
-                      <button
-                        type="button"
-                        onClick={() => removeAssetImage(image)}
-                        className="absolute right-1 top-1 rounded-full bg-slate-900/70 p-1 text-white opacity-0 transition group-hover:opacity-100"
-                        aria-label="이미지 삭제"
-                      >
-                        <XIcon size={12} />
-                      </button>
                     </div>
                   ))}
                 </div>

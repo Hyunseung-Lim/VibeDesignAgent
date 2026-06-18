@@ -58,7 +58,8 @@
 - 미션 ID: `mission-YYYYMMDD-HHmmss` 형식 (사람이 읽기 쉬운 구조)
 - 참여자 목록 조회 및 세션 열람 (읽기 전용 뷰)
 - 참여자 카드의 X는 해당 미션 세션과 하위 `memoryDrafts`/`reviewTurns`만 삭제하며, 유저 정보/장기 메모리/다른 미션 기록은 유지
-- 사용자 카드의 `세션 백업 후 삭제`는 모든 세션/참여 기록을 백업 후 삭제하되, 장기 메모리 컬렉션은 유지
+- 사용자 카드의 `세션 백업 후 삭제`는 세션/참여 기록/Storage 파일/장기 메모리(`memories_0_1_2`)/클러스터 캐시(`memoryClusters`)/retrieval logs를 백업 후 삭제한다 `[현행 2026-06-18 → 15.94]`
+- 참여자 모달의 개별 `미션 기록 삭제`는 해당 미션 세션, participant record, `memoryDrafts`/`reviewTurns`, 그 미션의 `source.missionId`를 가진 장기 메모리와 mission-scoped retrieval logs를 삭제하고, `memoryClusters` cache를 비운다 `[현행 2026-06-18 → 15.94]`
 - 유저 메모리 조회: 버전별 cluster view 중심으로 표시
 - 메모리 cluster view: similarity graph, cluster list/detail, graph 진단값을 표시
 
@@ -121,7 +122,7 @@
 - **채팅 컨텍스트**: 미션 제목/브리핑, 현재 아이디어 내용, 기존 목업 HTML, 선택된 UI 요소, 인용 레퍼런스, 대화 히스토리
 - **missionBrief 보완 주입**: 신규 목업 생성 시 아이디어 내용이 300자 미만으로 빈약하면 `missionBrief`를 `buildMockupPrompt`에 직접 주입해 제품 데이터가 Stitch에 전달되도록 보장 (수정 시에는 주입 안 함)
 - **이미지 주도 생성**: 사용자가 참고 이미지를 첨부/붙여넣거나(Phase 1) 신규 목업 요청에 URL을 주면(Phase 2 — 채팅 메시지 내 URL 또는 인용 레퍼런스의 URL), 텍스트 design.md 단계 없이 그 화면을 Stitch에 `upload`→`edit`로 재구성해 목업을 만들고 결과에서 design.md를 역추출·저장한다. URL은 서버가 스크린샷(Microlink 무키, `captureScreenshot` 추상화)으로 캡처하며 첨부 이미지가 우선. 모바일 목업이면 URL 캡처도 390×844 모바일 viewport, 데스크톱이면 1280×900 viewport로 찍는다. 이미지/URL이 있으면 "디자인 스타일 필수" 게이트를 우회한다. `src/app/api/stitch/route.ts`의 `isImageLed` 분기 참고 `[현행 2026-06-15 → 15.81/15.83]`
-- **콘텐츠 자산 주도 생성(asset-led)**: 미션 옵션에 어드민이 등록한 콘텐츠 이미지(`assetImages`, 실제 상품 사진·UI 캡쳐)가 있으면 신규 목업 생성 시 그 URL들을 `/api/stitch`로 넘겨, 서버가 다운로드→`upload`→`edit`하면서 "이 이미지들을 그대로 콘텐츠로 박아 넣어라"(`assetImageEmbedPrompt`)로 생성한다. 이미지 주도 생성과 달리 이미지를 스타일로 재구성하지 않고 콘텐츠 자산으로 보존하며, 레이아웃·스타일은 brief와 디자인 시스템을 따른다. 그래서 디자인 스타일을 미리 적용하고 결과 기반 design.md 역추출은 하지 않는다. 사용자가 그 턴에 스타일 이미지/URL을 첨부하면 그쪽(isImageLed)이 우선. `src/app/api/stitch/route.ts`의 `isAssetLed` 분기 참고 `[현행 2026-06-17 → 15.89]`
+- **콘텐츠 자산 주도 생성(asset-led)**: 미션 옵션에 어드민이 등록한 콘텐츠 이미지(`assetImages`, 실제 상품 사진·UI 캡쳐)가 있으면 신규 목업 생성 시 그 URL과 설명(`note`)을 `/api/stitch`로 넘겨, 서버가 다운로드→`upload`→`edit`하면서 asset manifest와 함께 "이 이미지들을 그대로 콘텐츠로 박아 넣어라"(`assetImageEmbedPrompt`)로 생성한다. 이미지 주도 생성과 달리 이미지를 스타일로 재구성하지 않고 콘텐츠 자산으로 보존하며, 레이아웃·스타일은 brief와 디자인 시스템을 따른다. 그래서 디자인 스타일을 미리 적용하고 결과 기반 design.md 역추출은 하지 않는다. 사용자가 그 턴에 스타일 이미지/URL을 첨부하면 그쪽(isImageLed)이 우선. `src/app/api/stitch/route.ts`의 `isAssetLed` 분기 참고 `[현행 2026-06-18 → 15.89/15.93]`
 - **캔버스**: 드래그 패닝, 휠 줌, Fit 버튼, 확대(fullscreen) 모드. 선택 스크립트는 iframe HTML에 항상 주입하고, 편집 모드 토글은 pointer event와 선택 해제 메시지로 제어해 iframe `srcDoc` reload를 피한다 `[현행 2026-06-15 → 15.78]`
 - **편집 모드**: 특정 UI 요소 클릭 선택 → `[EDIT_MOCKUP: {prompt}]`로 수정. 선택 요소가 있는 상태에서 "크게/색/문구/삭제" 등 짧은 타깃 편집 요청이 오면 planner 판단과 무관하게 현재 목업 HTML과 선택 요소 컨텍스트를 함께 주입한다 `[현행 2026-06-15 → 15.77]`
 - Stitch edit가 기존 screen을 mutate하지 않고 새 screen을 만들면 기존 artboard를 덮어쓰지 않고 새 artboard로 추가한 뒤 active로 전환한다 `[현행 2026-06-15 → 15.79]`
@@ -981,7 +982,7 @@ type ChatPlan = {
 - [x] 참여자 카드 X 삭제 범위를 특정 미션 세션 + `memoryDrafts`/`reviewTurns` 하위 컬렉션까지로 정리
 - [x] 사용자 카드 `세션 백업 후 삭제`와 참여자 X 삭제 범위 구분
   - 참여자 X: 현재 미션 session + `memoryDrafts`/`reviewTurns` + participant record만 삭제, 유저 정보/장기 메모리/다른 미션 기록 유지
-  - 세션 백업 후 삭제: 전체 sessions/participant records/storage 파일을 백업 후 삭제, 장기 메모리는 유지
+  - 세션 백업 후 삭제: 전체 sessions/participant records/storage 파일을 백업 후 삭제, 장기 메모리는 유지 `[stale 2026-06-18 → 15.94: 장기 메모리와 memoryClusters/retrieval logs도 백업 후 삭제]`
 - [x] `/agent` 메모리 클러스터 뷰 정리
   - agent page를 cluster graph 중심으로 정리하고 cluster list/detail + Included memory items를 표시
   - `react-force-graph-2d`를 client-only dynamic import로 바꿔 Vercel prerender의 `window is not defined` 오류 해결
@@ -1812,7 +1813,7 @@ type ChatPlan = {
   - Dialog 문구에 삭제 scope를 명시:
     - 미션 삭제는 미션 목록 제거.
     - 참여자 미션 기록 삭제는 해당 미션 세션과 하위 기록만 삭제.
-    - 세션 백업/삭제는 Storage 파일 포함, 메모리 컬렉션 유지.
+    - 세션 백업/삭제는 Storage 파일 포함, 메모리 컬렉션 유지. `[stale 2026-06-18 → 15.94: 메모리 컬렉션과 클러스터 캐시도 삭제]`
   - 확인 버튼은 `destructive` variant, 취소 버튼은 `outline` variant 사용.
 - `/main/[missionId]`
   - idea delete, design/mockup delete, reference delete를 하나의 `DestructiveSessionAction` state로 통합.
@@ -3123,6 +3124,22 @@ type ChatPlan = {
 - 클라이언트: 신규 미션 생성과 기존 미션 편집의 콘텐츠 이미지 업로드/삭제가 Storage SDK 직접 호출 대신 admin API를 호출한다.
 - 후속 수정: file input을 비우기 전에 선택 파일을 `File[]`로 고정한다. `FileList`를 그대로 async 함수에 넘기면 `getIdToken()` 대기 중 input reset으로 목록이 비어, 파일 선택 후 아무 반응 없이 업로드가 0건으로 끝날 수 있었다.
 - 검증: `npm run lint -- src/app/api/admin/mission-assets/route.ts src/app/admin/new/page.tsx src/app/admin/page.tsx` 통과(기존 admin warning만 유지), `./node_modules/.bin/tsc --noEmit` 통과. 실제 업로드 smoke test는 인증된 admin 브라우저에서 재확인 필요.
+
+### 15.93 미션 콘텐츠 이미지 설명 manifest 추가 `[implemented 2026-06-18]`
+
+- 문제: 어드민이 콘텐츠 이미지를 올릴 수는 있지만, 어떤 이미지가 어떤 상품/작품/인물인지 설명할 수 없어 Stitch가 이커머스 상품 사진이나 포트폴리오 작품 이미지를 서로 바꿔 쓸 위험이 있었다.
+- 구현:
+  - `/admin/new`와 `/admin`의 콘텐츠 이미지 카드에 설명 textarea를 추가했다. 저장 필드는 기존 `assetImages[].note`를 사용한다.
+  - 신규/기존 미션 저장 시 `note`를 유지한다. main 세션에서 신규 목업 생성 시 `assetImages[{url,note}]`를 `/api/stitch`로 전달한다.
+  - `/api/stitch`의 asset-led 경로가 note 목록을 `Asset 1: ...` 형태의 manifest로 만들어 `assetImageEmbedPrompt`에 포함한다. 프롬프트는 manifest를 보고 제품/인물/작품 간 이미지를 서로 바꾸지 말라고 지시한다.
+- 한계: 여전히 Stitch에 이미지를 구조화된 멀티모달 배열로 직접 전달하는 API는 아니고, 업로드된 프로젝트 이미지 + 텍스트 manifest 기반이다. 정확한 상품 카드 매핑을 보장하려면 생성 후 HTML에 asset URL을 직접 주입하는 후처리가 별도 후보.
+
+### 15.94 세션 백업 후 삭제에 장기 메모리/클러스터 포함 `[implemented 2026-06-18]`
+
+- 문제: 관리자 사용자 카드의 `관리자 미션 기록 삭제`/`미션 기록 삭제`는 세션과 참여 기록, `memoryDrafts`, presentation Storage만 삭제하고 장기 메모리 `users/{uid}/memories_0_1_2`와 `memoryClusters`를 남겼다. 그래서 삭제 후 `/agent`의 클러스터링 화면에 과거 데이터가 계속 보였다.
+- 수정: `POST /api/admin/users/[uid]/sessions`의 백업 데이터에 기존 메모리뿐 아니라 `memoryClusters`, `memoryRetrievalLogs`를 포함하고, 삭제 단계에서 `memories_0_1_2`, `memoryClusters`, `memoryRetrievalLogs`를 함께 삭제한다.
+- UI: 확인 모달 설명에서 장기 메모리/클러스터 캐시도 삭제된다고 명시하고, 성공 toast에 삭제된 메모리/클러스터 개수를 표시한다.
+- 의도: 이 버튼은 사용자 세션 리셋/관리자 테스트 데이터 삭제 용도이므로, `/agent`에서 보이는 장기 메모리 상태도 같이 초기화한다. 개별 미션 기록 삭제(`recordsOnly`)도 해당 미션의 `source.missionId`를 가진 장기 메모리를 삭제하고 cluster cache를 비운다. 이미 세션 문서가 지워진 경우에도 `DELETE /api/admin/users/{uid}/memory?missionId={missionId}`로 같은 cleanup을 실행할 수 있다.
 
 ### 15.90 에이전트 능력 카탈로그 — 예시 요청 안내 `[implemented 2026-06-17]`
 

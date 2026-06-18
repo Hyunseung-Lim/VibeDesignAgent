@@ -4246,6 +4246,7 @@ export default function MainScreenPage() {
                   activeOption?.assetImages?.length
                     ? activeOption.assetImages.map((image) => ({
                         url: image.url,
+                        note: image.note,
                       }))
                     : undefined,
               }),

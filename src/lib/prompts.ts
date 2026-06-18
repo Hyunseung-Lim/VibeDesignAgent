@@ -575,6 +575,7 @@ export function assetImageEmbedPrompt(
   productPrompt: string,
   deviceLabel: string,
   imageCount: number,
+  assetManifest?: string,
 ) {
   const imagesPhrase =
     imageCount > 1
@@ -583,6 +584,9 @@ export function assetImageEmbedPrompt(
   return [
     `Design a working, responsive ${deviceLabel} for the brief below.`,
     `${imagesPhrase} real content assets supplied by the mission (product photos, UI captures, or brand imagery). Place them into the layout EXACTLY as provided — do not redraw, restyle, recolor, heavily crop, or swap them for generated or placeholder imagery. Keep their natural aspect ratio and put them in the appropriate content slots (e.g. product card thumbnails, hero, gallery).`,
+    assetManifest
+      ? `Use this asset manifest to understand what each uploaded image represents. Do not swap images between products, people, or works:\n${assetManifest}`
+      : "",
     `Everything else — overall layout, navigation, typography, spacing, and supporting copy — follows the brief and the project's design system. Only the supplied images are fixed; the surrounding UI is yours to design.`,
     productPrompt
       ? `Use this brief to drive the layout and real, on-brief copy:\n${productPrompt}`

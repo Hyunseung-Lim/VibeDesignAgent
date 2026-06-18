@@ -636,6 +636,8 @@ export default function AdminPage() {
           `참여 기록 ${data?.deletedParticipantRecords ?? 0}개`,
           `memoryDrafts ${data?.deletedMemoryDrafts ?? 0}개`,
           `reviewTurns ${data?.deletedReviewTurns ?? 0}개`,
+          `메모리 ${data?.deletedMemories ?? 0}개`,
+          `클러스터 ${data?.deletedMemoryClusters ?? 0}개`,
         ].join(" · "),
       });
     } catch (error) {
@@ -873,6 +875,8 @@ export default function AdminPage() {
         description: [
           `세션 ${data.deletedSessionMissions ?? 0}개`,
           `참여 기록 ${data.deletedParticipantRecords ?? 0}개`,
+          `메모리 ${data.deletedMemories ?? 0}개`,
+          `클러스터 ${data.deletedMemoryClusters ?? 0}개`,
           `Storage ${data.deletedStorageFiles ?? 0}개`,
         ].join(" · "),
       });
@@ -1034,6 +1038,29 @@ export default function AdminPage() {
         ...prev,
         options: options.map((option) =>
           option.id === id ? { ...option, ...changes } : option,
+        ),
+      };
+    });
+  };
+
+  const updateMissionAssetImage = (
+    optionId: string,
+    imagePath: string,
+    changes: Partial<AssetImage>,
+  ) => {
+    setEditFields((prev) => {
+      const options = normalizeOptions(prev.options as MissionOption[]);
+      return {
+        ...prev,
+        options: options.map((option) =>
+          option.id === optionId
+            ? {
+                ...option,
+                assetImages: (option.assetImages ?? []).map((image) =>
+                  image.path === imagePath ? { ...image, ...changes } : image,
+                ),
+              }
+            : option,
         ),
       };
     });
@@ -1584,7 +1611,7 @@ export default function AdminPage() {
       : destructiveAction.type === "participant-records"
         ? {
             title: "미션 기록을 삭제할까요?",
-            description: `${destructiveAction.label} 사용자의 ${missionTitle(destructiveAction.missionId)} 기록만 삭제합니다. 해당 미션 세션과 하위 memoryDrafts/reviewTurns를 삭제하며, 유저 정보와 다른 미션 기록은 유지됩니다.`,
+            description: `${destructiveAction.label} 사용자의 ${missionTitle(destructiveAction.missionId)} 기록만 삭제합니다. 해당 미션 세션, memoryDrafts/reviewTurns, 이 미션에서 생성된 장기 메모리와 클러스터 캐시를 삭제하며, 유저 정보와 다른 미션 기록은 유지됩니다.`,
             actionLabel: "기록 삭제",
           }
         : destructiveAction.type === "all-memory"
@@ -1595,7 +1622,7 @@ export default function AdminPage() {
             }
           : {
               title: "세션 데이터를 백업 후 삭제할까요?",
-              description: `${destructiveAction.label}의 세션 데이터와 Storage 파일을 백업한 뒤 삭제합니다. 메모리 컬렉션은 삭제하지 않습니다.`,
+              description: `${destructiveAction.label}의 세션, 참여 기록, Storage 파일, 장기 메모리와 클러스터 캐시를 백업한 뒤 삭제합니다. 이 작업은 되돌릴 수 없습니다.`,
               actionLabel: "백업 후 삭제",
             }
     : null;
@@ -2333,31 +2360,49 @@ export default function AdminPage() {
                                       생성 시 콘텐츠 자산으로 활용합니다.
                                     </p>
                                     {(opt.assetImages?.length ?? 0) > 0 && (
-                                      <div className="flex flex-wrap gap-2">
+                                      <div className="space-y-2">
                                         {(opt.assetImages ?? []).map((image) => (
                                           <div
                                             key={image.path || image.url}
-                                            className="group relative h-20 w-20 overflow-hidden rounded-xl border border-border bg-background"
+                                            className="flex flex-col gap-2 rounded-xl border border-border bg-background p-2 sm:flex-row"
                                           >
-                                            {/* eslint-disable-next-line @next/next/no-img-element */}
-                                            <img
-                                              src={image.url}
-                                              alt="콘텐츠 이미지"
-                                              className="h-full w-full object-cover"
-                                            />
-                                            <button
-                                              type="button"
-                                              onClick={() =>
-                                                void removeMissionAssetImage(
+                                            <div className="group relative h-24 w-full shrink-0 overflow-hidden rounded-lg bg-muted sm:w-24">
+                                              {/* eslint-disable-next-line @next/next/no-img-element */}
+                                              <img
+                                                src={image.url}
+                                                alt={
+                                                  image.note?.trim() ||
+                                                  "콘텐츠 이미지"
+                                                }
+                                                className="h-full w-full object-cover"
+                                              />
+                                              <button
+                                                type="button"
+                                                onClick={() =>
+                                                  void removeMissionAssetImage(
+                                                    opt.id,
+                                                    image,
+                                                  )
+                                                }
+                                                className="absolute right-1 top-1 rounded-full bg-background/90 p-1 text-foreground opacity-0 shadow-sm transition group-hover:opacity-100"
+                                                aria-label="콘텐츠 이미지 삭제"
+                                              >
+                                                <XIcon size={12} />
+                                              </button>
+                                            </div>
+                                            <Textarea
+                                              value={image.note ?? ""}
+                                              onChange={(e) =>
+                                                updateMissionAssetImage(
                                                   opt.id,
-                                                  image,
+                                                  image.path,
+                                                  { note: e.target.value },
                                                 )
                                               }
-                                              className="absolute right-1 top-1 rounded-full bg-background/90 p-1 text-foreground opacity-0 shadow-sm transition group-hover:opacity-100"
-                                              aria-label="콘텐츠 이미지 삭제"
-                                            >
-                                              <XIcon size={12} />
-                                            </button>
+                                              placeholder="이미지 설명: 예) 린넨 셔츠 대표 상품 사진, 상품 카드에 사용"
+                                              rows={2}
+                                              className="min-h-24 resize-none text-xs"
+                                            />
                                           </div>
                                         ))}
                                       </div>

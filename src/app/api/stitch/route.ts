@@ -591,6 +591,7 @@ async function fetchImageAsDataUrl(rawUrl: string): Promise<string> {
 async function generateScreenFromAssetImages(
   project: StitchProject,
   assetImageDataUrls: string[],
+  assetImageNotes: string[],
   productPrompt: string,
   deviceType: DeviceType,
 ): Promise<StitchScreenHandle> {
@@ -612,10 +613,16 @@ async function generateScreenFromAssetImages(
   }
   const deviceLabel =
     deviceType === "MOBILE" ? "mobile app screen" : "desktop website";
+  const assetManifest = assetImageNotes
+    .map((note, index) =>
+      `Asset ${index + 1}: ${note || "No admin description provided."}`,
+    )
+    .join("\n");
   const embedPrompt = assetImageEmbedPrompt(
     productPrompt,
     deviceLabel,
     assetImageDataUrls.length,
+    assetManifest,
   );
   return baseRefScreen.edit(embedPrompt, deviceType);
 }
@@ -661,7 +668,7 @@ export async function POST(request: Request) {
     appliedDesignStyleHash?: string | null;
     styleImage?: { dataUrl?: string } | null;
     styleSourceUrl?: string | null;
-    assetImages?: { url?: string }[] | null;
+    assetImages?: { url?: string; note?: string }[] | null;
   };
 
   if (!prompt) {
@@ -675,9 +682,13 @@ export async function POST(request: Request) {
   // Asset-led generation: the mission supplies real content images to embed
   // as-is. Only for new screens, and only when no style image is driving the
   // look (style image takes precedence as it defines the whole appearance).
-  const assetImageUrls = (assetImages ?? [])
-    .map((image) => (typeof image?.url === "string" ? image.url.trim() : ""))
-    .filter(Boolean);
+  const assetImageInputs = (assetImages ?? [])
+    .map((image) => ({
+      url: typeof image?.url === "string" ? image.url.trim() : "",
+      note: typeof image?.note === "string" ? image.note.trim() : "",
+    }))
+    .filter((image) => image.url);
+  const assetImageUrls = assetImageInputs.map((image) => image.url);
   const isAssetLed = assetImageUrls.length > 0 && !screenId && !isImageLed;
 
   try {
@@ -763,6 +774,7 @@ export async function POST(request: Request) {
         screen = await generateScreenFromAssetImages(
           project,
           assetDataUrls,
+          assetImageInputs.map((image) => image.note),
           prompt,
           deviceType,
         );
