@@ -41,6 +41,13 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
@@ -180,7 +187,18 @@ type AssetImage = {
   note?: string;
 };
 
-async function uploadMissionAsset(file: File, token: string): Promise<AssetImage> {
+const ASSET_IMAGE_ACCEPT = "image/png,image/jpeg,image/webp";
+const ASSET_IMAGE_TYPE_ERROR = "PNG, JPG, WebP 이미지만 업로드할 수 있습니다.";
+const SUPPORTED_ASSET_IMAGE_TYPES = new Set(ASSET_IMAGE_ACCEPT.split(","));
+
+function isSupportedAssetImage(file: File) {
+  return SUPPORTED_ASSET_IMAGE_TYPES.has(file.type);
+}
+
+async function uploadMissionAsset(
+  file: File,
+  token: string,
+): Promise<AssetImage> {
   const form = new FormData();
   form.append("file", file);
   const res = await fetch("/api/admin/mission-assets", {
@@ -415,8 +433,7 @@ export default function AdminPage() {
     useState<SemanticFilter>("all");
   const [memoryStartDate, setMemoryStartDate] = useState("");
   const [memoryEndDate, setMemoryEndDate] = useState("");
-  const [memoryViewTab, setMemoryViewTab] =
-    useState<MemoryViewTab>("clusters");
+  const [memoryViewTab, setMemoryViewTab] = useState<MemoryViewTab>("clusters");
   const [memoryGraphClusters, setMemoryGraphClusters] = useState<
     MemoryCluster[]
   >([]);
@@ -431,7 +448,9 @@ export default function AdminPage() {
   >(null);
   const [isLoadingMemoryClusters, setIsLoadingMemoryClusters] = useState(false);
   const [isClusteringMemory, setIsClusteringMemory] = useState(false);
-  const [memoryGraphGeneratedAt, setMemoryGraphGeneratedAt] = useState<number | null>(null);
+  const [memoryGraphGeneratedAt, setMemoryGraphGeneratedAt] = useState<
+    number | null
+  >(null);
   const [memoryClusterError, setMemoryClusterError] = useState<string | null>(
     null,
   );
@@ -474,6 +493,9 @@ export default function AdminPage() {
     useState<OnboardingSettings>(defaultOnboardingSettings);
   const [isSavingOnboardingSettings, setIsSavingOnboardingSettings] =
     useState(false);
+  const [previewAssetImage, setPreviewAssetImage] = useState<AssetImage | null>(
+    null,
+  );
   const [destructiveAction, setDestructiveAction] =
     useState<DestructiveAdminAction | null>(null);
 
@@ -609,7 +631,10 @@ export default function AdminPage() {
     });
   };
 
-  const deleteUserData = async (participant: Participant, targetMissionId: string) => {
+  const deleteUserData = async (
+    participant: Participant,
+    targetMissionId: string,
+  ) => {
     try {
       const currentUser = firebaseAuth.currentUser;
       if (!currentUser) {
@@ -964,9 +989,7 @@ export default function AdminPage() {
         ).catch(() => null);
         const sessionMissionIds =
           sessionMissionSnap?.docs.map((missionDoc) => missionDoc.id) ?? [];
-        const completedSessionMissionIds = (
-          sessionMissionSnap?.docs ?? []
-        )
+        const completedSessionMissionIds = (sessionMissionSnap?.docs ?? [])
           .filter(
             (missionDoc) =>
               (missionDoc.data() as Record<string, unknown>).status ===
@@ -1066,19 +1089,23 @@ export default function AdminPage() {
     });
   };
 
-  const uploadMissionAssetImages = async (
-    optionId: string,
-    files: File[],
-  ) => {
+  const uploadMissionAssetImages = async (optionId: string, files: File[]) => {
     if (files.length === 0) return;
+    const validFiles = files.filter(isSupportedAssetImage);
+    if (validFiles.length === 0) {
+      toast.error(ASSET_IMAGE_TYPE_ERROR);
+      return;
+    }
+    if (validFiles.length < files.length) {
+      toast.error(ASSET_IMAGE_TYPE_ERROR);
+    }
     setIsUploadingMissionAssets(true);
     try {
       const user = firebaseAuth.currentUser;
       if (!user) throw new Error("로그인이 필요합니다.");
       const token = await getIdToken(user);
       const uploaded: AssetImage[] = [];
-      for (const file of files) {
-        if (!file.type.startsWith("image/")) continue;
+      for (const file of validFiles) {
         uploaded.push(await uploadMissionAsset(file, token));
       }
       if (uploaded.length === 0) return;
@@ -1090,10 +1117,10 @@ export default function AdminPage() {
             option.id === optionId
               ? {
                   ...option,
-                  assetImages: [...(option.assetImages ?? []), ...uploaded].slice(
-                    0,
-                    12,
-                  ),
+                  assetImages: [
+                    ...(option.assetImages ?? []),
+                    ...uploaded,
+                  ].slice(0, 12),
                 }
               : option,
           ),
@@ -1108,7 +1135,10 @@ export default function AdminPage() {
     }
   };
 
-  const removeMissionAssetImage = async (optionId: string, image: AssetImage) => {
+  const removeMissionAssetImage = async (
+    optionId: string,
+    image: AssetImage,
+  ) => {
     setEditFields((prev) => {
       const options = normalizeOptions(prev.options as MissionOption[]);
       return {
@@ -1134,7 +1164,6 @@ export default function AdminPage() {
       });
     }
   };
-
 
   const versionMemoryRows = useMemo(
     () =>
@@ -1265,7 +1294,8 @@ export default function AdminPage() {
         output: row.output ?? null,
         originalInteractionContent: row.originalInteractionContent ?? null,
         action: row.agentActionCategory ?? null,
-        sourceType: row.sourceType ?? row.memorySource ?? row.type ?? "during_session",
+        sourceType:
+          row.sourceType ?? row.memorySource ?? row.type ?? "during_session",
         keywords: row.keyword ?? row.keywords ?? [],
         weight: row.weight ?? null,
         embedding: row.embedding,
@@ -1369,7 +1399,9 @@ export default function AdminPage() {
         setMemoryGraphClusterDiagnostics(
           parseMemoryGraphClusterDiagnostics(data.graphDiagnostics),
         );
-        setMemoryGraphGeneratedAt(typeof data.generatedAt === "number" ? data.generatedAt : null);
+        setMemoryGraphGeneratedAt(
+          typeof data.generatedAt === "number" ? data.generatedAt : null,
+        );
         setSelectedMemoryClusterId(graphClusters[0]?.id ?? null);
       } catch (error) {
         if (cancelled) return;
@@ -1679,6 +1711,38 @@ export default function AdminPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+      <Dialog
+        open={Boolean(previewAssetImage)}
+        onOpenChange={(open) => {
+          if (!open) setPreviewAssetImage(null);
+        }}
+      >
+        <DialogContent
+          aria-describedby="asset-image-preview-description"
+          className="max-w-5xl overflow-hidden p-0"
+        >
+          {previewAssetImage && (
+            <>
+              <DialogHeader className="border-b border-border px-4 py-3 pr-12">
+                <DialogTitle className="leading-snug">
+                  {previewAssetImage.note?.trim() || "콘텐츠 이미지"}
+                </DialogTitle>
+                <DialogDescription id="asset-image-preview-description">
+                  미션 콘텐츠 자산 원본 미리보기
+                </DialogDescription>
+              </DialogHeader>
+              <div className="flex max-h-[calc(100vh-10rem)] items-center justify-center bg-muted p-4">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={previewAssetImage.url}
+                  alt={previewAssetImage.note?.trim() || "콘텐츠 이미지"}
+                  className="max-h-[calc(100vh-12rem)] max-w-full rounded-lg object-contain"
+                />
+              </div>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
       {/* Memory modal */}
       {memoryModal && (
         <div
@@ -1694,7 +1758,9 @@ export default function AdminPage() {
                 <p className="text-sm font-semibold text-foreground">
                   유저 메모리
                 </p>
-                <p className="text-xs text-muted-foreground">{memoryModal.userName}</p>
+                <p className="text-xs text-muted-foreground">
+                  {memoryModal.userName}
+                </p>
                 <p className="mt-1 text-xs text-muted-foreground">
                   v0.1.2 {memoryModal.counts["0.1.2"] ?? 0}개
                 </p>
@@ -1963,15 +2029,17 @@ export default function AdminPage() {
                         cellClassName: "max-w-48 wrap-anywhere",
                         render: (row) => (
                           <div className="flex flex-wrap gap-1">
-                            {(row.keywords ?? []).map((kw: string, i: number) => (
-                              <Badge
-                                key={i}
-                                variant="secondary"
-                                className="h-auto max-w-full wrap-anywhere rounded-full whitespace-normal"
-                              >
-                                {kw}
-                              </Badge>
-                            ))}
+                            {(row.keywords ?? []).map(
+                              (kw: string, i: number) => (
+                                <Badge
+                                  key={i}
+                                  variant="secondary"
+                                  className="h-auto max-w-full wrap-anywhere rounded-full whitespace-normal"
+                                >
+                                  {kw}
+                                </Badge>
+                              ),
+                            )}
                           </div>
                         ),
                       },
@@ -2009,7 +2077,8 @@ export default function AdminPage() {
                     selectedClusterId={selectedMemoryClusterId}
                     generatedAt={memoryGraphGeneratedAt}
                     hasStaleCache={
-                      activeMemoryClusters.flatMap((c) => c.itemIds).length > 0 &&
+                      activeMemoryClusters.flatMap((c) => c.itemIds).length >
+                        0 &&
                       activeMemoryClusters
                         .flatMap((c) => c.itemIds)
                         .every((id) => !allMemoryIdSet.has(id))
@@ -2110,434 +2179,473 @@ export default function AdminPage() {
           </TabsList>
 
           <TabsContent value="users" className="space-y-8">
-        <section className="space-y-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <h2 className="text-lg font-semibold text-foreground">
-                유저 목록
-              </h2>
-              <p className="text-sm text-muted-foreground">
-                미션 참여 기록과 세션 데이터를 유저별로 모아봅니다.
-              </p>
-            </div>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={loadUsers}
-              disabled={isLoadingUsers}
-              className="rounded-2xl px-4 text-sm"
-            >
-              {isLoadingUsers ? "불러오는 중..." : "새로고침"}
-            </Button>
-          </div>
+            <section className="space-y-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h2 className="text-lg font-semibold text-foreground">
+                    유저 목록
+                  </h2>
+                  <p className="text-sm text-muted-foreground">
+                    미션 참여 기록과 세션 데이터를 유저별로 모아봅니다.
+                  </p>
+                </div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={loadUsers}
+                  disabled={isLoadingUsers}
+                  className="rounded-2xl px-4 text-sm"
+                >
+                  {isLoadingUsers ? "불러오는 중..." : "새로고침"}
+                </Button>
+              </div>
 
-          {adminUsers.length === 0 ? (
-            <div className="flex h-32 items-center justify-center rounded-3xl border border-dashed border-border bg-card text-sm text-muted-foreground">
-              {isLoadingUsers
-                ? "유저 데이터를 불러오는 중입니다."
-                : "아직 유저 데이터가 없습니다."}
-            </div>
-          ) : (
-            <div className="grid gap-3 lg:grid-cols-2">
-              {adminUsers.map((user) => (
-                <AdminUserCard
-                  key={user.id}
-                  user={user}
-                  onboardingMissionId={ONBOARDING_MISSION_ID}
-                  missionTitle={missionTitle}
-                  isLoadingMemory={isLoadingMemory}
-                  isDeletingSessions={deletingSessionsUserId === user.id}
-                  onOpenMemoryTable={() => openMemoryTable(user)}
-                  onBackupAndDeleteSessions={() =>
-                    requestBackupAndDeleteSessions(user)
-                  }
-                />
-              ))}
-            </div>
-          )}
-        </section>
+              {adminUsers.length === 0 ? (
+                <div className="flex h-32 items-center justify-center rounded-3xl border border-dashed border-border bg-card text-sm text-muted-foreground">
+                  {isLoadingUsers
+                    ? "유저 데이터를 불러오는 중입니다."
+                    : "아직 유저 데이터가 없습니다."}
+                </div>
+              ) : (
+                <div className="grid gap-3 lg:grid-cols-2">
+                  {adminUsers.map((user) => (
+                    <AdminUserCard
+                      key={user.id}
+                      user={user}
+                      onboardingMissionId={ONBOARDING_MISSION_ID}
+                      missionTitle={missionTitle}
+                      isLoadingMemory={isLoadingMemory}
+                      isDeletingSessions={deletingSessionsUserId === user.id}
+                      onOpenMemoryTable={() => openMemoryTable(user)}
+                      onBackupAndDeleteSessions={() =>
+                        requestBackupAndDeleteSessions(user)
+                      }
+                    />
+                  ))}
+                </div>
+              )}
+            </section>
           </TabsContent>
 
           <TabsContent value="missions" className="space-y-8">
-        <section className="space-y-4">
-          <div className="flex items-center justify-between">
-            <h2 className="text-lg font-semibold text-foreground">미션 목록</h2>
-            <span className="text-sm text-muted-foreground">{missions.length}개</span>
-          </div>
-
-          <div className="rounded-2xl border border-border bg-card p-4 shadow-sm">
-            <div className="mb-3 flex items-center justify-between gap-3">
-              <div>
-                <p className="text-xs font-semibold text-muted-foreground">
-                  온보딩 설정
-                </p>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  유저 {adminUsers.length}명
-                </p>
+            <section className="space-y-4">
+              <div className="flex items-center justify-between">
+                <h2 className="text-lg font-semibold text-foreground">
+                  미션 목록
+                </h2>
+                <span className="text-sm text-muted-foreground">
+                  {missions.length}개
+                </span>
               </div>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                onClick={openOnboardingParticipants}
-                className="rounded-full text-muted-foreground"
-                title="온보딩 유저 보기"
-                aria-label="온보딩 유저 보기"
-              >
-                <UsersIcon size={16} />
-              </Button>
-            </div>
-            <div className="flex flex-wrap items-end gap-3">
-              <label className="space-y-1 text-xs font-semibold text-muted-foreground">
-                제한 시간
-                <div className="flex items-center gap-2">
-                  <Input
-                    type="number"
-                    min={1}
-                    value={onboardingSettings.durationMinutes}
-                    onChange={(e) =>
-                      setOnboardingSettings((prev) => ({
-                        ...prev,
-                        durationMinutes: Number(e.target.value) || 20,
-                      }))
-                    }
-                    className="w-24"
-                  />
-                  <span className="text-sm font-normal text-muted-foreground">분</span>
-                </div>
-              </label>
-              <Button
-                type="button"
-                onClick={saveOnboardingSettings}
-                disabled={isSavingOnboardingSettings}
-                className="rounded-2xl px-5"
-              >
-                {isSavingOnboardingSettings ? "저장 중..." : "저장"}
-              </Button>
-            </div>
-          </div>
 
-          {missions.length === 0 ? (
-            <div className="flex h-40 items-center justify-center rounded-3xl border border-dashed border-border bg-card text-sm text-muted-foreground">
-              아직 미션이 없습니다. 첫 미션을 만들어보세요.
-            </div>
-          ) : (
-            <div className="space-y-3">
-              {missions.map((mission) => {
-                const isEditing = editingId === mission.id;
-
-                return (
-                  <div
-                    key={mission.id}
-                    className="rounded-3xl border border-border bg-card px-6 py-5 shadow-sm"
+              <div className="rounded-2xl border border-border bg-card p-4 shadow-sm">
+                <div className="mb-3 flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-xs font-semibold text-muted-foreground">
+                      온보딩 설정
+                    </p>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      유저 {adminUsers.length}명
+                    </p>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    onClick={openOnboardingParticipants}
+                    className="rounded-full text-muted-foreground"
+                    title="온보딩 유저 보기"
+                    aria-label="온보딩 유저 보기"
                   >
-                    <div className="flex items-start gap-3">
-                      <div className="flex-1 min-w-0 space-y-3">
-                        {isEditing ? (
-                          <>
-                            <Input
-                              autoFocus
-                              value={editFields.title ?? ""}
-                              onChange={(e) =>
-                                setEditFields((p) => ({
-                                  ...p,
-                                  title: e.target.value,
-                                }))
-                              }
-                              onKeyDown={(e) => {
-                                if (e.key === "Escape") setEditingId(null);
-                              }}
-                              placeholder="미션 제목"
-                              className="text-sm font-semibold"
-                            />
-                            <Textarea
-                              value={editFields.description ?? ""}
-                              onChange={(e) =>
-                                setEditFields((p) => ({
-                                  ...p,
-                                  description: e.target.value,
-                                }))
-                              }
-                              placeholder="미션 설명 (선택)"
-                              rows={2}
-                              className="resize-none text-sm text-muted-foreground"
-                            />
-                            <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                              <span>디바이스</span>
-                              {(["desktop", "mobile"] as Device[]).map((d) => (
-                                <button
-                                  key={d}
-                                  type="button"
-                                  onClick={() =>
-                                    setEditFields((p) => ({ ...p, device: d }))
+                    <UsersIcon size={16} />
+                  </Button>
+                </div>
+                <div className="flex flex-wrap items-end gap-3">
+                  <label className="space-y-1 text-xs font-semibold text-muted-foreground">
+                    제한 시간
+                    <div className="flex items-center gap-2">
+                      <Input
+                        type="number"
+                        min={1}
+                        value={onboardingSettings.durationMinutes}
+                        onChange={(e) =>
+                          setOnboardingSettings((prev) => ({
+                            ...prev,
+                            durationMinutes: Number(e.target.value) || 20,
+                          }))
+                        }
+                        className="w-24"
+                      />
+                      <span className="text-sm font-normal text-muted-foreground">
+                        분
+                      </span>
+                    </div>
+                  </label>
+                  <Button
+                    type="button"
+                    onClick={saveOnboardingSettings}
+                    disabled={isSavingOnboardingSettings}
+                    className="rounded-2xl px-5"
+                  >
+                    {isSavingOnboardingSettings ? "저장 중..." : "저장"}
+                  </Button>
+                </div>
+              </div>
+
+              {missions.length === 0 ? (
+                <div className="flex h-40 items-center justify-center rounded-3xl border border-dashed border-border bg-card text-sm text-muted-foreground">
+                  아직 미션이 없습니다. 첫 미션을 만들어보세요.
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {missions.map((mission) => {
+                    const isEditing = editingId === mission.id;
+
+                    return (
+                      <div
+                        key={mission.id}
+                        className="rounded-3xl border border-border bg-card px-6 py-5 shadow-sm"
+                      >
+                        <div className="flex items-start gap-3">
+                          <div className="flex-1 min-w-0 space-y-3">
+                            {isEditing ? (
+                              <>
+                                <Input
+                                  autoFocus
+                                  value={editFields.title ?? ""}
+                                  onChange={(e) =>
+                                    setEditFields((p) => ({
+                                      ...p,
+                                      title: e.target.value,
+                                    }))
                                   }
-                                  className={`rounded-lg border px-3 py-1 text-xs font-semibold transition ${
-                                    (editFields.device ?? "desktop") === d
-                                      ? "border-primary bg-primary text-primary-foreground"
-                                      : "border-border text-muted-foreground hover:bg-muted"
-                                  }`}
-                                >
-                                  {d === "desktop" ? "PC" : "모바일"}
-                                </button>
-                              ))}
-                            </div>
-                            <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                              <span>제한 시간 (분)</span>
-                              <Input
-                                type="number"
-                                min={0}
-                                value={
-                                  (editFields.durationMinutes as number) ?? 30
-                                }
-                                onChange={(e) =>
-                                  setEditFields((p) => ({
-                                    ...p,
-                                    durationMinutes: Number(e.target.value),
-                                  }))
-                                }
-                                className="w-20 text-xs"
-                              />
-                              <span className="text-muted-foreground">
-                                (0 = 제한 없음)
-                              </span>
-                            </div>
-                            {/* Single standalone mission content (data stays as
+                                  onKeyDown={(e) => {
+                                    if (e.key === "Escape") setEditingId(null);
+                                  }}
+                                  placeholder="미션 제목"
+                                  className="text-sm font-semibold"
+                                />
+                                <Textarea
+                                  value={editFields.description ?? ""}
+                                  onChange={(e) =>
+                                    setEditFields((p) => ({
+                                      ...p,
+                                      description: e.target.value,
+                                    }))
+                                  }
+                                  placeholder="미션 설명 (선택)"
+                                  rows={2}
+                                  className="resize-none text-sm text-muted-foreground"
+                                />
+                                <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                                  <span>디바이스</span>
+                                  {(["desktop", "mobile"] as Device[]).map(
+                                    (d) => (
+                                      <button
+                                        key={d}
+                                        type="button"
+                                        onClick={() =>
+                                          setEditFields((p) => ({
+                                            ...p,
+                                            device: d,
+                                          }))
+                                        }
+                                        className={`rounded-lg border px-3 py-1 text-xs font-semibold transition ${
+                                          (editFields.device ?? "desktop") === d
+                                            ? "border-primary bg-primary text-primary-foreground"
+                                            : "border-border text-muted-foreground hover:bg-muted"
+                                        }`}
+                                      >
+                                        {d === "desktop" ? "PC" : "모바일"}
+                                      </button>
+                                    ),
+                                  )}
+                                </div>
+                                <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                                  <span>제한 시간 (분)</span>
+                                  <Input
+                                    type="number"
+                                    min={0}
+                                    value={
+                                      (editFields.durationMinutes as number) ??
+                                      30
+                                    }
+                                    onChange={(e) =>
+                                      setEditFields((p) => ({
+                                        ...p,
+                                        durationMinutes: Number(e.target.value),
+                                      }))
+                                    }
+                                    className="w-20 text-xs"
+                                  />
+                                  <span className="text-muted-foreground">
+                                    (0 = 제한 없음)
+                                  </span>
+                                </div>
+                                {/* Single standalone mission content (data stays as
                                 options[0]; the option-selection mechanic was
                                 removed, so there is exactly one content block). */}
-                            {(() => {
-                              const opt =
-                                normalizeOptions(
-                                  editFields.options as MissionOption[],
-                                )[0] ?? createEmptyOption();
-                              return (
-                                <div className="space-y-2 rounded-2xl border border-border bg-muted p-3">
-                                  <p className="text-xs font-semibold text-muted-foreground">
-                                    미션 콘텐츠
-                                  </p>
-                                  <Input
-                                    value={opt.title}
-                                    onChange={(e) =>
-                                      updateEditOption(opt.id, {
-                                        title: e.target.value,
-                                      })
-                                    }
-                                    placeholder="주제/브랜드 이름 (예: 🌙 Zzzly)"
-                                    className="text-xs"
-                                  />
-                                  <Textarea
-                                    value={opt.description}
-                                    onChange={(e) =>
-                                      updateEditOption(opt.id, {
-                                        description: e.target.value,
-                                      })
-                                    }
-                                    placeholder="한 줄 설명"
-                                    rows={2}
-                                    className="resize-none text-xs"
-                                  />
-                                  <div className="space-y-1.5">
-                                    <p className="text-xs font-semibold text-muted-foreground">
-                                      콘텐츠 (마크다운)
-                                    </p>
-                                    <Textarea
-                                      value={opt.content}
-                                      onChange={(e) =>
-                                        updateEditOption(opt.id, {
-                                          content: e.target.value,
-                                        })
-                                      }
-                                      placeholder={"## 서비스 개요\n- ..."}
-                                      rows={4}
-                                      className="resize-y font-mono text-xs"
-                                    />
-                                  </div>
-                                  <div className="space-y-2">
-                                    <p className="text-xs font-semibold text-muted-foreground">
-                                      콘텐츠 이미지
-                                    </p>
-                                    <p className="text-xs text-muted-foreground">
-                                      실제 상품 사진이나 UI 캡쳐를 넣어두면 Stitch 목업
-                                      생성 시 콘텐츠 자산으로 활용합니다.
-                                    </p>
-                                    {(opt.assetImages?.length ?? 0) > 0 && (
-                                      <div className="space-y-2">
-                                        {(opt.assetImages ?? []).map((image) => (
-                                          <div
-                                            key={image.path || image.url}
-                                            className="flex flex-col gap-2 rounded-xl border border-border bg-background p-2 sm:flex-row"
-                                          >
-                                            <div className="group relative h-24 w-full shrink-0 overflow-hidden rounded-lg bg-muted sm:w-24">
-                                              {/* eslint-disable-next-line @next/next/no-img-element */}
-                                              <img
-                                                src={image.url}
-                                                alt={
-                                                  image.note?.trim() ||
-                                                  "콘텐츠 이미지"
-                                                }
-                                                className="h-full w-full object-cover"
-                                              />
-                                              <button
-                                                type="button"
-                                                onClick={() =>
-                                                  void removeMissionAssetImage(
-                                                    opt.id,
-                                                    image,
-                                                  )
-                                                }
-                                                className="absolute right-1 top-1 rounded-full bg-background/90 p-1 text-foreground opacity-0 shadow-sm transition group-hover:opacity-100"
-                                                aria-label="콘텐츠 이미지 삭제"
-                                              >
-                                                <XIcon size={12} />
-                                              </button>
-                                            </div>
-                                            <Textarea
-                                              value={image.note ?? ""}
-                                              onChange={(e) =>
-                                                updateMissionAssetImage(
-                                                  opt.id,
-                                                  image.path,
-                                                  { note: e.target.value },
-                                                )
-                                              }
-                                              placeholder="이미지 설명: 예) 린넨 셔츠 대표 상품 사진, 상품 카드에 사용"
-                                              rows={2}
-                                              className="min-h-24 resize-none text-xs"
-                                            />
-                                          </div>
-                                        ))}
-                                      </div>
-                                    )}
-                                    <label className="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-dashed border-border px-3 py-2 text-xs font-medium text-muted-foreground transition hover:bg-background">
-                                      {isUploadingMissionAssets ? (
-                                        <>
-                                          <Spinner className="size-3" />
-                                          업로드 중...
-                                        </>
-                                      ) : (
-                                        <>이미지 추가</>
-                                      )}
-                                      <input
-                                        type="file"
-                                        accept="image/*"
-                                        multiple
-                                        className="hidden"
-                                        disabled={isUploadingMissionAssets}
-                                        onChange={(e) => {
-                                          const files = Array.from(
-                                            e.currentTarget.files ?? [],
-                                          );
-                                          void uploadMissionAssetImages(
-                                            opt.id,
-                                            files,
-                                          );
-                                          e.target.value = "";
-                                        }}
+                                {(() => {
+                                  const opt =
+                                    normalizeOptions(
+                                      editFields.options as MissionOption[],
+                                    )[0] ?? createEmptyOption();
+                                  return (
+                                    <div className="space-y-2 rounded-2xl border border-border bg-muted p-3">
+                                      <p className="text-xs font-semibold text-muted-foreground">
+                                        미션 콘텐츠
+                                      </p>
+                                      <Input
+                                        value={opt.title}
+                                        onChange={(e) =>
+                                          updateEditOption(opt.id, {
+                                            title: e.target.value,
+                                          })
+                                        }
+                                        placeholder="주제/브랜드 이름 (예: 🌙 Zzzly)"
+                                        className="text-xs"
                                       />
-                                    </label>
-                                  </div>
+                                      <Textarea
+                                        value={opt.description}
+                                        onChange={(e) =>
+                                          updateEditOption(opt.id, {
+                                            description: e.target.value,
+                                          })
+                                        }
+                                        placeholder="한 줄 설명"
+                                        rows={2}
+                                        className="resize-none text-xs"
+                                      />
+                                      <div className="space-y-1.5">
+                                        <p className="text-xs font-semibold text-muted-foreground">
+                                          콘텐츠 (마크다운)
+                                        </p>
+                                        <Textarea
+                                          value={opt.content}
+                                          onChange={(e) =>
+                                            updateEditOption(opt.id, {
+                                              content: e.target.value,
+                                            })
+                                          }
+                                          placeholder={"## 서비스 개요\n- ..."}
+                                          rows={4}
+                                          className="resize-y font-mono text-xs"
+                                        />
+                                      </div>
+                                      <div className="space-y-2">
+                                        <p className="text-xs font-semibold text-muted-foreground">
+                                          콘텐츠 이미지
+                                        </p>
+                                        <p className="text-xs text-muted-foreground">
+                                          실제 상품 사진이나 UI 캡쳐를 넣어두면
+                                          Stitch 목업 생성 시 콘텐츠 자산으로
+                                          활용합니다.
+                                        </p>
+                                        {(opt.assetImages?.length ?? 0) > 0 && (
+                                          <div className="space-y-2">
+                                            {(opt.assetImages ?? []).map(
+                                              (image) => (
+                                                <div
+                                                  key={image.path || image.url}
+                                                  className="flex flex-col gap-2 rounded-xl border border-border bg-background p-2 sm:flex-row"
+                                                >
+                                                  <div className="group relative h-24 w-full shrink-0 overflow-hidden rounded-lg bg-muted sm:w-24">
+                                                    <button
+                                                      type="button"
+                                                      onClick={() =>
+                                                        setPreviewAssetImage(
+                                                          image,
+                                                        )
+                                                      }
+                                                      className="block h-full w-full cursor-zoom-in"
+                                                      aria-label={`크게 보기: ${
+                                                        image.note?.trim() ||
+                                                        "콘텐츠 이미지"
+                                                      }`}
+                                                    >
+                                                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                                                      <img
+                                                        src={image.url}
+                                                        alt={
+                                                          image.note?.trim() ||
+                                                          "콘텐츠 이미지"
+                                                        }
+                                                        className="h-full w-full object-cover transition duration-150 group-hover:scale-105"
+                                                      />
+                                                    </button>
+                                                    <button
+                                                      type="button"
+                                                      onClick={() =>
+                                                        void removeMissionAssetImage(
+                                                          opt.id,
+                                                          image,
+                                                        )
+                                                      }
+                                                      className="absolute right-1 top-1 rounded-full bg-background/90 p-1 text-foreground opacity-0 shadow-sm transition group-hover:opacity-100"
+                                                      aria-label="콘텐츠 이미지 삭제"
+                                                    >
+                                                      <XIcon size={12} />
+                                                    </button>
+                                                  </div>
+                                                  <Textarea
+                                                    value={image.note ?? ""}
+                                                    onChange={(e) =>
+                                                      updateMissionAssetImage(
+                                                        opt.id,
+                                                        image.path,
+                                                        {
+                                                          note: e.target.value,
+                                                        },
+                                                      )
+                                                    }
+                                                    placeholder="이미지 설명: 예) 린넨 셔츠 대표 상품 사진, 상품 카드에 사용"
+                                                    rows={2}
+                                                    className="min-h-24 resize-none text-xs"
+                                                  />
+                                                </div>
+                                              ),
+                                            )}
+                                          </div>
+                                        )}
+                                        <label className="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-dashed border-border px-3 py-2 text-xs font-medium text-muted-foreground transition hover:bg-background">
+                                          {isUploadingMissionAssets ? (
+                                            <>
+                                              <Spinner className="size-3" />
+                                              업로드 중...
+                                            </>
+                                          ) : (
+                                            <>이미지 추가</>
+                                          )}
+                                          <input
+                                            type="file"
+                                            accept={ASSET_IMAGE_ACCEPT}
+                                            multiple
+                                            className="hidden"
+                                            disabled={isUploadingMissionAssets}
+                                            onChange={(e) => {
+                                              const files = Array.from(
+                                                e.currentTarget.files ?? [],
+                                              );
+                                              void uploadMissionAssetImages(
+                                                opt.id,
+                                                files,
+                                              );
+                                              e.target.value = "";
+                                            }}
+                                          />
+                                        </label>
+                                      </div>
+                                    </div>
+                                  );
+                                })()}
+                                <div className="flex gap-2">
+                                  <Button
+                                    type="button"
+                                    size="sm"
+                                    onClick={() => saveEdit(mission.id)}
+                                    disabled={isUploadingMissionAssets}
+                                    className="rounded-xl px-4 text-xs"
+                                  >
+                                    저장
+                                  </Button>
+                                  <Button
+                                    type="button"
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() => setEditingId(null)}
+                                    className="rounded-xl px-4 text-xs"
+                                  >
+                                    취소
+                                  </Button>
                                 </div>
-                              );
-                            })()}
-                            <div className="flex gap-2">
-                              <Button
-                                type="button"
-                                size="sm"
-                                onClick={() => saveEdit(mission.id)}
-                                disabled={isUploadingMissionAssets}
-                                className="rounded-xl px-4 text-xs"
-                              >
-                                저장
-                              </Button>
-                              <Button
-                                type="button"
-                                variant="outline"
-                                size="sm"
-                                onClick={() => setEditingId(null)}
-                                className="rounded-xl px-4 text-xs"
-                              >
-                                취소
-                              </Button>
-                            </div>
-                          </>
-                        ) : (
-                          <>
-                            <div className="flex items-center gap-3">
-                              <p className="text-sm font-semibold text-foreground truncate">
-                                {mission.title}
-                              </p>
-                              <Badge variant="secondary" className="shrink-0 rounded-full">
-                                {(mission.device ?? "desktop") === "desktop" ? (
-                                  <>
-                                    <MonitorIcon size={12} className="inline" />{" "}
-                                    PC
-                                  </>
-                                ) : (
-                                  <>
-                                    <SmartphoneIcon
-                                      size={12}
-                                      className="inline"
-                                    />{" "}
-                                    모바일
-                                  </>
+                              </>
+                            ) : (
+                              <>
+                                <div className="flex items-center gap-3">
+                                  <p className="text-sm font-semibold text-foreground truncate">
+                                    {mission.title}
+                                  </p>
+                                  <Badge
+                                    variant="secondary"
+                                    className="shrink-0 rounded-full"
+                                  >
+                                    {(mission.device ?? "desktop") ===
+                                    "desktop" ? (
+                                      <>
+                                        <MonitorIcon
+                                          size={12}
+                                          className="inline"
+                                        />{" "}
+                                        PC
+                                      </>
+                                    ) : (
+                                      <>
+                                        <SmartphoneIcon
+                                          size={12}
+                                          className="inline"
+                                        />{" "}
+                                        모바일
+                                      </>
+                                    )}
+                                  </Badge>
+                                </div>
+                                {mission.description && (
+                                  <p className="text-xs text-muted-foreground leading-relaxed">
+                                    {mission.description}
+                                  </p>
                                 )}
-                              </Badge>
-                            </div>
-                            {mission.description && (
-                              <p className="text-xs text-muted-foreground leading-relaxed">
-                                {mission.description}
-                              </p>
+                                <p className="text-xs text-muted-foreground">
+                                  {mission.options?.[0]?.title ||
+                                    "콘텐츠 미설정"}
+                                </p>
+                              </>
                             )}
-                            <p className="text-xs text-muted-foreground">
-                              {mission.options?.[0]?.title || "콘텐츠 미설정"}
-                            </p>
-                          </>
-                        )}
-                      </div>
+                          </div>
 
-                      {!isEditing && (
-                        <div className="flex shrink-0 items-center gap-1">
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => openParticipants(mission.id)}
-                            className="rounded-full text-muted-foreground"
-                            title="참여자 보기"
-                            aria-label="참여자 보기"
-                          >
-                            <UsersIcon size={16} />
-                          </Button>
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => startEdit(mission)}
-                            className="rounded-full text-muted-foreground"
-                            title="수정"
-                            aria-label="미션 수정"
-                          >
-                            <PencilIcon size={16} />
-                          </Button>
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => requestDeleteMission(mission)}
-                            className="rounded-full text-muted-foreground hover:bg-red-50 hover:text-red-400"
-                            title="삭제"
-                            aria-label="미션 삭제"
-                          >
-                            <XIcon size={16} />
-                          </Button>
+                          {!isEditing && (
+                            <div className="flex shrink-0 items-center gap-1">
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon"
+                                onClick={() => openParticipants(mission.id)}
+                                className="rounded-full text-muted-foreground"
+                                title="참여자 보기"
+                                aria-label="참여자 보기"
+                              >
+                                <UsersIcon size={16} />
+                              </Button>
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon"
+                                onClick={() => startEdit(mission)}
+                                className="rounded-full text-muted-foreground"
+                                title="수정"
+                                aria-label="미션 수정"
+                              >
+                                <PencilIcon size={16} />
+                              </Button>
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon"
+                                onClick={() => requestDeleteMission(mission)}
+                                className="rounded-full text-muted-foreground hover:bg-red-50 hover:text-red-400"
+                                title="삭제"
+                                aria-label="미션 삭제"
+                              >
+                                <XIcon size={16} />
+                              </Button>
+                            </div>
+                          )}
                         </div>
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </section>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </section>
           </TabsContent>
         </Tabs>
       </div>
@@ -2615,7 +2723,10 @@ export default function AdminPage() {
                             {p.email}
                           </p>
                         )}
-                        <Badge variant={badge.variant} className="mt-1 rounded-full">
+                        <Badge
+                          variant={badge.variant}
+                          className="mt-1 rounded-full"
+                        >
                           {badge.label}
                         </Badge>
                         {p.isAdmin && (
@@ -2651,10 +2762,14 @@ export default function AdminPage() {
                           onClick={() => requestDeleteUserData(p)}
                           className="rounded-full text-muted-foreground hover:bg-red-50 hover:text-red-500"
                           title={
-                            p.isAdmin ? "관리자 미션 기록 삭제" : "미션 기록 삭제"
+                            p.isAdmin
+                              ? "관리자 미션 기록 삭제"
+                              : "미션 기록 삭제"
                           }
                           aria-label={
-                            p.isAdmin ? "관리자 미션 기록 삭제" : "미션 기록 삭제"
+                            p.isAdmin
+                              ? "관리자 미션 기록 삭제"
+                              : "미션 기록 삭제"
                           }
                         >
                           <XIcon size={14} />

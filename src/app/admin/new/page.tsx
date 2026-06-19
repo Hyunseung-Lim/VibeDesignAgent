@@ -77,6 +77,14 @@ async function deleteMissionAsset(path: string, token: string) {
   }
 }
 
+const ASSET_IMAGE_ACCEPT = "image/png,image/jpeg,image/webp";
+const ASSET_IMAGE_TYPE_ERROR = "PNG, JPG, WebP 이미지만 업로드할 수 있습니다.";
+const SUPPORTED_ASSET_IMAGE_TYPES = new Set(ASSET_IMAGE_ACCEPT.split(","));
+
+function isSupportedAssetImage(file: File) {
+  return SUPPORTED_ASSET_IMAGE_TYPES.has(file.type);
+}
+
 export default function NewMissionPage() {
   const router = useRouter();
   const [ready, setReady] = useState(false);
@@ -116,15 +124,23 @@ export default function NewMissionPage() {
 
   const uploadAssetImages = async (files: File[]) => {
     if (files.length === 0) return;
-    setError("");
+    const validFiles = files.filter(isSupportedAssetImage);
+    if (validFiles.length === 0) {
+      setError(ASSET_IMAGE_TYPE_ERROR);
+      return;
+    }
+    if (validFiles.length < files.length) {
+      setError(ASSET_IMAGE_TYPE_ERROR);
+    } else {
+      setError("");
+    }
     setIsUploading(true);
     try {
       const user = firebaseAuth.currentUser;
       if (!user) throw new Error("로그인이 필요합니다.");
       const token = await getIdToken(user);
       const uploaded: AssetImage[] = [];
-      for (const file of files) {
-        if (!file.type.startsWith("image/")) continue;
+      for (const file of validFiles) {
         uploaded.push(await uploadMissionAsset(file, token));
       }
       if (uploaded.length > 0) {
@@ -380,7 +396,7 @@ export default function NewMissionPage() {
               <label className="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-dashed border-slate-300 px-3 py-2 text-sm font-semibold text-slate-600 transition hover:bg-slate-50">
                 <input
                   type="file"
-                  accept="image/*"
+                  accept={ASSET_IMAGE_ACCEPT}
                   multiple
                   disabled={isUploading}
                   onChange={(e) => {

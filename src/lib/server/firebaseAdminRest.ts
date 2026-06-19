@@ -189,6 +189,8 @@ export async function uploadPublicStorageObject(
     throw new Error(`Storage upload failed: ${res.status} ${text.slice(0, 200)}`);
   }
 
+  await res.json().catch(() => null);
+
   return {
     path: objectName,
     url: firebaseStorageDownloadUrl(bucket, objectName, downloadToken),
@@ -209,6 +211,23 @@ export async function deleteStorageObject(objectName: string, token: string) {
   if (!res.ok && res.status !== 404) {
     throw new Error(`Delete storage ${objectName} failed: ${res.status}`);
   }
+}
+
+export async function downloadStorageObject(objectName: string, token: string) {
+  const bucket = storageBucketName();
+  const res = await fetch(
+    `https://storage.googleapis.com/storage/v1/b/${bucket}/o/${encodeURIComponent(
+      objectName,
+    )}?alt=media`,
+    {
+      headers: { Authorization: `Bearer ${token}` },
+    },
+  );
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Storage download failed: ${res.status} ${text.slice(0, 200)}`);
+  }
+  return res;
 }
 
 export async function verifyFirebaseIdToken(request: Request) {

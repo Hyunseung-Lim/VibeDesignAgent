@@ -10,6 +10,7 @@ import {
 export const runtime = "nodejs";
 
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
+const SUPPORTED_IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/webp"]);
 
 function safeFileName(name: string) {
   return (
@@ -38,6 +39,12 @@ export async function POST(request: Request) {
   if (!file.type.startsWith("image/")) {
     return Response.json({ error: "only image files are allowed" }, { status: 400 });
   }
+  if (!SUPPORTED_IMAGE_TYPES.has(file.type)) {
+    return Response.json(
+      { error: "PNG, JPG, WebP 이미지만 업로드할 수 있습니다." },
+      { status: 415 },
+    );
+  }
   if (file.size > MAX_IMAGE_BYTES) {
     return Response.json(
       { error: "image file must be 8MB or smaller" },
@@ -55,7 +62,9 @@ export async function POST(request: Request) {
     token,
   );
 
-  return Response.json(uploaded);
+  const publicUrl = new URL("/api/mission-assets", request.url);
+  publicUrl.searchParams.set("path", uploaded.path);
+  return Response.json({ ...uploaded, url: publicUrl.toString() });
 }
 
 export async function DELETE(request: Request) {

@@ -54,7 +54,7 @@
 
 - 어드민 이메일 화이트리스트로 접근 제한
 - 미션 CRUD (생성/수정/삭제)
-- 미션 콘텐츠는 Firestore `missions/{id}.options[0]`에 저장(제목/설명/마크다운 content). 옵션에는 어드민이 올린 콘텐츠 이미지 `assetImages[{url, path, note}]`도 담긴다. 이 이미지는 `/admin/new`뿐 아니라 `/admin` 기존 미션 편집에서도 Firebase Storage `mission-assets/`에 업로드/삭제할 수 있고, main 세션의 Mission 섹션에서 썸네일로 바로 확인할 수 있다. 저장된 URL/path는 목업 생성 시 asset-led 경로로 그대로 주입된다(위 "콘텐츠 자산 주도 생성" 참고) `[현행 2026-06-17 → 15.91]`
+- 미션 콘텐츠는 Firestore `missions/{id}.options[0]`에 저장(제목/설명/마크다운 content). 옵션에는 어드민이 올린 콘텐츠 이미지 `assetImages[{url, path, note}]`도 담긴다. 이 이미지는 `/admin/new`뿐 아니라 `/admin` 기존 미션 편집에서도 Firebase Storage `mission-assets/`에 PNG/JPG/WebP만 업로드/삭제할 수 있고, main 세션의 Mission 섹션에서 썸네일로 바로 확인할 수 있다. 저장된 URL/path는 목업 생성 시 asset-led 경로로 그대로 주입된다(위 "콘텐츠 자산 주도 생성" 참고) `[현행 2026-06-19 → 15.96]`
 - 미션 ID: `mission-YYYYMMDD-HHmmss` 형식 (사람이 읽기 쉬운 구조)
 - 참여자 목록 조회 및 세션 열람 (읽기 전용 뷰)
 - 참여자 카드의 X는 해당 미션 세션과 하위 `memoryDrafts`/`reviewTurns`만 삭제하며, 유저 정보/장기 메모리/다른 미션 기록은 유지
@@ -3191,3 +3191,11 @@ type ChatPlan = {
 - 구현: 기존 @phosphor-icons/react 사용 14개 파일을 lucide로 교체. 이름 매핑(suffix Icon 유지) — DeviceMobile→Smartphone, PencilSimple→Pencil, UsersThree→Users, ArrowsOut→Maximize2, ArrowsIn→Minimize2, DownloadSimple→Download, MagnifyingGlassPlus/Minus→ZoomIn/ZoomOut, CornersOut→Maximize, CaretDown/Up→ChevronDown/Up, CheckCircle→CircleCheck, LockSimple→Lock, SignOut→LogOut, Trash→Trash2. phosphor 전용 prop `weight`는 lucide에 없어 제거(mission-card, user-menu).
 - 컨벤션: 앞으로 신규 아이콘은 lucide에서 가져온다. 브랜드/로고가 필요한 예외만 phosphor.
 - 검증: `tsc --noEmit` 통과, 변경 파일 eslint 0 error(기존 warning만). phosphor 잔존 참조는 page.tsx GoogleLogo 1건뿐임을 grep으로 확인.
+
+### 15.96 미션 콘텐츠 이미지 업로드 포맷 제한 `[implemented 2026-06-19]`
+
+- 문제: `/admin` 기존 미션 편집에서 콘텐츠 이미지를 업로드한 직후 썸네일이 깨져 보일 수 있었다. 기존 input/API가 `image/*`를 모두 허용해서 HEIC/HEIF처럼 업로드는 되지만 브라우저 `<img>`가 안정적으로 표시하지 못하는 포맷이 통과할 수 있었다.
+- 수정: `POST /api/admin/mission-assets`가 PNG/JPG/WebP만 허용하고 그 외 image MIME은 415와 한국어 오류를 반환한다. `/admin`과 `/admin/new`의 file input accept도 같은 세 포맷으로 좁히고, 클라이언트에서 먼저 필터링해 깨진 썸네일이 생기기 전에 오류를 보여준다.
+- 후속 수정: PNG도 200 업로드 후 깨지는 케이스가 있고 서버 환경에서 `firebasestorage.googleapis.com` 호출이 TLS 오류를 내서, 저장 URL을 Firebase download URL 대신 앱 프록시 `/api/mission-assets?path=...`로 바꿨다. 업로드/삭제/다운로드 프록시는 서버에서 service account로 `storage.googleapis.com`만 호출한다. 이 URL은 브라우저 썸네일과 Stitch asset-led 다운로드가 모두 이미지처럼 사용할 수 있다.
+- UI 보강: `/admin` 기존 미션 편집의 콘텐츠 이미지 썸네일을 클릭하면 Dialog에서 원본 비율로 크게 볼 수 있게 했다. 삭제 버튼은 기존처럼 썸네일 우상단에 유지한다.
+- 문서: 1~9장 `/admin` Current Snapshot의 콘텐츠 이미지 업로드 계약을 PNG/JPG/WebP로 갱신했다.
