@@ -22,6 +22,7 @@ import {
 } from "firebase/firestore";
 import {
   ArrowLeftIcon,
+  ArrowDownIcon,
   Maximize2Icon,
   Minimize2Icon,
   BrainIcon,
@@ -68,10 +69,8 @@ import { MissionBriefSection } from "@/components/session/mission-brief-section"
 import { MissionOptionSelection } from "@/components/session/mission-option-selection";
 import {
   ProfileInputCard,
-  ProfileReviewCard,
   SetupMissionSummaryCard,
 } from "@/components/session/session-setup-cards";
-import { SessionSetupStepper } from "@/components/session/session-setup-stepper";
 import { SessionProductTour } from "@/components/session/session-product-tour";
 import { MemoryScoreBar } from "@/components/memory/memory-score-bar";
 import { MemoryCard } from "@/components/memory/memory-card";
@@ -1779,7 +1778,6 @@ export default function MainScreenPage() {
   const [isMissionContextReady, setIsMissionContextReady] = useState(false);
   const [sessionLoaded, setSessionLoaded] = useState(false);
   const [profileModalConfirmed, setProfileModalConfirmed] = useState(false);
-  const [profileStep, setProfileStep] = useState<1 | 2 | 3>(1);
   const [profileRawMarkdown, setProfileRawMarkdown] = useState("");
   const [profileSaving, setProfileSaving] = useState(false);
   const [isProductTourOpen, setIsProductTourOpen] = useState(false);
@@ -2534,8 +2532,13 @@ export default function MainScreenPage() {
       setSessionLoaded(true);
       const completed = session?.status === "completed";
       setSessionCompleted(completed);
+      // A session that was ever started must skip the pre-session setup page on
+      // resume. The timer/status are the authoritative "already started" signals;
+      // content checks are kept as a fallback for older snapshots.
       const sessionAlreadyStarted =
         completed ||
+        session?.status === "active" ||
+        Number(session?.timerStartedAt ?? session?.startedAt ?? 0) > 0 ||
         (session?.messages?.length ?? 0) > 0 ||
         (session?.ideas?.length ?? 0) > 0 ||
         (session?.artboards?.length ?? 0) > 0;
@@ -6429,91 +6432,26 @@ export default function MainScreenPage() {
           onPreviewChange={setActiveOptionPreviewId}
           onChooseOption={(option) => {
             void chooseMissionOption(option);
-            setProfileStep(2);
           }}
         />
-      ) : !isReadOnly && isMissionContextReady && sessionLoaded && !sessionCompleted && !profileModalConfirmed && !isOnboardingMission && profileStep === 1 ? (
-        /* Step 1: Mission reading (mission selection was removed for single-option missions) */
+      ) : !isReadOnly && isMissionContextReady && sessionLoaded && !sessionCompleted && !profileModalConfirmed ? (
+        /* Single-page setup: read mission, (optionally) add pre-session info, start.
+           The former 1-2-3 steps were near-identical pages; merged into one scroll. */
         <main className="flex flex-1 flex-col overflow-hidden">
-          <SessionSetupStepper currentStep={1} />
-          <div className="flex-1 overflow-y-auto">
-            <div className="mx-auto max-w-3xl space-y-6 px-8 py-8">
-              <SetupMissionSummaryCard
-                missionTitle={missionTitle}
-                missionBrief={missionBrief}
-                parentMissionTitle={parentMissionTitle}
-                parentMissionBrief={parentMissionBrief}
-                activeOption={activeOption}
-                showOption={missionOptions.length > 1}
-                missionDurationMinutes={missionDurationMinutes}
-              />
+          {missionOptions.length > 1 && (
+            <div className="border-b border-slate-100 bg-white px-8 py-4">
+              <div className="mx-auto flex max-w-3xl items-center">
+                <button
+                  type="button"
+                  onClick={() => setSelectedOptionId(null)}
+                  className="flex shrink-0 items-center gap-1 text-sm text-slate-400 transition hover:text-slate-700"
+                >
+                  <ArrowLeftIcon className="size-3.5" aria-hidden="true" />
+                  옵션 다시 선택
+                </button>
+              </div>
             </div>
-          </div>
-          <div className="border-t border-slate-200 bg-white px-8 py-4">
-            <div className="mx-auto max-w-3xl">
-              <button
-                type="button"
-                onClick={() => setProfileStep(2)}
-                className="w-full rounded-2xl bg-slate-900 py-3.5 text-sm font-semibold text-white transition hover:bg-slate-700"
-              >
-                다음
-              </button>
-            </div>
-          </div>
-        </main>
-      ) : !isReadOnly && isMissionContextReady && sessionLoaded && !sessionCompleted && !profileModalConfirmed && !isOnboardingMission && profileStep === 2 ? (
-        /* Step 2: Profile input (skipped for onboarding — no before-session memory) */
-        <main className="flex flex-1 flex-col overflow-hidden">
-          <SessionSetupStepper
-            currentStep={2}
-            onBack={() => {
-              if (missionOptions.length > 1) {
-                setSelectedOptionId(null);
-              }
-              setProfileStep(1);
-            }}
-          />
-          <div className="flex-1 overflow-y-auto">
-            <div className="mx-auto max-w-3xl space-y-6 px-8 py-8">
-              <SetupMissionSummaryCard
-                missionTitle={missionTitle}
-                missionBrief={missionBrief}
-                parentMissionTitle={parentMissionTitle}
-                parentMissionBrief={parentMissionBrief}
-                activeOption={activeOption}
-                showOption={missionOptions.length > 1}
-                missionDurationMinutes={missionDurationMinutes}
-              />
-              <ProfileInputCard
-                value={profileRawMarkdown}
-                onChange={setProfileRawMarkdown}
-              />
-            </div>
-          </div>
-          {/* Next button */}
-          <div className="border-t border-slate-200 bg-white px-8 py-4">
-            <div className="mx-auto max-w-3xl">
-              <button
-                onClick={() => setProfileStep(3)}
-                className="w-full rounded-2xl bg-slate-900 py-3.5 text-sm font-semibold text-white transition hover:bg-slate-700"
-              >
-                다음
-              </button>
-            </div>
-          </div>
-        </main>
-      ) : !isReadOnly && isMissionContextReady && sessionLoaded && !sessionCompleted && !profileModalConfirmed && (profileStep === 3 || isOnboardingMission) ? (
-        /* Step 3: Review + start */
-        <main className="flex flex-1 flex-col overflow-hidden">
-          <SessionSetupStepper
-            currentStep={3}
-            hideProfileStep={isOnboardingMission}
-            onBack={() =>
-              isOnboardingMission
-                ? setSelectedOptionId(null)
-                : setProfileStep(2)
-            }
-          />
+          )}
           <div className="flex-1 overflow-y-auto">
             <div className="mx-auto max-w-3xl space-y-6 px-8 py-8">
               <SetupMissionSummaryCard
@@ -6526,7 +6464,31 @@ export default function MainScreenPage() {
                 missionDurationMinutes={missionDurationMinutes}
               />
               {!isOnboardingMission && (
-                <ProfileReviewCard value={profileRawMarkdown} />
+                <>
+                  <div className="flex justify-center">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        document
+                          .getElementById("setup-profile-input")
+                          ?.scrollIntoView({
+                            behavior: "smooth",
+                            block: "start",
+                          })
+                      }
+                      className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 px-4 py-2 text-sm font-medium text-slate-500 transition hover:border-slate-300 hover:text-slate-700"
+                    >
+                      다음: 사전 정보 입력
+                      <ArrowDownIcon className="size-3.5" aria-hidden="true" />
+                    </button>
+                  </div>
+                  <div id="setup-profile-input" className="scroll-mt-8">
+                    <ProfileInputCard
+                      value={profileRawMarkdown}
+                      onChange={setProfileRawMarkdown}
+                    />
+                  </div>
+                </>
               )}
             </div>
           </div>
@@ -6565,7 +6527,7 @@ export default function MainScreenPage() {
                     void persistSessionSnapshot(startedAt);
                   }
                 }}
-                className="flex w-full items-center justify-center gap-2 rounded-2xl bg-slate-900 py-3.5 text-sm font-semibold text-white transition hover:bg-slate-700 disabled:opacity-60"
+                className="flex w-full cursor-pointer items-center justify-center gap-2 rounded-2xl bg-slate-900 py-3.5 text-sm font-semibold text-white transition hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 {profileSaving ? (
                   <>

@@ -19,10 +19,6 @@ type ProfileInputCardProps = {
   onChange: (value: string) => void;
 };
 
-type ProfileReviewCardProps = {
-  value: string;
-};
-
 type SetupMissionSummaryCardProps = {
   missionTitle: string;
   missionBrief: string;
@@ -74,38 +70,21 @@ const setupMarkdownComponents = {
 export function ProfileInputCard({ value, onChange }: ProfileInputCardProps) {
   return (
     <div className="rounded-2xl border border-slate-200 bg-white px-6 py-5">
-      <p className="font-semibold text-slate-900">
-        에이전트가 미리 알아야 할 것들
-      </p>
+      <p className="font-semibold text-slate-900">사전 정보 입력</p>
       <p className="mt-1 text-sm leading-relaxed text-slate-500">
-        미션을 진행할 때 처음부터 반영해야 하는 정보를 적어주세요. 브랜드
-        컬러, 타겟 사용자, 프로젝트 제약 조건처럼 대화만으로 알기 어려운
-        맥락이 좋습니다.
+        미션을 시작하기 전에, 에이전트가 미리 알아두면 좋을 내용을 자유롭게
+        적어주세요. 지난 세션에서 ‘에이전트가 이걸 미리 알았다면 더 수월했을
+        텐데’라고 느낀 점이 있다면 함께 적어주셔도 좋고, 이번 미션을 위한
+        계획이나 평소 선호하는 작업 방식 등 도움이 될 만한 것이라면 무엇이든
+        괜찮습니다. 여기에 적은 내용은 미션이 끝난 뒤에도 에이전트가 기억합니다.
       </p>
       <textarea
         value={value}
         onChange={(event) => onChange(event.target.value)}
-        placeholder="예: 이 미션에서는 브랜드 컬러를 네이비로 유지해야 해요. 타겟은 20대 여성이고, 앱 출시는 3개월 안에 해야 해요."
+        placeholder="예: 나는 세부를 다듬기 전에 전체 방향부터 잡는 편이고, 레퍼런스는 국내 사례를 참고하는 편이야."
         rows={5}
         className="mt-4 w-full resize-none rounded-xl border border-slate-200 px-3 py-2.5 text-sm leading-relaxed text-slate-700 outline-none placeholder:text-slate-300 focus:border-slate-400"
       />
-    </div>
-  );
-}
-
-export function ProfileReviewCard({ value }: ProfileReviewCardProps) {
-  return (
-    <div className="rounded-2xl border border-slate-200 bg-white px-6 py-5">
-      <p className="font-semibold text-slate-900">입력한 정보</p>
-      <div className="mt-3">
-        {value.trim() ? (
-          <p className="whitespace-pre-wrap text-sm leading-relaxed text-slate-700">
-            {value}
-          </p>
-        ) : (
-          <p className="text-sm text-slate-400">입력한 정보가 없습니다.</p>
-        )}
-      </div>
     </div>
   );
 }
