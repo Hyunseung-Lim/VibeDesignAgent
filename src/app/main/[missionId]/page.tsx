@@ -4420,6 +4420,25 @@ export default function MainScreenPage() {
                   : idea,
               ),
             );
+            // The attached image only reaches memory as a content description
+            // (the image normalizer deliberately avoids preference inference).
+            // The actual visual preference lives in the style derived from the
+            // generated result, which arrives after the turn's memory draft.
+            // Record it as a separate, session-scoped style-preference signal.
+            if (isNew && styleImageForTurn) {
+              void encodeMemoryDraft(
+                `style-image-preference-${assistantId}`,
+                [
+                  "사용자가 이번 턴에 스타일 참고 이미지를 첨부했고, 생성 결과에서 아래 디자인 스타일이 확인됨.",
+                  "이번 미션/시안 맥락의 시각 선호 evidence로 기록하고, 단일 첨부를 사용자 전역 취향으로 단정하지 말 것.",
+                  `사용자 요청: ${text}`,
+                ].join("\n"),
+                `첨부 이미지 기반으로 도출된 디자인 스타일:\n${String(
+                  data.derivedDesignStyle.content,
+                ).slice(0, 4000)}`,
+                userMsg.createdAt ?? Date.now(),
+              );
+            }
           }
           if (isNew) {
             const primaryId = crypto.randomUUID();

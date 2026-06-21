@@ -140,6 +140,8 @@ function inferAgentActionCategory(output: string, interactionId: string) {
   if (interactionId.startsWith("cite-reference-")) return "reference_cite";
   if (interactionId.startsWith("delete-reference-")) return "reference_delete";
   if (interactionId.startsWith("final-design-")) return "final_design_select";
+  if (interactionId.startsWith("style-image-preference-"))
+    return "style_image_preference";
   return "agent_response";
 }
 

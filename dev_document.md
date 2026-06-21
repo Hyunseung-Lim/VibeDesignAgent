@@ -160,6 +160,7 @@
 
 - **생성 단위**: 세션 중 interaction turn마다 `/api/memory/drafts`에서 memory draft 생성. interaction마다 semantic memory를 적극 생성하고 해석 신뢰도를 `interpretationConfidence`로 기록 `[추가됨 2026-06-12 → 15.63]`
 - **Source normalization**: 채팅 turn의 인용 text, link metadata, 선택 UI result, 첨부 image를 structured source로 draft API에 전달한다. text/link/UI는 서버에서 텍스트화하고 image는 필요할 때만 vision description을 생성한다. 결과와 source fingerprint를 draft에 저장해 같은 interaction 재처리 시 재사용한다 `[현행 2026-06-21 → 15.100]`
+- **첨부 이미지 시각 선호**: image normalizer는 의도적으로 선호를 추론하지 않으므로, 첨부 이미지가 주도한 목업 생성이 성공해 derivedDesignStyle가 나오면 그 스타일을 `style-image-preference-{turnId}` interactionId(category `style_image_preference`)로 별도 draft에 기록한다. 이번 미션/시안 맥락의 session-scoped evidence로 담고 전역 취향으로 단정하지 않는다 `[현행 2026-06-21 → 15.101]`
 - **확정 시점**: 사용자가 `세션 종료` 버튼을 누르면 `/api/memory/complete-session`에서 draft를 통합해 장기 메모리로 저장
 - **버전 관리**: admin memory modal에서 v0.1.0 / v0.1.1 / v0.1.2를 분리 조회 `[stale 2026-06-12 → 15.51: legacy fallback 제거로 현재 v0.1.2 단일 버전만 사용(MemoryVersionTab = "0.1.2"). v0.1.0/v0.1.1 분리 조회 없음]`
 - **현재 활용**: 각 채팅 turn 직전에 `/api/memory/retrieve`로 현재 query와 가까운 memory top 5를 검색해 채팅 context에 주입
@@ -3252,3 +3253,13 @@ type ChatPlan = {
   - source fingerprint, normalization version, normalized text/types, normalized timestamp를 memory draft에 저장한다. 같은 interaction과 fingerprint가 다시 들어오면 저장된 normalization을 재사용한다.
   - normalized source context를 원본 interaction content에 포함해 memory encoding과 embedding의 근거로 쓰고, 세션 종료 시 장기 memory document에도 normalization metadata를 승격한다.
 - 검증: TypeScript와 관련 파일 ESLint를 통과해야 하며, 첨부 이미지가 있는 실제 chat turn에서 draft 재호출 시 sourceNormalizedAt이 유지되는지 라이브 확인이 필요하다.
+
+### 15.101 첨부 이미지 시각 선호를 메모리에 기록 `[implemented 2026-06-21]`
+
+- 배경(QA Note `이미지 첨부 기반 마음에 든 디자인이 메모리에 안 들어감`): 15.100 이후 첨부 이미지는 vision description으로 메모리에 들어오지만, image normalizer는 의도적으로 선호를 추론하지 않는다. 정작 시각 선호 신호인 derivedDesignStyle(생성 결과에서 역추출한 디자인 스타일)는 idea.designStyle 상태로만 저장되고 어떤 memory draft에도 연결되지 않았다. 또한 turn의 memory draft는 채팅 스트림 완료 시점에 만들어지는데 derivedDesignStyle는 그 뒤 목업 생성에서 나와 타이밍도 어긋났다.
+- 수정:
+  - 첨부 이미지가 주도한 신규 목업 생성이 성공해 derivedDesignStyle가 나오면, 그 스타일을 `style-image-preference-{turnId}` interactionId로 별도 memory draft에 기록한다.
+  - draft route의 category 추론에 `style-image-preference-` 접두사 → `style_image_preference`를 추가한다.
+  - input에는 이번 턴에 스타일 참고 이미지를 첨부했다는 사실과 사용자 요청을 담고, 이번 미션/시안 맥락의 session-scoped evidence로만 기록하며 단일 첨부를 전역 취향으로 단정하지 말라는 지시를 포함한다. output에는 도출된 디자인 스타일 요지를 담는다.
+  - 이미지 자체는 이 별도 draft의 source로 다시 넘기지 않는다. 이미지 내용은 이미 turn draft에서 정규화되므로 중복 vision 호출을 피한다.
+- 검증: tsc 통과, 변경 파일 ESLint 0 error. 첨부 이미지로 목업을 생성한 실제 세션에서 style_image_preference draft가 생기고 세션 종료 시 장기 메모리로 승격되는지, 다음 미션에서 과도하게 강제하지 않고 참고 근거로만 retrieval되는지 라이브 확인이 필요하다.
