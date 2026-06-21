@@ -127,6 +127,10 @@ export async function POST(request: Request) {
   try {
     const token = await getFirebaseAccessToken();
     const items = await loadMemoryItems(user.localId, token);
+    const profile = await getFirestoreDocument(`users/${user.localId}`, token);
+    const subjectName = String(
+      profile?.displayName ?? user.displayName ?? "",
+    ).trim();
 
     if (items.length < 3) {
       return Response.json(
@@ -141,6 +145,7 @@ export async function POST(request: Request) {
       token,
       user.email ?? user.localId,
       variant,
+      subjectName,
     );
 
     return Response.json({

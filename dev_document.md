@@ -176,7 +176,7 @@
 - 1단계: 선택한 variant별 텍스트를 `text-embedding-3-large`로 embedding
 - 2단계: cosine similarity graph 생성. 강한 유사도 edge와 node별 KNN edge를 함께 사용
 - 3단계: similarity graph에서 label propagation으로 community를 찾고, community가 너무 많으면 centroid similarity 기준으로 최대 16개까지 merge
-- 4단계: LLM은 cluster membership을 바꾸지 않고, 최종 cluster label/summary만 생성
+- 4단계: LLM은 cluster membership을 바꾸지 않고 최종 cluster label/summary만 생성한다. summary는 작업 목록을 일반적으로 요약하지 않고 Firestore profile의 실제 displayName을 사용해 그 사람의 반복되는 성격, 습관, 작업 방식, 의사결정 패턴과 디자인 취향을 근거와 함께 서술한다. 단일·약한 근거에는 consistently/always 같은 반복 표현을 쓰지 않는다 `[현행 2026-06-21 → 15.99]`
 - `/agent` UI에는 팀원이 자기 memory에 대해 3가지 입력 variant를 바꿔가며 클러스터를 생성·비교할 수 있는 테스트 컨트롤을 표시한다
 - 캐시 키는 memory version + item signature + clustering method version + input variant로 분리해 서로 다른 입력 실험 결과가 덮어쓰이지 않게 관리한다 `[현행 2026-06-16 → 15.86]`
 
@@ -3226,3 +3226,18 @@ type ChatPlan = {
   - `page.tsx`: `isSubstantiveDesignBrief()`가 새 `CREATE_NOTE` payload의 길이, 실질 단위 수, task-statement 패턴을 검사한다. 부족하면 `recoverThinDesignBrief()`가 현재 미션 맥락, 원래 payload, 실제 사용자 요청을 목표/필수 요구사항/시안 방향/핵심 경험/완료 기준 구조로 재조립한다. 사용자가 의도적으로 짧게 수정할 수 있도록 `UPDATE_NOTE`에는 적용하지 않는다.
   - 시안 탭과 그 아래 Design Brief/Design Style/Mockup의 포함 관계가 드러나도록 workspace 상위 제목을 `Design Workspace`에서 `디자인 시안`으로 변경했다. 제목 아래에는 세 구성 요소의 관계를 한 줄로 상시 표시하고, 좌측 섹션 라벨도 축약형 대신 `Design Brief`/`Design Style`/`Mockup`으로 통일한다. 제품 투어의 기존 `시안 안의 3가지` 단계도 같은 용어를 사용한다.
 - 검증: `./node_modules/.bin/tsc --noEmit` 통과. 관련 파일 ESLint 0 error, 기존 warning 7개 유지. 실제 chat provider 응답을 포함한 라이브 재검증 필요.
+
+### 15.99 메모리 클러스터 summary를 사용자 이해 중심으로 개선 `[implemented 2026-06-21]`
+
+- 배경(QA Note `메모리 클러스터 summary 작성 관련`, P2): 기존 cluster summary가 `This cluster contains...`처럼 묶인 작업을 일반적으로 설명해, 실제 사용자의 성격·습관·방식·취향을 읽기 어려웠다. 화면에 `the user` 같은 익명 표현 대신 실제 이름을 쓰고 싶다는 요구도 있었다.
+- 원인:
+  - label prompt가 summary를 `shared pattern` 한 문장으로만 요구했고, 사람의 반복 행동·의사결정·작업 방식·디자인 취향을 우선하라는 계약이 없었다.
+  - labeler 입력에 대상 사용자의 이름이 없었다.
+  - 사용자 `/agent`의 공용 `memoryClustering.ts`와 admin 타인 진단 route에 labeler 구현이 중복돼 한쪽만 수정하면 화면별 결과가 달라질 수 있었다.
+- 수정:
+  - cluster label/summary 지시문을 `src/lib/prompts.ts`의 공용 builder로 옮기고 사용자·admin labeler가 함께 사용하게 해, 프롬프트 변경 지점을 하나로 통합했다.
+  - 두 labeler 모두 `users/{uid}.displayName`을 읽어 prompt의 subject로 전달한다. 이름이 있으면 summary에서 그 이름을 자연스럽게 사용하고 `the user`/`the participant` 표현을 금지한다. 이름이 없을 때만 `this participant`를 제한적으로 허용한다.
+  - summary를 1~2문장으로 확장해, cluster evidence에 근거한 성격·습관·작업 프로세스·의사결정·시각 및 UX 취향을 foreground하도록 요구한다. 반복 근거가 있을 때는 concrete evidence와 함께 recurring pattern을 쓰고, 단일·약한 cluster에서는 consistently/always를 금지한다.
+  - parse 실패 fallback도 익명 generic count 문장 대신 이름과 cluster label을 포함한다.
+  - clustering method version을 `similarity-graph-v3-persona-summary`로 올렸다. admin cache fallback도 같은 method version 문서만 허용하고 저장 문서에 version을 명시해 과거 generic summary cache가 재사용되지 않게 한다.
+- 검증: `./node_modules/.bin/tsc --noEmit` 통과. 관련 clustering 파일 ESLint 0 error. 실제 displayName과 memory 데이터가 있는 계정에서 클러스터 재생성 후 문구 라이브 확인 필요.

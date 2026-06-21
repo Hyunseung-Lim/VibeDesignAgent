@@ -1,5 +1,6 @@
 import OpenAI from "openai";
 import { createHash } from "crypto";
+import { memoryClusterLabelPrompt } from "@/lib/prompts";
 import { patchFirestoreDocument } from "@/lib/server/firebaseAdminRest";
 
 export const EMBEDDING_MODEL = "text-embedding-3-large";
@@ -11,7 +12,7 @@ export const GRAPH_STRONG_SIMILARITY = 0.74;
 export const GRAPH_KNN_EDGES = 3;
 export const GRAPH_COMMUNITY_ITERATIONS = 30;
 export const CLUSTER_COLLECTION = "memoryClusters";
-export const CLUSTERING_METHOD_VERSION = "similarity-graph-v2";
+export const CLUSTERING_METHOD_VERSION = "similarity-graph-v3-persona-summary";
 export const MEMORY_VERSION = "0.1.2";
 export const CLUSTERING_INPUT_VARIANTS = [
   "semantic-only",
@@ -288,30 +289,17 @@ function parseClusterLabels(raw: string) {
 export async function labelClusters(
   clusters: MemoryCluster[],
   itemsById: Map<string, ClusterInputItem>,
+  subjectName?: string,
 ) {
   if (clusters.length === 0) return clusters;
+  const subject = subjectName?.trim() || "This participant";
   const completion = await openai.chat.completions.create({
     model: LABEL_MODEL,
     response_format: { type: "json_object" },
     messages: [
       {
         role: "system",
-        content: `Name semantic-memory clusters for a design-agent research admin view.
-
-The cluster membership is already fixed by an embedding-based clustering method. Do not move, add, remove, or duplicate item ids.
-
-Return valid JSON only:
-{
-  "clusters": [
-    {
-      "id": "cluster id",
-      "label": "2-5 word English label",
-      "summary": "One concise English sentence explaining the shared pattern."
-    }
-  ]
-}
-
-Use natural researcher-friendly labels. Avoid awkward noun stacks and avoid inventing facts beyond the provided semantic memory, episode, original interaction content, and keywords. Treat action labels as optional metadata only, not as the cluster meaning.`,
+        content: memoryClusterLabelPrompt(subjectName),
       },
       {
         role: "user",
@@ -346,7 +334,13 @@ Use natural researcher-friendly labels. Avoid awkward noun stacks and avoid inve
     return {
       ...cluster,
       label: label?.label || fallbackLabel(cluster),
-      summary: label?.summary || `This cluster contains ${cluster.count} semantically similar memory items.`,
+      summary:
+        label?.summary ||
+        `${subject} shows a recurring pattern around ${(
+          label?.label || fallbackLabel(cluster)
+        ).toLowerCase()} across ${cluster.count} recorded interaction${
+          cluster.count === 1 ? "" : "s"
+        }.`,
     };
   });
 }
@@ -521,12 +515,17 @@ export async function generateAndStoreClusters(
   token: string,
   generatedBy: string,
   variant: ClusteringInputVariant = "full-context",
+  subjectName?: string,
 ) {
   const normalizedVariant = normalizeClusteringInputVariant(variant);
   const vectors = await embedItems(items, normalizedVariant);
   const graphCommunity = buildGraphCommunityClusters(items, vectors);
   const itemsById = new Map(items.map((item) => [item.id, item]));
-  const graphClusters = await labelClusters(graphCommunity.clusters, itemsById);
+  const graphClusters = await labelClusters(
+    graphCommunity.clusters,
+    itemsById,
+    subjectName,
+  );
   const graphDiagnostics = graphCommunity.diagnostics;
   const graphEdges = graphCommunity.edges;
   const completedAt = Date.now();

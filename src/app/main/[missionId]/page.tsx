@@ -91,6 +91,12 @@ import {
   injectNoNavigation,
   injectSelectionScript,
 } from "@/lib/session/mockup-html";
+import {
+  buildMockupPrompt,
+  CURRENT_MOCKUP_REFINEMENT_PROMPT,
+  defaultMockupPromptForIdea,
+  FORKED_STYLE_MOCKUP_PROMPT,
+} from "@/lib/prompts";
 
 const ONBOARDING_MISSION_ID = "onboarding";
 
@@ -1057,19 +1063,6 @@ function isSameDesignStyle(a?: string | null, b?: string | null) {
   return Boolean(left && right && left === right);
 }
 
-function defaultMockupPromptForIdea(idea: Idea | null, targetDevice: Device) {
-  const deviceLabel =
-    targetDevice === "mobile" ? "mobile app screen" : "desktop web page";
-  return [
-    `Create a high-fidelity ${deviceLabel} UI mockup based on the active design brief.`,
-    idea?.title ? `Design brief title: ${idea.title}` : "",
-    idea?.description ? `Design brief content:\n${idea.description}` : "",
-    "Use polished visual hierarchy, realistic content, strong spacing, and a complete usable first screen.",
-  ]
-    .filter(Boolean)
-    .join("\n\n");
-}
-
 function normalizeMockupActionPrompt(rawPrompt: string) {
   const prompt = rawPrompt.trim();
   if (!prompt.startsWith("{") || !prompt.endsWith("}")) return prompt;
@@ -1218,33 +1211,6 @@ type WebKitGestureEvent = Event & {
 
 function activeDesignStyle(idea?: Idea | null) {
   return idea?.designStyle ?? null;
-}
-
-// Visual style is applied via the Stitch project-level design system (see
-// /api/stitch), not injected here. This prompt only carries product/UX intent.
-function buildMockupPrompt(
-  basePrompt: string,
-  idea?: Idea | null,
-  missionBrief?: string,
-) {
-  const parts: string[] = [basePrompt];
-  if (idea?.description?.trim()) {
-    parts.push(
-      "",
-      "Use the following active design brief. It describes what to build for this specific 시안.",
-      `Design brief title: ${idea.title}`,
-      `Design brief content:\n${idea.description.slice(0, 8000)}`,
-    );
-  }
-  // Fallback: if the design brief is thin, inject full mission content so Stitch has the product details
-  if (missionBrief?.trim() && (idea?.description?.length ?? 0) < 300) {
-    parts.push(
-      "",
-      "Mission content (use as product/content reference since the design brief above is sparse):",
-      missionBrief.slice(0, 6000),
-    );
-  }
-  return parts.join("\n");
 }
 
 function nextDraftTitle(ideas: Idea[]) {
@@ -1513,14 +1479,6 @@ function formatReferenceMemoryDetails(references: Reference[]) {
     .slice(0, 8)
     .map((reference, index) => formatReferenceMemoryDetail(reference, index + 1))
     .join("\n");
-}
-
-function buildEditMockupPrompt(changePrompt: string) {
-  return [
-    "Edit the existing mockup in place. Preserve the current layout structure, visual style, typography, spacing, colors, content hierarchy, and all unrelated sections.",
-    "Do not redesign the page from scratch. Do not create a new concept, new canvas, or unrelated alternative version.",
-    `Requested change: ${changePrompt}`,
-  ].join("\n");
 }
 
 function normalizeArtboardPositionsByIdea(boards: Artboard[]) {
@@ -4167,7 +4125,7 @@ export default function MainScreenPage() {
                   ...m,
                   content: [
                     stripDesignSpecActionBlocks(m.content),
-                    "[GENERATE_MOCKUP: Create a new high-fidelity UI mockup for the forked idea using the newly cited reference direction as the visual source. Preserve the product requirements and required product-list information from the copied brief, but reinterpret the visual language, layout density, typography, palette, image scale, filters, sorting controls, and product cards from the cited reference. Do not reuse the previous 시안's visual style.]",
+                    `[GENERATE_MOCKUP: ${FORKED_STYLE_MOCKUP_PROMPT}]`,
                   ]
                     .filter(Boolean)
                     .join("\n\n"),
@@ -4221,16 +4179,16 @@ export default function MainScreenPage() {
           ideas.find((i) => i.id === effectiveActiveIdeaId) ??
           null;
         const parsedPrompt = normalizeMockupActionPrompt(
-          (generateMatch ?? editMatch)?.[1] ??
+            (generateMatch ?? editMatch)?.[1] ??
             (shouldAutoGenerateForkedStyleMockup
-              ? "Create a new high-fidelity UI mockup for the forked idea using the newly cited reference direction as the visual source. Preserve the product requirements and required product-list information from the copied brief, but reinterpret the visual language, layout density, typography, palette, image scale, filters, sorting controls, and product cards from the cited reference. Do not reuse the previous 시안's visual style."
+              ? FORKED_STYLE_MOCKUP_PROMPT
               : ""),
         );
         const prompt =
           parsedPrompt ||
           (generateMatch
             ? defaultMockupPromptForIdea(activeIdea, device)
-            : "Refine the current mockup according to the latest user request while preserving the existing structure.");
+            : CURRENT_MOCKUP_REFINEMENT_PROMPT);
         const mockupIdeaId = effectiveActiveIdeaId;
         const isNew = Boolean(generateMatch || shouldAutoGenerateForkedStyleMockup);
         const stitchPrompt = buildMockupPrompt(

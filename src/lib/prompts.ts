@@ -399,6 +399,37 @@ Return valid JSON only:
 - sourceText: copy the input unit text that this record encodes.
 - Ignore empty, vague, duplicate, or purely administrative text.`;
 
+export function memoryClusterLabelPrompt(subjectName?: string) {
+  const hasSubjectName = Boolean(subjectName?.trim());
+  const subject = subjectName?.trim() || "This participant";
+  const subjectInstruction = hasSubjectName
+    ? `Mention ${subject} naturally and never call them "the user" or "the participant".`
+    : `No real name is available. Use "this participant" sparingly and never call them "the user".`;
+
+  return `Name and summarize semantic-memory clusters for a design-agent research view.
+
+The cluster membership is already fixed by an embedding-based clustering method. Do not move, add, remove, or duplicate item ids.
+
+The person represented by these memories is: ${subject}
+
+Return valid JSON only:
+{
+  "clusters": [
+    {
+      "id": "cluster id",
+      "label": "2-5 word English label",
+      "summary": "One or two concise English sentences describing the person's recurring traits, habits, working process, or design taste evidenced by this cluster."
+    }
+  ]
+}
+
+Use natural researcher-friendly labels. The summary must foreground the person rather than merely inventorying tasks or artifacts. Describe concrete recurring behavior such as how they decide, iterate, communicate, structure work, or express visual and UX preferences.
+
+${subjectInstruction} For a weak or single-item cluster, describe a specific observed tendency without words such as "consistently" or "always". For repeated evidence, state the recurring pattern and the concrete evidence behind it. Avoid generic summaries such as "works on design tasks" or "prefers user-friendly design".
+
+Avoid awkward noun stacks and never invent facts beyond the provided semantic memory, episode, original interaction content, and keywords. Treat action labels as optional metadata only, not as the cluster meaning.`;
+}
+
 // ────────────────────────────────────────────────────────────
 // References — 레퍼런스 검색 파이프라인
 // 사용처: src/app/api/references/route.ts
@@ -465,9 +496,55 @@ Rationales must be short Korean phrases explaining the concrete design/UX value 
 }
 
 // ────────────────────────────────────────────────────────────
-// Stitch — 디자인 스타일 마크다운을 design system 토큰으로 추출
-// 사용처: src/app/api/stitch/route.ts
+// Stitch — 목업 생성 및 디자인 스타일 처리
+// 사용처: src/app/main/[missionId]/page.tsx, src/app/api/stitch/route.ts
 // ────────────────────────────────────────────────────────────
+
+export const FORKED_STYLE_MOCKUP_PROMPT =
+  "Create a new high-fidelity UI mockup for the forked idea using the newly cited reference direction as the visual source. Preserve the product requirements and required product-list information from the copied brief, but reinterpret the visual language, layout density, typography, palette, image scale, filters, sorting controls, and product cards from the cited reference. Do not reuse the previous 시안's visual style.";
+
+export const CURRENT_MOCKUP_REFINEMENT_PROMPT =
+  "Refine the current mockup according to the latest user request while preserving the existing structure.";
+
+export function defaultMockupPromptForIdea(
+  idea: { title?: string; description?: string } | null,
+  targetDevice: "mobile" | "desktop",
+) {
+  const deviceLabel =
+    targetDevice === "mobile" ? "mobile app screen" : "desktop web page";
+  return [
+    `Create a high-fidelity ${deviceLabel} UI mockup based on the active design brief.`,
+    idea?.title ? `Design brief title: ${idea.title}` : "",
+    idea?.description ? `Design brief content:\n${idea.description}` : "",
+    "Use polished visual hierarchy, realistic content, strong spacing, and a complete usable first screen.",
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+}
+
+export function buildMockupPrompt(
+  basePrompt: string,
+  idea?: { title?: string; description?: string } | null,
+  missionBrief?: string,
+) {
+  const parts: string[] = [basePrompt];
+  if (idea?.description?.trim()) {
+    parts.push(
+      "",
+      "Use the following active design brief. It describes what to build for this specific 시안.",
+      `Design brief title: ${idea.title ?? ""}`,
+      `Design brief content:\n${idea.description.slice(0, 8000)}`,
+    );
+  }
+  if (missionBrief?.trim() && (idea?.description?.length ?? 0) < 300) {
+    parts.push(
+      "",
+      "Mission content (use as product/content reference since the design brief above is sparse):",
+      missionBrief.slice(0, 6000),
+    );
+  }
+  return parts.join("\n");
+}
 
 // Allowed values mirror @google/stitch-sdk DesignTheme enums. Keep in sync if
 // the SDK changes. ROUND_TWO is deprecated, so the sharpest usable corner is
