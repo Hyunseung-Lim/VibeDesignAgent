@@ -962,6 +962,49 @@ function parseCreateNoteBlock(text: string): CreateNoteData | null {
   return parseNoteBlock(text, "CREATE_NOTE");
 }
 
+function isSubstantiveDesignBrief(description: string) {
+  const normalized = description.replace(/\s+/g, " ").trim();
+  const substantiveUnits = description
+    .split(/(?:\n+|[.!?。]\s*)/)
+    .map((line) => line.replace(/^\s*(?:[-*]|\d+[.)])\s*/, "").trim())
+    .filter((line) => line.length >= 24);
+  const looksLikeTaskStatement =
+    normalized.length < 180 &&
+    /(?:시안|브리프|노트).{0,24}(?:작성|정리|생성|제안|설계)|(?:작성|정리|생성|제안|설계).{0,24}(?:시안|브리프|노트)/i.test(
+      normalized,
+    );
+  return (
+    !looksLikeTaskStatement &&
+    (substantiveUnits.length >= 3 ||
+      (normalized.length >= 180 && substantiveUnits.length >= 2))
+  );
+}
+
+function recoverThinDesignBrief(
+  description: string,
+  userRequest: string,
+  missionContext?: string,
+) {
+  if (isSubstantiveDesignBrief(description)) return description.trim();
+
+  const direction = description.trim().slice(0, 1500);
+  const request = userRequest.trim().slice(0, 1000);
+  const mission = missionContext?.trim().slice(0, 5000);
+  return [
+    "## 목표와 맥락",
+    direction || request || "미션 요구사항을 충족하는 구체적인 디자인 시안을 만든다.",
+    mission ? `## 필수 요구사항\n${mission}` : "",
+    request && request !== direction ? `## 사용자 요청\n${request}` : "",
+    "## 핵심 경험과 화면 구성",
+    "미션의 필수 콘텐츠와 요구사항이 화면의 정보 구조, 주요 섹션, 사용자 행동 흐름에 빠짐없이 드러나도록 구성한다.",
+    "## 완료 기준",
+    "디자이너가 이 문서만 보고 대상 사용자, 화면 목적, 필수 콘텐츠와 주요 인터랙션을 판단해 목업을 시작할 수 있어야 한다.",
+  ]
+    .filter(Boolean)
+    .join("\n\n")
+    .slice(0, 8000);
+}
+
 function parseUpdateNoteBlock(text: string): UpdateNoteData | null {
   return parseNoteBlock(text, "UPDATE_NOTE");
 }
@@ -3716,7 +3759,27 @@ export default function MainScreenPage() {
       let createdNote: Idea | null = null;
       let turnIdeaOverride: Idea | null = null;
       const createNoteBlock = parseCreateNoteBlock(fullText);
-      const createNoteDescription = createNoteBlock?.description?.trim() ?? "";
+      const parsedCreateNoteDescription =
+        createNoteBlock?.description?.trim() ?? "";
+      const createNoteDescription = parsedCreateNoteDescription
+        ? recoverThinDesignBrief(
+            parsedCreateNoteDescription,
+            text,
+            effectiveMissionBrief,
+          )
+        : "";
+      if (
+        parsedCreateNoteDescription &&
+        createNoteDescription !== parsedCreateNoteDescription
+      ) {
+        console.warn(
+          "[create_note] Thin or task-like Design Brief recovered with mission context.",
+          {
+            originalLength: parsedCreateNoteDescription.length,
+            recoveredLength: createNoteDescription.length,
+          },
+        );
+      }
       if (createNoteBlock && !createNoteDescription) {
         const blockStart = fullText.indexOf("[CREATE_NOTE:");
         console.warn(
@@ -6608,44 +6671,44 @@ export default function MainScreenPage() {
 
             <div ref={workspaceSectionRef} className="scroll-mt-16">
               <IdeaWorkspace
-                title="Design Workspace"
+                title="디자인 시안"
                 ideas={ideas}
                 activeIdeaId={activeIdeaId}
                 activeSectionId={activeIdeaTab}
                 readOnly={isReadOnly}
                 sections={[
-                  { id: "idea", label: "Brief", ref: ideaSectionRef },
-                  { id: "style", label: "Style", ref: styleSectionRef },
+                  { id: "idea", label: "Design Brief", ref: ideaSectionRef },
+                  { id: "style", label: "Design Style", ref: styleSectionRef },
                   { id: "mockup", label: "Mockup", ref: mockupSectionRef },
                 ]}
                 onSwitchIdea={switchIdea}
                 onDeleteIdea={requestDeleteIdea}
                 onSelectSection={setActiveIdeaTab}
               >
-              {(() => {
-                const idea = ideas.find((i) => i.id === activeIdeaId) ?? null;
-                if (!idea) return null;
-                return (
-                  <>
-                    <IdeaNoteSection
-                      sectionRef={ideaSectionRef}
-                      title={idea.title}
-                      description={idea.description}
-                      expanded={isIdeaExpanded}
-                      onToggleExpanded={() =>
-                        setIsIdeaExpanded((expanded) => !expanded)
-                      }
-                    />
+                {(() => {
+                  const idea =
+                    ideas.find((i) => i.id === activeIdeaId) ?? null;
+                  return (
+                    <>
+                      <IdeaNoteSection
+                        sectionRef={ideaSectionRef}
+                        title={idea?.title ?? ""}
+                        description={idea?.description ?? ""}
+                        expanded={isIdeaExpanded}
+                        onToggleExpanded={() =>
+                          setIsIdeaExpanded((expanded) => !expanded)
+                        }
+                      />
 
-                    <DesignStyleSection
-                      sectionRef={styleSectionRef}
-                      style={idea.designStyle}
-                      open={isDesignSpecOpen}
-                      onToggle={() => setIsDesignSpecOpen((open) => !open)}
-                    />
-                  </>
-                );
-              })()}
+                      <DesignStyleSection
+                        sectionRef={styleSectionRef}
+                        style={idea?.designStyle}
+                        open={isDesignSpecOpen}
+                        onToggle={() => setIsDesignSpecOpen((open) => !open)}
+                      />
+                    </>
+                  );
+                })()}
 
               <MockupSection
                 sectionRef={mockupSectionRef}

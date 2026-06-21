@@ -110,7 +110,7 @@ export function MockupSection({
               )}
             </>
           ) : (
-            <p>{'에이전트에게 "목업 만들어줘"라고 말하면 여기에 표시됩니다.'}</p>
+            <p>아직 생성된 Mockup이 없습니다.</p>
           )}
         </div>
       )}

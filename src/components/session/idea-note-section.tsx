@@ -27,9 +27,11 @@ export function IdeaNoteSection({
     >
       <div className="flex items-center justify-between">
         <div className="space-y-1">
-          <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">
-            {title}
-          </p>
+          {title && (
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+              {title}
+            </p>
+          )}
           <p className="text-base font-semibold text-slate-900">
             Design Brief
           </p>
@@ -108,9 +110,7 @@ export function IdeaNoteSection({
               {description}
             </ReactMarkdown>
           ) : (
-            <p className="text-slate-400">
-              에이전트가 아직 Design Brief를 작성하지 않았습니다.
-            </p>
+            <p className="text-slate-400">아직 작성된 Design Brief가 없습니다.</p>
           )}
         </div>
 

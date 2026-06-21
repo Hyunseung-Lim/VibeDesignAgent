@@ -60,7 +60,7 @@ const EMPTY_IDEA_STEPS: TourStep[] = [
   {
     target: "idea-workspace",
     title: "시안의 구성",
-    body: "각 시안은 Design Brief, 디자인 스타일, Mockup으로 구성됩니다. 먼저 에이전트에게 시안을 작성해달라고 요청하면 이 구조가 채워집니다.",
+    body: "각 시안은 Design Brief, Design Style, Mockup으로 구성됩니다. 먼저 에이전트에게 시안을 작성해달라고 요청하면 이 구조가 채워집니다.",
   },
   {
     target: "final-design",
@@ -121,7 +121,7 @@ const IDEA_STEPS: TourStep[] = [
   {
     target: "idea-section-nav",
     title: "시안 안의 3가지",
-    body: "각 시안은 Brief, Style, Mockup 세 영역으로 나뉩니다. 왼쪽 버튼으로 현재 시안의 작업 기준과 결과물을 빠르게 오갈 수 있어요.",
+    body: "각 시안은 Design Brief, Design Style, Mockup 세 영역으로 나뉩니다. 왼쪽 버튼으로 현재 시안의 작업 기준과 결과물을 빠르게 오갈 수 있어요.",
   },
   {
     target: "idea-brief",
@@ -130,7 +130,7 @@ const IDEA_STEPS: TourStep[] = [
   },
   {
     target: "idea-style",
-    title: "디자인 스타일",
+    title: "Design Style",
     body: "색, 타이포, 스케일, 레이아웃 무드, 레퍼런스에서 얻은 시각 규칙이 저장됩니다.",
   },
   {

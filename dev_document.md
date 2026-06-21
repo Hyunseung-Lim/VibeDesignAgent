@@ -148,7 +148,7 @@
 - **웹 검색 표시**: 검색 발생 시 `[WEB_SEARCHED]` 마커 → "웹 검색 완료" 배지 표시
 - **인용 링크**: 웹 검색 출처 `(domain.com)` 자동으로 클릭 가능한 마크다운 링크로 변환
 - **특수 블록 처리**:
-  - `[CREATE_NOTE: ...]` → 새 아이디어(시안) 생성. 단, 디자인 스타일만 먼저 작성되어 현재 시안이 빈 shell이면 새 시안을 만들지 않고 해당 시안 내용을 채움
+  - `[CREATE_NOTE: ...]` → 새 아이디어(시안) 생성. 저장 payload는 목표/대상 사용자, 핵심 경험, 화면 구조, 미션 필수 콘텐츠, 제약을 포함한 독립적인 Design Brief여야 한다. 모델이 한 줄 작업 지시문을 반환하면 클라이언트가 미션 맥락과 현재 사용자 요청으로 시작 가능한 브리프를 복구한다. 단, 디자인 스타일만 먼저 작성되어 현재 시안이 빈 shell이면 새 시안을 만들지 않고 해당 시안 내용을 채움 `[현행 2026-06-21 → 15.98]`
   - `[UPDATE_NOTE: ...]` → 현재 아이디어 내용 업데이트
   - `[CREATE_DESIGN_SPEC: ...]` → 현재 아이디어의 디자인 스타일 정의/교체. 현재 아이디어가 없으면 빈 시안을 자동 생성하고 그 시안에 스타일을 저장
   - `[GENERATE_MOCKUP: ...]` → Stitch 목업 생성
@@ -3214,3 +3214,15 @@ type ChatPlan = {
   - Stitch primary screen이 `htmlPending`이면 HTML 재조회가 성공한 뒤에만 artboard를 추가하며, 끝내 빈 HTML이면 생성 실패로 처리한다. 추가 screen과 저장 세션 복원도 재조회 helper를 공유한다.
   - HTML이 없는 저장 artboard는 빈 iframe을 렌더하지 않고 로딩 상태를 보이며, 재조회 실패 시 새로고침 재시도 안내를 표시한다.
 - 검증: `./node_modules/.bin/tsc --noEmit` 통과. 관련 파일 ESLint 0 error, 기존 warning 7개 유지. 실제 Stitch 응답 지연을 포함한 라이브 재검증 필요.
+
+### 15.98 한 줄 Design Brief 저장 방지 `[implemented 2026-06-21]`
+
+- 배경(QA Note `디자인 시안 생성 관련 버그`, P2): 사용자가 디자인 시안을 요청하면 채팅 prose에는 시안 설명이 나오지만, 실제 Design Brief에는 `미션 기준 시안 작성` 같은 한 줄 작업 지시문만 저장되는 문제가 있었다. 또한 디자인 시안과 그 내부 구성 요소인 Design Brief의 계층이 화면 제목에서 충분히 분명하지 않았다.
+- 원인:
+  - prompt는 self-contained brief를 요구했지만 action payload가 downstream source of truth라는 점과 최소 구성 요소를 강하게 고정하지 않았다. 모델이 상세 내용을 action 밖 prose에 쓰고 `CREATE_NOTE.description`은 메타 문장으로 축약해도 클라이언트가 정상 저장했다.
+  - 저장 경로에는 새 브리프의 최소 내용 품질을 확인하는 deterministic guard가 없었다.
+- 수정:
+  - `CHAT_NOTE_ACTION_PROMPT`: 저장되는 action payload 자체에 목표/대상 사용자, 핵심 경험, 화면·섹션 구조, 미션 필수 콘텐츠, 제약·완료 기준을 담도록 명시했다. 새 브리프는 최소 세 개의 실질 문장 또는 bullet을 가져야 하며 action 밖 prose로 대체할 수 없다.
+  - `page.tsx`: `isSubstantiveDesignBrief()`가 새 `CREATE_NOTE` payload의 길이, 실질 단위 수, task-statement 패턴을 검사한다. 부족하면 `recoverThinDesignBrief()`가 현재 미션 맥락, 원래 payload, 실제 사용자 요청을 목표/필수 요구사항/시안 방향/핵심 경험/완료 기준 구조로 재조립한다. 사용자가 의도적으로 짧게 수정할 수 있도록 `UPDATE_NOTE`에는 적용하지 않는다.
+  - 시안 탭과 그 아래 Design Brief/Design Style/Mockup의 포함 관계가 드러나도록 workspace 상위 제목을 `Design Workspace`에서 `디자인 시안`으로 변경했다. 제목 아래에는 세 구성 요소의 관계를 한 줄로 상시 표시하고, 좌측 섹션 라벨도 축약형 대신 `Design Brief`/`Design Style`/`Mockup`으로 통일한다. 제품 투어의 기존 `시안 안의 3가지` 단계도 같은 용어를 사용한다.
+- 검증: `./node_modules/.bin/tsc --noEmit` 통과. 관련 파일 ESLint 0 error, 기존 warning 7개 유지. 실제 chat provider 응답을 포함한 라이브 재검증 필요.
