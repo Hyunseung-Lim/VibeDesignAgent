@@ -159,6 +159,7 @@
 ### 4.7 메모리 (Memory)
 
 - **생성 단위**: 세션 중 interaction turn마다 `/api/memory/drafts`에서 memory draft 생성. interaction마다 semantic memory를 적극 생성하고 해석 신뢰도를 `interpretationConfidence`로 기록 `[추가됨 2026-06-12 → 15.63]`
+- **Source normalization**: 채팅 turn의 인용 text, link metadata, 선택 UI result, 첨부 image를 structured source로 draft API에 전달한다. text/link/UI는 서버에서 텍스트화하고 image는 필요할 때만 vision description을 생성한다. 결과와 source fingerprint를 draft에 저장해 같은 interaction 재처리 시 재사용한다 `[현행 2026-06-21 → 15.100]`
 - **확정 시점**: 사용자가 `세션 종료` 버튼을 누르면 `/api/memory/complete-session`에서 draft를 통합해 장기 메모리로 저장
 - **버전 관리**: admin memory modal에서 v0.1.0 / v0.1.1 / v0.1.2를 분리 조회 `[stale 2026-06-12 → 15.51: legacy fallback 제거로 현재 v0.1.2 단일 버전만 사용(MemoryVersionTab = "0.1.2"). v0.1.0/v0.1.1 분리 조회 없음]`
 - **현재 활용**: 각 채팅 turn 직전에 `/api/memory/retrieve`로 현재 query와 가까운 memory top 5를 검색해 채팅 context에 주입
@@ -3241,3 +3242,13 @@ type ChatPlan = {
   - parse 실패 fallback도 익명 generic count 문장 대신 이름과 cluster label을 포함한다.
   - clustering method version을 `similarity-graph-v3-persona-summary`로 올렸다. admin cache fallback도 같은 method version 문서만 허용하고 저장 문서에 version을 명시해 과거 generic summary cache가 재사용되지 않게 한다.
 - 검증: `./node_modules/.bin/tsc --noEmit` 통과. 관련 clustering 파일 ESLint 0 error. 실제 displayName과 memory 데이터가 있는 계정에서 클러스터 재생성 후 문구 라이브 확인 필요.
+
+### 15.100 메모리 입력 source normalization과 lazy cache `[implemented 2026-06-21]`
+
+- 배경(QA Note `Source Normalization`): interaction input에는 text, link, image, UI result가 서로 다른 형태로 들어오지만 memory encoder는 클라이언트가 합친 문자열만 받아 첨부 이미지를 놓치고, 재처리 가능한 정규화 결과도 저장하지 않았다.
+- 수정:
+  - 채팅 turn에서 인용 text, reference link metadata, 선택 UI result, 첨부 image를 structured `sources` payload로 `/api/memory/drafts`에 전달한다.
+  - text/link/UI는 서버에서 bounded text로 정규화하고, image가 있을 때만 vision description을 생성한다. image는 허용된 data image 형식과 5MB 이하 입력만 처리한다.
+  - source fingerprint, normalization version, normalized text/types, normalized timestamp를 memory draft에 저장한다. 같은 interaction과 fingerprint가 다시 들어오면 저장된 normalization을 재사용한다.
+  - normalized source context를 원본 interaction content에 포함해 memory encoding과 embedding의 근거로 쓰고, 세션 종료 시 장기 memory document에도 normalization metadata를 승격한다.
+- 검증: TypeScript와 관련 파일 ESLint를 통과해야 하며, 첨부 이미지가 있는 실제 chat turn에서 draft 재호출 시 sourceNormalizedAt이 유지되는지 라이브 확인이 필요하다.

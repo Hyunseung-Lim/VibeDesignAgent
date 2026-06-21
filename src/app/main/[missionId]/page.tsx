@@ -97,6 +97,7 @@ import {
   defaultMockupPromptForIdea,
   FORKED_STYLE_MOCKUP_PROMPT,
 } from "@/lib/prompts";
+import type { MemoryDraftSources } from "@/lib/memory-sources";
 
 const ONBOARDING_MISSION_ID = "onboarding";
 
@@ -2159,6 +2160,7 @@ export default function MainScreenPage() {
       input: string,
       output: string,
       timestamp: number,
+      sources?: MemoryDraftSources,
     ) => {
       if (isReadOnly || !missionId || !input.trim() || !output.trim()) return;
       const currentUser = firebaseAuth.currentUser;
@@ -2177,6 +2179,7 @@ export default function MainScreenPage() {
             input,
             output,
             timestamp,
+            sources,
           }),
         });
       } catch (error) {
@@ -3470,6 +3473,23 @@ export default function MainScreenPage() {
       citedTexts,
       selectedElement,
     );
+    const memorySources: MemoryDraftSources = {
+      texts: [...citedTexts],
+      links: selectedReferences.map((reference) => ({
+        title: reference.title,
+        url: reference.url,
+        description: reference.description,
+        rationale: reference.rationale,
+      })),
+      image: attachedStyleImage,
+      uiResult: selectedElement
+        ? {
+            artboardId: selectedElement.artboardId,
+            selector: selectedElement.selector,
+            html: selectedElement.outerHTML,
+          }
+        : null,
+    };
 
     setMessages((prev) => [...prev, userMsg, assistantMsg]);
     setInputText("");
@@ -3527,6 +3547,7 @@ export default function MainScreenPage() {
         memoryInput,
         manualReferenceReply,
         userMsg.createdAt ?? Date.now(),
+        memorySources,
       );
       setChatPhasesByMessageId((prev) => {
         const next = { ...prev };
@@ -3711,6 +3732,7 @@ export default function MainScreenPage() {
         memoryInput,
         fullText,
         userMsg.createdAt ?? Date.now(),
+        memorySources,
       );
 
       // Parse special blocks from completed response
@@ -4061,6 +4083,7 @@ export default function MainScreenPage() {
             .filter(Boolean)
             .join("\n\n"),
           userMsg.createdAt ?? Date.now(),
+          memorySources,
         );
       };
       if (fetchRefMatch) {

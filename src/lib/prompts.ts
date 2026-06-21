@@ -353,6 +353,10 @@ Return exactly this JSON shape:
   // High = clearly supported; low = speculative over-reading.
 }`;
 
+export const MEMORY_SOURCE_IMAGE_PROMPT = `Describe an image as normalized textual evidence for a UI/UX design-agent memory record.
+
+Write one concise English paragraph covering only visible, memory-relevant facts: artifact or product type, readable content, layout and UI structure, visual direction, and any explicit user-provided annotation visible in the image. Do not infer durable user preferences, identity, intent, or personality. Do not mention that you are an AI and do not use markdown.`;
+
 export const PROFILE_MEMORY_SEGMENT_PROMPT = `# Task
 
 Split user-provided before-session memory markdown into small source units.

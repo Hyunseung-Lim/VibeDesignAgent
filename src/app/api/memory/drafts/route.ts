@@ -7,6 +7,12 @@ import {
   verifyFirebaseIdToken,
 } from "@/lib/server/firebaseAdminRest";
 import { MEMORY_ENCODE_PROMPT } from "@/lib/prompts";
+import type { MemoryDraftSources } from "@/lib/memory-sources";
+import {
+  MEMORY_SOURCE_NORMALIZATION_VERSION,
+  memorySourceFingerprint,
+  normalizeMemorySources,
+} from "@/lib/server/memorySourceNormalization";
 
 export const runtime = "nodejs";
 
@@ -33,6 +39,16 @@ function stringArray(value: unknown, fallback: string[] = []) {
   return Array.isArray(value)
     ? value.map((item) => String(item).trim()).filter(Boolean)
     : fallback;
+}
+
+function jsonStringArray(value: unknown) {
+  if (Array.isArray(value)) return stringArray(value);
+  if (typeof value !== "string") return [];
+  try {
+    return stringArray(JSON.parse(value));
+  } catch {
+    return [];
+  }
 }
 
 function parseMemory(raw: string): EncodedMemory {
@@ -171,6 +187,7 @@ export async function POST(request: Request) {
     input?: string;
     output?: string;
     timestamp?: number;
+    sources?: MemoryDraftSources;
   };
   const missionId = body.missionId?.trim();
   const interactionId = body.interactionId?.trim();
@@ -186,6 +203,20 @@ export async function POST(request: Request) {
   const createdAt = Date.now();
   const timestamp = Number(body.timestamp ?? createdAt);
   const token = await getFirebaseAccessToken();
+  const draftPath = `sessions/${user.localId}/missions/${encodeURIComponent(missionId)}/memoryDrafts/${encodeURIComponent(interactionId)}`;
+  const existingDraft = await getFirestoreDocument(draftPath, token);
+  const sourceFingerprint = memorySourceFingerprint(body.sources);
+  const canReuseNormalizedSources =
+    existingDraft?.sourceNormalizationVersion ===
+      MEMORY_SOURCE_NORMALIZATION_VERSION &&
+    existingDraft?.sourceNormalizationFingerprint === sourceFingerprint &&
+    typeof existingDraft?.normalizedSourceText === "string";
+  const normalizedSources = canReuseNormalizedSources
+    ? {
+        text: String(existingDraft.normalizedSourceText),
+        sourceTypes: jsonStringArray(existingDraft.normalizedSourceTypesJson),
+      }
+    : await normalizeMemorySources(body.sources);
   const [previousDraft, olderDraft] = await loadPreviousDrafts(
     user.localId,
     missionId,
@@ -196,8 +227,13 @@ export async function POST(request: Request) {
   const agentActions = extractAgentActions(output);
   const originalInteractionContent = [
     `User input:\n${input}`,
+    normalizedSources.text
+      ? `Normalized source context:\n${normalizedSources.text}`
+      : "",
     `Agent output:\n${output.slice(0, 10000)}`,
-  ].join("\n\n");
+  ]
+    .filter(Boolean)
+    .join("\n\n");
   const previousEpisodes = [
     String(previousDraft?.episode ?? "").trim(),
     String(olderDraft?.episode ?? "").trim(),
@@ -226,7 +262,7 @@ export async function POST(request: Request) {
   });
   const encoded = parseMemory(completion.choices[0]?.message?.content ?? "{}");
   await patchFirestoreDocument(
-    `sessions/${user.localId}/missions/${encodeURIComponent(missionId)}/memoryDrafts/${encodeURIComponent(interactionId)}`,
+    draftPath,
     {
       schemaVersion: MEMORY_SCHEMA_VERSION,
       missionId,
@@ -234,6 +270,13 @@ export async function POST(request: Request) {
       input: input.slice(0, 8000),
       output: output.slice(0, 12000),
       originalInteractionContent: originalInteractionContent.slice(0, 20000),
+      normalizedSourceText: normalizedSources.text,
+      sourceNormalizationVersion: MEMORY_SOURCE_NORMALIZATION_VERSION,
+      sourceNormalizationFingerprint: sourceFingerprint,
+      normalizedSourceTypesJson: JSON.stringify(normalizedSources.sourceTypes),
+      sourceNormalizedAt: canReuseNormalizedSources
+        ? Number(existingDraft?.sourceNormalizedAt ?? createdAt)
+        : createdAt,
       timestamp,
       keywordsJson: JSON.stringify(encoded.keywords),
       episode: encoded.episode.slice(0, 2000),

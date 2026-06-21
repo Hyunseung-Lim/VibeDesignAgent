@@ -121,6 +121,14 @@ export async function POST(request: Request) {
               input: draft.input ?? "",
               output: draft.output ?? "",
               originalInteractionContent,
+              normalizedSourceText: draft.normalizedSourceText ?? "",
+              sourceNormalizationVersion:
+                draft.sourceNormalizationVersion ?? null,
+              sourceNormalizationFingerprint:
+                draft.sourceNormalizationFingerprint ?? null,
+              normalizedSourceTypesJson:
+                draft.normalizedSourceTypesJson ?? "[]",
+              sourceNormalizedAt: draft.sourceNormalizedAt ?? null,
               link: null,
               embedding: embedding ?? [],
               embeddingSource: EMBEDDING_SOURCE,
