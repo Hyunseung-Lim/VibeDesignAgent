@@ -264,6 +264,26 @@ function createEmptyOption(): MissionOption {
   };
 }
 
+function missionAssetProxyUrl(path?: string) {
+  const objectName = String(path ?? "").trim();
+  if (!objectName.startsWith("mission-assets/")) return "";
+  const base =
+    typeof window === "undefined" ? "http://localhost" : window.location.origin;
+  const url = new URL("/api/mission-assets", base);
+  url.searchParams.set("path", objectName);
+  return url.toString();
+}
+
+function normalizeAssetImage(image: AssetImage) {
+  const path = typeof image?.path === "string" ? image.path : "";
+  const proxyUrl = missionAssetProxyUrl(path);
+  return {
+    url: proxyUrl || (typeof image?.url === "string" ? image.url : ""),
+    path,
+    note: typeof image?.note === "string" ? image.note : "",
+  };
+}
+
 function normalizeOptions(options?: MissionOption[]) {
   return (options ?? []).map((option) => ({
     id: option.id || crypto.randomUUID(),
@@ -272,11 +292,7 @@ function normalizeOptions(options?: MissionOption[]) {
     content: option.content ?? "",
     assetImages: Array.isArray(option.assetImages)
       ? option.assetImages
-          .map((image) => ({
-            url: typeof image?.url === "string" ? image.url : "",
-            path: typeof image?.path === "string" ? image.path : "",
-            note: typeof image?.note === "string" ? image.note : "",
-          }))
+          .map((image) => normalizeAssetImage(image))
           .filter((image) => /^https?:\/\//i.test(image.url))
           .slice(0, 12)
       : [],

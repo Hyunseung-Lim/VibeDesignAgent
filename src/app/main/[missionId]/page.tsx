@@ -566,6 +566,7 @@ type Artboard = {
   device: Device;
   stitchScreenId?: string;
   ideaId: string;
+  htmlStatus?: "pending" | "failed";
 };
 
 type DestructiveSessionAction =
@@ -620,6 +621,26 @@ function referenceMatches(a: Reference, b: Reference) {
   const aImage = canonicalReferenceUrl(a.imageUrl);
   const bImage = canonicalReferenceUrl(b.imageUrl);
   return Boolean((aUrl && aUrl === bUrl) || (aImage && aImage === bImage));
+}
+
+function missionAssetProxyUrl(path?: string) {
+  const objectName = String(path ?? "").trim();
+  if (!objectName.startsWith("mission-assets/")) return "";
+  const base =
+    typeof window === "undefined" ? "http://localhost" : window.location.origin;
+  const url = new URL("/api/mission-assets", base);
+  url.searchParams.set("path", objectName);
+  return url.toString();
+}
+
+function normalizeAssetImage(image: AssetImage) {
+  const path = typeof image?.path === "string" ? image.path : "";
+  const proxyUrl = missionAssetProxyUrl(path);
+  return {
+    url: proxyUrl || (typeof image?.url === "string" ? image.url : ""),
+    path,
+    note: typeof image?.note === "string" ? image.note : "",
+  };
 }
 
 function buildReferencePreferenceContext(
@@ -712,10 +733,9 @@ function normalizeMissionOptions(
       device: option.device,
       content: option.content ?? "",
       assetImages: Array.isArray(option.assetImages)
-        ? option.assetImages.filter(
-            (image): image is AssetImage =>
-              typeof image?.url === "string" && image.url.length > 0,
-          )
+        ? option.assetImages
+            .map((image) => normalizeAssetImage(image))
+            .filter((image) => /^https?:\/\//i.test(image.url))
         : [],
     }));
   if (options.length > 0) return options;
@@ -789,7 +809,7 @@ async function fetchOnboardingMissionData() {
 
 function extractJsonActionPayload(
   text: string,
-  tag: "CREATE_NOTE" | "UPDATE_NOTE",
+  tag: "CREATE_NOTE" | "UPDATE_NOTE" | "CREATE_DESIGN_SPEC",
 ) {
   const start = text.indexOf(`[${tag}:`);
   if (start === -1) return null;
@@ -825,7 +845,10 @@ function extractJsonActionPayload(
   return null;
 }
 
-function extractPlainNoteContent(text: string, tag: "CREATE_NOTE" | "UPDATE_NOTE"): string | null {
+function extractPlainNoteContent(
+  text: string,
+  tag: "CREATE_NOTE" | "UPDATE_NOTE" | "CREATE_DESIGN_SPEC",
+): string | null {
   const marker = `[${tag}:`;
   const start = text.indexOf(marker);
   if (start === -1) return null;
@@ -946,42 +969,34 @@ function parseUpdateNoteBlock(text: string): UpdateNoteData | null {
 function parseCreateDesignSpecBlock(
   text: string,
 ): { title: string; content: string } | null {
-  const tag = "[CREATE_DESIGN_SPEC:";
-  const start = text.indexOf(tag);
-  if (start === -1) return null;
-  const payloadStart = text.indexOf("{", start);
-  if (payloadStart === -1) return null;
-  let depth = 0;
-  let inString = false;
-  let escaped = false;
-  for (let i = payloadStart; i < text.length; i++) {
-    const char = text[i];
-    if (escaped) {
-      escaped = false;
-      continue;
-    }
-    if (char === "\\") {
-      escaped = true;
-      continue;
-    }
-    if (char === '"') {
-      inString = !inString;
-      continue;
-    }
-    if (inString) continue;
-    if (char === "{") depth++;
-    if (char === "}") {
-      depth--;
-      if (depth === 0) {
-        try {
-          return JSON.parse(text.slice(payloadStart, i + 1));
-        } catch {
-          return null;
-        }
-      }
+  if (!text.includes("[CREATE_DESIGN_SPEC:")) return null;
+
+  const jsonPayload = extractJsonActionPayload(text, "CREATE_DESIGN_SPEC");
+  if (jsonPayload) {
+    try {
+      const parsed = JSON.parse(jsonPayload) as Record<string, unknown>;
+      const content = pickNoteContent(parsed);
+      const title =
+        typeof parsed.title === "string" && parsed.title.trim()
+          ? parsed.title.trim()
+          : "디자인 스타일";
+      return { title, content };
+    } catch {
+      return {
+        title:
+          extractStringFieldLoose(jsonPayload, ["title"]) || "디자인 스타일",
+        content: extractStringFieldLoose(jsonPayload, NOTE_CONTENT_KEYS),
+      };
     }
   }
-  return null;
+
+  const plain = extractPlainNoteContent(text, "CREATE_DESIGN_SPEC");
+  if (!plain) return null;
+  const parsed = parsePlainNotePayload(plain);
+  return {
+    title: parsed.title?.trim() || "디자인 스타일",
+    content: parsed.description.trim(),
+  };
 }
 
 function stripDesignSpecActionBlocks(content: string) {
@@ -1683,6 +1698,35 @@ async function stitchResponseError(response: Response) {
   if (typeof data?.error === "string") return data.error;
   const text = await response.text().catch(() => "");
   return text || `HTTP ${response.status}`;
+}
+
+async function fetchStitchScreenHtml(
+  projectId: string,
+  screenId: string,
+  attempts = 3,
+) {
+  let lastError = "Stitch 화면 HTML이 아직 준비되지 않았습니다.";
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const response = await fetch(
+      `/api/stitch/html?projectId=${encodeURIComponent(projectId)}&screenId=${encodeURIComponent(screenId)}`,
+    );
+    const data = await response.json().catch(() => null);
+    if (response.ok && typeof data?.html === "string" && data.html.trim()) {
+      return data.html as string;
+    }
+    if (!response.ok && !data?.htmlPending) {
+      throw new Error(
+        typeof data?.error === "string"
+          ? data.error
+          : `Stitch 화면을 불러오지 못했습니다. HTTP ${response.status}`,
+      );
+    }
+    if (typeof data?.error === "string") lastError = data.error;
+    if (attempt < attempts - 1) {
+      await new Promise((resolve) => window.setTimeout(resolve, 1500));
+    }
+  }
+  throw new Error(lastError);
 }
 
 export default function MainScreenPage() {
@@ -2525,6 +2569,8 @@ export default function MainScreenPage() {
         const loaded: Artboard[] = session.artboards.map((a: Artboard) => ({
           ...a,
           ideaId: a.ideaId ?? firstIdeaId,
+          htmlStatus:
+            !a.html && a.stitchScreenId ? "pending" : a.htmlStatus,
         }));
         const normalizedLoaded = normalizeArtboardPositionsByIdea(loaded);
         setArtboards(normalizedLoaded);
@@ -2542,19 +2588,28 @@ export default function MainScreenPage() {
         if (pid) {
           normalizedLoaded.forEach((a: Artboard) => {
             if (!a.stitchScreenId || a.html) return;
-            fetch(
-              `/api/stitch/html?projectId=${pid}&screenId=${a.stitchScreenId}`,
-            )
-              .then((r) => r.json())
-              .then((d) => {
-                if (d.html)
-                  setArtboards((prev) =>
-                    prev.map((p) =>
-                      p.id === a.id ? { ...p, html: d.html } : p,
-                    ),
-                  );
-              })
-              .catch(() => {});
+            fetchStitchScreenHtml(pid, a.stitchScreenId)
+              .then((html) =>
+                setArtboards((prev) =>
+                  prev.map((p) =>
+                    p.id === a.id
+                      ? {
+                          ...p,
+                          html,
+                          htmlStatus: undefined,
+                          htmlUpdatedAt: Date.now(),
+                        }
+                      : p,
+                  ),
+                ),
+              )
+              .catch(() =>
+                setArtboards((prev) =>
+                  prev.map((p) =>
+                    p.id === a.id ? { ...p, htmlStatus: "failed" } : p,
+                  ),
+                ),
+              );
           });
         }
       } else if (session?.mockupHtml) {
@@ -3792,6 +3847,22 @@ export default function MainScreenPage() {
 
       const designSpecBlock = parseCreateDesignSpecBlock(fullText);
       if (
+        fullText.includes("[CREATE_DESIGN_SPEC:") &&
+        !designSpecBlock?.content?.trim()
+      ) {
+        setMessages((prev) =>
+          prev.map((message) =>
+            message.id === assistantId &&
+            !message.content.includes("디자인 스타일을 저장하지 못했습니다.")
+              ? {
+                  ...message,
+                  content: `${message.content}\n\n⚠️ 디자인 스타일을 저장하지 못했습니다. 다시 요청해 주세요.`,
+                }
+              : message,
+          ),
+        );
+      }
+      if (
         shouldForkStyleDirection &&
         !turnIdeaOverride &&
         activeIdeaAtTurnStart
@@ -4262,6 +4333,25 @@ export default function MainScreenPage() {
           setMockupProgress({ percent: 92, label: "응답 처리 중" });
           const data = await res.json();
           if (data.error) throw new Error(data.error);
+          if (
+            data.htmlPending &&
+            !data.html?.trim() &&
+            data.projectId &&
+            data.screenId
+          ) {
+            setMockupProgress({
+              percent: 94,
+              label: "화면 HTML 준비 대기 중",
+            });
+            data.html = await fetchStitchScreenHtml(
+              data.projectId,
+              data.screenId,
+            );
+            data.htmlPending = false;
+          }
+          if (typeof data.html !== "string" || !data.html.trim()) {
+            throw new Error("Stitch가 표시할 수 있는 화면 HTML을 반환하지 않았습니다.");
+          }
           setMockupProgress({ percent: 96, label: "아트보드 배치 중" });
           if (data.projectId) setStitchProjectId(data.projectId);
           if (data.designSystemId !== undefined)
@@ -4333,6 +4423,7 @@ export default function MainScreenPage() {
                   device,
                   stitchScreenId: sid,
                   ideaId,
+                  htmlStatus: "pending",
                 }),
               );
 
@@ -4357,21 +4448,30 @@ export default function MainScreenPage() {
                     ? "화면 HTML 준비 대기 중"
                     : "추가 화면 불러오는 중",
               });
-              fetch(
-                `/api/stitch/html?projectId=${data.projectId}&screenId=${sid}`,
-              )
-                .then((r) => r.json())
-                .then((d) => {
-                  if (d.html)
-                    setArtboards((prev) =>
-                      prev.map((a) =>
-                        a.stitchScreenId === sid
-                          ? { ...a, html: d.html, htmlUpdatedAt: Date.now() }
-                          : a,
-                      ),
-                    );
-                })
-                .catch(() => {});
+              fetchStitchScreenHtml(data.projectId, sid)
+                .then((html) =>
+                  setArtboards((prev) =>
+                    prev.map((a) =>
+                      a.stitchScreenId === sid
+                        ? {
+                            ...a,
+                            html,
+                            htmlStatus: undefined,
+                            htmlUpdatedAt: Date.now(),
+                          }
+                        : a,
+                    ),
+                  ),
+                )
+                .catch(() =>
+                  setArtboards((prev) =>
+                    prev.map((a) =>
+                      a.stitchScreenId === sid
+                        ? { ...a, htmlStatus: "failed" }
+                        : a,
+                    ),
+                  ),
+                );
             });
           } else {
             const targetId =
@@ -4446,22 +4546,30 @@ export default function MainScreenPage() {
               setActiveArtboardId(htmlTargetId);
             }
             if (data.htmlPending && htmlTargetId) {
-              fetch(
-                `/api/stitch/html?projectId=${data.projectId}&screenId=${data.screenId}`,
-              )
-                .then((r) => r.json())
-                .then((d) => {
-                  if (d.html) {
-                    setArtboards((prev) =>
-                      prev.map((a) =>
-                        a.id === htmlTargetId
-                          ? { ...a, html: d.html, htmlUpdatedAt: Date.now() }
-                          : a,
-                      ),
-                    );
-                  }
-                })
-                .catch(() => {});
+              fetchStitchScreenHtml(data.projectId, data.screenId)
+                .then((html) =>
+                  setArtboards((prev) =>
+                    prev.map((a) =>
+                      a.id === htmlTargetId
+                        ? {
+                            ...a,
+                            html,
+                            htmlStatus: undefined,
+                            htmlUpdatedAt: Date.now(),
+                          }
+                        : a,
+                    ),
+                  ),
+                )
+                .catch(() =>
+                  setArtboards((prev) =>
+                    prev.map((a) =>
+                      a.id === htmlTargetId
+                        ? { ...a, htmlStatus: "failed" }
+                        : a,
+                    ),
+                  ),
+                );
             }
           }
           setMockupProgress({ percent: 100, label: "완료" });
@@ -5256,25 +5364,42 @@ export default function MainScreenPage() {
                   });
                 }}
               >
-                <iframe
-                  key={`${artboard.id}-${artboard.htmlUpdatedAt ?? artboard.createdAt ?? 0}`}
-                  ref={(node) => {
-                    if (node) mockupFrameRefs.current.set(artboard.id, node);
-                    else mockupFrameRefs.current.delete(artboard.id);
-                  }}
-                  srcDoc={artboardHtml}
-                  sandbox="allow-scripts"
-                  scrolling="no"
-                  style={{
-                    width: DEVICE_SIZE[artboard.device ?? "desktop"].width,
-                    height: artboardHeight,
-                    border: "none",
-                    display: "block",
-                    overflow: "hidden",
-                    pointerEvents: editMode ? "auto" : "none",
-                  }}
-                  title={artboard.label}
-                />
+                {artboard.html ? (
+                  <iframe
+                    key={`${artboard.id}-${artboard.htmlUpdatedAt ?? artboard.createdAt ?? 0}`}
+                    ref={(node) => {
+                      if (node) mockupFrameRefs.current.set(artboard.id, node);
+                      else mockupFrameRefs.current.delete(artboard.id);
+                    }}
+                    srcDoc={artboardHtml}
+                    sandbox="allow-scripts"
+                    scrolling="no"
+                    style={{
+                      width: DEVICE_SIZE[artboard.device ?? "desktop"].width,
+                      height: artboardHeight,
+                      border: "none",
+                      display: "block",
+                      overflow: "hidden",
+                      pointerEvents: editMode ? "auto" : "none",
+                    }}
+                    title={artboard.label}
+                  />
+                ) : (
+                  <div className="flex h-full w-full flex-col items-center justify-center gap-4 bg-zinc-900 text-zinc-300">
+                    {artboard.htmlStatus === "failed" ? (
+                      <p className="text-sm font-medium">
+                        화면을 불러오지 못했습니다. 페이지를 새로고침해 다시 시도해 주세요.
+                      </p>
+                    ) : (
+                      <>
+                        <Spinner className="size-7" />
+                        <p className="text-sm font-medium">
+                          Stitch 화면을 불러오는 중...
+                        </p>
+                      </>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
           );

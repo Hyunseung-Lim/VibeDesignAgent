@@ -123,6 +123,7 @@
 - **missionBrief 보완 주입**: 신규 목업 생성 시 아이디어 내용이 300자 미만으로 빈약하면 `missionBrief`를 `buildMockupPrompt`에 직접 주입해 제품 데이터가 Stitch에 전달되도록 보장 (수정 시에는 주입 안 함)
 - **이미지 주도 생성**: 사용자가 참고 이미지를 첨부/붙여넣거나(Phase 1) 신규 목업 요청에 URL을 주면(Phase 2 — 채팅 메시지 내 URL 또는 인용 레퍼런스의 URL), 텍스트 design.md 단계 없이 그 화면을 Stitch에 `upload`→`edit`로 재구성해 목업을 만들고 결과에서 design.md를 역추출·저장한다. URL은 서버가 스크린샷(Microlink 무키, `captureScreenshot` 추상화)으로 캡처하며 첨부 이미지가 우선. 모바일 목업이면 URL 캡처도 390×844 모바일 viewport, 데스크톱이면 1280×900 viewport로 찍는다. 이미지/URL이 있으면 "디자인 스타일 필수" 게이트를 우회한다. `src/app/api/stitch/route.ts`의 `isImageLed` 분기 참고 `[현행 2026-06-15 → 15.81/15.83]`
 - **콘텐츠 자산 주도 생성(asset-led)**: 미션 옵션에 어드민이 등록한 콘텐츠 이미지(`assetImages`, 실제 상품 사진·UI 캡쳐)가 있으면 신규 목업 생성 시 그 URL과 설명(`note`)을 `/api/stitch`로 넘겨, 서버가 다운로드→`upload`→`edit`하면서 asset manifest와 함께 "이 이미지들을 그대로 콘텐츠로 박아 넣어라"(`assetImageEmbedPrompt`)로 생성한다. 이미지 주도 생성과 달리 이미지를 스타일로 재구성하지 않고 콘텐츠 자산으로 보존하며, 레이아웃·스타일은 brief와 디자인 시스템을 따른다. 그래서 디자인 스타일을 미리 적용하고 결과 기반 design.md 역추출은 하지 않는다. 사용자가 그 턴에 스타일 이미지/URL을 첨부하면 그쪽(isImageLed)이 우선. `src/app/api/stitch/route.ts`의 `isAssetLed` 분기 참고 `[현행 2026-06-18 → 15.89/15.93]`
+- **액션/화면 완료 보장**: `CREATE_DESIGN_SPEC`는 JSON 뒤 닫는 대괄호가 빠지거나 일반 마크다운 payload로 와도 균형 스캔과 loose parser로 복구하며, 복구 불가능하면 영구적인 작성 중 상태 대신 명시적 실패로 표시한다. Stitch가 screen metadata만 먼저 반환하면 HTML을 재조회한 뒤 아트보드를 확정하고, 저장된 screen의 HTML 복원 중에는 빈 iframe 대신 로딩/실패 상태를 표시한다. `src/lib/session/chat-content.ts`와 `src/app/main/[missionId]/page.tsx`를 직접 확인 `[현행 2026-06-21 → 15.97]`
 - **캔버스**: 드래그 패닝, 휠 줌, Fit 버튼, 확대(fullscreen) 모드. 선택 스크립트는 iframe HTML에 항상 주입하고, 편집 모드 토글은 pointer event와 선택 해제 메시지로 제어해 iframe `srcDoc` reload를 피한다 `[현행 2026-06-15 → 15.78]`
 - **편집 모드**: 특정 UI 요소 클릭 선택 → `[EDIT_MOCKUP: {prompt}]`로 수정. 선택 요소가 있는 상태에서 "크게/색/문구/삭제" 등 짧은 타깃 편집 요청이 오면 planner 판단과 무관하게 현재 목업 HTML과 선택 요소 컨텍스트를 함께 주입한다 `[현행 2026-06-15 → 15.77]`
 - Stitch edit가 기존 screen을 mutate하지 않고 새 screen을 만들면 기존 artboard를 덮어쓰지 않고 새 artboard로 추가한 뒤 active로 전환한다 `[현행 2026-06-15 → 15.79]`
@@ -3198,4 +3199,18 @@ type ChatPlan = {
 - 수정: `POST /api/admin/mission-assets`가 PNG/JPG/WebP만 허용하고 그 외 image MIME은 415와 한국어 오류를 반환한다. `/admin`과 `/admin/new`의 file input accept도 같은 세 포맷으로 좁히고, 클라이언트에서 먼저 필터링해 깨진 썸네일이 생기기 전에 오류를 보여준다.
 - 후속 수정: PNG도 200 업로드 후 깨지는 케이스가 있고 서버 환경에서 `firebasestorage.googleapis.com` 호출이 TLS 오류를 내서, 저장 URL을 Firebase download URL 대신 앱 프록시 `/api/mission-assets?path=...`로 바꿨다. 업로드/삭제/다운로드 프록시는 서버에서 service account로 `storage.googleapis.com`만 호출한다. 이 URL은 브라우저 썸네일과 Stitch asset-led 다운로드가 모두 이미지처럼 사용할 수 있다.
 - UI 보강: `/admin` 기존 미션 편집의 콘텐츠 이미지 썸네일을 클릭하면 Dialog에서 원본 비율로 크게 볼 수 있게 했다. 삭제 버튼은 기존처럼 썸네일 우상단에 유지한다.
+- 호환 보정: 예전 Firebase download URL로 저장돼 깨지는 `assetImages`도 `path`가 `mission-assets/...`이면 `/admin`과 `/main/[missionId]` 로드 시 현재 origin의 `/api/mission-assets?path=...`로 재계산한다. 기존 미션을 저장하면 보정된 URL이 Firestore에 남는다.
 - 문서: 1~9장 `/admin` Current Snapshot의 콘텐츠 이미지 업로드 계약을 PNG/JPG/WebP로 갱신했다.
+
+### 15.97 디자인 스타일 action과 Stitch 빈 아트보드 복구 `[implemented 2026-06-21]`
+
+- 문제: 완료된 채팅 응답이 `디자인 스타일 작성 중...` chip으로 계속 남으면서 디자인 스타일이 저장되지 않고, Mockup에는 HTML이 없는 빈 화면이 표시되는 QA가 발생했다.
+- 원인:
+  - `CREATE_DESIGN_SPEC` chip parser는 정확한 JSON + 닫는 대괄호 형태만 완료로 봤지만 runtime parser와 모델 출력은 닫는 대괄호 누락, 일반 markdown payload, 일부 malformed JSON을 허용할 수 있어 UI와 저장 상태가 어긋났다.
+  - `/api/stitch`가 `htmlPending`으로 screen metadata를 먼저 반환할 때 클라이언트가 빈 artboard를 즉시 추가하고 HTML endpoint를 한 번만 호출했다. 그 호출에서도 HTML이 준비되지 않으면 빈 iframe이 영구적으로 남았다. Firestore에는 Stitch artboard HTML을 비워 저장하므로 세션 재진입 복원도 같은 단발 조회 문제를 가졌다.
+- 수정:
+  - `src/lib/session/chat-content.ts`: 디자인 스타일 action도 note action과 같은 bracket/brace 균형 스캔을 사용한다. balanced JSON이면 닫는 대괄호가 없어도 완료 chip으로 수렴하고, 저장 불가능 marker가 있으면 실패 chip으로 표시한다.
+  - `src/app/main/[missionId]/page.tsx`: `CREATE_DESIGN_SPEC` parser가 정상 JSON, loose JSON string field, plain markdown payload를 순서대로 복구한다. content를 얻지 못하면 사용자에게 저장 실패를 명시한다.
+  - Stitch primary screen이 `htmlPending`이면 HTML 재조회가 성공한 뒤에만 artboard를 추가하며, 끝내 빈 HTML이면 생성 실패로 처리한다. 추가 screen과 저장 세션 복원도 재조회 helper를 공유한다.
+  - HTML이 없는 저장 artboard는 빈 iframe을 렌더하지 않고 로딩 상태를 보이며, 재조회 실패 시 새로고침 재시도 안내를 표시한다.
+- 검증: `./node_modules/.bin/tsc --noEmit` 통과. 관련 파일 ESLint 0 error, 기존 warning 7개 유지. 실제 Stitch 응답 지연을 포함한 라이브 재검증 필요.

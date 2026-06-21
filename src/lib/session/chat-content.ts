@@ -34,6 +34,14 @@ const NOTE_RULES = [
   },
 ] as const;
 
+const DESIGN_SPEC_RULE = {
+  tag: "CREATE_DESIGN_SPEC",
+  doneLabel: "디자인 스타일 추가됨",
+  pendingLabel: "디자인 스타일 작성 중...",
+  failedLabel: "디자인 스타일 작성 실패",
+  failedMarker: "디자인 스타일을 저장하지 못했습니다.",
+} as const;
+
 function findNoteBlock(
   text: string,
   tag: string,
@@ -118,12 +126,6 @@ const BLOCK_RULES = [
     doneLabel: "웹 검색 완료",
     pendingLabel: "웹 검색 중...",
   },
-  {
-    complete: /\[CREATE_DESIGN_SPEC:\s*\{[\s\S]*?\}\]/,
-    partial: /\[CREATE_DESIGN_SPEC:[\s\S]*$/,
-    doneLabel: "디자인 스타일 추가됨",
-    pendingLabel: "디자인 스타일 작성 중...",
-  },
 ];
 
 export function processMessageContent(content: string): ContentPart[] {
@@ -155,7 +157,28 @@ export function processMessageContent(content: string): ContentPart[] {
       }
     }
 
-    // Regex-based blocks (mockup, references, web search, design spec).
+    // Design style payloads have the same freeform JSON/markdown failure modes
+    // as note payloads. A balanced JSON object is actionable even when the
+    // model omits the trailing `]`, so keep the chip state aligned with the
+    // runtime parser instead of leaving a permanent "작성 중" chip.
+    const designSpec = findNoteBlock(remaining, DESIGN_SPEC_RULE.tag);
+    if (
+      designSpec &&
+      (earliest === null || designSpec.index < earliest.index)
+    ) {
+      earliest = {
+        index: designSpec.index,
+        matchStr: designSpec.matchStr,
+        label: designSpec.done
+          ? DESIGN_SPEC_RULE.doneLabel
+          : DESIGN_SPEC_RULE.pendingLabel,
+        done: designSpec.done,
+        failedLabel: DESIGN_SPEC_RULE.failedLabel,
+        failedMarker: DESIGN_SPEC_RULE.failedMarker,
+      };
+    }
+
+    // Regex-based blocks (mockup, references, web search).
     for (const rule of BLOCK_RULES) {
       for (const [regex, done, label] of [
         [rule.complete, true, rule.doneLabel],
