@@ -5,6 +5,8 @@ import { useState } from "react";
 import { ArrowUp, ImagePlus, Sparkles, X } from "lucide-react";
 import { ChatCapabilityCatalog } from "./chat-capability-catalog";
 import { Spinner } from "@/components/ui/spinner";
+import { Button, buttonVariants } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 
 export type ChatInputSelectedElement = {
   selector: string;
@@ -207,14 +209,15 @@ export function ChatInput({
                 className="fixed inset-0 z-10 cursor-default"
               />
               <div className="absolute bottom-full left-0 z-20 mb-2 w-80 max-w-[calc(100%-1rem)] rounded-2xl border border-slate-200 bg-white p-4 shadow-lg">
-                <button
-                  type="button"
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
                   aria-label="닫기"
                   onClick={() => setCatalogOpen(false)}
-                  className="absolute right-3 top-3 rounded-full p-1 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600"
+                  className="absolute right-3 top-3 rounded-full text-slate-400 hover:text-slate-600"
                 >
                   <X size={14} />
-                </button>
+                </Button>
                 <ChatCapabilityCatalog
                   onPick={(example) => {
                     onPickCatalogExample(example);
@@ -255,27 +258,32 @@ export function ChatInput({
           />
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-0.5">
-              <button
-                type="button"
+              <Button
+                variant="ghost"
+                size="icon"
                 data-tour="chat-capability-catalog"
                 title="부탁할 수 있는 것들 보기"
                 onClick={() => setCatalogOpen((prev) => !prev)}
                 disabled={!missionContextReady}
-                className={`flex shrink-0 items-center rounded-full p-1.5 transition ${
-                  catalogOpen
-                    ? "text-indigo-600 hover:bg-indigo-50"
-                    : "text-slate-400 hover:bg-slate-100 hover:text-slate-600"
-                } ${!missionContextReady ? "pointer-events-none opacity-40" : ""}`}
+                aria-pressed={catalogOpen}
+                className={cn(
+                  "rounded-full text-slate-400 hover:text-slate-600",
+                  catalogOpen &&
+                    "text-indigo-600 hover:bg-indigo-50 hover:text-indigo-600",
+                )}
               >
                 <Sparkles size={18} />
-              </button>
+              </Button>
               <label
                 title="스타일 참고 이미지 첨부 (이 이미지처럼 목업 생성)"
-                className={`flex shrink-0 cursor-pointer items-center rounded-full p-1.5 transition ${
+                className={cn(
+                  buttonVariants({ variant: "ghost", size: "icon" }),
+                  "rounded-full",
                   styleImage
-                    ? "text-slate-700 hover:bg-slate-100"
-                    : "text-slate-400 hover:bg-slate-100 hover:text-slate-600"
-                } ${!missionContextReady ? "pointer-events-none opacity-40" : ""}`}
+                    ? "text-slate-700"
+                    : "text-slate-400 hover:text-slate-600",
+                  !missionContextReady && "pointer-events-none opacity-40",
+                )}
               >
                 <ImagePlus size={18} />
                 <input
@@ -292,34 +300,36 @@ export function ChatInput({
               </label>
             </div>
             {generatingMockup ? (
-              <button
-                type="button"
+              <Button
+                variant="destructive"
+                size="sm"
                 onClick={onCancelMockupGeneration}
-                className="flex items-center gap-1.5 rounded-full bg-red-500 px-4 py-2 text-xs font-semibold text-white transition hover:bg-red-600"
+                className="rounded-full"
               >
                 <Spinner className="size-3" />
                 {generatingCurrentIdeaMockup
                   ? `${mockupOperation === "edit" ? "수정" : "생성"} 취소`
                   : "작업 취소"}
-              </button>
+              </Button>
             ) : loading ? (
-              <button
-                type="button"
+              <Button
+                variant="destructive"
+                size="sm"
                 onClick={onCancelMessage}
-                className="rounded-full bg-red-500 px-4 py-2 text-xs font-semibold text-white transition hover:bg-red-600"
+                className="rounded-full"
               >
                 중단
-              </button>
+              </Button>
             ) : (
-              <button
-                type="button"
+              <Button
+                size="icon"
                 onClick={onSendMessage}
                 disabled={!inputText.trim() || !missionContextReady}
                 aria-label="보내기"
-                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-slate-900 text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-40"
+                className="rounded-full"
               >
                 <ArrowUp size={18} />
-              </button>
+              </Button>
             )}
           </div>
         </div>

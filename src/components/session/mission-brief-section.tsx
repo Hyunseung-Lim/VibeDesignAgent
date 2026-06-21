@@ -2,6 +2,7 @@
 
 import { ChevronDown, Monitor, Smartphone } from "lucide-react";
 import ReactMarkdown from "react-markdown";
+import { Badge } from "@/components/ui/badge";
 
 type MissionBriefDevice = "desktop" | "mobile";
 
@@ -95,7 +96,7 @@ export function MissionBriefSection({
                 </span>
               )}
             </p>
-            <span className="inline-flex shrink-0 items-center gap-1 rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-medium text-slate-600">
+            <Badge variant="outline" className="text-slate-600">
               {device === "mobile" ? (
                 <>
                   <Smartphone className="size-3" aria-hidden="true" />
@@ -107,7 +108,7 @@ export function MissionBriefSection({
                   PC 기준
                 </>
               )}
-            </span>
+            </Badge>
           </div>
 
           {brief ? (

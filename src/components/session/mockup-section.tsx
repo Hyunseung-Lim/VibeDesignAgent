@@ -65,7 +65,9 @@ export function MockupSection({
       className="space-y-3 scroll-mt-4"
     >
       <div className="flex items-center justify-between">
-        <p className="text-base font-semibold text-slate-900">Mockup</p>
+        <p className="text-base font-semibold text-slate-900">
+          Mockup <span className="text-slate-400">(목업)</span>
+        </p>
         {hasArtboards && (
           <MockupCanvasToolbar
             editMode={editMode}

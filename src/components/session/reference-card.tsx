@@ -1,5 +1,6 @@
 import { ArrowUpRight, Check, ExternalLink, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { Badge } from "@/components/ui/badge";
 
 export type SessionReference = {
   id: string;
@@ -95,14 +96,8 @@ export function ReferenceCard({
 
         <div className="mt-auto space-y-2">
           <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-            <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-600">
-              {reference.tag}
-            </span>
-            {purpose && (
-              <span className="rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[11px] font-medium text-slate-600">
-                {purpose}
-              </span>
-            )}
+            <Badge variant="secondary">{reference.tag}</Badge>
+            {purpose && <Badge variant="outline">{purpose}</Badge>}
           </div>
 
           <div className="flex items-center justify-between gap-2">

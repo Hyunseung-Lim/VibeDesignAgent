@@ -3,6 +3,7 @@
 import { Monitor, Smartphone } from "lucide-react";
 import { SetupMissionSummaryCard } from "@/components/session/session-setup-cards";
 import { SessionSetupStepper } from "@/components/session/session-setup-stepper";
+import { Button } from "@/components/ui/button";
 
 type MissionOptionDevice = "desktop" | "mobile";
 
@@ -104,15 +105,14 @@ export function MissionOptionSelection({
 
       <div className="border-t border-slate-200 bg-white px-8 py-4">
         <div className="mx-auto max-w-3xl">
-          <button
-            type="button"
+          <Button
             onClick={() => {
               if (activeOption) onChooseOption(activeOption);
             }}
-            className="w-full rounded-2xl bg-slate-900 py-3.5 text-sm font-semibold text-white transition hover:bg-slate-700"
+            className="h-auto w-full rounded-2xl py-3.5 text-sm font-semibold"
           >
             다음
-          </button>
+          </Button>
         </div>
       </div>
     </main>

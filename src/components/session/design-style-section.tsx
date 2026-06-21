@@ -4,6 +4,7 @@ import type { RefObject, ReactElement, ReactNode } from "react";
 import React from "react";
 import { ChevronDown } from "lucide-react";
 import ReactMarkdown from "react-markdown";
+import { Badge } from "@/components/ui/badge";
 
 export type DesignStyleSectionStyle = {
   id: string;
@@ -80,34 +81,22 @@ export function DesignStyleSection({
       data-tour="idea-style"
       className="space-y-3 scroll-mt-4"
     >
-      <div className="flex items-center justify-between">
-        <p className="text-base font-semibold text-slate-900">Style</p>
-      </div>
-
       <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
         <button
           type="button"
           onClick={onToggle}
           className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left transition hover:bg-slate-50"
         >
-          <div className="min-w-0 space-y-0.5">
-            <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-400">
-              Design Style
-            </p>
-            <p className="text-sm font-semibold text-slate-800">
-              {style ? "현재 시안의 시각 규칙" : "아직 정의되지 않음"}
-            </p>
-          </div>
+          <p className="min-w-0 text-base font-semibold text-slate-900">
+            Design Style <span className="text-slate-400">(디자인 스타일)</span>
+          </p>
           <div className="flex shrink-0 items-center gap-2">
-            <span
-              className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${
-                style
-                  ? "bg-slate-100 text-slate-700"
-                  : "bg-slate-50 text-slate-400"
-              }`}
+            <Badge
+              variant={style ? "secondary" : "outline"}
+              className={style ? undefined : "text-slate-400"}
             >
               {style ? "설정됨" : "미정의"}
-            </span>
+            </Badge>
             <span className="flex size-7 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500">
               <ChevronDown
                 size={14}
@@ -121,8 +110,9 @@ export function DesignStyleSection({
         {open && (
           <div className="space-y-3 border-t border-slate-100 px-4 py-3">
             {!style ? (
-              <p className="text-xs text-slate-500">
-                에이전트에게 이 시안의 디자인 스타일을 정의해달라고 요청하세요.
+              <p className="text-sm text-slate-400">
+                아직 정의된 Design Style이 없어요. 에이전트에게 디자인 스타일
+                정의를 요청해 보세요.
               </p>
             ) : (
               <div className="space-y-3">

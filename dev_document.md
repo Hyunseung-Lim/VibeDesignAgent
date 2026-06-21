@@ -3275,3 +3275,25 @@ type ChatPlan = {
   - `SessionSetupStepper`는 옵션 선택 화면(mission-option-selection)에서 계속 사용하므로 컴포넌트 자체는 유지한다.
   - 이미 시작된 세션은 resume 시 setup 페이지를 건너뛰어야 한다. `sessionAlreadyStarted` 판정에 status active와 timerStartedAt/startedAt를 추가해(기존 messages/ideas/artboards 유무는 구 snapshot fallback으로 유지), 시작한 적 있는 세션이면 `profileModalConfirmed`를 true로 두고 본 세션 화면으로 바로 들어가게 한다.
 - 검증: tsc 통과, 변경 파일 ESLint 0 error. 단일/다중 옵션/온보딩 미션 각각에서 setup 페이지 진입, 스크롤, 옵션 되돌아가기, 세션 시작이 정상 동작하는지와, 채팅 기록이 있는 세션 resume 시 setup 페이지가 뜨지 않는지 라이브 확인이 필요하다.
+
+### 15.103 시안 작업 영역 세 섹션 UI 통일 `[implemented 2026-06-21]`
+
+- 배경(QA Note `UI 통일성`): Design Brief는 그라데이션 페이드 + 하단 펼치기/접기 pill로 접고, Design Style은 헤더 클릭 아코디언으로 접어 방식이 달랐다. 또 Design Style 헤더의 현재 시안의 시각 규칙 부제가 불필요했고, 세 섹션 타이틀 표기도 제각각이었다.
+- 수정:
+  - Design Brief(`idea-note-section`)를 Design Style과 같은 헤더 클릭 아코디언(ChevronDown 회전)으로 통일하고 기존 페이드 + 하단 pill을 제거했다. 브리프는 기본 노출이 자연스러우므로 `isIdeaExpanded` 기본값을 펼침(true)으로 두었다.
+  - Design Style(`design-style-section`)에서 현재 시안의 시각 규칙/아직 정의되지 않음 부제와 중복되던 바깥 Style 타이틀을 제거했다. 설정됨/미정의 badge는 유지.
+  - 세 섹션 타이틀을 Design Brief (디자인 브리프), Design Style (디자인 스타일), Mockup (목업)으로 통일하고 같은 text-base/semibold 스타일을 적용했다. 영어는 제품 투어/빈 상태 문구와 같은 기존 용어 Mockup을 따르고, 한국어를 slate-400으로 병기한다.
+  - IdeaNoteSection의 미사용 `title` prop(시안 제목 라벨)을 제거했다.
+  - Brief/Style 빈 상태 문구가 크기(text-sm vs text-xs)와 톤이 달라 둘 다 text-sm/slate-400과 "아직 ~가 없어요. 에이전트에게 ~ 요청해 보세요." 형태로 통일했다.
+- 검증: tsc 통과, 변경 파일 ESLint 0 error. 실제 시안 화면에서 세 섹션 타이틀과 Brief/Style 아코디언 동작, 브리프 기본 펼침을 라이브 확인이 필요하다.
+
+### 15.104 세션 UI shadcn 프리미티브 점진 표준화 `[implemented 2026-06-21, 진행 중]`
+
+- 배경(QA Note `shadcn 점진 표준화`): shadcn 셋업(components.json radix-nova, `src/components/ui/`)은 있으나 세션 화면이 raw button + slate 하드코딩으로 짜여 비일관적이었다. 토큰은 중립 그레이스케일이라 primary는 기존 slate-900과 사실상 같고, destructive는 솔리드가 아니라 연한 틴트다.
+- 원칙: 토큰이 잘 맞는 중립 버튼/뱃지만 ui/Button·ui/Badge로 옮기고, indigo/violet 강조와 커스텀 composite(탭/카드/토글)는 유지한다. 의도적 pill 모양은 className으로 보존한다.
+- 적용:
+  - Phase 1 chat-input: 전송/카탈로그 토글/카탈로그 닫기 X를 ui/Button으로, 이미지 첨부 label은 buttonVariants로 통일.
+  - Phase 2: 상태 뱃지를 ui/Badge로(reference-card tag/purpose, design-style 설정됨/미정의, mission-brief 디바이스), 풀폭 primary CTA를 ui/Button으로(mission-option-selection 다음, main setup 세션 시작하기).
+  - Phase 3: chat-input 취소/중단 버튼을 variant destructive(연한 틴트)로 통일. 기존 솔리드 빨강 대비 차분해지는 시각 변화가 있으며, 솔리드가 필요하면 className으로 복원한다.
+- 범위 밖/후속: chat-panel/chat-bubble 및 page.tsx의 나머지 버튼은 케이스별 후속. 진행 상황은 QA Note 추적 문서에 단계별로 기록한다.
+- 검증: 각 단계 tsc 통과, 변경 파일 ESLint 0 error. 외형 라이브 확인 필요(특히 destructive 틴트, 뱃지 크기).

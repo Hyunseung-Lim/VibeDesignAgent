@@ -54,6 +54,7 @@ import { ChatBubble } from "@/components/session/chat-bubble";
 import { ChatCapabilityCatalog } from "@/components/session/chat-capability-catalog";
 import { ChatInput } from "@/components/session/chat-input";
 import { Spinner } from "@/components/ui/spinner";
+import { Button } from "@/components/ui/button";
 import { ChatPanel } from "@/components/session/chat-panel";
 import { DesignStyleSection } from "@/components/session/design-style-section";
 import { FinalDesignSelector } from "@/components/session/final-design-selector";
@@ -1800,7 +1801,7 @@ export default function MainScreenPage() {
   >("mission");
   const [activeIdeaTab, setActiveIdeaTab] = useState("idea");
   const [activeIdeaId, setActiveIdeaId] = useState<string | null>(null);
-  const [isIdeaExpanded, setIsIdeaExpanded] = useState(false);
+  const [isIdeaExpanded, setIsIdeaExpanded] = useState(true);
   const [isOptionExpanded, setIsOptionExpanded] = useState(true);
   const [userId, setUserId] = useState<string | null>(null);
   const [isFetchingRefs, setIsFetchingRefs] = useState(false);
@@ -6495,7 +6496,7 @@ export default function MainScreenPage() {
           {/* Session start button */}
           <div className="border-t border-slate-200 bg-white px-8 py-4">
             <div className="mx-auto max-w-3xl">
-              <button
+              <Button
                 disabled={profileSaving}
                 onClick={async () => {
                   const currentUser = firebaseAuth.currentUser;
@@ -6527,7 +6528,7 @@ export default function MainScreenPage() {
                     void persistSessionSnapshot(startedAt);
                   }
                 }}
-                className="flex w-full cursor-pointer items-center justify-center gap-2 rounded-2xl bg-slate-900 py-3.5 text-sm font-semibold text-white transition hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
+                className="h-auto w-full rounded-2xl py-3.5 text-sm font-semibold"
               >
                 {profileSaving ? (
                   <>
@@ -6539,7 +6540,7 @@ export default function MainScreenPage() {
                 ) : (
                   "세션 시작하기"
                 )}
-              </button>
+              </Button>
             </div>
           </div>
         </main>
@@ -6654,7 +6655,6 @@ export default function MainScreenPage() {
                     <>
                       <IdeaNoteSection
                         sectionRef={ideaSectionRef}
-                        title={idea?.title ?? ""}
                         description={idea?.description ?? ""}
                         expanded={isIdeaExpanded}
                         onToggleExpanded={() =>

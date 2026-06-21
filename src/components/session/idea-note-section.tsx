@@ -1,12 +1,11 @@
 "use client";
 
 import type { RefObject } from "react";
-import { ChevronDown, ChevronUp } from "lucide-react";
+import { ChevronDown } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 
 type IdeaNoteSectionProps = {
   sectionRef: RefObject<HTMLElement | null>;
-  title: string;
   description: string;
   expanded: boolean;
   onToggleExpanded: () => void;
@@ -14,7 +13,6 @@ type IdeaNoteSectionProps = {
 
 export function IdeaNoteSection({
   sectionRef,
-  title,
   description,
   expanded,
   onToggleExpanded,
@@ -23,27 +21,28 @@ export function IdeaNoteSection({
     <section
       ref={sectionRef}
       data-tour="idea-brief"
-      className="space-y-4 scroll-mt-4"
+      className="space-y-3 scroll-mt-4"
     >
-      <div className="flex items-center justify-between">
-        <div className="space-y-1">
-          {title && (
-            <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">
-              {title}
-            </p>
-          )}
-          <p className="text-base font-semibold text-slate-900">
-            Design Brief
-          </p>
-        </div>
-      </div>
-
-      <div className="relative rounded-2xl border border-slate-100 bg-white shadow-sm">
-        <div
-          className={`space-y-2 px-5 pb-14 pt-5 text-sm text-slate-700 ${
-            expanded ? "max-h-[60vh] overflow-y-auto" : "max-h-64 overflow-hidden"
-          }`}
+      <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+        <button
+          type="button"
+          onClick={onToggleExpanded}
+          className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left transition hover:bg-slate-50"
         >
+          <p className="text-base font-semibold text-slate-900">
+            Design Brief <span className="text-slate-400">(디자인 브리프)</span>
+          </p>
+          <span className="flex size-7 shrink-0 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500">
+            <ChevronDown
+              size={14}
+              className={`transition-transform ${expanded ? "rotate-180" : ""}`}
+              aria-hidden="true"
+            />
+          </span>
+        </button>
+
+        {expanded && (
+          <div className="max-h-[60vh] space-y-2 overflow-y-auto border-t border-slate-100 px-5 py-4 text-sm text-slate-700">
           {description ? (
             <ReactMarkdown
               components={{
@@ -110,23 +109,13 @@ export function IdeaNoteSection({
               {description}
             </ReactMarkdown>
           ) : (
-            <p className="text-slate-400">아직 작성된 Design Brief가 없습니다.</p>
+            <p className="text-sm text-slate-400">
+              아직 작성된 Design Brief가 없어요. 에이전트에게 시안 작성을
+              요청해 보세요.
+            </p>
           )}
-        </div>
-
-        {!expanded && (
-          <div className="pointer-events-none absolute inset-x-0 bottom-0 h-20 bg-linear-to-t from-white via-white to-transparent" />
+          </div>
         )}
-        <div className="absolute inset-x-0 bottom-3 z-10 flex justify-center">
-          <button
-            type="button"
-            onClick={onToggleExpanded}
-            className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-3 py-1 text-xs text-slate-500 shadow-sm transition hover:bg-slate-50"
-          >
-            {expanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
-            {expanded ? "접기" : "펼치기"}
-          </button>
-        </div>
       </div>
     </section>
   );
