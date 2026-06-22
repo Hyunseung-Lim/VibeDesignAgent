@@ -4,6 +4,10 @@ import { Brain, ChevronDown, ChevronUp, TriangleAlert } from "lucide-react";
 import { ToolActionChip, type ToolActionChipData } from "./tool-action-chip";
 import { RetrievedMemoryBadge } from "@/components/memory/retrieved-memory-badge";
 import { Spinner } from "@/components/ui/spinner";
+import type {
+  ChatComposerCommand,
+  ChatComposerMention,
+} from "@/lib/session/chat-composer";
 
 export type ChatBubbleMessage = {
   id: string;
@@ -15,6 +19,8 @@ export type ChatBubbleMessage = {
   citedReferences?: { id: string; title: string; imageUrl?: string }[] | null;
   citedTexts?: string[] | null;
   styleImage?: { dataUrl: string; name?: string } | null;
+  composerCommand?: ChatComposerCommand | null;
+  composerMention?: ChatComposerMention | null;
   error?: string;
 };
 
@@ -97,6 +103,20 @@ export function ChatBubble({
       >
         {isUser ? (
           <div className="space-y-1.5">
+            {(message.composerCommand || message.composerMention) && (
+              <div className="flex flex-wrap justify-end gap-1">
+                {message.composerCommand && (
+                  <span className="rounded-full bg-white/20 px-2 py-0.5 text-xs font-medium text-white/90">
+                    {message.composerCommand.label}
+                  </span>
+                )}
+                {message.composerMention && (
+                  <span className="rounded-full bg-indigo-300/20 px-2 py-0.5 text-xs font-medium text-indigo-100">
+                    @{message.composerMention.label}
+                  </span>
+                )}
+              </div>
+            )}
             {message.styleImage && (
               <div className="flex justify-end">
                 <img

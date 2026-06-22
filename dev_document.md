@@ -141,6 +141,7 @@
 
 ### 4.6 AI 채팅
 
+- **구조화 composer 문법**: `/`는 새 산출물 생성 명령(`/시안생성`, `/디자인스타일생성`, `/목업생성`, `/레퍼런스검색`), `@`는 현재 세션에 이미 존재하는 시안/Design Brief/Design Style/Mockup 언급이다. 대상이 없으면 현재 활성 시안을 사용하고, `@디자인스타일` 같은 검색은 dropdown에서 `시안 N · 디자인 스타일` 실제 대상을 확인한 뒤 ID 기반 chip으로 고정한다. 레퍼런스 카드·텍스트 하이라이트·목업 요소는 기존 전용 선택/인용 UI를 유지하며 `@`에 중복 노출하지 않는다. 명령/언급은 plain text 파싱이 아니라 구조화 metadata로 `/api/chat`과 review/memory context에 전달되고 명시적 `/` 명령이 planner 추론보다 우선한다. `src/lib/session/chat-composer.ts`, `src/components/session/chat-input.tsx`, `src/app/api/chat/route.ts`를 직접 확인 `[현행 2026-06-22 → 15.108]`
 - **응답 생성 provider**: 기본 OpenAI `gpt-5.4` (Responses API). `CHAT_RESPONSE_PROVIDER=anthropic` 또는 `LLM_PROVIDER=anthropic`이면 최종 chat 응답 생성만 Claude Messages API로 전환
 - **Provider 범위**: planner, embedding, memory retrieval/encoding, clustering label은 기존 OpenAI 경로 유지. `/api/chat`의 최종 assistant response streaming만 provider switch 대상. Admin UI에서는 메인 채팅 헤더의 LLM selector로 turn별 provider override 가능
 - **웹 검색**: OpenAI provider일 때 `web_search_preview` 툴 활성화, 레퍼런스 URL 인용 시 `tool_choice: "required"`로 강제. Anthropic provider일 때는 prompt에 포함된 reference title/url context를 사용하고 web search tool은 호출하지 않음
@@ -3325,3 +3326,53 @@ type ChatPlan = {
   - 중복된 admin clustering route 구현을 제거하고 공용 `memoryClustering.ts`의 cache path, graph community 생성, LLM labeling, 저장 로직을 호출하도록 교체했다.
   - 기존 compact-context cache path가 self/admin 양쪽에서 같으므로 같은 uid와 item signature의 결과를 그대로 공유한다.
 - 검증: `./node_modules/.bin/tsc --noEmit`, 관련 파일 ESLint(0 error, 기존 admin warning만 유지), `git diff --check`, `npm run build` 통과. Build의 기존 presentation route NFT trace warning은 유지. 실제 admin 계정에서 유저 카드 → 페이지 이동, back navigation, cache load/regenerate는 라이브 확인이 필요하다.
+
+### 15.108 채팅 composer의 `/` 생성 명령과 `@` 기존 산출물 언급 `[implemented 2026-06-22]`
+
+- 배경:
+  - 15.90의 ✨ 능력 카탈로그는 가능한 작업과 예문을 보여주지만, 사용자가 고른 작업을 구조화된 intent로 전달하지 않고 자연어를 입력창에 복사하는 데 그친다.
+  - `시안`은 Design Brief, Design Style, Mockup을 포함하는 상위 작업 단위인데, 기존 카탈로그의 `시안 잡기`가 실제로는 Design Brief 생성과 같은 의미로 쓰여 용어가 혼재했다.
+  - 레퍼런스 카드 선택, 텍스트 하이라이트 인용, 목업 요소 선택은 이미 전용 UI와 구조화된 전송 경로가 있다. 이를 `@` 자동완성으로 다시 제공하면 같은 기능의 진입점만 중복된다.
+- 결정:
+  - `/`는 존재하지 않는 산출물을 만드는 명시적 생성 액션, `@`는 이미 존재하는 시안/산출물을 언급하는 문법으로 분리한다.
+  - 별도 대상이 없으면 현재 활성 시안 탭을 기본 대상으로 사용한다. 일반적인 현재 시안 작업에는 `@시안 N`을 요구하지 않는다.
+  - `/시안생성`은 새 시안 컨테이너와 그 시안의 Design Brief를 함께 생성하고 새 탭을 활성화한다. 따라서 일반 흐름에서는 `/디자인브리프생성`을 별도 노출하지 않는다.
+  - 1차 `/` 목록은 `/시안생성`, `/디자인스타일생성`, `/목업생성`, `/레퍼런스검색`으로 제한한다. 실제 동작이 검색이므로 `레퍼런스생성`이라는 이름은 사용하지 않는다.
+  - `@디자인브리프`, `@디자인스타일`, `@목업`은 현재 활성 시안에 존재하는 해당 산출물의 contextual shortcut이다. 자동완성 결과에는 `시안 N · 디자인 스타일`처럼 실제 결합 대상을 표시하고, 선택 시점의 `ideaId`와 artifact type에 고정한다.
+  - 다른 시안을 직접 지목할 때는 동적으로 `@시안 1`, `@시안 2` 등을 제공한다. 해당 시안을 검색한 경우 존재하는 하위 산출물도 `시안 N · Design Brief/Design Style/Mockup` 결과로 찾을 수 있다. 사용자에게 이 긴 조합을 직접 입력하도록 요구하지 않고 dropdown이 완성한다.
+  - 존재하지 않는 산출물은 `@` 결과에 표시하지 않는다. 예를 들어 현재 시안에 Design Style이 없으면 `@디자인스타일` 대신 `/디자인스타일생성` 안내를 보여준다.
+  - 레퍼런스/텍스트/선택 요소는 `@` 목록에 넣지 않는다. 레퍼런스 카드 선택 → citation tray, 텍스트 하이라이트 → cited text tray, 목업 클릭 → selected element pill이라는 현행 전용 UI를 유지한다. 발표와 요소 수정도 `/` 또는 `@` 항목으로 만들지 않고 자연어 + 기존 선택 상태로 처리한다.
+- composer UX:
+  - textarea에서 단어 시작 위치의 `/` 또는 `@`를 감지해 입력창 위 dropdown을 연다. `/`는 생성 명령, `@`는 현재 세션에 실제로 존재하는 시안/산출물만 검색한다.
+  - 방향키 이동, Enter/Tab 선택, Escape 닫기, 바깥 클릭 닫기를 지원한다. IME 조합 중에는 확정/전송 단축키를 실행하지 않는다.
+  - 1차 구현에서는 textarea를 `contenteditable` 기반 리치 에디터로 바꾸지 않는다. 자동완성 선택 시 trigger query를 textarea에서 제거하고, 기존 citation tray와 같은 composer chip으로 명령/언급을 표시한다. chip 삭제 시 구조화 상태도 함께 제거한다.
+  - 한 turn에는 생성 명령을 최대 1개만 허용한다. 명령 chip과 언급 chip은 일반 요청 텍스트, 기존 citation tray, 첨부 이미지와 함께 사용할 수 있다.
+  - 현재 시안 contextual shortcut은 선택 당시 `ideaId`를 chip에 저장한다. 다른 시안을 선택하면 해당 탭도 활성화하고, 사용자가 이후 탭을 직접 바꾸면 이전 언급 chip을 해제해 화면의 활성 대상과 숨은 target이 어긋나지 않게 한다.
+  - ✨ 카탈로그 버튼은 `/` 명령 팔레트를 여는 slash/command 아이콘으로 교체한다. 클릭은 `/`를 직접 입력한 것과 같은 dropdown을 열고, 이미지 첨부 버튼은 유지한다. placeholder는 `/로 만들기 · @로 기존 항목 언급`의 의미를 짧게 안내한다.
+  - 빈 채팅의 능력 카탈로그는 제거하지 않고 새 문법의 발견성 안내로 축약한다. 각 단계의 긴 예문 목록 대신 `/` 생성 명령과 현재 활성 시안 기본 규칙을 보여준다.
+- 구조화 상태와 전송 계약:
+  - client composer에 `ComposerCommand`와 `ComposerMention` 상태를 둔다. mention은 최소 `kind`, `ideaId`, `artifactId?`, `label`을 가지며 표시 문자열을 식별자로 사용하지 않는다.
+  - `/api/chat` 요청에 plain text와 별도로 `requestedCommand` 및 `mentionedArtifact`를 전달한다. client dropdown은 현재 UI 상태와 선행 조건으로 생성 명령을 비활성화하고, 서버는 command/mention allowlist와 identifier를 검증한 후 planner 결과보다 명시적 명령을 우선한다.
+  - 명령 매핑은 `/시안생성` → 새 idea 강제 + `create_note`, `/디자인스타일생성` → `create_design_spec`, `/목업생성` → `generate_mockup`, `/레퍼런스검색` → `fetch_references`다.
+  - `/시안생성`은 현재의 자연어 fork 휴리스틱에 의존하지 않고 explicit new-idea flag로 새 시안을 만든다. 나머지 시안 종속 명령은 mention의 `ideaId`, 없으면 전송 시점의 `activeIdeaId`를 대상으로 한다.
+  - 명령/언급 metadata는 user message와 review turn에 저장해 재접속 시 표시, admin prompt 진단, memory draft의 실제 입력 맥락이 서로 어긋나지 않게 한다. 모델에 보낼 때는 raw token 문자열 파싱에 의존하지 않고 구조화 metadata를 system context로 직렬화한다.
+  - planner/API 실패 시 임의의 다른 생성 intent로 fallback하지 않는다. 명시적 명령의 선행 조건이 맞지 않으면 현재 시안에 무엇이 부족한지 채팅 오류/안내로 반환한다.
+- 구현 순서:
+  1. command/mention 타입, 명령 allowlist, 현재 시안 기반 자동완성 데이터와 순수 target resolution helper를 추가한다.
+  2. `ChatInput`에 `/`·`@` trigger dropdown, 키보드 조작, command/mention chip, ✨ 버튼 교체를 구현한다.
+  3. `/main/[missionId]`에서 composer 상태와 활성 시안/산출물 데이터를 연결하고, send snapshot·초기화·메시지 영속화를 추가한다.
+  4. `/api/chat` request schema, planner override, 선행 조건 검증, review 기록을 추가한다.
+  5. 명시적 `/시안생성`의 새 idea 생성과 기존 action 처리 경로를 연결하고, 자연어 fork 및 현재 active idea 처리와 충돌하지 않는지 정리한다.
+  6. 15.90의 카탈로그/제품 투어/빈 상태 설명을 새 문법에 맞게 갱신하고, 구현 완료 시 1~9장 Current Snapshot의 채팅 입력 계약도 같은 커밋에서 동기화한다.
+- 검증 계획:
+  - 현재 시안이 1/2일 때 `@디자인브리프`가 각각 올바른 `ideaId`에 고정되고, 선택 후 탭 변경에도 대상이 변하지 않는지 확인한다.
+  - 존재/미존재 Design Style과 Mockup에 따라 `@` 결과와 `/` 생성 안내가 올바르게 달라지는지 확인한다.
+  - `/시안생성`이 새 시안 + substantive Design Brief를 한 번만 만들고 새 탭을 활성화하는지, `/디자인스타일생성`과 `/목업생성`이 현재 또는 명시된 시안만 갱신하는지 확인한다.
+  - 레퍼런스 카드, 텍스트 인용, 선택 요소의 현행 선택·해제·전송이 바뀌지 않고 `@` 목록에 중복 노출되지 않는지 회귀 검증한다.
+  - 한글 IME, Enter 전송, Shift+Enter 줄바꿈, dropdown 키보드 탐색, 명령/언급 chip 삭제, 요청 취소 후 composer 초기화를 확인한다.
+  - TypeScript, 변경 파일 ESLint, `git diff --check`, production build와 실제 provider를 통한 command별 라이브 요청을 검증한다.
+- 구현/검증 결과:
+  - `src/lib/session/chat-composer.ts`에 공용 command/mention 계약과 검색 normalization을 추가하고, `ChatInput`에 `/`·`@` dropdown, 키보드/IME 처리, 구조화 chip, slash toolbar 버튼을 연결했다.
+  - 메시지/메모리 입력/review turn/API prompt에 command와 mention metadata를 보존하고, `/api/chat`이 명시적 command를 planner intent보다 우선하도록 연결했다. `/시안생성`은 기존 시안이 있어도 새 `CREATE_NOTE` 결과를 새 시안으로 materialize하며 명시적 command turn에는 자연어 style-fork 휴리스틱을 적용하지 않는다.
+  - 빈 채팅 catalog와 제품 투어를 새 문법으로 갱신했다. 레퍼런스/텍스트/선택 요소의 기존 citation UI는 변경하지 않았다.
+  - `./node_modules/.bin/tsc --noEmit`, 변경 파일 ESLint(0 error, 기존 warning만), `git diff --check`, `npm run build` 통과. Build의 기존 presentation route NFT trace warning은 유지. 실제 provider command별 end-to-end와 한글 IME dropdown 조작은 라이브 확인이 필요하다.

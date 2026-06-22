@@ -2,11 +2,15 @@
 
 import type { ChangeEvent, KeyboardEvent, RefObject } from "react";
 import { useState } from "react";
-import { ArrowUp, ImagePlus, Sparkles, X } from "lucide-react";
-import { ChatCapabilityCatalog } from "./chat-capability-catalog";
+import { ArrowUp, ImagePlus, X } from "lucide-react";
 import { Spinner } from "@/components/ui/spinner";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import {
+  matchesComposerSearch,
+  type ChatComposerCommand,
+  type ChatComposerMention,
+} from "@/lib/session/chat-composer";
 
 export type ChatInputSelectedElement = {
   selector: string;
@@ -26,6 +30,10 @@ type ChatInputProps = {
   styleImage: { dataUrl: string; name?: string } | null;
   textareaRef: RefObject<HTMLTextAreaElement | null>;
   inputText: string;
+  composerCommand: ChatComposerCommand | null;
+  composerMention: ChatComposerMention | null;
+  commandOptions: ChatComposerCommand[];
+  mentionOptions: ChatComposerMention[];
   missionContextReady: boolean;
   generatingMockup: boolean;
   loading: boolean;
@@ -39,12 +47,37 @@ type ChatInputProps = {
   onAttachStyleImage: (file: File) => void;
   onClearStyleImage: () => void;
   onInputChange: (event: ChangeEvent<HTMLTextAreaElement>) => void;
+  onInputTextChange: (value: string) => void;
   onKeyDown: (event: KeyboardEvent<HTMLTextAreaElement>) => void;
   onCancelMockupGeneration: () => void;
   onCancelMessage: () => void;
   onSendMessage: () => void;
-  onPickCatalogExample: (example: string) => void;
+  onSelectComposerCommand: (command: ChatComposerCommand) => void;
+  onClearComposerCommand: () => void;
+  onSelectComposerMention: (mention: ChatComposerMention) => void;
+  onClearComposerMention: () => void;
 };
+
+type ComposerTrigger = {
+  mode: "command" | "mention";
+  start: number;
+  end: number;
+  query: string;
+};
+
+function findComposerTrigger(value: string, caret: number): ComposerTrigger | null {
+  const beforeCaret = value.slice(0, caret);
+  const match = beforeCaret.match(/(^|\s)([/@])([^\s/@]*)$/);
+  if (!match || match.index === undefined) return null;
+  const prefixLength = match[1]?.length ?? 0;
+  const start = match.index + prefixLength;
+  return {
+    mode: match[2] === "/" ? "command" : "mention",
+    start,
+    end: caret,
+    query: match[3] ?? "",
+  };
+}
 
 export function ChatInput({
   readOnly,
@@ -54,6 +87,10 @@ export function ChatInput({
   styleImage,
   textareaRef,
   inputText,
+  composerCommand,
+  composerMention,
+  commandOptions,
+  mentionOptions,
   missionContextReady,
   generatingMockup,
   loading,
@@ -67,13 +104,73 @@ export function ChatInput({
   onAttachStyleImage,
   onClearStyleImage,
   onInputChange,
+  onInputTextChange,
   onKeyDown,
   onCancelMockupGeneration,
   onCancelMessage,
   onSendMessage,
-  onPickCatalogExample,
+  onSelectComposerCommand,
+  onClearComposerCommand,
+  onSelectComposerMention,
+  onClearComposerMention,
 }: ChatInputProps) {
-  const [catalogOpen, setCatalogOpen] = useState(false);
+  const [trigger, setTrigger] = useState<ComposerTrigger | null>(null);
+  const [activeOptionIndex, setActiveOptionIndex] = useState(0);
+  const filteredOptions = trigger
+    ? trigger.mode === "command"
+      ? commandOptions.filter((option) =>
+          matchesComposerSearch(
+            `${option.label} ${option.description}`,
+            trigger.query,
+          ),
+        )
+      : mentionOptions.filter((option) =>
+          matchesComposerSearch(option.searchText, trigger.query),
+        )
+    : [];
+
+  const closeSuggestions = () => {
+    setTrigger(null);
+    setActiveOptionIndex(0);
+  };
+
+  const selectOption = (index: number) => {
+    if (!trigger) return;
+    const option = filteredOptions[index];
+    if (!option || ("disabledReason" in option && option.disabledReason)) return;
+    const before = inputText.slice(0, trigger.start);
+    const after = inputText.slice(trigger.end);
+    onInputTextChange(`${before}${after}`.replace(/\s{2,}/g, " "));
+    if (trigger.mode === "command") {
+      onSelectComposerCommand(option as ChatComposerCommand);
+    } else {
+      onSelectComposerMention(option as ChatComposerMention);
+    }
+    closeSuggestions();
+    window.setTimeout(() => textareaRef.current?.focus(), 0);
+  };
+
+  const openCommandPalette = () => {
+    if (trigger?.mode === "command") {
+      onInputTextChange(
+        `${inputText.slice(0, trigger.start)}${inputText.slice(trigger.end)}`,
+      );
+      closeSuggestions();
+      return;
+    }
+    const textarea = textareaRef.current;
+    const caret = textarea?.selectionStart ?? inputText.length;
+    const separator = caret > 0 && !/\s/.test(inputText[caret - 1] ?? "") ? " " : "";
+    const next = `${inputText.slice(0, caret)}${separator}/${inputText.slice(caret)}`;
+    const start = caret + separator.length;
+    onInputTextChange(next);
+    setTrigger({ mode: "command", start, end: start + 1, query: "" });
+    setActiveOptionIndex(0);
+    window.setTimeout(() => {
+      textareaRef.current?.focus();
+      textareaRef.current?.setSelectionRange(start + 1, start + 1);
+    }, 0);
+  };
   return (
     <div className="border-t border-slate-200 bg-white/95 p-4">
       {readOnly && (
@@ -95,6 +192,37 @@ export function ChatInput({
           >
             <X size={12} />
           </button>
+        </div>
+      )}
+
+      {!readOnly && (composerCommand || composerMention) && (
+        <div className="mb-2 flex flex-wrap gap-1.5 text-xs">
+          {composerCommand && (
+            <span className="flex items-center gap-1 rounded-full bg-slate-900 px-2.5 py-1 font-medium text-white">
+              {composerCommand.label}
+              <button
+                type="button"
+                onClick={onClearComposerCommand}
+                aria-label={`${composerCommand.label} 해제`}
+                className="text-white/60 hover:text-white"
+              >
+                <X size={12} />
+              </button>
+            </span>
+          )}
+          {composerMention && (
+            <span className="flex items-center gap-1 rounded-full bg-indigo-50 px-2.5 py-1 font-medium text-indigo-700">
+              @{composerMention.label}
+              <button
+                type="button"
+                onClick={onClearComposerMention}
+                aria-label={`${composerMention.label} 언급 해제`}
+                className="text-indigo-400 hover:text-indigo-700"
+              >
+                <X size={12} />
+              </button>
+            </span>
+          )}
         </div>
       )}
 
@@ -200,30 +328,82 @@ export function ChatInput({
 
       {!readOnly && (
         <div className="relative flex flex-col gap-2 rounded-3xl border border-slate-200 bg-white px-4 py-3 transition-colors focus-within:border-slate-400">
-          {catalogOpen && (
+          {trigger && (
             <>
               <button
                 type="button"
-                aria-label="능력 카탈로그 닫기"
-                onClick={() => setCatalogOpen(false)}
+                aria-label="자동완성 닫기"
+                onClick={closeSuggestions}
                 className="fixed inset-0 z-10 cursor-default"
               />
-              <div className="absolute bottom-full left-0 z-20 mb-2 w-80 max-w-[calc(100%-1rem)] rounded-2xl border border-slate-200 bg-white p-4 shadow-lg">
-                <Button
-                  variant="ghost"
-                  size="icon-xs"
-                  aria-label="닫기"
-                  onClick={() => setCatalogOpen(false)}
-                  className="absolute right-3 top-3 rounded-full text-slate-400 hover:text-slate-600"
-                >
-                  <X size={14} />
-                </Button>
-                <ChatCapabilityCatalog
-                  onPick={(example) => {
-                    onPickCatalogExample(example);
-                    setCatalogOpen(false);
-                  }}
-                />
+              <div className="absolute bottom-full left-0 z-20 mb-2 w-80 max-w-[calc(100%-1rem)] overflow-hidden rounded-2xl border border-slate-200 bg-white p-2 shadow-lg">
+                <p className="px-2 py-1 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+                  {trigger.mode === "command"
+                    ? "새로 만들기"
+                    : "기존 항목 언급"}
+                </p>
+                {filteredOptions.length > 0 ? (
+                  <div className="flex flex-col gap-0.5">
+                    {filteredOptions.map((option, index) => {
+                      const disabledReason =
+                        "disabledReason" in option
+                          ? option.disabledReason
+                          : undefined;
+                      return (
+                        <button
+                          key={
+                            "id" in option && trigger.mode === "command"
+                              ? option.id
+                              : `${(option as ChatComposerMention).kind}-${(option as ChatComposerMention).ideaId}-${(option as ChatComposerMention).artifactId ?? "idea"}`
+                          }
+                          type="button"
+                          disabled={Boolean(disabledReason)}
+                          onMouseDown={(event) => event.preventDefault()}
+                          onMouseEnter={() => setActiveOptionIndex(index)}
+                          onClick={() => selectOption(index)}
+                          className={cn(
+                            "flex w-full items-start justify-between gap-3 rounded-xl px-3 py-2 text-left transition",
+                            index === activeOptionIndex &&
+                              !disabledReason &&
+                              "bg-indigo-50",
+                            disabledReason
+                              ? "cursor-not-allowed text-slate-300"
+                              : "text-slate-700 hover:bg-indigo-50",
+                          )}
+                        >
+                          <span className="min-w-0">
+                            <span className="block truncate text-sm font-medium">
+                              {trigger.mode === "command"
+                                ? (option as ChatComposerCommand).label
+                                : (option as ChatComposerMention).label}
+                            </span>
+                            <span className="block truncate text-[11px] text-slate-400">
+                              {trigger.mode === "command"
+                                ? disabledReason ||
+                                  (option as ChatComposerCommand).description
+                                : (option as ChatComposerMention).kind === "idea"
+                                  ? "시안"
+                                  : "기존 산출물"}
+                            </span>
+                          </span>
+                          {trigger.mode === "mention" &&
+                            (option as ChatComposerMention).ideaId ===
+                              mentionOptions[0]?.ideaId && (
+                              <span className="shrink-0 rounded-full bg-slate-100 px-2 py-0.5 text-[10px] text-slate-500">
+                                현재 시안
+                              </span>
+                            )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <p className="px-3 py-4 text-center text-xs text-slate-400">
+                    {trigger.mode === "mention"
+                      ? "일치하는 기존 산출물이 없습니다. /로 새로 만들 수 있어요."
+                      : "일치하는 명령이 없습니다."}
+                  </p>
+                )}
               </div>
             </>
           )}
@@ -231,8 +411,50 @@ export function ChatInput({
             ref={textareaRef}
             rows={1}
             value={inputText}
-            onChange={onInputChange}
-            onKeyDown={onKeyDown}
+            onChange={(event) => {
+              onInputChange(event);
+              const caret = event.currentTarget.selectionStart;
+              const nextTrigger = findComposerTrigger(
+                event.currentTarget.value,
+                caret,
+              );
+              setTrigger(nextTrigger);
+              setActiveOptionIndex(0);
+            }}
+            onKeyDown={(event) => {
+              if (
+                trigger &&
+                filteredOptions.length > 0 &&
+                !event.nativeEvent.isComposing
+              ) {
+                if (event.key === "ArrowDown") {
+                  event.preventDefault();
+                  setActiveOptionIndex((index) =>
+                    (index + 1) % filteredOptions.length,
+                  );
+                  return;
+                }
+                if (event.key === "ArrowUp") {
+                  event.preventDefault();
+                  setActiveOptionIndex((index) =>
+                    (index - 1 + filteredOptions.length) %
+                    filteredOptions.length,
+                  );
+                  return;
+                }
+                if (event.key === "Enter" || event.key === "Tab") {
+                  event.preventDefault();
+                  selectOption(activeOptionIndex);
+                  return;
+                }
+              }
+              if (trigger && event.key === "Escape") {
+                event.preventDefault();
+                closeSuggestions();
+                return;
+              }
+              onKeyDown(event);
+            }}
             onPaste={(event) => {
               const items = event.clipboardData?.items;
               if (!items) return;
@@ -251,7 +473,7 @@ export function ChatInput({
             disabled={!missionContextReady}
             placeholder={
               missionContextReady
-                ? "에이전트에게 메시지를 입력하세요..."
+                ? "/로 만들기 · @로 기존 항목 언급"
                 : "미션 정보를 불러오는 중입니다..."
             }
             className="max-h-40 w-full resize-none bg-transparent px-1 text-sm text-slate-700 outline-none focus-visible:outline-none placeholder:text-slate-400"
@@ -261,18 +483,17 @@ export function ChatInput({
               <Button
                 variant="ghost"
                 size="icon"
-                data-tour="chat-capability-catalog"
-                title="부탁할 수 있는 것들 보기"
-                onClick={() => setCatalogOpen((prev) => !prev)}
+                data-tour="chat-command-palette"
+                title="새로 만들기 명령"
+                onClick={openCommandPalette}
                 disabled={!missionContextReady}
-                aria-pressed={catalogOpen}
                 className={cn(
-                  "rounded-full text-slate-400 hover:text-slate-600",
-                  catalogOpen &&
+                  "rounded-full font-mono text-lg text-slate-400 hover:text-slate-600",
+                  trigger?.mode === "command" &&
                     "text-indigo-600 hover:bg-indigo-50 hover:text-indigo-600",
                 )}
               >
-                <Sparkles size={18} />
+                /
               </Button>
               <label
                 title="스타일 참고 이미지 첨부 (이 이미지처럼 목업 생성)"
@@ -324,7 +545,10 @@ export function ChatInput({
               <Button
                 size="icon"
                 onClick={onSendMessage}
-                disabled={!inputText.trim() || !missionContextReady}
+                disabled={
+                  (!inputText.trim() && !composerCommand) ||
+                  !missionContextReady
+                }
                 aria-label="보내기"
                 className="rounded-full"
               >

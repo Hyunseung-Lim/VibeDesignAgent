@@ -23,6 +23,7 @@ import {
   chatReferencePreferencePrompt,
   chatPlannerPrompt,
 } from "@/lib/prompts";
+import type { ChatComposerCommandId } from "@/lib/session/chat-composer";
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 type ChatResponseProvider = "openai" | "anthropic";
@@ -259,6 +260,63 @@ type ChatPlan = {
   needs: ChatPlanNeeds;
   reason: string;
 };
+
+const CHAT_COMPOSER_COMMAND_IDS = new Set<ChatComposerCommandId>([
+  "create_idea",
+  "create_design_style",
+  "generate_mockup",
+  "fetch_references",
+]);
+
+function normalizeRequestedCommand(value: unknown): ChatComposerCommandId | null {
+  if (!value || typeof value !== "object") return null;
+  const id = String((value as Record<string, unknown>).id ?? "");
+  return CHAT_COMPOSER_COMMAND_IDS.has(id as ChatComposerCommandId)
+    ? (id as ChatComposerCommandId)
+    : null;
+}
+
+const CHAT_COMPOSER_MENTION_KINDS = new Set([
+  "idea",
+  "design_brief",
+  "design_style",
+  "mockup",
+]);
+
+function normalizeMentionIdentifier(value: unknown) {
+  return String(value ?? "")
+    .replace(/[^a-zA-Z0-9_-]/g, "")
+    .slice(0, 200);
+}
+
+function forceRequestedCommand(
+  plan: ChatPlan,
+  command: ChatComposerCommandId | null,
+): ChatPlan {
+  if (!command) return plan;
+  const intentByCommand: Record<ChatComposerCommandId, ChatPlanIntent> = {
+    create_idea: "create_note",
+    create_design_style: "create_design_spec",
+    generate_mockup: "generate_mockup",
+    fetch_references: "fetch_references",
+  };
+  const intent = intentByCommand[command];
+  return {
+    ...plan,
+    intent,
+    confidence: 1,
+    needs: {
+      ...plan.needs,
+      mission: true,
+      activeIdea: command !== "create_idea" && command !== "fetch_references",
+      designSpec: command === "generate_mockup",
+      mockupHtml: false,
+      selectedElement: false,
+      conversationHistory: "recent",
+    },
+    reason: `Explicit composer command: ${command}`,
+  };
+}
 
 type BuiltChatMessage = {
   role: "system" | "user" | "assistant";
@@ -752,7 +810,27 @@ export async function POST(request: Request) {
     review,
     responseProvider,
     referencePreferenceContext,
+    requestedCommand,
+    mentionedArtifact,
   } = await request.json();
+  const requestedCommandId = normalizeRequestedCommand(requestedCommand);
+  const mentionRecord =
+    mentionedArtifact && typeof mentionedArtifact === "object"
+      ? (mentionedArtifact as Record<string, unknown>)
+      : null;
+  const mentionKind = String(mentionRecord?.kind ?? "");
+  const mentionIdeaId = normalizeMentionIdentifier(mentionRecord?.ideaId);
+  const normalizedMention =
+    mentionRecord &&
+    mentionIdeaId &&
+    CHAT_COMPOSER_MENTION_KINDS.has(mentionKind)
+      ? {
+          kind: mentionKind,
+          ideaId: mentionIdeaId,
+          artifactId: normalizeMentionIdentifier(mentionRecord.artifactId),
+          label: truncateText(mentionRecord.label, 200).replace(/[\r\n]+/g, " "),
+        }
+      : null;
   const reviewConfig = (review && typeof review === "object"
     ? review
     : null) as {
@@ -819,16 +897,21 @@ export async function POST(request: Request) {
       title: truncateText(missionTitle, 200),
       briefPreview: truncateText(missionBrief, 500),
     },
+    requestedCommand: requestedCommandId,
+    mentionedArtifact: normalizedMention,
   };
   const { plan: rawPromptPlan, fallback: promptPlanFallback } =
     await createChatPlan(plannerInput);
-  const promptPlan = forceIntentFromUserText(
-    rawPromptPlan,
-    latestUserText,
-    Boolean(designSpec),
-    Boolean(mockupHtml),
-    Boolean(selectedElement),
-    Array.isArray(citedReferences) ? citedReferences.length : 0,
+  const promptPlan = forceRequestedCommand(
+    forceIntentFromUserText(
+      rawPromptPlan,
+      latestUserText,
+      Boolean(designSpec),
+      Boolean(mockupHtml),
+      Boolean(selectedElement),
+      Array.isArray(citedReferences) ? citedReferences.length : 0,
+    ),
+    requestedCommandId,
   );
   const promptPlanReliable =
     !promptPlanFallback && promptPlan.confidence >= 0.55;
@@ -854,6 +937,20 @@ export async function POST(request: Request) {
   const systemMessages: BuiltChatMessage[] = [
     { role: "system", content: CHAT_AGENT_BASE_PROMPT },
   ];
+  if (requestedCommandId) {
+    markContext("requestedCommand");
+    systemMessages.push({
+      role: "system",
+      content: `The user explicitly selected the composer command ${requestedCommandId}. Execute the mapped action for this turn. Do not reinterpret it as a different intent.`,
+    });
+  }
+  if (normalizedMention?.ideaId) {
+    markContext("mentionedArtifact");
+    systemMessages.push({
+      role: "system",
+      content: `The user explicitly mentioned an existing workspace artifact. Kind: ${normalizedMention.kind}; ideaId: ${normalizedMention.ideaId}; artifactId: ${normalizedMention.artifactId || "(none)"}. The client has already aligned activeIdea to this target. Treat the structured target as authoritative.`,
+    });
+  }
   markContext("actionInstruction");
   systemMessages.push({
     role: "system",
@@ -1085,6 +1182,8 @@ export async function POST(request: Request) {
       ? citedTexts.map((text: unknown) => truncateText(text, 1200))
       : undefined,
     citedReferences: compactReferences(citedReferences),
+    requestedCommand: requestedCommandId,
+    mentionedArtifact: normalizedMention,
   };
 
   const storeReviewTurn = async (meta: Record<string, unknown>) => {

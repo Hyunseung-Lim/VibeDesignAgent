@@ -42,10 +42,10 @@ const EMPTY_IDEA_STEPS: TourStep[] = [
     body: "오른쪽 채팅에서 에이전트에게 레퍼런스 탐색, 시안 작성, 디자인 스타일 정리, 목업 생성을 요청합니다. 선택한 레퍼런스나 화면 요소도 여기로 보낼 수 있어요.",
   },
   {
-    target: "chat-capability-catalog",
+    target: "chat-command-palette",
     fallbackTarget: "chat-panel",
-    title: "부탁할 수 있는 것들",
-    body: "무엇을 어떻게 요청할지 막히면 입력창의 이 버튼을 누르세요. 레퍼런스, 시안, 디자인 스타일, 목업, 요소 수정까지 예시 문구를 보여주고, 누르면 입력창에 채워집니다.",
+    title: "만들기 명령",
+    body: "입력창의 / 버튼이나 키보드의 /로 새 시안, 디자인 스타일, 목업, 레퍼런스 검색 명령을 고를 수 있습니다. @를 입력하면 현재 세션에 이미 있는 시안과 산출물을 언급할 수 있어요.",
   },
   {
     target: "reference-section",
@@ -98,10 +98,10 @@ const IDEA_STEPS: TourStep[] = [
     body: "오른쪽 채팅에서 에이전트에게 레퍼런스 탐색, 시안 작성, 디자인 스타일 정리, 목업 생성을 요청합니다. 선택한 레퍼런스나 화면 요소도 여기로 보낼 수 있어요.",
   },
   {
-    target: "chat-capability-catalog",
+    target: "chat-command-palette",
     fallbackTarget: "chat-panel",
-    title: "부탁할 수 있는 것들",
-    body: "무엇을 어떻게 요청할지 막히면 입력창의 이 버튼을 누르세요. 레퍼런스, 시안, 디자인 스타일, 목업, 요소 수정까지 예시 문구를 보여주고, 누르면 입력창에 채워집니다.",
+    title: "만들기 명령",
+    body: "입력창의 / 버튼이나 키보드의 /로 새 시안, 디자인 스타일, 목업, 레퍼런스 검색 명령을 고를 수 있습니다. @를 입력하면 현재 세션에 이미 있는 시안과 산출물을 언급할 수 있어요.",
   },
   {
     target: "reference-section",

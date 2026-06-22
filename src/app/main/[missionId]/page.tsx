@@ -98,6 +98,11 @@ import {
   FORKED_STYLE_MOCKUP_PROMPT,
 } from "@/lib/prompts";
 import type { MemoryDraftSources } from "@/lib/memory-sources";
+import {
+  CHAT_COMPOSER_COMMANDS,
+  type ChatComposerCommand,
+  type ChatComposerMention,
+} from "@/lib/session/chat-composer";
 
 const ONBOARDING_MISSION_ID = "onboarding";
 
@@ -149,6 +154,8 @@ type Message = {
   citedReferences?: { id: string; title: string; imageUrl?: string }[] | null;
   citedTexts?: string[] | null;
   styleImage?: { dataUrl: string; name?: string } | null;
+  composerCommand?: ChatComposerCommand | null;
+  composerMention?: ChatComposerMention | null;
   reviewTurnId?: string | null;
   chatPhases?: string[];
   // Explicit, prominent error surfaced in the chat bubble (red callout),
@@ -1741,6 +1748,10 @@ export default function MainScreenPage() {
 
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputText, setInputText] = useState("");
+  const [composerCommand, setComposerCommand] =
+    useState<ChatComposerCommand | null>(null);
+  const [composerMention, setComposerMention] =
+    useState<ChatComposerMention | null>(null);
   const [attachedStyleImage, setAttachedStyleImage] = useState<{
     dataUrl: string;
     name?: string;
@@ -3264,7 +3275,8 @@ export default function MainScreenPage() {
     if (artboards.length === 1) setTimeout(fitToCanvas, 0);
   }, [artboards.length, fitToCanvas]);
 
-  const switchIdea = (ideaId: string) => {
+  const switchIdea = (ideaId: string, preserveComposerMention = false) => {
+    if (!preserveComposerMention) setComposerMention(null);
     setActiveIdeaId(ideaId);
     setIsIdeaExpanded(false);
     setActiveIdeaTab("idea");
@@ -3272,6 +3284,115 @@ export default function MainScreenPage() {
     setActiveArtboardId(ideaBoards.at(-1)?.id ?? null);
     setTimeout(() => fitToCanvasForIdea(ideaId), 0);
   };
+
+  const composerMentionOptions = useMemo<ChatComposerMention[]>(() => {
+    const orderedIdeas = [
+      ...ideas.filter((idea) => idea.id === activeIdeaId),
+      ...ideas.filter((idea) => idea.id !== activeIdeaId),
+    ];
+    return orderedIdeas.flatMap((idea) => {
+      const ideaNumber = ideas.findIndex((candidate) => candidate.id === idea.id) + 1;
+      const ideaLabel = idea.title.trim() || `시안 ${Math.max(ideaNumber, 1)}`;
+      const options: ChatComposerMention[] = [
+        {
+          kind: "idea",
+          ideaId: idea.id,
+          label: ideaLabel,
+          searchText: `${ideaLabel} 시안`,
+        },
+      ];
+      if (idea.description.trim()) {
+        options.push({
+          kind: "design_brief",
+          ideaId: idea.id,
+          artifactId: idea.id,
+          label: `${ideaLabel} · 디자인 브리프`,
+          searchText: `${ideaLabel} 디자인브리프 design brief 브리프`,
+        });
+      }
+      if (idea.designStyle?.content?.trim()) {
+        options.push({
+          kind: "design_style",
+          ideaId: idea.id,
+          artifactId: idea.designStyle.id,
+          label: `${ideaLabel} · 디자인 스타일`,
+          searchText: `${ideaLabel} 디자인스타일 design style 스타일`,
+        });
+      }
+      const ideaArtboard = artboards
+        .filter((artboard) => artboard.ideaId === idea.id)
+        .at(-1);
+      if (ideaArtboard) {
+        options.push({
+          kind: "mockup",
+          ideaId: idea.id,
+          artifactId: ideaArtboard.id,
+          label: `${ideaLabel} · 목업`,
+          searchText: `${ideaLabel} 목업 mockup`,
+        });
+      }
+      return options;
+    });
+  }, [activeIdeaId, artboards, ideas]);
+
+  const composerCommandOptions = useMemo<ChatComposerCommand[]>(() => {
+    const activeIdea = ideas.find((idea) => idea.id === activeIdeaId) ?? null;
+    const hasMockup = artboards.some(
+      (artboard) => artboard.ideaId === activeIdeaId,
+    );
+    const hasImageLedSource = Boolean(
+      attachedStyleImage ||
+        selectedReferences.some((reference) => reference.url) ||
+        extractFirstUrl(inputText),
+    );
+    return CHAT_COMPOSER_COMMANDS.map((command) => {
+      let disabledReason: string | undefined;
+      if (command.id === "create_design_style") {
+        if (!activeIdea?.description.trim()) {
+          disabledReason = "먼저 시안과 Design Brief가 필요해요";
+        } else if (activeIdea.designStyle?.content?.trim()) {
+          disabledReason = "현재 시안에 이미 Design Style이 있어요";
+        }
+      }
+      if (command.id === "generate_mockup") {
+        if (!activeIdea?.description.trim()) {
+          disabledReason = "먼저 시안과 Design Brief가 필요해요";
+        } else if (
+          !activeIdea?.designStyle?.content?.trim() &&
+          !hasImageLedSource
+        ) {
+          disabledReason = "먼저 Design Style이 필요해요";
+        } else if (hasMockup) {
+          disabledReason = "현재 시안에 이미 목업이 있어요";
+        }
+      }
+      return { ...command, disabledReason };
+    });
+  }, [
+    activeIdeaId,
+    artboards,
+    attachedStyleImage,
+    ideas,
+    inputText,
+    selectedReferences,
+  ]);
+
+  useEffect(() => {
+    if (!composerCommand) return;
+    const currentOption = composerCommandOptions.find(
+      (option) => option.id === composerCommand.id,
+    );
+    if (currentOption?.disabledReason) setComposerCommand(null);
+  }, [composerCommand, composerCommandOptions]);
+
+  useEffect(() => {
+    if (
+      composerMention &&
+      !ideas.some((idea) => idea.id === composerMention.ideaId)
+    ) {
+      setComposerMention(null);
+    }
+  }, [composerMention, ideas]);
 
   const requestDeleteIdea = (ideaId: string) => {
     if (isReadOnly) return;
@@ -3413,7 +3534,10 @@ export default function MainScreenPage() {
   }, []);
 
   const sendMessage = useCallback(async () => {
-    const text = inputText.trim();
+    const commandForTurn = composerCommand;
+    const mentionForTurn = composerMention;
+    const typedText = inputText.trim();
+    const text = typedText || commandForTurn?.defaultPrompt || "";
     if (!text || !isMissionContextReady || isLoading || isGeneratingMockup)
       return;
     // Snapshot the attached style image for this turn; the GENERATE_MOCKUP call
@@ -3449,6 +3573,8 @@ export default function MainScreenPage() {
           : null,
       citedTexts: citedTexts.length > 0 ? [...citedTexts] : null,
       styleImage: attachedStyleImage,
+      composerCommand: commandForTurn,
+      composerMention: mentionForTurn,
     };
     const assistantId = crypto.randomUUID();
     const assistantMsg: Message = {
@@ -3471,12 +3597,18 @@ export default function MainScreenPage() {
       return next;
     });
     const manualReference = parseManualReferencePrompt(text);
-    const memoryInput = formatMemoryInputWithCitations(
-      text,
-      selectedReferences,
-      citedTexts,
-      selectedElement,
-    );
+    const memoryInput = [
+      commandForTurn ? `명시적 생성 명령: ${commandForTurn.label}` : "",
+      mentionForTurn ? `언급한 기존 산출물: ${mentionForTurn.label}` : "",
+      formatMemoryInputWithCitations(
+        text,
+        selectedReferences,
+        citedTexts,
+        selectedElement,
+      ),
+    ]
+      .filter(Boolean)
+      .join("\n");
     const memorySources: MemoryDraftSources = {
       texts: [...citedTexts],
       links: selectedReferences.map((reference) => ({
@@ -3497,6 +3629,8 @@ export default function MainScreenPage() {
 
     setMessages((prev) => [...prev, userMsg, assistantMsg]);
     setInputText("");
+    setComposerCommand(null);
+    setComposerMention(null);
     if (textareaRef.current) textareaRef.current.style.height = "auto";
     if (selectedElement) {
       clearIframeSelections(selectedElement.artboardId);
@@ -3599,7 +3733,9 @@ export default function MainScreenPage() {
         .filter(Boolean)
         .join("\n\n");
       const retrievedMemory = await retrieveMemoryForQuery(retrievalQuery);
-      const isReferenceSearchTurn = isReferenceSearchRequest(text);
+      const isReferenceSearchTurn =
+        commandForTurn?.id === "fetch_references" ||
+        isReferenceSearchRequest(text);
       const promptMemory = isReferenceSearchTurn
         ? filterMemoryForReferenceSearch(retrievedMemory)
         : retrievedMemory;
@@ -3652,6 +3788,17 @@ export default function MainScreenPage() {
               ? `# ${appliedStyle.title}\n${appliedStyle.content}`
               : undefined;
           })(),
+          requestedCommand: commandForTurn
+            ? { id: commandForTurn.id, label: commandForTurn.label }
+            : undefined,
+          mentionedArtifact: mentionForTurn
+            ? {
+                kind: mentionForTurn.kind,
+                ideaId: mentionForTurn.ideaId,
+                artifactId: mentionForTurn.artifactId,
+                label: mentionForTurn.label,
+              }
+            : undefined,
           review: {
             missionId,
             turnId: assistantId,
@@ -3661,7 +3808,15 @@ export default function MainScreenPage() {
         }),
       });
 
-      if (!res.ok || !res.body) throw new Error("API error");
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => null);
+        throw new Error(
+          typeof errorData?.error === "string"
+            ? errorData.error
+            : "요청을 처리하지 못했습니다.",
+        );
+      }
+      if (!res.body) throw new Error("응답 스트림을 열지 못했습니다.");
 
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
@@ -3704,11 +3859,13 @@ export default function MainScreenPage() {
       );
       const activeIdeaAtTurnStart =
         ideas.find((idea) => idea.id === activeIdeaId) ?? null;
-      const shouldForkStyleDirection = shouldForkIdeaForStyleReference(
-        text,
-        activeIdeaAtTurnStart,
-        selectedReferences.length,
-      );
+      const shouldForkStyleDirection =
+        !commandForTurn &&
+        shouldForkIdeaForStyleReference(
+          text,
+          activeIdeaAtTurnStart,
+          selectedReferences.length,
+        );
 
       // Convert web search citation domains (domain.com) to clickable markdown links
       fullText = fullText.replace(
@@ -3782,7 +3939,8 @@ export default function MainScreenPage() {
         const shouldFillStyleShell =
           activeIdea &&
           activeIdea.designStyle &&
-          !activeIdea.description.trim();
+          !activeIdea.description.trim() &&
+          commandForTurn?.id !== "create_idea";
         if (shouldFillStyleShell && !shouldForkStyleDirection) {
           turnIdeaOverride = {
             ...activeIdea,
@@ -4690,6 +4848,10 @@ export default function MainScreenPage() {
       const isTimeout =
         (err as Error)?.message === "timeout" ||
         (err instanceof DOMException && err.name === "AbortError");
+      const requestErrorMessage =
+        err instanceof Error && err.message
+          ? err.message
+          : "요청을 처리하지 못했습니다. 다시 시도해주세요.";
       setMessages((prev) =>
         prev.map((m) =>
           m.id === assistantId
@@ -4698,12 +4860,12 @@ export default function MainScreenPage() {
                   ...m,
                   content: "응답 시간이 초과되었습니다. 다시 시도해주세요.",
                 }
-              : { ...m, error: "요청을 처리하지 못했습니다. 다시 시도해주세요." }
+              : { ...m, error: requestErrorMessage }
             : m,
         ),
       );
       if (!isTimeout) {
-        toast.error("요청을 처리하지 못했습니다. 다시 시도해주세요.");
+        toast.error(requestErrorMessage);
       }
     } finally {
       clearTimeout(timeoutId);
@@ -4717,6 +4879,8 @@ export default function MainScreenPage() {
     }
   }, [
     inputText,
+    composerCommand,
+    composerMention,
     isLoading,
     isMissionContextReady,
     isGeneratingMockup,
@@ -7181,12 +7345,13 @@ export default function MainScreenPage() {
                 <div className="flex h-full flex-col items-center justify-center gap-4 text-center text-sm text-slate-400">
                   <div className="flex flex-col gap-1">
                     <p className="font-medium text-slate-500">디자인 에이전트</p>
-                    <p>레퍼런스 탐색, 시안, 디자인 스타일, 목업, 발표까지 도와드립니다.</p>
+                    <p>레퍼런스 탐색, 시안, 디자인 스타일과 목업 생성을 도와드립니다.</p>
                   </div>
                   <div className="w-full max-w-sm rounded-2xl border border-slate-200 bg-white p-4 text-left">
                     <ChatCapabilityCatalog
-                      onPick={(example) => {
-                        setInputText(example);
+                      commands={composerCommandOptions}
+                      onPick={(command) => {
+                        setComposerCommand(command);
                         textareaRef.current?.focus();
                       }}
                     />
@@ -7367,6 +7532,10 @@ export default function MainScreenPage() {
               styleImage={attachedStyleImage}
               textareaRef={textareaRef}
               inputText={inputText}
+              composerCommand={composerCommand}
+              composerMention={composerMention}
+              commandOptions={composerCommandOptions}
+              mentionOptions={composerMentionOptions}
               missionContextReady={isMissionContextReady}
               generatingMockup={isGeneratingMockup}
               loading={isLoading}
@@ -7386,14 +7555,20 @@ export default function MainScreenPage() {
               onAttachStyleImage={handleAttachStyleImage}
               onClearStyleImage={() => setAttachedStyleImage(null)}
               onInputChange={handleTextareaChange}
+              onInputTextChange={setInputText}
               onKeyDown={handleKeyDown}
               onCancelMockupGeneration={cancelMockupGeneration}
               onCancelMessage={cancelMessage}
               onSendMessage={sendMessage}
-              onPickCatalogExample={(example) => {
-                setInputText(example);
-                textareaRef.current?.focus();
+              onSelectComposerCommand={setComposerCommand}
+              onClearComposerCommand={() => setComposerCommand(null)}
+              onSelectComposerMention={(mention) => {
+                setComposerMention(mention);
+                if (mention.ideaId !== activeIdeaId) {
+                  switchIdea(mention.ideaId, true);
+                }
               }}
+              onClearComposerMention={() => setComposerMention(null)}
             />
           </ChatPanel>
         </main>
