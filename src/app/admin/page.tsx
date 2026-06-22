@@ -500,7 +500,6 @@ export default function AdminPage() {
   const [memoryForgettingError, setMemoryForgettingError] = useState<
     string | null
   >(null);
-  const [isLoadingMemory, setIsLoadingMemory] = useState(false);
   const [isDeletingMemory, setIsDeletingMemory] = useState(false);
   const [deletingSessionsUserId, setDeletingSessionsUserId] = useState<
     string | null
@@ -852,43 +851,6 @@ export default function AdminPage() {
       toast.success("메모리 항목을 삭제했어요.");
     } catch {
       toast.error("메모리 삭제에 실패했습니다.");
-    }
-  };
-
-  const openMemoryTable = async (user: AdminUser) => {
-    const token = await getAdminToken();
-    if (!token) return;
-    setIsLoadingMemory(true);
-    try {
-      const res = await fetch(`/api/admin/users/${user.id}/memory`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!res.ok) throw new Error("메모리 조회 실패");
-      const data = await res.json();
-      const counts = data.counts ?? {};
-      setMemoryVersionTab("0.1.2");
-      resetMemoryFilters();
-      setMemoryViewTab("clusters");
-      setMemoryGraphClusters([]);
-      setMemoryGraphEdges([]);
-      setSelectedMemoryClusterId(null);
-      setSelectedAdminGraphMemoryId(null);
-      setMemoryClusterError(null);
-      setMemoryGraphClusterDiagnostics(null);
-      setMemoryRetrievalLogs([]);
-      setSelectedMemoryRetrievalId(null);
-      setMemoryRetrievalError(null);
-      setMemoryModal({
-        userId: user.id,
-        userName: user.displayName ?? user.email ?? user.id,
-        rows: Array.isArray(data.memories) ? data.memories : [],
-        counts,
-      });
-    } catch (e) {
-      console.error(e);
-      toast.error("메모리를 불러오지 못했습니다.");
-    } finally {
-      setIsLoadingMemory(false);
     }
   };
 
@@ -2230,9 +2192,7 @@ export default function AdminPage() {
                       user={user}
                       onboardingMissionId={ONBOARDING_MISSION_ID}
                       missionTitle={missionTitle}
-                      isLoadingMemory={isLoadingMemory}
                       isDeletingSessions={deletingSessionsUserId === user.id}
-                      onOpenMemoryTable={() => openMemoryTable(user)}
                       onBackupAndDeleteSessions={() =>
                         requestBackupAndDeleteSessions(user)
                       }

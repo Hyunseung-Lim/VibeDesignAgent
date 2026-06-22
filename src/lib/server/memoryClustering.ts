@@ -14,12 +14,7 @@ export const GRAPH_COMMUNITY_ITERATIONS = 30;
 export const CLUSTER_COLLECTION = "memoryClusters";
 export const CLUSTERING_METHOD_VERSION = "similarity-graph-v3-persona-summary";
 export const MEMORY_VERSION = "0.1.2";
-export const CLUSTERING_INPUT_VARIANTS = [
-  "semantic-only",
-  "compact-context",
-  "full-context",
-] as const;
-export type ClusteringInputVariant = (typeof CLUSTERING_INPUT_VARIANTS)[number];
+export const CLUSTERING_INPUT_VARIANT = "compact-context" as const;
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
@@ -82,16 +77,8 @@ export type GraphCommunityDiagnostics = {
 
 type ClusterLabel = { id: string; label: string; summary: string };
 
-export function normalizeClusteringInputVariant(
-  value: unknown,
-): ClusteringInputVariant {
-  return CLUSTERING_INPUT_VARIANTS.includes(value as ClusteringInputVariant)
-    ? (value as ClusteringInputVariant)
-    : "full-context";
-}
-
-export function clusteringMethodVersion(variant: ClusteringInputVariant) {
-  return `${CLUSTERING_METHOD_VERSION}:${variant}`;
+export function clusteringMethodVersion() {
+  return `${CLUSTERING_METHOD_VERSION}:${CLUSTERING_INPUT_VARIANT}`;
 }
 
 export function stringArray(value: unknown) {
@@ -103,11 +90,10 @@ export function stringArray(value: unknown) {
 export function clusterCacheId(
   memoryVersion: string,
   itemSignature: string,
-  variant: ClusteringInputVariant = "full-context",
 ) {
   const versionKey = memoryVersion.replace(/[^a-zA-Z0-9_-]/g, "_");
   const signatureHash = createHash("sha256")
-    .update(`${clusteringMethodVersion(variant)}:${itemSignature}`)
+    .update(`${clusteringMethodVersion()}:${itemSignature}`)
     .digest("hex")
     .slice(0, 24);
   return `${versionKey}-${signatureHash}`;
@@ -117,12 +103,10 @@ export function clusterDocumentPath(
   uid: string,
   memoryVersion: string,
   itemSignature: string,
-  variant: ClusteringInputVariant = "full-context",
 ) {
   return `users/${uid}/${CLUSTER_COLLECTION}/${clusterCacheId(
     memoryVersion,
     itemSignature,
-    variant,
   )}`;
 }
 
@@ -171,44 +155,16 @@ export function parseStoredGraphEdges(value: unknown): ClusterGraphEdge[] {
     );
 }
 
-function embeddingText(
-  item: ClusterInputItem,
-  variant: ClusteringInputVariant = "full-context",
-) {
-  // Timestamp stays available as metadata only; vectors use the selected
-  // text variant so teams can compare clustering behavior during testing.
-  const originalInteractionContent =
-    item.originalInteractionContent ||
-    [
-      item.input ? `User input:\n${item.input}` : "",
-      item.output ? `Agent output:\n${item.output}` : "",
-    ]
-      .filter(Boolean)
-      .join("\n\n");
-
-  if (variant === "semantic-only") {
-    return item.semantic || item.episodic || item.input || item.output || item.id;
-  }
-
-  const compactFields = [
+function embeddingText(item: ClusterInputItem) {
+  // Timestamp and original interaction content stay metadata-only. Clustering
+  // vectors use only the structured keyword, episode, and semantic fields.
+  return [
     item.keyword?.length ? `Keywords: ${item.keyword.join(", ")}` : "",
     item.episodic ? `Episodic: ${item.episodic}` : "",
     item.semantic ? `Semantic: ${item.semantic}` : "",
-  ];
-
-  if (variant === "compact-context") {
-    return compactFields.filter(Boolean).join("\n") || itemSummary(item);
-  }
-
-  return [
-    ...compactFields,
-    originalInteractionContent
-      ? `Original interaction content:\n${originalInteractionContent}`
-      : "",
-    item.link ? `Link: ${item.link}` : "",
   ]
     .filter(Boolean)
-    .join("\n");
+    .join("\n") || item.id;
 }
 
 function itemSummary(item: ClusterInputItem) {
@@ -347,11 +303,10 @@ export async function labelClusters(
 
 export async function embedItems(
   items: ClusterInputItem[],
-  variant: ClusteringInputVariant = "full-context",
 ) {
   const response = await openai.embeddings.create({
     model: EMBEDDING_MODEL,
-    input: items.map((item) => embeddingText(item, variant)),
+    input: items.map(embeddingText),
   });
   return response.data.map((item) => l2Normalize(item.embedding));
 }
@@ -514,11 +469,9 @@ export async function generateAndStoreClusters(
   items: ClusterInputItem[],
   token: string,
   generatedBy: string,
-  variant: ClusteringInputVariant = "full-context",
   subjectName?: string,
 ) {
-  const normalizedVariant = normalizeClusteringInputVariant(variant);
-  const vectors = await embedItems(items, normalizedVariant);
+  const vectors = await embedItems(items);
   const graphCommunity = buildGraphCommunityClusters(items, vectors);
   const itemsById = new Map(items.map((item) => [item.id, item]));
   const graphClusters = await labelClusters(
@@ -533,12 +486,12 @@ export async function generateAndStoreClusters(
   const itemSignature = memoryClusterItemSignature(items);
 
   await patchFirestoreDocument(
-    clusterDocumentPath(uid, MEMORY_VERSION, itemSignature, normalizedVariant),
+    clusterDocumentPath(uid, MEMORY_VERSION, itemSignature),
     {
       itemSignature,
       memoryVersion: MEMORY_VERSION,
-      clusteringMethodVersion: clusteringMethodVersion(normalizedVariant),
-      clusteringInputVariant: normalizedVariant,
+      clusteringMethodVersion: clusteringMethodVersion(),
+      clusteringInputVariant: CLUSTERING_INPUT_VARIANT,
       sourceItemCount: items.length,
       graphClusters,
       graphEdges,

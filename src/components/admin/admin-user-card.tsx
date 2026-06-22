@@ -38,9 +38,7 @@ interface AdminUserCardProps {
   user: AdminUser;
   onboardingMissionId: string;
   missionTitle: (missionId: string) => string;
-  isLoadingMemory: boolean;
   isDeletingSessions: boolean;
-  onOpenMemoryTable: () => void;
   onBackupAndDeleteSessions: () => void;
 }
 
@@ -49,9 +47,7 @@ export function AdminUserCard({
   user,
   onboardingMissionId,
   missionTitle,
-  isLoadingMemory,
   isDeletingSessions,
-  onOpenMemoryTable,
   onBackupAndDeleteSessions,
 }: AdminUserCardProps) {
   const badge = onboardingBadge(user.onboardingStatus);
@@ -165,15 +161,12 @@ export function AdminUserCard({
       </div>
 
       <div className="mt-4 flex flex-wrap items-center gap-2">
-        <Button
-          type="button"
-          variant="link"
-          onClick={onOpenMemoryTable}
-          disabled={isLoadingMemory}
+        <Link
+          href={`/admin/users/${encodeURIComponent(user.id)}/memory`}
           className="h-auto rounded-md px-3 py-1.5 text-[11px] font-semibold text-indigo-500 hover:bg-indigo-50 hover:text-indigo-700 hover:no-underline disabled:text-muted-foreground"
         >
-          메모리 테이블 보기 →
-        </Button>
+          메모리 보기 →
+        </Link>
         <Button
           type="button"
           variant="link"

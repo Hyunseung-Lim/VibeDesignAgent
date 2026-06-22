@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { getIdToken, onAuthStateChanged } from "firebase/auth";
 import { collection, getDocs } from "firebase/firestore";
 import { firebaseAuth, db } from "@/lib/firebase";
+import { isAdminEmail } from "@/lib/admin";
 import { ArrowLeftIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
@@ -21,25 +22,6 @@ import type {
 
 const NO_SESSION_KEY = "__no_session__";
 const ONBOARDING_MISSION_ID = "onboarding";
-const CLUSTER_VARIANTS = [
-  {
-    value: "semantic-only",
-    label: "Semantic only",
-    description: "해석 메모리만",
-  },
-  {
-    value: "compact-context",
-    label: "Semantic + Episode",
-    description: "원문 로그 제외",
-  },
-  {
-    value: "full-context",
-    label: "Full context",
-    description: "현재 기준",
-  },
-] as const;
-type ClusterVariant = (typeof CLUSTER_VARIANTS)[number]["value"];
-
 // Chronological rank for cumulative memory views. Mission ids are
 // `mission-YYYYMMDD-HHmmss`, so plain string compare = time order. Onboarding is
 // the base and always sorts first; unknown ids sort last.
@@ -84,8 +66,21 @@ const MemoryClusterGraph = dynamic(
   },
 );
 
-export default function AgentMemoryPage() {
+type MemoryClusterPageProps = {
+  targetUserId?: string;
+  backHref?: string;
+};
+
+export function MemoryClusterPage({
+  targetUserId,
+  backHref = "/lobby",
+}: MemoryClusterPageProps = {}) {
   const router = useRouter();
+  const targetPath = targetUserId
+    ? `/api/admin/users/${encodeURIComponent(targetUserId)}/memory`
+    : "/api/memory";
+  const memoryEndpoint = targetUserId ? targetPath : `${targetPath}/all`;
+  const clustersEndpoint = `${targetPath}/clusters`;
   const [currentUser, setCurrentUser] = useState<
     import("firebase/auth").User | null
   >(null);
@@ -93,10 +88,7 @@ export default function AgentMemoryPage() {
   const [clusters, setClusters] = useState<MemoryCluster[]>([]);
   const [clusterEdges, setClusterEdges] = useState<ClusterGraphEdge[]>([]);
   const [loading, setLoading] = useState(true);
-  const [isLoadingClusters, setIsLoadingClusters] = useState(false);
   const [isRegenerating, setIsRegenerating] = useState(false);
-  const [clusterVariant, setClusterVariant] =
-    useState<ClusterVariant>("full-context");
   const [selectedClusterId, setSelectedClusterId] = useState<string | null>(
     null,
   );
@@ -134,27 +126,14 @@ export default function AgentMemoryPage() {
     );
   };
 
-  const loadClusters = (
-    user: import("firebase/auth").User,
-    variant: ClusterVariant,
-  ) =>
-    getIdToken(user)
-      .then((token) =>
-        fetch(`/api/memory/clusters?variant=${variant}`, {
-          headers: { Authorization: `Bearer ${token}` },
-        }),
-      )
-      .then((r) => (r.ok ? r.json() : null))
-      .then(applyClusterData);
-
-  const loadData = (user: import("firebase/auth").User, variant: ClusterVariant) =>
+  const loadData = (user: import("firebase/auth").User) =>
     getIdToken(user).then((token) => {
       const headers = { Authorization: `Bearer ${token}` };
       return Promise.all([
-        fetch("/api/memory/all", { headers }).then((r) =>
+        fetch(memoryEndpoint, { headers }).then((r) =>
           r.ok ? r.json() : null,
         ),
-        fetch(`/api/memory/clusters?variant=${variant}`, { headers }).then(
+        fetch(clustersEndpoint, { headers }).then(
           (r) => (r.ok ? r.json() : null),
         ),
       ]).then(([memData, clusterData]) => {
@@ -166,33 +145,16 @@ export default function AgentMemoryPage() {
       });
     });
 
-  const handleSelectClusterVariant = async (variant: ClusterVariant) => {
-    if (clusterVariant === variant) return;
-    setClusterVariant(variant);
-    if (!currentUser) return;
-    setIsLoadingClusters(true);
-    try {
-      await loadClusters(currentUser, variant);
-    } catch (err) {
-      console.error("[agent] cluster variant load failed", err);
-      toast.error("클러스터를 불러오지 못했어요.");
-    } finally {
-      setIsLoadingClusters(false);
-    }
-  };
-
   const handleRegenerate = async () => {
     if (!currentUser || isRegenerating) return;
     setIsRegenerating(true);
     try {
       const token = await getIdToken(currentUser);
-      const res = await fetch("/api/memory/clusters", {
+      const res = await fetch(clustersEndpoint, {
         method: "POST",
         headers: {
           Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json",
         },
-        body: JSON.stringify({ variant: clusterVariant }),
       });
       const data = await res.json().catch(() => null);
       if (!res.ok) throw new Error(data?.error ?? "생성 실패");
@@ -224,9 +186,13 @@ export default function AgentMemoryPage() {
         router.replace("/");
         return;
       }
+      if (targetUserId && !isAdminEmail(user.email)) {
+        router.replace("/lobby");
+        return;
+      }
       setCurrentUser(user);
       setLoading(true);
-      loadData(user, clusterVariant)
+      loadData(user)
         .catch((err) => {
           console.error("[agent] load failed", err);
         })
@@ -365,45 +331,6 @@ export default function AgentMemoryPage() {
       )
     : [];
 
-  const clusterVariantControls = (
-    <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-border bg-card px-4 py-3">
-      <div>
-        <p className="text-xs font-semibold text-muted-foreground">
-          클러스터링 입력 비교
-        </p>
-        <p className="text-[11px] text-muted-foreground/70">
-          같은 기억을 어떤 텍스트로 임베딩할지 바꿔봅니다.
-        </p>
-      </div>
-      <div className="flex rounded-lg border border-border bg-muted/40 p-1">
-        {CLUSTER_VARIANTS.map((variant) => {
-          const selected = clusterVariant === variant.value;
-          return (
-            <button
-              key={variant.value}
-              type="button"
-              onClick={() => handleSelectClusterVariant(variant.value)}
-              disabled={isLoadingClusters || isRegenerating}
-              className={cn(
-                "min-w-32 rounded-md px-3 py-1.5 text-left transition",
-                selected
-                  ? "bg-background text-foreground shadow-sm"
-                  : "text-muted-foreground hover:text-foreground",
-              )}
-            >
-              <span className="block text-xs font-semibold">
-                {variant.label}
-              </span>
-              <span className="block text-[10px] leading-tight opacity-70">
-                {variant.description}
-              </span>
-            </button>
-          );
-        })}
-      </div>
-    </div>
-  );
-
   return (
     <div className="min-h-screen bg-background">
       {/* Header */}
@@ -413,16 +340,21 @@ export default function AgentMemoryPage() {
             type="button"
             variant="ghost"
             size="icon"
-            onClick={() => router.push("/lobby")}
+            onClick={() => router.push(backHref)}
             className="rounded-full text-muted-foreground"
             aria-label="로비로 돌아가기"
           >
             <ArrowLeftIcon size={18} />
           </Button>
 
-          <p className="text-base font-semibold text-foreground">
-            에이전트 기억
-          </p>
+          <div className="flex min-w-0 items-baseline gap-2">
+            <p className="shrink-0 text-base font-semibold text-foreground">
+              에이전트 기억
+            </p>
+            <p className="truncate text-[10px] text-muted-foreground/70">
+              클러스터링 입력: Keyword · Episodic · Semantic
+            </p>
+          </div>
         </div>
       </div>
 
@@ -430,16 +362,8 @@ export default function AgentMemoryPage() {
         <div className="flex items-center justify-center py-24 text-sm text-muted-foreground">
           불러오는 중...
         </div>
-      ) : isLoadingClusters ? (
-        <div>
-          {clusterVariantControls}
-          <div className="flex items-center justify-center py-24 text-sm text-muted-foreground">
-            클러스터를 불러오는 중...
-          </div>
-        </div>
       ) : clusters.length === 0 ? (
         <div>
-          {clusterVariantControls}
           <MemoryClusterEmptyState
             canGenerate={memories.length >= 3}
             isRegenerating={isRegenerating}
@@ -448,7 +372,6 @@ export default function AgentMemoryPage() {
         </div>
       ) : (
         <div className="flex h-[calc(100vh-57px)] flex-col overflow-hidden">
-          {clusterVariantControls}
           {sessionFilterOptions.length > 1 ? (
             <div className="flex shrink-0 items-center gap-2 overflow-x-auto border-b border-border bg-card px-4 py-2.5">
               <span className="shrink-0 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
@@ -500,7 +423,7 @@ export default function AgentMemoryPage() {
               selectedClusterId={selectedClusterId}
               generatedAt={clustersGeneratedAt}
               hasStaleCache={hasStaleCache}
-              isRegenerating={isRegenerating || isLoadingClusters}
+              isRegenerating={isRegenerating}
               onSelectCluster={(clusterId) => {
                 setSelectedClusterId(clusterId);
                 setSelectedMemoryId(null);
@@ -535,4 +458,8 @@ export default function AgentMemoryPage() {
       )}
     </div>
   );
+}
+
+export default function AgentMemoryPage() {
+  return <MemoryClusterPage />;
 }

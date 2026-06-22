@@ -1,76 +1,34 @@
 import {
   getFirebaseAccessToken,
   getFirestoreDocument,
-  listFirestoreDocumentIds,
   verifyFirebaseIdToken,
 } from "@/lib/server/firebaseAdminRest";
+import { loadClusterInputItems } from "@/lib/server/memoryItems";
 import {
+  CLUSTERING_INPUT_VARIANT,
   MEMORY_VERSION,
   MAX_ITEMS,
   isMemoryCluster,
   generateAndStoreClusters,
   clusterDocumentPath,
   memoryClusterItemSignature,
-  normalizeClusteringInputVariant,
   parseStoredGraphEdges,
-  type ClusterInputItem,
 } from "@/lib/server/memoryClustering";
 
 export const runtime = "nodejs";
 
-const MEMORY_COLLECTION = "memories_0_1_2";
-
-function str(v: unknown): string | null {
-  return typeof v === "string" && v.trim() ? v.trim() : null;
-}
-
-async function loadMemoryItems(uid: string, token: string): Promise<ClusterInputItem[]> {
-  const ids = await listFirestoreDocumentIds(`users/${uid}/${MEMORY_COLLECTION}`, token);
-  const items: ClusterInputItem[] = [];
-  await Promise.all(
-    ids.map(async (id) => {
-      const data = ((await getFirestoreDocument(
-        `users/${uid}/${MEMORY_COLLECTION}/${encodeURIComponent(id)}`,
-        token,
-      )) ?? {}) as Record<string, unknown>;
-      const episodic = str(data.episodic ?? data.episode);
-      if (!episodic && !str(data.semantic) && !str(data.input)) return;
-      items.push({
-        id,
-        action: str(data.action) ?? undefined,
-        keyword: Array.isArray(data.keywords)
-          ? data.keywords.map(String)
-          : Array.isArray(data.keyword)
-            ? (data.keyword as unknown[]).map(String)
-            : [],
-        episodic: episodic ?? undefined,
-        semantic: str(data.semantic) ?? undefined,
-        input: str(data.input) ?? undefined,
-        output: str(data.output) ?? undefined,
-        originalInteractionContent:
-          str(data.originalInteractionContent) ?? undefined,
-        timestamp: typeof data.timestamp === "number" ? data.timestamp : 0,
-      });
-    }),
-  );
-  return items.slice(0, MAX_ITEMS);
-}
-
 export async function GET(request: Request) {
   const user = await verifyFirebaseIdToken(request);
   if (!user) return Response.json({ error: "unauthorized" }, { status: 401 });
-  const url = new URL(request.url);
-  const variant = normalizeClusteringInputVariant(url.searchParams.get("variant"));
-
   try {
     const token = await getFirebaseAccessToken();
-    const items = await loadMemoryItems(user.localId, token);
+    const items = await loadClusterInputItems(user.localId, token, MAX_ITEMS);
     if (items.length < 3) {
       return Response.json({
         clusters: [],
         edges: [],
         found: false,
-        variant,
+        variant: CLUSTERING_INPUT_VARIANT,
         memoryVersion: MEMORY_VERSION,
         itemSignature: null,
         generatedAt: null,
@@ -79,7 +37,7 @@ export async function GET(request: Request) {
 
     const itemSignature = memoryClusterItemSignature(items);
     const data = (await getFirestoreDocument(
-      clusterDocumentPath(user.localId, MEMORY_VERSION, itemSignature, variant),
+      clusterDocumentPath(user.localId, MEMORY_VERSION, itemSignature),
       token,
     )) as Record<string, unknown> | null;
 
@@ -88,7 +46,7 @@ export async function GET(request: Request) {
         clusters: [],
         edges: [],
         found: false,
-        variant,
+        variant: CLUSTERING_INPUT_VARIANT,
         memoryVersion: MEMORY_VERSION,
         itemSignature,
         generatedAt: null,
@@ -103,7 +61,7 @@ export async function GET(request: Request) {
       clusters,
       edges: parseStoredGraphEdges(data.graphEdges),
       found: clusters.length > 0,
-      variant,
+      variant: CLUSTERING_INPUT_VARIANT,
       memoryVersion: typeof data.memoryVersion === "string"
         ? data.memoryVersion
         : MEMORY_VERSION,
@@ -121,12 +79,9 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   const user = await verifyFirebaseIdToken(request);
   if (!user) return Response.json({ error: "unauthorized" }, { status: 401 });
-  const body = (await request.json().catch(() => ({}))) as { variant?: unknown };
-  const variant = normalizeClusteringInputVariant(body.variant);
-
   try {
     const token = await getFirebaseAccessToken();
-    const items = await loadMemoryItems(user.localId, token);
+    const items = await loadClusterInputItems(user.localId, token, MAX_ITEMS);
     const profile = await getFirestoreDocument(`users/${user.localId}`, token);
     const subjectName = String(
       profile?.displayName ?? user.displayName ?? "",
@@ -144,7 +99,6 @@ export async function POST(request: Request) {
       items,
       token,
       user.email ?? user.localId,
-      variant,
       subjectName,
     );
 
@@ -152,7 +106,7 @@ export async function POST(request: Request) {
       clusters: graphClusters,
       edges: graphEdges,
       found: graphClusters.length > 0,
-      variant,
+      variant: CLUSTERING_INPUT_VARIANT,
       memoryVersion: MEMORY_VERSION,
       generatedAt: Date.now(),
     });

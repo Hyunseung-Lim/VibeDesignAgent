@@ -60,8 +60,8 @@
 - 참여자 카드의 X는 해당 미션 세션과 하위 `memoryDrafts`/`reviewTurns`만 삭제하며, 유저 정보/장기 메모리/다른 미션 기록은 유지
 - 사용자 카드의 `세션 백업 후 삭제`는 세션/참여 기록/Storage 파일/장기 메모리(`memories_0_1_2`)/클러스터 캐시(`memoryClusters`)/retrieval logs를 백업 후 삭제한다 `[현행 2026-06-18 → 15.94]`
 - 참여자 모달의 개별 `미션 기록 삭제`는 해당 미션 세션, participant record, `memoryDrafts`/`reviewTurns`, 그 미션의 `source.missionId`를 가진 장기 메모리와 mission-scoped retrieval logs를 삭제하고, `memoryClusters` cache를 비운다 `[현행 2026-06-18 → 15.94]`
-- 유저 메모리 조회: 버전별 cluster view 중심으로 표시
-- 메모리 cluster view: similarity graph, cluster list/detail, graph 진단값을 표시
+- 유저 카드의 `메모리 보기`는 모달을 열지 않고 `/admin/users/[uid]/memory` 전용 페이지로 이동한다. 이 페이지는 `/agent`와 같은 `MemoryClusterPage`를 렌더링해 헤더, 세션 누적 필터, cluster list, similarity graph, detail side panel, empty/loading state를 동일하게 유지한다 `[현행 2026-06-22 → 15.107]`
+- Admin 대상 메모리 목록과 clustering API는 self `/agent` 경로와 같은 normalization 및 clustering helper를 사용한다. 같은 uid와 item signature에는 양쪽 화면이 같은 memory item, cache document, cluster membership/label을 읽는다 `[현행 2026-06-22 → 15.107]`
 
 ### `/main/[missionId]` — 메인 디자인 세션
 
@@ -167,20 +167,21 @@
 - **Prompt 주입 방식**: profile input은 `profile_memories`에 source of truth로 보관한 뒤 derived memory로 쪼개 interaction memory와 같은 retrieved memory system message에 주입. prompt compact JSON은 `episodic`/`semantic` 배열만 포함한다. 같은 memory document에 episodic/semantic이 모두 있어도 prompt에서는 각각 `episodic[].episodic`, `semantic[].semantic`으로 분리해 넣고 memory id/weight/similarity/source metadata는 제외
 - **Legacy**: `GET /api/memory/bootstrap`은 세션 시작 시 memory를 preload하던 구 방식이며, 현재 main client에서는 호출하지 않음
 - **Retrieval 쿼리 구성**: `[user text] + Mission: [parentMissionTitle] + Active idea: [description]` — 선택된 옵션 이름(페르소나 등)은 제외해 임베딩 노이즈 방지
-- **Admin 관측**: researcher가 user별 memory cluster 결과와 graph/detail 진단값을 확인 가능
+- **Admin 관측**: researcher가 `/admin/users/[uid]/memory`에서 `/agent`와 동일한 user별 memory cluster graph/list/detail을 확인 가능 `[현행 2026-06-22 → 15.107]`
 - **Retrieval MVP**: v0.1.2 memory document에 embedding과 `weight` metadata를 저장하고, retrieve된 memory의 weight를 천천히 올림
 - **Forgetting MVP**: low-weight/duplicate 후보를 `archivedAt` 기반으로 soft archive
 
 #### 메모리 클러스터링
 
 - 경로: 일반 사용자 본인 memory는 `GET/POST /api/memory/clusters`, admin의 타인 memory 진단은 `GET/POST /api/admin/users/[uid]/memory/clusters`
-- 입력 variant: `/agent`에서 `semantic-only`, `compact-context`(keyword+episodic+semantic), `full-context`(기존 keyword+episodic+semantic+originalInteractionContent+link)를 선택할 수 있다. 기본값은 `full-context`
-- 1단계: 선택한 variant별 텍스트를 `text-embedding-3-large`로 embedding
+- 입력 계약: keyword + episodic + semantic만 `text-embedding-3-large`의 clustering embedding 입력으로 사용한다. 원문 interaction, input/output, link, timestamp는 embedding에서 제외한다 `[현행 2026-06-22 → 15.105]`
+- 1단계: 구조화된 keyword + episodic + semantic 텍스트를 `text-embedding-3-large`로 embedding
 - 2단계: cosine similarity graph 생성. 강한 유사도 edge와 node별 KNN edge를 함께 사용
 - 3단계: similarity graph에서 label propagation으로 community를 찾고, community가 너무 많으면 centroid similarity 기준으로 최대 16개까지 merge
 - 4단계: LLM은 cluster membership을 바꾸지 않고 최종 cluster label/summary만 생성한다. summary는 작업 목록을 일반적으로 요약하지 않고 Firestore profile의 실제 displayName을 사용해 그 사람의 반복되는 성격, 습관, 작업 방식, 의사결정 패턴과 디자인 취향을 근거와 함께 서술한다. 단일·약한 근거에는 consistently/always 같은 반복 표현을 쓰지 않는다 `[현행 2026-06-21 → 15.99]`
-- `/agent` UI에는 팀원이 자기 memory에 대해 3가지 입력 variant를 바꿔가며 클러스터를 생성·비교할 수 있는 테스트 컨트롤을 표시한다
-- 캐시 키는 memory version + item signature + clustering method version + input variant로 분리해 서로 다른 입력 실험 결과가 덮어쓰이지 않게 관리한다 `[현행 2026-06-16 → 15.86]`
+- `/agent` UI는 입력 variant 비교 컨트롤 없이 단일 clustering 결과만 표시하고, 헤더에 고정 입력 필드 Keyword · Episodic · Semantic을 작은 보조 문구로 안내한다 `[현행 2026-06-22 → 15.106]`
+- 캐시 키는 memory version + item signature + clustering method version으로 관리한다. method version에는 고정 입력 계약인 compact-context가 포함된다 `[현행 2026-06-22 → 15.105]`
+- Self/admin API는 `loadUserMemoryItems`와 `loadClusterInputItems`를 공유하며, admin 전용 cluster route도 `generateAndStoreClusters`를 호출한다. 별도 admin clustering 알고리즘은 두지 않는다 `[현행 2026-06-22 → 15.107]`
 
 ---
 
@@ -3297,3 +3298,30 @@ type ChatPlan = {
   - Phase 3: chat-input 취소/중단 버튼을 variant destructive(연한 틴트)로 통일. 기존 솔리드 빨강 대비 차분해지는 시각 변화가 있으며, 솔리드가 필요하면 className으로 복원한다.
 - 범위 밖/후속: chat-panel/chat-bubble 및 page.tsx의 나머지 버튼은 케이스별 후속. 진행 상황은 QA Note 추적 문서에 단계별로 기록한다.
 - 검증: 각 단계 tsc 통과, 변경 파일 ESLint 0 error. 외형 라이브 확인 필요(특히 destructive 틴트, 뱃지 크기).
+
+### 15.105 메모리 클러스터링 입력을 structured memory로 단일화 `[implemented 2026-06-22]`
+
+- 배경: `/agent`에 공개했던 세 가지 clustering embedding 입력 실험 중 keyword + episodic + semantic 조합만 유지하기로 결정했다.
+- 수정:
+  - clustering embedding text를 keyword + episodic + semantic으로 고정하고 semantic-only/full-context 분기와 원문 interaction fallback을 제거했다.
+  - `/api/memory/clusters`는 query/body의 variant 값을 받지 않고 compact-context 캐시만 조회·생성한다. 응답과 저장 문서의 clusteringInputVariant는 호환성 및 진단을 위해 compact-context로 유지한다.
+  - `/agent`의 입력 variant 비교 컨트롤과 관련 client state/loading 경로를 제거했다.
+  - 기존 compact-context cache key는 동일하므로 같은 memory item signature의 생성 결과는 계속 재사용할 수 있다.
+- 검증: `./node_modules/.bin/tsc --noEmit`, 관련 파일 ESLint, `git diff --check` 통과.
+
+### 15.106 클러스터링 입력 필드 안내 추가 `[implemented 2026-06-22]`
+
+- `/agent` 헤더의 에이전트 기억 제목 옆에 현재 clustering embedding 입력인 Keyword · Episodic · Semantic을 작은 muted 보조 문구로 표시한다.
+- 좁은 화면에서는 헤더 높이를 바꾸지 않고 문구가 truncate되도록 처리한다.
+- 검증: 관련 파일 ESLint, `./node_modules/.bin/tsc --noEmit`, `git diff --check` 통과.
+
+### 15.107 Admin 유저 메모리를 Agent와 동일한 전용 페이지로 통합 `[implemented 2026-06-22]`
+
+- 배경: `/admin` 유저 카드의 메모리 보기는 full-screen modal과 admin 전용 데이터 가공/클러스터 구현을 사용해 `/agent`와 UI 및 결과가 달라질 수 있었다.
+- 수정:
+  - 유저 카드 액션을 `메모리 보기` Link로 바꾸고 `/admin/users/[uid]/memory` 동적 페이지로 이동시킨다. 클릭 시 modal은 열리지 않는다.
+  - `/agent`의 화면 본체를 `MemoryClusterPage` named component로 공개해 self 페이지와 admin 대상 페이지가 같은 컴포넌트 인스턴스를 렌더링한다. Admin 페이지의 유일한 차이는 권한 확인, API base path, 뒤로가기 목적지다.
+  - `loadUserMemoryItems`와 `loadClusterInputItems`를 서버 공용 helper로 추출해 self/admin memory API가 같은 필드 정규화, 정렬, structured clustering 대상 선별을 사용한다.
+  - 중복된 admin clustering route 구현을 제거하고 공용 `memoryClustering.ts`의 cache path, graph community 생성, LLM labeling, 저장 로직을 호출하도록 교체했다.
+  - 기존 compact-context cache path가 self/admin 양쪽에서 같으므로 같은 uid와 item signature의 결과를 그대로 공유한다.
+- 검증: `./node_modules/.bin/tsc --noEmit`, 관련 파일 ESLint(0 error, 기존 admin warning만 유지), `git diff --check`, `npm run build` 통과. Build의 기존 presentation route NFT trace warning은 유지. 실제 admin 계정에서 유저 카드 → 페이지 이동, back navigation, cache load/regenerate는 라이브 확인이 필요하다.
