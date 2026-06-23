@@ -2629,6 +2629,19 @@ export default function MainScreenPage() {
       if (loadedIdeas.length > 0) {
         setIdeas(loadedIdeas);
         setActiveIdeaId(loadedIdeas[0].id);
+      } else if (!isReadOnly && !completed) {
+        // Seed a default 시안 1 so the workspace, tabs, and Brief/Style/Mockup
+        // structure are visible from the start (teachable in the tutorial) and
+        // ideas do not appear out of nowhere mid-session. The first generated
+        // brief fills this empty shell instead of appending a 시안 2.
+        const defaultIdea: Idea = {
+          id: crypto.randomUUID(),
+          title: "시안 1",
+          description: "",
+          createdAt: Date.now(),
+        };
+        setIdeas([defaultIdea]);
+        setActiveIdeaId(defaultIdea.id);
       }
       if (session?.references) setReferences(session.references);
       if (session?.activityLog) setActivityLog(session.activityLog);
@@ -3911,12 +3924,26 @@ export default function MainScreenPage() {
       }
       if (createNoteBlock && createNoteDescription) {
         const activeIdea = ideas.find((idea) => idea.id === activeIdeaId);
+        const activeIdeaHasArtboards = artboards.some(
+          (board) => board.ideaId === activeIdea?.id,
+        );
+        // The seeded default 시안 1 (or any idea still an empty shell) should be
+        // filled by the first brief instead of appending a new 시안.
+        const isEmptyIdeaShell = activeIdea
+          ? !activeIdea.description.trim() &&
+            !activeIdea.designStyle &&
+            !activeIdeaHasArtboards
+          : false;
         const shouldFillStyleShell =
           activeIdea &&
           activeIdea.designStyle &&
           !activeIdea.description.trim() &&
           commandForTurn?.id !== "create_idea";
-        if (shouldFillStyleShell && !shouldForkStyleDirection) {
+        if (
+          activeIdea &&
+          ((shouldFillStyleShell && !shouldForkStyleDirection) ||
+            isEmptyIdeaShell)
+        ) {
           turnIdeaOverride = {
             ...activeIdea,
             description: createNoteDescription,
@@ -6683,6 +6710,7 @@ export default function MainScreenPage() {
           {/* Left panel: content */}
           <section
             ref={missionPanelRef}
+            data-tour="content-panel"
             className="flex-1 space-y-6 overflow-y-auto pb-32 pt-8 pl-10 pr-6"
           >
             <div className="sticky top-0 z-10 pb-3">

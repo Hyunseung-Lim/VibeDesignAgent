@@ -150,7 +150,8 @@
 - **웹 검색 표시**: 검색 발생 시 `[WEB_SEARCHED]` 마커 → "웹 검색 완료" 배지 표시
 - **인용 링크**: 웹 검색 출처 `(domain.com)` 자동으로 클릭 가능한 마크다운 링크로 변환
 - **특수 블록 처리**:
-  - `[CREATE_NOTE: ...]` → 새 아이디어(시안) 생성. 저장 payload는 목표/대상 사용자, 핵심 경험, 화면 구조, 미션 필수 콘텐츠, 제약을 포함한 독립적인 Design Brief여야 한다. 모델이 한 줄 작업 지시문을 반환하면 클라이언트가 미션 맥락과 현재 사용자 요청으로 시작 가능한 브리프를 복구한다. 단, 디자인 스타일만 먼저 작성되어 현재 시안이 빈 shell이면 새 시안을 만들지 않고 해당 시안 내용을 채움 `[현행 2026-06-21 → 15.98]`
+  - `[CREATE_NOTE: ...]` → 새 아이디어(시안) 생성. 저장 payload는 목표/대상 사용자, 핵심 경험, 화면 구조, 미션 필수 콘텐츠, 제약을 포함한 독립적인 Design Brief여야 한다. 모델이 한 줄 작업 지시문을 반환하면 클라이언트가 미션 맥락과 현재 사용자 요청으로 시작 가능한 브리프를 복구한다. 단, 현재 시안이 빈 shell이면(디자인 스타일만 먼저 작성된 경우, 또는 세션 시작 시 시드된 빈 디폴트 시안 1: description·designStyle·artboard 모두 없음) 새 시안을 만들지 않고 해당 시안 내용을 채움 `[현행 2026-06-23 → 15.98/15.116]`
+  - 세션은 빈 디폴트 시안 1로 시작한다(read-only/완료 세션 제외). 워크스페이스·탭·Brief/Style/Mockup 구조를 처음부터 노출하고, 첫 brief가 위 shell-fill 규칙으로 이 시안을 채운다 `[현행 2026-06-23 → 15.116]`
   - `[UPDATE_NOTE: ...]` → 현재 아이디어 내용 업데이트
   - `[CREATE_DESIGN_SPEC: ...]` → 현재 아이디어의 디자인 스타일 정의/교체. 현재 아이디어가 없으면 빈 시안을 자동 생성하고 그 시안에 스타일을 저장
   - `[GENERATE_MOCKUP: ...]` → Stitch 목업 생성
@@ -3462,3 +3463,13 @@ type ChatPlan = {
 - 저장 계약: doc의 `input` 필드 저장은 그대로 둔다(admin/원문 보기 용도). 변경은 답변 주입과 인코딩 프레이밍에 한정된다.
 - 변경 파일: `src/app/api/chat/route.ts`(profile 주입을 compact JSON으로), `src/lib/prompts.ts`(`chatProfileMemoryPrompt`, `PROFILE_MEMORY_ENCODE_PROMPT`), `src/app/api/memory/profile/route.ts`(mission context 스레딩), `src/app/main/[missionId]/page.tsx`(profile POST에 missionTitle/brief 추가).
 - 검증: `npx tsc --noEmit`, 변경 파일 ESLint(0 error, 기존 page warning만) 통과. 실제 인코딩 episodic 프레이밍 품질과 답변 단계 주입 결과는 라이브 확인이 필요하다.
+
+### 15.116 세션 시작 시 빈 디폴트 시안 1 시드 `[implemented 2026-06-23]`
+
+- 배경(QA Note `튜토리얼에 드래그해서 인용하기 기능 설명 추가` 논의 중 파생): 시안이 0개로 시작하다 보니 튜토리얼에서 탭/시안 구조를 가르치기 어렵고, 빈 시안 상태 투어의 "시안의 구성" 스텝이 직전 "시안 작업 공간"과 같은 idea-workspace를 중복 하이라이트했다. 또 작업 도중 시안이 갑자기 생겨 사용자가 혼란스러울 수 있다.
+- 결정: 세션을 빈 디폴트 시안 1로 시작한다. 워크스페이스·탭·Brief/Style/Mockup 구조가 처음부터 노출되어 투어가 정상 IDEA_STEPS 경로로 설명 가능하고, 시안이 중간에 불쑥 생기는 혼란도 사라진다.
+- 시드: 세션 로드 시 저장된 시안이 없고 read-only/완료 세션이 아니면 description·designStyle·artboard가 없는 시안 1을 만들어 active로 둔다. 상태로만 두고 세션 시작/스냅샷 저장 시 영속화되며, 재개 시 저장된 시안으로 로드된다.
+- 첫 생성은 fill: `[CREATE_NOTE]`가 빈 shell(디자인 스타일만 있는 기존 shell 또는 시드된 빈 디폴트)일 때 append 대신 그 시안을 채우도록 조건을 확장했다. 덕분에 빈 시안 1 + 채워진 시안 2 같은 중복이 생기지 않는다. mockup/designSpec 우선 생성도 active(디폴트) 시안에 붙으므로 추가 빈 시안이 생기지 않는다.
+- 투어 영향: 디폴트 시안 덕에 `hasIdeas`가 사실상 항상 true → IDEA_STEPS 사용. EMPTY_IDEA_STEPS는 read-only 빈 세션 같은 예외에만 남는 fallback이 됐고, 그 안의 중복 하이라이트는 후속 정리 대상으로 남겨둔다.
+- 변경 파일: `src/app/main/[missionId]/page.tsx`(세션 로드 시 디폴트 시안 시드, CREATE_NOTE 빈 shell fill 조건 확장).
+- 검증: `npx tsc --noEmit`, 변경 파일 ESLint(0 error, 기존 page warning만), `npm run build` 통과. 신규/재개 세션에서 디폴트 시안 노출, 첫 brief의 fill 동작, 빈 시안으로 세션 종료 시 동작은 라이브 확인이 필요하다.
