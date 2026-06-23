@@ -2144,12 +2144,13 @@ export default function MainScreenPage() {
       timestamp: number,
       sources?: MemoryDraftSources,
     ) => {
-      if (isReadOnly || !missionId || !input.trim() || !output.trim()) return;
+      if (isReadOnly || !missionId || !input.trim() || !output.trim())
+        return false;
       const currentUser = firebaseAuth.currentUser;
-      if (!currentUser) return;
+      if (!currentUser) return false;
       try {
         const token = await getIdToken(currentUser);
-        await fetch("/api/memory/drafts", {
+        const response = await fetch("/api/memory/drafts", {
           method: "POST",
           headers: {
             Authorization: `Bearer ${token}`,
@@ -2164,8 +2165,13 @@ export default function MainScreenPage() {
             sources,
           }),
         });
+        if (!response.ok) {
+          throw new Error(`Memory draft failed: ${response.status}`);
+        }
+        return true;
       } catch (error) {
         console.warn("Unable to encode memory draft", error);
+        return false;
       }
     },
     [isReadOnly, missionId],
@@ -5148,6 +5154,27 @@ export default function MainScreenPage() {
         saveTimerRef.current = null;
       }
       await persistSessionSnapshot();
+      const finalBoard = finalArtboardId
+        ? artboards.find((board) => board.id === finalArtboardId) ?? null
+        : null;
+      const finalIdea = finalBoard
+        ? ideas.find((idea) => idea.id === finalBoard.ideaId) ?? null
+        : null;
+      if (finalBoard && finalIdea) {
+        const finalMemoryCreated = await encodeMemoryDraft(
+          `final-design-selection-${finalBoard.id}`,
+          `최종 디자인 확정: ${finalBoard.label}`,
+          `artboardId: ${finalBoard.id} / 시안: ${finalIdea.title} / 생성일: ${
+            finalBoard.createdAt
+              ? new Date(finalBoard.createdAt).toLocaleString("ko-KR")
+              : "미상"
+          }`,
+          Date.now(),
+        );
+        if (!finalMemoryCreated) {
+          throw new Error("Unable to create the final-design memory draft.");
+        }
+      }
       const token = await getIdToken(currentUser, true);
       const res = await fetch("/api/memory/complete-session", {
         method: "POST",
@@ -6870,21 +6897,9 @@ export default function MainScreenPage() {
                 artboards={artboards}
                 finalArtboardId={finalArtboardId}
                 readOnly={isReadOnly}
-                onSelect={(board, idea) => {
+                onSelect={(board) => {
                   const next = board.id === finalArtboardId ? null : board.id;
                   setFinalArtboardId(next);
-                  if (next) {
-                    void encodeMemoryDraft(
-                      `final-design-${board.id}`,
-                      `최종 디자인 선택: ${board.label}`,
-                      `시안: ${idea.title} / 생성일: ${
-                        board.createdAt
-                          ? new Date(board.createdAt).toLocaleString("ko-KR")
-                          : "미상"
-                      }`,
-                      Date.now(),
-                    );
-                  }
                 }}
               />
             </div>

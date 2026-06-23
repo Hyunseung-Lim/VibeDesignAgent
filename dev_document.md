@@ -137,6 +137,7 @@
 
 - 세션 종료 전 생성된 목업 중 하나를 최종 디자인으로 선택
 - 최종 디자인은 mission session의 `finalArtboardId`로 저장
+- 선택을 바꾸는 중간 클릭은 memory draft를 만들지 않는다. 세션 종료 직전에 현재 `finalArtboardId` 하나만 final-design memory로 기록하며, 종료 API도 과거 방식으로 누적된 선택 draft 중 현재 최종안 하나만 승격한다 `[현행 2026-06-23 → 15.112]`
 - 최종 디자인 미선택 상태로 세션 종료 시 확인 경고를 표시
 
 ### 4.6 AI 채팅
@@ -3416,3 +3417,15 @@ type ChatPlan = {
   - memory item/session summary/agent/session review 전달 타입과 매핑에서 interpretationConfidence를 제거하고 detail panel의 semantic 유무 badge 및 confidence/과해석 badge를 제거했다. 기존/profile semantic 본문은 호환 표시한다.
   - 공용 Firestore patch helper에 optional delete field mask를 추가해 별도 요청 없이 필드를 삭제할 수 있게 했다.
 - 검증: `./node_modules/.bin/tsc --noEmit`, 변경 파일 ESLint(0 error, 기존 page warning만), `git diff --check`, `npm run build` 통과. Build의 기존 presentation route NFT trace warning은 유지. 신규 interaction draft와 promoted memory에 semantic/confidence field가 없고 기존/profile semantic retrieval이 유지되는지는 실제 세션에서 라이브 확인이 필요하다.
+
+### 15.112 Final Design 최종 선택 하나만 메모리로 확정 `[implemented 2026-06-23]`
+
+- 배경(QA Note `Final Design 최종으로 누른 것만 메모리에 저장되게`): Final Design card를 클릭할 때마다 artboard별 memory draft를 즉시 만들어, 사용자가 비교하며 선택을 바꾸면 모든 중간 선택이 장기 메모리 후보로 누적됐다.
+- 수정:
+  - Final Design card 클릭은 `finalArtboardId` UI/session state만 변경하고 memory draft를 만들지 않는다.
+  - 세션 종료 시 session snapshot을 먼저 저장한 뒤 현재 final artboard와 owner idea를 확인해 `final-design-selection-{artboardId}` draft 하나를 생성하고, 그 요청 완료 후 memory completion을 호출한다.
+  - final selection draft 생성 실패는 성공으로 삼키지 않고 세션 종료를 중단한다. 사용자가 재시도하면 같은 final draft ID를 갱신하므로 최종안 메모리 없이 세션만 완료되는 상태를 막는다.
+  - 종료 API는 session document의 `finalArtboardId`를 source of truth로 읽는다. 새 final selection draft가 있으면 그것만 승격하고, rollout 전 누적된 legacy `final-design-{artboardId}` draft는 새 draft가 없을 때 현재 선택과 일치하는 하나만 호환 승격한다.
+  - 현재 선택과 다른 final-design draft 및 최종 선택 해제 상태의 draft는 `skipped_superseded`와 completion timestamp로 닫아 session review와 장기 memory에서 제외한다.
+- 불변식: 한 session completion에서 `final_design_select` memory는 최대 하나이며, 최종 디자인이 없으면 0개다.
+- 검증: `./node_modules/.bin/tsc --noEmit`, 변경 파일 ESLint(0 error, 기존 page warning만), `git diff --check`, `npm run build` 통과. Build의 기존 presentation route NFT trace warning은 유지. A→B→C 선택 변경 후 종료, 선택 해제 후 경고 종료, legacy draft가 있는 진행 중 세션 종료는 라이브 확인이 필요하다.

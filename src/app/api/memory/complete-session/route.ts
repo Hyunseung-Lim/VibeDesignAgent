@@ -53,6 +53,12 @@ export async function POST(request: Request) {
   const sessionPath = `sessions/${user.localId}/missions/${encodeURIComponent(missionId)}`;
   const sourceId = missionId;
   const draftPath = `${sessionPath}/memoryDrafts`;
+  const session =
+    ((await getFirestoreDocument(sessionPath, token)) ?? {}) as Record<
+      string,
+      unknown
+    >;
+  const finalArtboardId = String(session.finalArtboardId ?? "").trim();
   const draftIds = await listFirestoreDocumentIds(draftPath, token);
   const drafts: Array<Record<string, unknown> & { id: string }> = await Promise.all(
     draftIds.map(async (id) => {
@@ -61,10 +67,35 @@ export async function POST(request: Request) {
     }),
   );
   const completedAt = Date.now();
+  const currentFinalDraftId = finalArtboardId
+    ? `final-design-selection-${finalArtboardId}`
+    : "";
+  const legacyFinalDraftId = finalArtboardId
+    ? `final-design-${finalArtboardId}`
+    : "";
+  const hasCurrentFinalDraft = drafts.some(
+    (draft) => draft.id === currentFinalDraftId,
+  );
 
   const promotedMemoryIds = (
     await Promise.all(
       drafts.map(async (draft) => {
+        const isFinalDesignDraft =
+          draft.id.startsWith("final-design-") ||
+          draft.agentActionCategory === "final_design_select";
+        const shouldPromoteFinalDesign = finalArtboardId
+          ? hasCurrentFinalDraft
+            ? draft.id === currentFinalDraftId
+            : draft.id === legacyFinalDraftId
+          : false;
+        if (isFinalDesignDraft && !shouldPromoteFinalDesign) {
+          await patchFirestoreDocument(
+            `${draftPath}/${draft.id}`,
+            { status: "skipped_superseded", promotedAt: completedAt },
+            token,
+          );
+          return null;
+        }
         const timestamp = Number(draft.timestamp ?? draft.createdAt ?? completedAt);
         const keywords = jsonArray(draft.keywordsJson);
         const semantic =
