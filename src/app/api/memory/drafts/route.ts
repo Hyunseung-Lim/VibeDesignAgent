@@ -29,17 +29,7 @@ const FIRST_SESSION_TURN = "This is the first turn of this session.";
 type EncodedMemory = {
   keywords: string[];
   episode: string;
-  semantic: string | null;
-  // 0.0–1.0: how well the interaction supports the semantic interpretation.
-  // null when no semantic was produced (legacy / parse failure).
-  interpretationConfidence: number | null;
 };
-
-function clamp01(value: unknown): number | null {
-  const n = typeof value === "number" ? value : Number(value);
-  if (!Number.isFinite(n)) return null;
-  return Math.min(1, Math.max(0, n));
-}
 
 function stringArray(value: unknown, fallback: string[] = []) {
   return Array.isArray(value)
@@ -60,13 +50,6 @@ function jsonStringArray(value: unknown) {
 function parseMemory(raw: string): EncodedMemory {
   try {
     const parsed = JSON.parse(raw) as Partial<EncodedMemory>;
-    const semantic =
-      typeof parsed.semantic === "string"
-        ? parsed.semantic.trim()
-        : Array.isArray(parsed.semantic)
-          ? stringArray(parsed.semantic)[0]
-          : null;
-    const semanticText = semantic || null;
     return {
       keywords: stringArray(parsed.keywords, [
         "conversation",
@@ -74,17 +57,11 @@ function parseMemory(raw: string): EncodedMemory {
         "response",
       ]).slice(0, 10),
       episode: String(parsed.episode ?? "").trim(),
-      semantic: semanticText,
-      interpretationConfidence: semanticText
-        ? clamp01(parsed.interpretationConfidence)
-        : null,
     };
   } catch {
     return {
       keywords: ["conversation", "request", "response"],
       episode: "",
-      semantic: null,
-      interpretationConfidence: null,
     };
   }
 }
@@ -362,11 +339,6 @@ export async function POST(request: Request) {
       timestamp,
       keywordsJson: JSON.stringify(encoded.keywords),
       episode: encoded.episode.slice(0, 2000),
-      semanticJson: JSON.stringify(
-        encoded.semantic ? [encoded.semantic.slice(0, 2000)] : [],
-      ),
-      semantic: encoded.semantic?.slice(0, 2000) ?? "",
-      interpretationConfidence: encoded.interpretationConfidence,
       previousEpisode: String(previousDraft?.episode ?? "").slice(0, 2000),
       agentActionCategory,
       agentActionsJson: JSON.stringify(agentActions),
@@ -374,6 +346,7 @@ export async function POST(request: Request) {
       createdAt,
     },
     token,
+    ["semanticJson", "semantic", "interpretationConfidence"],
   );
 
   return Response.json({ ok: true, memory: encoded });

@@ -30,19 +30,6 @@ function formatWeight(weight: number | null | undefined) {
   return `${Math.round(weight * 100)}%`;
 }
 
-// How well the interaction supported the agent's semantic interpretation.
-// Low confidence = a speculative over-reading of the user (intentional — the
-// agent is encouraged to interpret boldly so over-reaches are visible).
-function interpretationTier(value: number | null | undefined) {
-  if (value == null || !Number.isFinite(value)) return null;
-  const pct = Math.round(value * 100);
-  if (value >= 0.8)
-    return { label: `해석 근거 강함 ${pct}%`, className: "border-emerald-200 bg-emerald-50 text-emerald-700" };
-  if (value >= 0.4)
-    return { label: `해석 추론 ${pct}%`, className: "border-amber-200 bg-amber-50 text-amber-700" };
-  return { label: `과해석 ${pct}%`, className: "border-rose-200 bg-rose-50 text-rose-700" };
-}
-
 function sourceLabel(sourceType: string | null | undefined) {
   if (sourceType === "before_session") {
     return "Before session";
@@ -236,21 +223,6 @@ export function MemoryClusterSidePanel({
                                     ◆ 이번 세션 신규
                                   </Badge>
                                 ) : null}
-                                {item.semantic ? (
-                                  <Badge
-                                    variant="secondary"
-                                    className="rounded-full border-emerald-200 bg-emerald-50 text-[10px] text-emerald-700"
-                                  >
-                                    Semantic summary
-                                  </Badge>
-                                ) : (
-                                  <Badge
-                                    variant="secondary"
-                                    className="rounded-full border-slate-200 bg-slate-50 text-[10px] text-slate-500"
-                                  >
-                                    No semantic summary
-                                  </Badge>
-                                )}
                               </div>
                               <p
                                 className={`min-w-0 leading-relaxed ${
@@ -319,22 +291,7 @@ export function MemoryClusterSidePanel({
                             <MemoryField label="Episodic" value={item.episodic} />
                           ) : null}
                           {item.semantic ? (
-                            <div className="space-y-1.5">
-                              <MemoryField label="Semantic" value={item.semantic} />
-                              {(() => {
-                                const tier = interpretationTier(
-                                  item.interpretationConfidence,
-                                );
-                                return tier ? (
-                                  <Badge
-                                    variant="secondary"
-                                    className={`rounded-full ${tier.className}`}
-                                  >
-                                    {tier.label}
-                                  </Badge>
-                                ) : null;
-                              })()}
-                            </div>
+                            <MemoryField label="Semantic" value={item.semantic} />
                           ) : null}
                           {item.input ? (
                             <MemoryField label="Original input" value={item.input} />

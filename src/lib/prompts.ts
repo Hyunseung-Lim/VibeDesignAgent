@@ -287,7 +287,7 @@ From the third turn onward, this contains exactly two prior episodes when both a
 
 interaction timestamps:
 Optional current/previous interaction timestamps.
-Use only to understand order, recency, and session flow. Do not store timestamps or date strings as keywords or semantic preferences.
+Use only to understand order, recency, and session flow. Do not store timestamps or date strings as keywords.
 
 original interaction content:
 The combined interaction record for this turn.
@@ -297,7 +297,7 @@ Treat this field as the source of truth for the interaction. Do not invent a sep
 
 # Normalized Reference Context
 
-When the interaction includes cited material, the original interaction content contains a normalized reference interpretation produced before memory encoding. Use that interpretation as the reference evidence for the episode and semantic insight. Do not independently broaden mission-specific or negative evidence into a durable global preference.
+When the interaction includes cited material, the original interaction content contains a normalized reference interpretation produced before memory encoding. Use that interpretation as factual evidence for the episode and keywords. Do not independently broaden mission-specific or negative evidence into a durable global preference.
 
 # Rules
 
@@ -309,21 +309,7 @@ Always:
 
 Never:
 - Summarize only one side of the interaction.
-- Restate what the user literally said or did as a semantic insight; the semantic must be an interpretation about the person, not a paraphrase of the turn.
 - Include timestamps, speaker names, or generic filler words in keywords.
-
-# Semantic Interpretation (active)
-
-Always produce exactly one semantic insight — never null. Interpret the user as a person: their intent, preferences, traits, tendencies, working style, taste, or communication style.
-
-Be bold. Even when the turn only weakly supports it, commit to a concrete interpretive hypothesis about the user rather than refusing. Going beyond what is strictly proven is allowed and expected; a speculative but specific reading is more useful here than a cautious non-answer.
-
-Then rate how well the interaction actually supports that insight with "interpretationConfidence" (0.0–1.0):
-- 0.8–1.0: directly and clearly supported by the interaction.
-- 0.4–0.7: reasonable inference with partial support.
-- 0.0–0.3: speculative over-reading that goes well beyond the evidence.
-
-Keep the semantic specific and readable (one sentence), not generic filler.
 
 # Output Format
 
@@ -336,17 +322,10 @@ Return exactly this JSON shape:
     // Exclude speaker names, timestamps, and generic filler words.
     // Include at least three non-redundant keywords.
   ],
-  "episode": "",
+  "episode": ""
   // One factual English sentence describing the interaction,
   // including the user request, relevant prior context, agent output/outcome,
   // and immediate outcome, feedback, or decision.
-
-  "semantic": "",
-  // Required one-sentence English interpretive insight about the user (see Semantic Interpretation). Never null, never empty.
-
-  "interpretationConfidence": 0.0
-  // Number 0.0–1.0: how well the interaction supports the semantic insight above.
-  // High = clearly supported; low = speculative over-reading.
 }`;
 
 export const MEMORY_SOURCE_NORMALIZATION_PROMPT = `# Task

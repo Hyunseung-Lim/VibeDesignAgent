@@ -159,7 +159,7 @@
 
 ### 4.7 메모리 (Memory)
 
-- **생성 단위**: 세션 중 interaction turn마다 `/api/memory/drafts`에서 memory draft 생성. interaction마다 semantic memory를 적극 생성하고 해석 신뢰도를 `interpretationConfidence`로 기록 `[추가됨 2026-06-12 → 15.63]`
+- **생성 단위**: 세션 중 interaction turn마다 `/api/memory/drafts`에서 keyword와 factual episode를 생성한다. 신규 during-session memory는 사용자 성향을 추측하는 semantic interpretation이나 `interpretationConfidence`를 생성·저장하지 않는다. before-session profile에서 사용자가 직접 제공한 durable 정보와 기존 memory의 semantic은 호환성을 위해 계속 읽는다 `[현행 2026-06-23 → 15.111]`
 - **Source normalization**: 채팅 turn의 인용 text, link, 선택 UI result, 첨부 image를 structured source로 draft API에 전달한다. link는 메모리 turn 해석 전에 source 유형별로 lazy 분석해 별도 cache artifact로 저장한다. article/case study와 live product는 실제 URL의 case·기능·포지셔닝·UX 근거를 분리하고, visual curation/style source는 선택 이미지 자체를 vision 분석한다. 이후 user input·agent output과 source evidence를 함께 해석해 이번 interaction의 참고 측면과 적용 범위를 정한다. 세부 구현은 `src/lib/server/referenceSourceAnalysis.ts`와 `src/lib/server/memorySourceNormalization.ts`를 직접 확인한다 `[현행 2026-06-23 → 15.110]`
 - **첨부 이미지 시각 선호**: image normalizer는 의도적으로 선호를 추론하지 않으므로, 첨부 이미지가 주도한 목업 생성이 성공해 derivedDesignStyle가 나오면 그 스타일을 `style-image-preference-{turnId}` interactionId(category `style_image_preference`)로 별도 draft에 기록한다. 이번 미션/시안 맥락의 session-scoped evidence로 담고 전역 취향으로 단정하지 않는다 `[현행 2026-06-21 → 15.101]`
 - **확정 시점**: 사용자가 `세션 종료` 버튼을 누르면 `/api/memory/complete-session`에서 draft를 통합해 장기 메모리로 저장
@@ -3402,3 +3402,17 @@ type ChatPlan = {
   - 저장된 source artifact를 interaction normalizer에 전달해, 여러 case 중 사용자가 지목한 case나 기능/포지셔닝/스타일 중 이번 turn에서 원한 측면은 user input과 agent output을 결합하는 다음 단계에서 선택한다.
   - source 분석 실패 시 기존 metadata fallback을 저장하고 memory encoding은 계속한다. 분석 fingerprint/version과 사용한 artifact 목록을 draft 및 장기 memory metadata로 승격한다.
 - 검증: `./node_modules/.bin/tsc --noEmit`, 변경 파일 ESLint(0 error, 기존 page warning만), `git diff --check`, `npm run build` 통과. Build의 기존 presentation route NFT trace warning은 유지. 실제 article/case study, live product, Pinterest/curation image 각각에서 cache artifact와 normalized interaction context가 의도대로 분리되는지는 provider 연결 환경에서 라이브 확인이 필요하다.
+
+### 15.111 during-session semantic interpretation 제거 `[implemented 2026-06-23]`
+
+- 배경(QA Note `Semantic Interpretation 값 삭제`): interaction마다 사용자 성향을 과감하게 추론해 semantic과 confidence를 강제 생성하던 15.63 동작은 현재 활용 대비 과해석과 데이터 복잡도가 컸다.
+- 범위 결정:
+  - 신규 during-session turn의 speculative semantic interpretation만 제거한다.
+  - before-session profile에서 사용자가 직접 제공한 durable preference/constraint를 구조화하는 semantic과 기존 저장 memory의 읽기 호환성은 유지한다.
+- 수정:
+  - `MEMORY_ENCODE_PROMPT`에서 Semantic Interpretation 섹션, semantic paraphrase 규칙, semantic/confidence output field를 제거하고 keyword + factual episode만 반환하도록 축소했다.
+  - draft parser에서 semantic/confidence parse와 clamp를 제거했다. draft 저장 시 Firestore update mask delete로 semantic, semanticJson, interpretationConfidence를 실제 필드 삭제해 같은 interaction 재생성 시 구 값도 남지 않게 했다.
+  - session complete는 신규 semantic 없는 memory document에서 semantic/confidence 필드를 삭제하며 embedding은 keyword, episode, original interaction content를 사용한다. 과거 draft에 실제 semantic이 있으면 session completion 호환을 위해 semantic 자체는 승격하되 confidence는 제거한다.
+  - memory item/session summary/agent/session review 전달 타입과 매핑에서 interpretationConfidence를 제거하고 detail panel의 semantic 유무 badge 및 confidence/과해석 badge를 제거했다. 기존/profile semantic 본문은 호환 표시한다.
+  - 공용 Firestore patch helper에 optional delete field mask를 추가해 별도 요청 없이 필드를 삭제할 수 있게 했다.
+- 검증: `./node_modules/.bin/tsc --noEmit`, 변경 파일 ESLint(0 error, 기존 page warning만), `git diff --check`, `npm run build` 통과. Build의 기존 presentation route NFT trace warning은 유지. 신규 interaction draft와 promoted memory에 semantic/confidence field가 없고 기존/profile semantic retrieval이 유지되는지는 실제 세션에서 라이브 확인이 필요하다.

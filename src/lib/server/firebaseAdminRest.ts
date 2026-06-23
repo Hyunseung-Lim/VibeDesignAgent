@@ -374,9 +374,10 @@ export async function patchFirestoreDocument(
   documentPath: string,
   data: Record<string, unknown>,
   token: string,
+  deleteFields: string[] = [],
 ) {
   const url = new URL(`${firestoreBase()}/${documentPath}`);
-  Object.keys(data).forEach((field) =>
+  [...Object.keys(data), ...deleteFields].forEach((field) =>
     url.searchParams.append("updateMask.fieldPaths", field),
   );
   const res = await fetch(url, {

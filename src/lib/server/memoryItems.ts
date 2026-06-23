@@ -61,7 +61,6 @@ export async function loadUserMemoryItems(uid: string, token: string) {
         timestamp: numberValue(data.timestamp ?? data.createdAt),
         archivedAt: numberValue(data.archivedAt),
         archiveReason: stringValue(data.archiveReason),
-        interpretationConfidence: numberValue(data.interpretationConfidence),
         source:
           data.source && typeof data.source === "object" ? data.source : null,
       };

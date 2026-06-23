@@ -243,7 +243,6 @@ export function MemoryClusterPage({
     timestamp: m.timestamp ?? 0,
     keyword: m.keywords,
     keywords: m.keywords,
-    interpretationConfidence: m.interpretationConfidence ?? null,
     row: {
       source: m.source ?? undefined,
     },

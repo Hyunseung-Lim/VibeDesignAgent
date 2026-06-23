@@ -69,11 +69,6 @@ export async function POST(request: Request) {
         const keywords = jsonArray(draft.keywordsJson);
         const semantic =
           String(draft.semantic ?? "").trim() || jsonArray(draft.semanticJson)[0] || "";
-        const interpretationConfidence =
-          typeof draft.interpretationConfidence === "number" &&
-          Number.isFinite(draft.interpretationConfidence)
-            ? draft.interpretationConfidence
-            : null;
         const episodic = String(draft.episode ?? "").trim();
         const input = String(draft.input ?? "").trim();
         const output = String(draft.output ?? "").trim();
@@ -82,7 +77,7 @@ export async function POST(request: Request) {
           [`User input:\n${input}`, `Agent output:\n${output}`]
             .filter((section) => !section.endsWith("\n"))
             .join("\n\n");
-        // Keep timestamp as metadata only; vector similarity should stay semantic.
+        // Keep timestamp as metadata only; vector similarity should stay content-based.
         const embeddingText = [
           keywords.length ? `Keywords: ${keywords.join(", ")}` : "",
           episodic ? `Episodic: ${episodic}` : "",
@@ -94,7 +89,7 @@ export async function POST(request: Request) {
         const [embedding] = await embedMemoryTexts(embeddingText ? [embeddingText] : []);
         // Promote whenever the draft carries any usable content, not only when an
         // episodic line exists. Episodic-empty drafts (UI events, final-design
-        // selections, semantic-only memories) were previously skipped here yet
+        // selections and legacy semantic-only memories) were previously skipped here yet
         // still marked "promoted" below — so they silently vanished from
         // long-term memory and the agent view while remaining in the session.
         const hasContent = Boolean(
@@ -116,8 +111,7 @@ export async function POST(request: Request) {
               episodic,
               episode: episodic,
               content: episodic,
-              semantic: semantic || null,
-              interpretationConfidence,
+              ...(semantic ? { semantic } : {}),
               input: draft.input ?? "",
               output: draft.output ?? "",
               originalInteractionContent,
@@ -154,6 +148,9 @@ export async function POST(request: Request) {
               ownerUid: user.localId,
             },
             token,
+            semantic
+              ? ["interpretationConfidence"]
+              : ["semantic", "semanticJson", "interpretationConfidence"],
           );
         }
         await patchFirestoreDocument(
