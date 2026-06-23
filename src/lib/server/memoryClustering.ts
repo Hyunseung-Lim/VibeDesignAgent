@@ -1,7 +1,11 @@
 import OpenAI from "openai";
 import { createHash } from "crypto";
 import { memoryClusterLabelPrompt } from "@/lib/prompts";
-import { patchFirestoreDocument } from "@/lib/server/firebaseAdminRest";
+import {
+  getFirestoreDocument,
+  listFirestoreDocumentIds,
+  patchFirestoreDocument,
+} from "@/lib/server/firebaseAdminRest";
 
 export const EMBEDDING_MODEL = "text-embedding-3-large";
 export const LABEL_MODEL = "gpt-5.4-mini";
@@ -133,6 +137,61 @@ export function isMemoryCluster(value: unknown): value is MemoryCluster {
 
 export function parseStoredClusters(value: unknown) {
   return Array.isArray(value) ? value.filter(isMemoryCluster) : [];
+}
+
+// Best-effort load of the most recently generated cluster cache for a user.
+// Cluster docs are keyed by item signature and accumulate over time; we pick the
+// newest by generatedAt. Returns [] when no cache exists (caller falls back).
+// This never regenerates clusters (no LLM) — safe for the chat/retrieve hot path.
+export async function loadLatestStoredClusters(
+  uid: string,
+  token: string,
+): Promise<MemoryCluster[]> {
+  const ids = await listFirestoreDocumentIds(
+    `users/${uid}/${CLUSTER_COLLECTION}`,
+    token,
+  );
+  if (ids.length === 0) return [];
+  const docs = await Promise.all(
+    ids.map(async (id) => {
+      const data = (await getFirestoreDocument(
+        `users/${uid}/${CLUSTER_COLLECTION}/${encodeURIComponent(id)}`,
+        token,
+      )) as Record<string, unknown> | null;
+      if (!data) return null;
+      return {
+        generatedAt: typeof data.generatedAt === "number" ? data.generatedAt : 0,
+        clusters: parseStoredClusters(data.graphClusters),
+      };
+    }),
+  );
+  const latest = docs
+    .filter(
+      (doc): doc is { generatedAt: number; clusters: MemoryCluster[] } =>
+        Boolean(doc && doc.clusters.length > 0),
+    )
+    .sort((a, b) => b.generatedAt - a.generatedAt)[0];
+  return latest ? latest.clusters : [];
+}
+
+// Map each memory item id to the cluster it belongs to (first match wins).
+export function clusterSummaryByItemId(clusters: MemoryCluster[]) {
+  const map = new Map<
+    string,
+    { clusterId: string; label: string; summary: string }
+  >();
+  for (const cluster of clusters) {
+    for (const itemId of cluster.itemIds) {
+      if (!map.has(itemId)) {
+        map.set(itemId, {
+          clusterId: cluster.id,
+          label: cluster.label,
+          summary: cluster.summary,
+        });
+      }
+    }
+  }
+  return map;
 }
 
 export function parseStoredGraphEdges(value: unknown): ClusterGraphEdge[] {

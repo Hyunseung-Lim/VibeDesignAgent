@@ -260,6 +260,7 @@ Rules:
 - Need citedTexts or citedReferences only when the current request refers to selected/cited material, examples, references, or inspiration.
 - Need interactionMemory when during-session memory could help continue or reference past design decisions, revise previous work, or generate/edit a mockup. Skip for standalone queries: reference searches, simple factual questions, or first-turn clarifications with no prior context.
 - Use "clarify" when the user request cannot be answered without asking a question.
+- "userClusterSummaries" (when present) summarize this user's habitual working patterns. Use them ONLY to disambiguate intent/needs when the request is too vague to decide the action from its text — not to pick content, style, or references (that happens when the answer is written). Ignore them when the action is already clear or when absent. Never quote them.
 
 Compact input:
 ${compactInputJson}`;

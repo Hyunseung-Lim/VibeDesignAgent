@@ -872,6 +872,32 @@ export async function POST(request: Request) {
     (item: unknown) => isBeforeSessionMemoryItem(item),
   ).length;
   const interactionMemoryCount = memoryItems.length - profileMemoryCount;
+  // Distinct persona-cluster summaries of the retrieved memory, attached by the
+  // retrieve endpoint. Gives the planner a compact "what kind of user is this"
+  // signal so it can choose user-specific actions without re-summarizing memory.
+  // Empty when clusters are not yet cached (planner falls back to the counts).
+  const userClusterSummaries: Array<{ label: string; summary: string }> = [];
+  const seenClusterIds = new Set<string>();
+  for (const item of memoryItems) {
+    const record = item as Record<string, unknown>;
+    const summary =
+      typeof record.clusterSummary === "string"
+        ? record.clusterSummary.trim()
+        : "";
+    if (!summary) continue;
+    const clusterId =
+      typeof record.clusterId === "string" && record.clusterId
+        ? record.clusterId
+        : summary;
+    if (seenClusterIds.has(clusterId)) continue;
+    seenClusterIds.add(clusterId);
+    userClusterSummaries.push({
+      label:
+        typeof record.clusterLabel === "string" ? record.clusterLabel.trim() : "",
+      summary: truncateText(summary, 400),
+    });
+    if (userClusterSummaries.length >= 3) break;
+  }
   const plannerInput = {
     latestUserText: truncateText(latestUserText, 1200),
     recentMessages: messageList.slice(-6).map(
@@ -897,6 +923,7 @@ export async function POST(request: Request) {
       title: truncateText(missionTitle, 200),
       briefPreview: truncateText(missionBrief, 500),
     },
+    userClusterSummaries,
     requestedCommand: requestedCommandId,
     mentionedArtifact: normalizedMention,
   };

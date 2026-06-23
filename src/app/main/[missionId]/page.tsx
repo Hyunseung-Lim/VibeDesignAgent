@@ -352,6 +352,9 @@ type MemoryRecord = {
   retrievedCount?: number;
   timestamp?: number;
   createdAt?: number;
+  clusterId?: string | null;
+  clusterLabel?: string | null;
+  clusterSummary?: string | null;
 };
 
 type MemoryRetrievalResponse = {

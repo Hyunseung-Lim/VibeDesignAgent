@@ -7,6 +7,10 @@ import {
   patchFirestoreDocument,
   verifyFirebaseIdToken,
 } from "@/lib/server/firebaseAdminRest";
+import {
+  clusterSummaryByItemId,
+  loadLatestStoredClusters,
+} from "@/lib/server/memoryClustering";
 
 export const runtime = "nodejs";
 
@@ -361,6 +365,10 @@ export async function POST(request: Request) {
   }
 
   let retrieved: Candidate[] = [];
+  let clusterByItemId = new Map<
+    string,
+    { clusterId: string; label: string; summary: string }
+  >();
   try {
     const token = await getFirebaseAccessToken();
     const now = Date.now();
@@ -381,6 +389,17 @@ export async function POST(request: Request) {
       .sort((a, b) => b.similarity - a.similarity);
 
     retrieved = ranked.slice(0, limit);
+    // Best-effort: attach the persona summary of the cluster each retrieved item
+    // belongs to. Used by the chat planner to pick user-specific actions without
+    // re-summarizing. Never blocks retrieval — cache miss just yields no summary.
+    try {
+      const clusters = await loadLatestStoredClusters(user.localId, token);
+      if (clusters.length > 0) {
+        clusterByItemId = clusterSummaryByItemId(clusters);
+      }
+    } catch (clusterError) {
+      console.warn("[memory/retrieve] cluster summary lookup failed", clusterError);
+    }
     const scoreDeltas = await updateRetrievedWeights(retrieved, token, now);
     // Decay every memory that was NOT retrieved this turn (usage-based forgetting).
     const idleTargets = ranked.slice(limit);
@@ -435,6 +454,9 @@ export async function POST(request: Request) {
         id: candidate.id,
         memoryId: candidate.memoryId,
         semanticItemId: candidate.semanticItemId,
+        clusterId: clusterByItemId.get(candidate.id)?.clusterId ?? null,
+        clusterLabel: clusterByItemId.get(candidate.id)?.label ?? null,
+        clusterSummary: clusterByItemId.get(candidate.id)?.summary ?? null,
         type:
           isBeforeSessionDoc(candidate.doc)
             ? "before_session_memory"
