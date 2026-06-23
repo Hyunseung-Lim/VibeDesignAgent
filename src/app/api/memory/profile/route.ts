@@ -50,6 +50,11 @@ type DerivedProfileMemory = {
   semantic: string | null;
 };
 
+type MissionContext = {
+  title: string;
+  brief: string;
+};
+
 function sanitizeItem(raw: unknown): ProfileMemoryItem | null {
   if (!raw || typeof raw !== "object") return null;
   const item = raw as Record<string, unknown>;
@@ -182,7 +187,10 @@ async function segmentProfileMemoryUnits(rawMarkdown: string) {
   );
 }
 
-async function encodeProfileMemoryUnits(segments: string[]) {
+async function encodeProfileMemoryUnits(
+  segments: string[],
+  missionContext: MissionContext,
+) {
   if (segments.length === 0) return [];
   const completion = await openai.chat.completions.create({
     model: "gpt-5.4-mini",
@@ -192,6 +200,13 @@ async function encodeProfileMemoryUnits(segments: string[]) {
       {
         role: "user",
         content: JSON.stringify({
+          // before-session units have no preceding interaction, so frame them with
+          // the mission the user is about to start and the fact that this is
+          // pre-session info they wrote — see PROFILE_MEMORY_ENCODE_PROMPT.
+          mission: {
+            title: missionContext.title.slice(0, 200),
+            brief: missionContext.brief.slice(0, 800),
+          },
           items: segments.map((text) => ({ text })),
         }),
       },
@@ -205,9 +220,12 @@ async function encodeProfileMemoryUnits(segments: string[]) {
   }));
 }
 
-async function deriveProfileMemories(rawMarkdown: string) {
+async function deriveProfileMemories(
+  rawMarkdown: string,
+  missionContext: MissionContext,
+) {
   const segments = await segmentProfileMemoryUnits(rawMarkdown);
-  return encodeProfileMemoryUnits(segments);
+  return encodeProfileMemoryUnits(segments, missionContext);
 }
 
 async function writeProfileDerivedMemories(
@@ -215,10 +233,11 @@ async function writeProfileDerivedMemories(
   missionId: string,
   rawMarkdown: string,
   items: ProfileMemoryItem[],
+  missionContext: MissionContext,
   token: string,
   now: number,
 ) {
-  const derived = await deriveProfileMemories(rawMarkdown);
+  const derived = await deriveProfileMemories(rawMarkdown, missionContext);
   if (derived.length === 0) return { count: 0, ids: [] as string[] };
   const writeBatchId = randomUUID();
   const embeddings = await embedTexts(
@@ -353,6 +372,10 @@ export async function POST(request: Request) {
     stringOrNull(body.rawMarkdown) ??
     stringOrNull(body.markdown) ??
     items.map((item) => `- ${item.input}`).join("\n");
+  const missionContext = {
+    title: stringOrNull(body.missionTitle) ?? "",
+    brief: stringOrNull(body.missionBrief) ?? "",
+  };
 
   const token = await getFirebaseAccessToken();
   const documentPath = `users/${user.localId}/profile_memories/${encodeURIComponent(missionId)}`;
@@ -409,6 +432,7 @@ export async function POST(request: Request) {
       missionId,
       rawMarkdown,
       items,
+      missionContext,
       token,
       now,
     );

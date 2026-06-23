@@ -901,7 +901,7 @@ archiveReason = "low-weight" | "duplicate" | "manual";
   - Planner 입력:
     - latest user input
     - 최근 message 3~5개 compact
-    - 현재 UI 상태 boolean/count: hasActiveIdea, hasMockupHtml, hasSelectedElement, hasDesignSpec, citedReferenceCount, citedTextCount, profileMemoryCount, interactionMemoryCount
+    - 현재 UI 상태 boolean/count: hasActiveIdea, hasMockupHtml, hasSelectedElement, hasDesignSpec, citedReferenceCount, citedTextCount, profileMemoryCount, interactionMemoryCount `[stale 2026-06-23 → 15.114: planner 입력에 관련 cluster persona 요약 userClusterSummaries(최대 3개)가 추가됨]`
     - mission title + 짧은 mission summary
   - Planner 출력 schema 초안:
 
@@ -3443,3 +3443,22 @@ type ChatPlan = {
   - Tailwind CDN처럼 늦게 삽입되는 runtime style도 scheduled measurement 직전에 다시 freeze한 뒤 overflow height를 계산한다.
   - canvas render path는 이미 계산한 artboard viewport를 wrapper width, iframe width, height reporter에 공통 사용해 device 기준 불일치를 막는다.
 - 검증: isolated helper fixture에서 1280×900 viewport 고정, 기존 auto override 제거, width freeze를 확인했다. `./node_modules/.bin/tsc --noEmit`, 변경 파일 ESLint(0 error, 기존 page warning만), `git diff --check`, `npm run build` 통과. Build의 기존 presentation route NFT trace warning은 유지. 문제를 재현한 실제 Stitch HTML에서 canvas/Final Design 레이아웃 일치와 긴 scroll page의 overflow height 측정은 라이브 확인이 필요하다.
+
+### 15.114 Planner에 관련 클러스터 요약 주입 `[implemented 2026-06-23]`
+
+- 배경(QA Note `답변 실행 전에 어떤 행동할지 결정하는 단계에서도 메모리가 들어가는지`): planner(행동 결정) 입력에는 메모리 개수(`profileMemoryCount`, `interactionMemoryCount`)만 들어가고 실제 내용은 답변 실행 단계에서만 주입돼, planner가 유저 특화 액션(intent/needs)을 고를 근거가 없었다. `[13.4의 Planner 입력 목록 stale 2026-06-23 → 15.114]`
+- 결정: 풀 컨텐츠를 또 넣어 요약 LLM을 돌리는 대신, 세션 종료 시 이미 생성·캐시된 persona cluster summary를 재사용한다. planner엔 짧은 요약, 답변 단계엔 기존 풀 컨텐츠로 역할을 분리한다.
+- 데이터 흐름: `/api/memory/retrieve`가 매 턴 검색 결과의 각 메모리에 소속 cluster의 `clusterId`/`clusterLabel`/`clusterSummary`를 부착한다. 이 필드는 `memoryContext`를 타고 `/api/chat`까지 전달되고, planner 입력에 distinct summary 최대 3개(`userClusterSummaries`)로 들어간다. chat 핫패스에는 새 Firestore 읽기를 추가하지 않는다.
+- 매핑/폴백: retrieve의 memory doc id와 cluster `itemIds`는 둘 다 `memories_0_1_2` 문서 id라 직접 매칭된다. cluster를 `loadLatestStoredClusters`로 best-effort 로드하며(LLM 재생성 없음), 캐시가 없거나 매칭 실패 시 `userClusterSummaries`는 빈 배열이 되어 기존 카운트 기반 동작으로 자연 폴백한다.
+- 적용 범위: planner 규칙은 cluster summary를 요청이 애매할 때 intent/needs를 가르는 데만 쓰고, 콘텐츠·스타일·레퍼런스 선택(답변 실행 단계의 역할)에는 쓰지 않도록 제한한다. 요청이 이미 명확하면 무시한다.
+- 변경 파일: `src/lib/server/memoryClustering.ts`(`loadLatestStoredClusters`, `clusterSummaryByItemId` 추가), `src/app/api/memory/retrieve/route.ts`(요약 부착), `src/app/api/chat/route.ts`(`userClusterSummaries` 추출·주입), `src/lib/prompts.ts`(planner 규칙), `src/app/main/[missionId]/page.tsx`(`MemoryRecord` 타입).
+- 검증: `npx tsc --noEmit`, 변경 파일 ESLint(0 error) 통과. 런타임 효과는 cluster 캐시가 있는 유저(최소 1세션 완료 후)로 라이브 확인이 필요하다.
+
+### 15.115 before-session 메모리 주입·인코딩을 during-session과 정렬 `[implemented 2026-06-23]`
+
+- 배경(QA Note `before-session 데이터 실행 단계에서 메모리 주입 시 변경 사항`): 답변 실행 단계에서 during-session 메모리는 episodic+semantic compact JSON으로 주입되는데, before-session 메모리만 `input` 원문을 bullet로 주입하고 있어 4장(1~9장)의 prompt 주입 계약(profile compact JSON은 episodic/semantic 배열만 포함)과도 어긋났다.
+- 답변 단계 변경: `/api/chat`의 profile 메모리 주입을 `compactMemoryContext`로 통일해 episodic/semantic만 넣는다. `chatProfileMemoryPrompt`는 bullet lines 대신 compact JSON을 받고 before-session 배경임을 설명한다. 이로써 코드가 4장 prompt 주입 계약과 일치한다(기존 input bullet 방식이 drift였음).
+- 인코딩 변경: before-session 유닛은 앞선 interaction이 없으므로 인코딩 입력에 사용자가 시작하려는 mission(title/brief)을 함께 넣고, `PROFILE_MEMORY_ENCODE_PROMPT`가 episodic을 미션 시작 전 사용자가 제공한 사전 정보로 프레이밍하도록 했다. mission 정보가 비면 프레이밍을 생략한다. mission title/brief는 클라이언트의 profile POST body로 전달한다(기존 chat route와 동일하게 클라이언트가 mission context를 넘기는 패턴).
+- 저장 계약: doc의 `input` 필드 저장은 그대로 둔다(admin/원문 보기 용도). 변경은 답변 주입과 인코딩 프레이밍에 한정된다.
+- 변경 파일: `src/app/api/chat/route.ts`(profile 주입을 compact JSON으로), `src/lib/prompts.ts`(`chatProfileMemoryPrompt`, `PROFILE_MEMORY_ENCODE_PROMPT`), `src/app/api/memory/profile/route.ts`(mission context 스레딩), `src/app/main/[missionId]/page.tsx`(profile POST에 missionTitle/brief 추가).
+- 검증: `npx tsc --noEmit`, 변경 파일 ESLint(0 error, 기존 page warning만) 통과. 실제 인코딩 episodic 프레이밍 품질과 답변 단계 주입 결과는 라이브 확인이 필요하다.

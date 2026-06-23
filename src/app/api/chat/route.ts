@@ -1018,15 +1018,13 @@ export async function POST(request: Request) {
 
     if (profileItems.length > 0) {
       markContext("profileMemory");
-      const lines = profileItems
-        .map((item) => {
-          const r = item as Record<string, unknown>;
-          return `- ${truncateText(r.input ?? r.episodic, 500)}`;
-        })
-        .join("\n");
+      const compactProfile = compactMemoryContext({
+        episodic: [],
+        semantic: profileItems,
+      });
       systemMessages.push({
         role: "system",
-        content: chatProfileMemoryPrompt(lines),
+        content: chatProfileMemoryPrompt(JSON.stringify(compactProfile)),
       });
     }
 

@@ -6639,6 +6639,16 @@ export default function MainScreenPage() {
                           missionId,
                           items: [],
                           rawMarkdown: profileRawMarkdown,
+                          missionTitle:
+                            parentMissionTitle ||
+                            activeOption?.title ||
+                            missionTitle ||
+                            "",
+                          missionBrief:
+                            parentMissionBrief ||
+                            missionBrief ||
+                            activeOption?.description ||
+                            "",
                         }),
                       });
                     }

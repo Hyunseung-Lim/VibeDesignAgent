@@ -129,8 +129,8 @@ export function chatMissionPrompt(missionTitle: string, missionBrief: string) {
   return `Current mission context:\nTitle: ${missionTitle}\nBrief: ${missionBrief}`;
 }
 
-export function chatProfileMemoryPrompt(lines: string) {
-  return `The following context was explicitly provided by the user before this session. Treat it as standing background — always apply it silently without referencing it directly.\n${lines}`;
+export function chatProfileMemoryPrompt(compactMemoryJson: string) {
+  return `Before-session memory the user explicitly provided as standing background before this session. The JSON groups episodic and semantic separately. Episodic items state what the user provided about themselves, their project, constraints, taste, or workflow ahead of the mission. Semantic items contain durable preferences, constraints, or working patterns. Treat it as standing background — apply it silently without referencing it directly.\n${compactMemoryJson}`;
 }
 
 export function chatInteractionMemoryPrompt(compactMemoryJson: string) {
@@ -438,7 +438,9 @@ The input is already segmented. Do not split or merge units unless an item is em
 
 # Input
 
-{"items":[{"text":"..."}]}
+{"mission":{"title":"...","brief":"..."},"items":[{"text":"..."}]}
+
+"mission" is the mission the user is about to start. The items are pre-session info the user wrote before beginning it; there is no preceding interaction with the agent. Use the mission only to frame the episodic statement as pre-session context (e.g. that, ahead of this mission, the user stated X). Do not invent details from the mission, and skip the mission framing if mission title/brief are empty.
 
 # Output
 
@@ -450,7 +452,7 @@ Return valid JSON only:
 - Write keywords, episodic, and semantic in English.
 - Preserve one output item per usable input item.
 - keywords: 1 to 6 concise keywords.
-- episodic: a concise statement of what the user explicitly provided about themselves, their project, constraints, taste, workflow, or context.
+- episodic: a concise statement that, before starting the mission, the user provided this about themselves, their project, constraints, taste, workflow, or context. Frame it as pre-session context for the mission when mission info is present.
 - semantic: a durable preference, tendency, constraint, or working pattern inferred from that unit. Use null only if there is no durable implication.
 - Do not invent personal facts, demographics, or preferences not supported by the input.
 - sourceText: copy the input unit text that this record encodes.
