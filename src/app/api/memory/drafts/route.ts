@@ -13,8 +13,14 @@ import {
   memorySourceFingerprint,
   normalizeMemorySources,
 } from "@/lib/server/memorySourceNormalization";
+import {
+  REFERENCE_SOURCE_ANALYSIS_VERSION,
+  analyzeReferenceSource,
+  referenceSourceAnalysisFingerprint,
+} from "@/lib/server/referenceSourceAnalysis";
 
 export const runtime = "nodejs";
+export const maxDuration = 120;
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const MEMORY_SCHEMA_VERSION = "0.1.2";
@@ -179,6 +185,67 @@ async function loadPreviousDrafts(
     .slice(0, 2);
 }
 
+async function enrichReferenceSources(
+  uid: string,
+  sources: MemoryDraftSources | undefined,
+  token: string,
+) {
+  const links = sources?.links ?? [];
+  if (links.length === 0) {
+    return { sources, analysisFingerprints: [] as string[] };
+  }
+
+  const boundedLinks = links.slice(0, 8);
+  const enrichedLinks: typeof boundedLinks = new Array(boundedLinks.length);
+  const analysisFingerprints: string[] = new Array(boundedLinks.length);
+  let nextIndex = 0;
+  const analyzeNext = async () => {
+    while (nextIndex < boundedLinks.length) {
+      const index = nextIndex++;
+      const link = boundedLinks[index];
+      const fingerprint = referenceSourceAnalysisFingerprint(link);
+      analysisFingerprints[index] = fingerprint;
+      const analysisPath = `users/${uid}/referenceSourceAnalyses/${fingerprint}`;
+      const cached = await getFirestoreDocument(analysisPath, token);
+      const canReuse =
+        cached?.analysisVersion === REFERENCE_SOURCE_ANALYSIS_VERSION &&
+        typeof cached?.analysisText === "string" &&
+        String(cached.analysisText).trim();
+      const analysis = canReuse
+        ? String(cached.analysisText)
+        : await analyzeReferenceSource(link);
+      if (!canReuse) {
+        await patchFirestoreDocument(
+          analysisPath,
+          {
+            analysisVersion: REFERENCE_SOURCE_ANALYSIS_VERSION,
+            fingerprint,
+            url: String(link.url ?? "").slice(0, 2000),
+            imageUrl: String(link.imageUrl ?? "").slice(0, 2000),
+            referenceMode: link.referenceMode ?? "",
+            searchProvider: link.searchProvider ?? "",
+            analysisText: analysis,
+            analyzedAt: Date.now(),
+          },
+          token,
+        );
+      }
+      enrichedLinks[index] = { ...link, analysis };
+    }
+  };
+  await Promise.all(
+    Array.from(
+      { length: Math.min(2, boundedLinks.length) },
+      () => analyzeNext(),
+    ),
+  );
+
+  return {
+    sources: { ...sources, links: enrichedLinks },
+    analysisFingerprints,
+  };
+}
+
 export async function POST(request: Request) {
   const user = await verifyFirebaseIdToken(request);
   if (!user) return Response.json({ error: "unauthorized" }, { status: 401 });
@@ -207,7 +274,16 @@ export async function POST(request: Request) {
   const token = await getFirebaseAccessToken();
   const draftPath = `sessions/${user.localId}/missions/${encodeURIComponent(missionId)}/memoryDrafts/${encodeURIComponent(interactionId)}`;
   const existingDraft = await getFirestoreDocument(draftPath, token);
-  const sourceFingerprint = memorySourceFingerprint(body.sources);
+  const enriched = await enrichReferenceSources(
+    user.localId,
+    body.sources,
+    token,
+  );
+  const sourceFingerprint = memorySourceFingerprint(
+    enriched.sources,
+    input,
+    output,
+  );
   const canReuseNormalizedSources =
     existingDraft?.sourceNormalizationVersion ===
       MEMORY_SOURCE_NORMALIZATION_VERSION &&
@@ -218,7 +294,7 @@ export async function POST(request: Request) {
         text: String(existingDraft.normalizedSourceText),
         sourceTypes: jsonStringArray(existingDraft.normalizedSourceTypesJson),
       }
-    : await normalizeMemorySources(body.sources);
+    : await normalizeMemorySources(enriched.sources, input, output);
   const [previousDraft, olderDraft] = await loadPreviousDrafts(
     user.localId,
     missionId,
@@ -276,6 +352,10 @@ export async function POST(request: Request) {
       sourceNormalizationVersion: MEMORY_SOURCE_NORMALIZATION_VERSION,
       sourceNormalizationFingerprint: sourceFingerprint,
       normalizedSourceTypesJson: JSON.stringify(normalizedSources.sourceTypes),
+      referenceSourceAnalysisVersion: REFERENCE_SOURCE_ANALYSIS_VERSION,
+      referenceSourceAnalysisFingerprintsJson: JSON.stringify(
+        enriched.analysisFingerprints,
+      ),
       sourceNormalizedAt: canReuseNormalizedSources
         ? Number(existingDraft?.sourceNormalizedAt ?? createdAt)
         : createdAt,

@@ -97,7 +97,10 @@ import {
   defaultMockupPromptForIdea,
   FORKED_STYLE_MOCKUP_PROMPT,
 } from "@/lib/prompts";
-import type { MemoryDraftSources } from "@/lib/memory-sources";
+import type {
+  MemoryDraftSources,
+  MemorySourceLink,
+} from "@/lib/memory-sources";
 import {
   CHAT_COMPOSER_COMMANDS,
   type ChatComposerCommand,
@@ -493,6 +496,22 @@ type Reference = {
   referencePurpose?: "visual_style" | "page_structure" | "content_components";
   referencePurposeLabel?: string;
 };
+
+function memorySourceLinkFromReference(
+  reference: Reference,
+): MemorySourceLink {
+  return {
+    title: reference.title,
+    url: reference.url,
+    description: reference.description,
+    rationale: reference.rationale,
+    imageUrl: reference.imageUrl,
+    referenceMode: reference.referenceMode,
+    searchProvider: reference.searchProvider,
+    referencePurpose: reference.referencePurpose,
+    referencePurposeLabel: reference.referencePurposeLabel,
+  };
+}
 
 type ReferencePreferenceContext = {
   scope: "mission";
@@ -1159,52 +1178,6 @@ async function hydrateManualReference(
 function extractFirstUrl(text: string): string | null {
   const match = text.match(/https?:\/\/[^\s)]+/i);
   return match ? match[0].replace(/[.,]+$/, "") : null;
-}
-
-function formatMemoryInputWithCitations(
-  text: string,
-  citedReferences: Reference[],
-  citedTexts: string[],
-  citedElement: {
-    artboardId: string;
-    selector: string;
-    outerHTML?: string;
-  } | null,
-) {
-  const sections = [`user input: ${text}`];
-  if (citedReferences.length > 0) {
-    sections.push(
-      [
-        `cited references (${citedReferences.length}):`,
-        ...citedReferences.map((reference, index) =>
-          formatReferenceMemoryDetail(reference, index + 1),
-        ),
-      ].join("\n"),
-    );
-  }
-  if (citedTexts.length > 0) {
-    sections.push(
-      [
-        `cited text snippets (${citedTexts.length}):`,
-        ...citedTexts.map((snippet, index) => `${index + 1}. ${snippet}`),
-      ].join("\n"),
-    );
-  }
-  if (citedElement) {
-    sections.push(
-      [
-        "cited design element:",
-        `artboardId: ${citedElement.artboardId}`,
-        `selector: ${citedElement.selector}`,
-        citedElement.outerHTML
-          ? `outerHTML: ${citedElement.outerHTML.slice(0, 1200)}`
-          : "",
-      ]
-        .filter(Boolean)
-        .join("\n"),
-    );
-  }
-  return sections.join("\n\n");
 }
 
 const ARTBOARD_GAP = 120;
@@ -3600,23 +3573,13 @@ export default function MainScreenPage() {
     const memoryInput = [
       commandForTurn ? `명시적 생성 명령: ${commandForTurn.label}` : "",
       mentionForTurn ? `언급한 기존 산출물: ${mentionForTurn.label}` : "",
-      formatMemoryInputWithCitations(
-        text,
-        selectedReferences,
-        citedTexts,
-        selectedElement,
-      ),
+      `user input: ${text}`,
     ]
       .filter(Boolean)
       .join("\n");
     const memorySources: MemoryDraftSources = {
       texts: [...citedTexts],
-      links: selectedReferences.map((reference) => ({
-        title: reference.title,
-        url: reference.url,
-        description: reference.description,
-        rationale: reference.rationale,
-      })),
+      links: selectedReferences.map(memorySourceLinkFromReference),
       image: attachedStyleImage,
       uiResult: selectedElement
         ? {
@@ -3685,7 +3648,13 @@ export default function MainScreenPage() {
         memoryInput,
         manualReferenceReply,
         userMsg.createdAt ?? Date.now(),
-        memorySources,
+        {
+          ...memorySources,
+          links: [
+            ...(memorySources.links ?? []),
+            memorySourceLinkFromReference(hydratedReference),
+          ],
+        },
       );
       setChatPhasesByMessageId((prev) => {
         const next = { ...prev };
@@ -4245,7 +4214,13 @@ export default function MainScreenPage() {
             .filter(Boolean)
             .join("\n\n"),
           userMsg.createdAt ?? Date.now(),
-          memorySources,
+          {
+            ...memorySources,
+            links: [
+              ...(memorySources.links ?? []),
+              ...result.references.map(memorySourceLinkFromReference),
+            ],
+          },
         );
       };
       if (fetchRefMatch) {
@@ -5097,6 +5072,11 @@ export default function MainScreenPage() {
       `레퍼런스 삭제: ${reference.title}`,
       formatReferenceMemoryDetail(reference),
       Date.now(),
+      {
+        links: [
+          memorySourceLinkFromReference(reference),
+        ],
+      },
     );
     setReferences((prev) =>
       prev.filter((candidate) => candidate.id !== reference.id),

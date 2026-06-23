@@ -160,7 +160,7 @@
 ### 4.7 메모리 (Memory)
 
 - **생성 단위**: 세션 중 interaction turn마다 `/api/memory/drafts`에서 memory draft 생성. interaction마다 semantic memory를 적극 생성하고 해석 신뢰도를 `interpretationConfidence`로 기록 `[추가됨 2026-06-12 → 15.63]`
-- **Source normalization**: 채팅 turn의 인용 text, link metadata, 선택 UI result, 첨부 image를 structured source로 draft API에 전달한다. text/link/UI는 서버에서 텍스트화하고 image는 필요할 때만 vision description을 생성한다. 결과와 source fingerprint를 draft에 저장해 같은 interaction 재처리 시 재사용한다 `[현행 2026-06-21 → 15.100]`
+- **Source normalization**: 채팅 turn의 인용 text, link, 선택 UI result, 첨부 image를 structured source로 draft API에 전달한다. link는 메모리 turn 해석 전에 source 유형별로 lazy 분석해 별도 cache artifact로 저장한다. article/case study와 live product는 실제 URL의 case·기능·포지셔닝·UX 근거를 분리하고, visual curation/style source는 선택 이미지 자체를 vision 분석한다. 이후 user input·agent output과 source evidence를 함께 해석해 이번 interaction의 참고 측면과 적용 범위를 정한다. 세부 구현은 `src/lib/server/referenceSourceAnalysis.ts`와 `src/lib/server/memorySourceNormalization.ts`를 직접 확인한다 `[현행 2026-06-23 → 15.110]`
 - **첨부 이미지 시각 선호**: image normalizer는 의도적으로 선호를 추론하지 않으므로, 첨부 이미지가 주도한 목업 생성이 성공해 derivedDesignStyle가 나오면 그 스타일을 `style-image-preference-{turnId}` interactionId(category `style_image_preference`)로 별도 draft에 기록한다. 이번 미션/시안 맥락의 session-scoped evidence로 담고 전역 취향으로 단정하지 않는다 `[현행 2026-06-21 → 15.101]`
 - **확정 시점**: 사용자가 `세션 종료` 버튼을 누르면 `/api/memory/complete-session`에서 draft를 통합해 장기 메모리로 저장
 - **버전 관리**: admin memory modal에서 v0.1.0 / v0.1.1 / v0.1.2를 분리 조회 `[stale 2026-06-12 → 15.51: legacy fallback 제거로 현재 v0.1.2 단일 버전만 사용(MemoryVersionTab = "0.1.2"). v0.1.0/v0.1.1 분리 조회 없음]`
@@ -3248,6 +3248,8 @@ type ChatPlan = {
 
 ### 15.100 메모리 입력 source normalization과 lazy cache `[implemented 2026-06-21]`
 
+`[stale 2026-06-23 → 15.109: text/link/UI의 단순 텍스트 포맷과 image 전용 설명을 넘어, 모든 reference source를 interaction 맥락과 함께 선행 해석하는 단계로 교체됨]`
+
 - 배경(QA Note `Source Normalization`): interaction input에는 text, link, image, UI result가 서로 다른 형태로 들어오지만 memory encoder는 클라이언트가 합친 문자열만 받아 첨부 이미지를 놓치고, 재처리 가능한 정규화 결과도 저장하지 않았다.
 - 수정:
   - 채팅 turn에서 인용 text, reference link metadata, 선택 UI result, 첨부 image를 structured `sources` payload로 `/api/memory/drafts`에 전달한다.
@@ -3376,3 +3378,27 @@ type ChatPlan = {
   - 메시지/메모리 입력/review turn/API prompt에 command와 mention metadata를 보존하고, `/api/chat`이 명시적 command를 planner intent보다 우선하도록 연결했다. `/시안생성`은 기존 시안이 있어도 새 `CREATE_NOTE` 결과를 새 시안으로 materialize하며 명시적 command turn에는 자연어 style-fork 휴리스틱을 적용하지 않는다.
   - 빈 채팅 catalog와 제품 투어를 새 문법으로 갱신했다. 레퍼런스/텍스트/선택 요소의 기존 citation UI는 변경하지 않았다.
   - `./node_modules/.bin/tsc --noEmit`, 변경 파일 ESLint(0 error, 기존 warning만), `git diff --check`, `npm run build` 통과. Build의 기존 presentation route NFT trace warning은 유지. 실제 provider command별 end-to-end와 한글 IME dropdown 조작은 라이브 확인이 필요하다.
+
+### 15.109 레퍼런스 해석을 메인 메모리 인코딩 전 단계로 분리 `[implemented 2026-06-23]`
+
+`[stale 2026-06-23 → 15.110: link source를 metadata와 대화만으로 해석하던 범위를 URL/선택 이미지의 유형별 lazy source analysis artifact까지 확장함]`
+
+- 배경: 15.100은 source를 메인 encoder 전에 텍스트 형태로 모았지만, link/text/UI는 메타데이터와 원문을 포맷하는 데 그쳤다. 레퍼런스가 layout, IA, behavior, tone, visual style 중 무엇을 뜻하는지와 durable/mission-specific/negative 범위인지는 여전히 메인 메모리 prompt의 Reference Handling 규칙이 직접 판단했다.
+- 수정:
+  - reference source가 있는 turn은 user input, agent output, structured source를 선행 normalizer가 함께 읽고 source summary, interaction use, relevant aspects, agent interpretation, scope, scope rationale, negative evidence를 JSON으로 해석한 뒤 bounded text context로 만든다.
+  - 첨부 image의 visible fact 설명도 같은 multimodal normalization 호출에 통합한다. source가 없는 turn은 추가 모델 호출을 하지 않으며, normalization 호출이나 JSON parse가 실패하면 raw source text로 폴백해 메모리 생성을 막지 않는다.
+  - 메인 memory encoder의 상세 Reference Handling 판단 규칙을 제거하고 normalized interpretation을 근거로 사용하되 mission-specific/negative evidence를 전역 선호로 확장하지 않는 계약만 남겼다.
+  - normalization version을 2로 올리고 fingerprint에 source뿐 아니라 bounded input/output도 포함한다. 따라서 source가 같아도 interaction 해석이 달라지면 재정규화하고, 완전히 같은 재처리만 저장된 결과를 재사용한다.
+  - client memory input에서 cited text/reference/UI의 문자열 복제를 제거했다. 원 사용자 요청과 command/mention metadata는 input에 두고 cited material은 structured sources → normalized context 한 경로로만 전달한다.
+- 검증: `./node_modules/.bin/tsc --noEmit`, 변경 파일 ESLint(0 error, 기존 page warning만), `git diff --check`, `npm run build` 통과. Build의 기존 presentation route NFT trace warning은 유지. 실제 reference cite/delete/search, cited text, selected UI, attached image turn에서 normalized interpretation과 scope가 draft에 저장되고 같은 요청 재호출 시 sourceNormalizedAt이 유지되는지는 라이브 확인이 필요하다.
+
+### 15.110 링크 레퍼런스의 유형별 source analysis와 공용 lazy cache `[implemented 2026-06-23]`
+
+- 배경: 15.109의 interaction normalizer는 link title, URL, description, rationale와 agent output을 근거로 참고 의도를 판단했지만 실제 linked source를 유형별로 읽지는 않았다. 검색 경로에서 생성한 referenceMode, provider, purpose, card image도 memory sources에서 유실돼 case study의 개별 사례, live app의 기능/포지셔닝/시각 근거, curation image의 실제 내용이 메모리 근거에 남지 않았다.
+- 수정:
+  - memory link source 계약에 image URL, reference mode, search provider, selected purpose/label, source analysis를 추가하고 cite/search/manual add/delete 경로가 같은 변환 helper를 사용하도록 통합했다.
+  - 메모리 draft가 link를 처음 필요로 할 때 URL/image/mode/provider 기반 fingerprint로 user별 reference source analysis cache를 조회한다. cache miss만 분석하고 결과를 즉시 별도 문서에 저장하므로 뒤의 memory encoding이 실패해도 같은 source 분석을 반복하지 않는다.
+  - product/article link는 web search로 해당 URL을 확인해 source type, 구체 case 목록, capabilities, positioning, UX/IA patterns, visual evidence, limitations를 분리한다. style/curation link는 선택된 card image 자체를 vision으로 분석하며 사용자 선호는 이 단계에서 추론하지 않는다.
+  - 저장된 source artifact를 interaction normalizer에 전달해, 여러 case 중 사용자가 지목한 case나 기능/포지셔닝/스타일 중 이번 turn에서 원한 측면은 user input과 agent output을 결합하는 다음 단계에서 선택한다.
+  - source 분석 실패 시 기존 metadata fallback을 저장하고 memory encoding은 계속한다. 분석 fingerprint/version과 사용한 artifact 목록을 draft 및 장기 memory metadata로 승격한다.
+- 검증: `./node_modules/.bin/tsc --noEmit`, 변경 파일 ESLint(0 error, 기존 page warning만), `git diff --check`, `npm run build` 통과. Build의 기존 presentation route NFT trace warning은 유지. 실제 article/case study, live product, Pinterest/curation image 각각에서 cache artifact와 normalized interaction context가 의도대로 분리되는지는 provider 연결 환경에서 라이브 확인이 필요하다.

@@ -3,6 +3,12 @@ export type MemorySourceLink = {
   url?: string;
   description?: string;
   rationale?: string;
+  imageUrl?: string;
+  referenceMode?: "style" | "product";
+  searchProvider?: string;
+  referencePurpose?: string;
+  referencePurposeLabel?: string;
+  analysis?: string;
 };
 
 export type MemorySourceUiResult = {

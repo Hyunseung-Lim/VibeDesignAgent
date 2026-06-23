@@ -129,6 +129,10 @@ export async function POST(request: Request) {
               normalizedSourceTypesJson:
                 draft.normalizedSourceTypesJson ?? "[]",
               sourceNormalizedAt: draft.sourceNormalizedAt ?? null,
+              referenceSourceAnalysisVersion:
+                draft.referenceSourceAnalysisVersion ?? null,
+              referenceSourceAnalysisFingerprintsJson:
+                draft.referenceSourceAnalysisFingerprintsJson ?? "[]",
               link: null,
               embedding: embedding ?? [],
               embeddingSource: EMBEDDING_SOURCE,
