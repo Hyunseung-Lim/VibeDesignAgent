@@ -3473,3 +3473,11 @@ type ChatPlan = {
 - 투어 영향: 디폴트 시안 덕에 `hasIdeas`가 사실상 항상 true → IDEA_STEPS 사용. EMPTY_IDEA_STEPS는 read-only 빈 세션 같은 예외에만 남는 fallback이 됐고, 그 안의 중복 하이라이트는 후속 정리 대상으로 남겨둔다.
 - 변경 파일: `src/app/main/[missionId]/page.tsx`(세션 로드 시 디폴트 시안 시드, CREATE_NOTE 빈 shell fill 조건 확장).
 - 검증: `npx tsc --noEmit`, 변경 파일 ESLint(0 error, 기존 page warning만), `npm run build` 통과. 신규/재개 세션에서 디폴트 시안 노출, 첫 brief의 fill 동작, 빈 시안으로 세션 종료 시 동작은 라이브 확인이 필요하다.
+
+### 15.117 세션 리뷰 세션 이전 탭에서 episodic과 semantic 함께 표시 `[implemented 2026-06-23]`
+
+- 배경(QA Note `세션 리뷰 UI`): 리뷰의 세션 이전 탭 memory card가 `memorySummaryText`로 semantic 한 줄만 보여줬다. before-session 메모리가 episodic/semantic을 갖게 된 15.115 이후로는 episodic도 함께 노출하는 게 맞다.
+- 변경: `MemoryCard`에 선택적 `fields`(label/value 배열) prop을 추가해, 있으면 단일 summary 대신 라벨된 섹션을 렌더한다. 세션 이전 탭에서는 memory의 episodic과 semantic을 각각 Episodic/Semantic 필드로 넘긴다. 둘 다 없으면 기존 summary로 폴백한다. 원본 입력 원문은 기존대로 탭 상단의 원래 입력한 내용 블록에 한 번만 표시한다.
+- 범위: `MemoryCard`는 이 탭에서만 사용되므로 다른 화면 영향 없음.
+- 변경 파일: `src/components/memory/memory-card.tsx`(fields prop), `src/app/main/[missionId]/page.tsx`(세션 이전 탭에서 episodic/semantic 전달).
+- 검증: `npx tsc --noEmit`, 변경 파일 ESLint(0 error, 기존 page warning만) 통과. 실제 리뷰 화면 표시는 라이브 확인이 필요하다.

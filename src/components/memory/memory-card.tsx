@@ -7,8 +7,11 @@ interface MemoryCardProps {
   referenced?: boolean;
   /** Status bar label, e.g. "세션 중 참고됨" / "세션 전 정보로 유지". */
   statusLabel: string;
-  /** Main body text (memory summary). */
+  /** Main body text (memory summary). Used when `fields` is not provided. */
   summary: string;
+  /** Optional labeled sections (e.g. Episodic / Semantic). When non-empty, these
+   * render instead of `summary`. */
+  fields?: Array<{ label: string; value: string }>;
   /** Pre-formatted strength label, e.g. "강함". */
   weightStrengthLabel?: string | null;
   /** Pre-formatted weight score, e.g. "0.82". */
@@ -23,6 +26,7 @@ export function MemoryCard({
   referenced = false,
   statusLabel,
   summary,
+  fields,
   weightStrengthLabel,
   weightScoreLabel,
   weightDeltaLabel,
@@ -86,7 +90,22 @@ export function MemoryCard({
 
       {/* Card body */}
       <div className="px-4 py-3">
-        <p className="text-sm leading-relaxed text-slate-800">{summary}</p>
+        {fields && fields.length > 0 ? (
+          <div className="space-y-2.5">
+            {fields.map((field) => (
+              <div key={field.label}>
+                <p className="mb-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-400">
+                  {field.label}
+                </p>
+                <p className="text-sm leading-relaxed text-slate-800">
+                  {field.value}
+                </p>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="text-sm leading-relaxed text-slate-800">{summary}</p>
+        )}
       </div>
     </button>
   );

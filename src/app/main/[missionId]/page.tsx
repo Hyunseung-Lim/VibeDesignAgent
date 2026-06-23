@@ -7155,6 +7155,17 @@ export default function MainScreenPage() {
                             referenced ? "세션 중 참고됨" : "세션 전 정보로 유지"
                           }
                           summary={memorySummaryText(memory)}
+                          fields={[
+                            memory.episodic
+                              ? { label: "Episodic", value: memory.episodic }
+                              : null,
+                            memory.semantic
+                              ? { label: "Semantic", value: memory.semantic }
+                              : null,
+                          ].filter(
+                            (field): field is { label: string; value: string } =>
+                              field !== null,
+                          )}
                           weightStrengthLabel={
                             memory.weight != null
                               ? formatWeightStrength(memory.weight)
