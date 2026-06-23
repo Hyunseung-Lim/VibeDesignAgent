@@ -360,13 +360,12 @@ type MemoryRetrievalResponse = {
 
 const CHAT_REMARK_PLUGINS = [remarkGfm];
 
-const SESSION_COMPLETION_STEPS = [
-  "이번 세션의 내용을 정리하고 있어요",
-  "다음 작업에 참고할 기억을 저장하고 있어요",
-  "이미 저장된 내용과 겹치는 부분을 정돈하고 있어요",
+// 한 줄 진행 문구. 타이머가 아니라 completeSession 의 실제 await 경계마다 바뀐다.
+// 0: 메모리 저장(complete-session), 1: 클러스터 분석(clusters), 2: 리뷰 요약 준비(summary).
+const SESSION_PROGRESS_MESSAGES = [
+  "이번 세션의 기억을 저장하고 있어요",
   "기억 묶음을 분석하고 있어요",
-  "리뷰 화면에 필요한 기억을 불러오고 있어요",
-  "세션이 저장되었어요",
+  "리뷰 화면을 준비하고 있어요",
 ] as const;
 
 function sessionMemorySummaryKey(targetUid: string, missionId: string) {
@@ -2212,7 +2211,6 @@ export default function MainScreenPage() {
   const chatScrollRef = useRef<HTMLDivElement>(null);
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
 
-  const sessionCompletionTimeoutsRef = useRef<number[]>([]);
   const leftPanelSectionLockUntilRef = useRef(0);
   const missionSectionRef = useRef<HTMLDivElement>(null);
   const referenceSectionRef = useRef<HTMLDivElement>(null);
@@ -5118,22 +5116,6 @@ export default function MainScreenPage() {
   };
   const isGeneratingCurrentIdeaMockup =
     isGeneratingMockup && generatingMockupIdeaId === activeIdeaId;
-  const clearSessionCompletionTimers = useCallback(() => {
-    sessionCompletionTimeoutsRef.current.forEach((timeoutId) => {
-      window.clearTimeout(timeoutId);
-    });
-    sessionCompletionTimeoutsRef.current = [];
-  }, []);
-  const startSessionCompletionProgress = useCallback(() => {
-    clearSessionCompletionTimers();
-    setSessionCompletionStep(0);
-    sessionCompletionTimeoutsRef.current = [
-      window.setTimeout(() => setSessionCompletionStep(1), 700),
-      window.setTimeout(() => setSessionCompletionStep(2), 1800),
-      window.setTimeout(() => setSessionCompletionStep(3), 2800),
-    ];
-  }, [clearSessionCompletionTimers]);
-  useEffect(() => clearSessionCompletionTimers, [clearSessionCompletionTimers]);
   const openSessionReview = useCallback(() => {
     setIsCompletingSession(false);
     setSessionCompletionReady(false);
@@ -5144,7 +5126,7 @@ export default function MainScreenPage() {
       return;
     const currentUser = firebaseAuth.currentUser;
     if (!currentUser) return;
-    startSessionCompletionProgress();
+    setSessionCompletionStep(0);
     setSessionCompletionReady(false);
     setIsCompletingSession(true);
     let completedSuccessfully = false;
@@ -5205,7 +5187,7 @@ export default function MainScreenPage() {
         }
       }
       setTimerEndedAt(completedAt);
-      setSessionCompletionStep(3);
+      setSessionCompletionStep(1);
       try {
         await fetch("/api/memory/clusters", {
           method: "POST",
@@ -5214,7 +5196,7 @@ export default function MainScreenPage() {
       } catch {
         // clustering failure is non-fatal
       }
-      setSessionCompletionStep(4);
+      setSessionCompletionStep(2);
       const reviewTargetUid = userId ?? currentUser.uid;
       try {
         const summary = await fetchSessionMemorySummary(
@@ -5232,7 +5214,6 @@ export default function MainScreenPage() {
         setSessionMemorySummary(EMPTY_SESSION_MEMORY_SUMMARY);
         sessionMemorySummaryKeyRef.current = null;
       }
-      setSessionCompletionStep(SESSION_COMPLETION_STEPS.length);
       setSessionCompleted(true);
       setSessionCompletionReady(true);
       setMemoryGraphPhase("after");
@@ -5241,7 +5222,6 @@ export default function MainScreenPage() {
       console.warn("Unable to complete session", error);
       toast.error("세션 종료 및 메모리 확정에 실패했습니다. 잠시 후 다시 시도해주세요.");
     } finally {
-      clearSessionCompletionTimers();
       if (!completedSuccessfully) {
         setIsCompletingSession(false);
         setSessionCompletionReady(false);
@@ -6520,48 +6500,18 @@ export default function MainScreenPage() {
               <div>
                 <p className="text-sm font-semibold text-slate-900">
                   {sessionCompletionReady
-                    ? "세션이 저장되었어요"
-                    : "세션을 마무리하는 중"}
+                    ? isOnboardingMission
+                      ? "온보딩이 완료되었어요"
+                      : "세션이 저장되었어요"
+                    : SESSION_PROGRESS_MESSAGES[sessionCompletionStep] ??
+                      SESSION_PROGRESS_MESSAGES[0]}
                 </p>
                 <p className="mt-1 text-xs text-slate-500">
                   {sessionCompletionReady
                     ? "리뷰 화면에서 이번 세션의 기억과 작업 흐름을 확인할 수 있어요."
-                    : "잠시만 기다려주세요. 작업 내용이 저장되고 있어요."}
+                    : "잠시만 기다려주세요."}
                 </p>
               </div>
-            </div>
-            <div className="mt-5 space-y-3">
-              {SESSION_COMPLETION_STEPS.map((step, index) => {
-                const isDone = index < sessionCompletionStep;
-                const isActive = index === sessionCompletionStep;
-                const label =
-                  index === SESSION_COMPLETION_STEPS.length - 1 &&
-                  isOnboardingMission
-                    ? "온보딩이 완료되었어요"
-                    : step;
-                return (
-                  <div key={step} className="flex items-center gap-3">
-                    <span
-                      className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full border text-[10px] font-semibold ${
-                        isDone
-                          ? "border-slate-900 bg-slate-900 text-white"
-                          : isActive
-                            ? "border-slate-900 bg-white text-slate-900"
-                            : "border-slate-200 bg-slate-50 text-slate-300"
-                      }`}
-                    >
-                      {isDone ? "✓" : index + 1}
-                    </span>
-                    <span
-                      className={`text-sm ${
-                        isDone || isActive ? "text-slate-900" : "text-slate-400"
-                      }`}
-                    >
-                      {label}
-                    </span>
-                  </div>
-                );
-              })}
             </div>
             {sessionCompletionReady && (
               <div className="mt-6 flex gap-2">
