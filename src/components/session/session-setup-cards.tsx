@@ -1,6 +1,15 @@
 "use client";
 
+import { useState } from "react";
 import ReactMarkdown from "react-markdown";
+
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 
 export type SessionSetupMissionOption = {
   title: string;
@@ -107,6 +116,10 @@ export function SetupMissionSummaryCard({
       ? missionBrief.trim()
       : activeOption?.description?.trim() || "";
   const assetImages = activeOption?.assetImages ?? [];
+  const [previewImage, setPreviewImage] = useState<{
+    image: SessionSetupAssetImage;
+    index: number;
+  } | null>(null);
   const showOptionSection =
     Boolean(activeOption || optionBrief) &&
     (showOption || Boolean(activeOption) || Boolean(parentMissionBrief));
@@ -163,32 +176,71 @@ export function SetupMissionSummaryCard({
           </p>
           <div className="mt-3 grid gap-3 sm:grid-cols-2">
             {assetImages.map((image, index) => (
-              <a
+              <button
                 key={`${image.url}-${index}`}
-                href={image.url}
-                target="_blank"
-                rel="noreferrer"
-                className="group flex min-w-0 gap-3 rounded-xl border border-slate-100 bg-slate-50/70 p-2 transition hover:border-slate-200 hover:bg-white"
+                type="button"
+                onClick={() => setPreviewImage({ image, index })}
+                className="group flex min-w-0 cursor-pointer gap-3 rounded-xl border border-slate-100 bg-slate-50/70 p-2 text-left transition hover:border-slate-300 hover:bg-white hover:shadow-md"
               >
                 <span
                   role="img"
                   aria-label={image.note?.trim() || `제공 이미지 ${index + 1}`}
-                  className="h-20 w-20 shrink-0 overflow-hidden rounded-lg bg-slate-100 bg-cover bg-center"
+                  className="h-20 w-20 shrink-0 overflow-hidden rounded-lg bg-slate-100 bg-cover bg-center transition-transform duration-200 group-hover:scale-105"
                   style={{ backgroundImage: `url(${image.url})` }}
                 />
                 <span className="min-w-0 flex-1 py-1">
                   <span className="block text-xs font-semibold uppercase tracking-wider text-slate-400">
                     이미지 {index + 1}
                   </span>
-                  <span className="mt-1 block whitespace-pre-wrap text-sm leading-relaxed text-slate-600 group-hover:text-slate-800">
+                  <span className="mt-1 line-clamp-3 whitespace-pre-wrap text-sm leading-relaxed text-slate-600 group-hover:text-slate-800">
                     {image.note?.trim() || "설명이 없습니다."}
                   </span>
                 </span>
-              </a>
+              </button>
             ))}
           </div>
         </div>
       )}
+
+      <Dialog
+        open={Boolean(previewImage)}
+        onOpenChange={(open) => {
+          if (!open) setPreviewImage(null);
+        }}
+      >
+        <DialogContent
+          aria-describedby="setup-asset-image-description"
+          className="max-w-3xl overflow-hidden p-0"
+        >
+          {previewImage && (
+            <>
+              <DialogHeader className="border-b border-slate-100 px-5 py-4 pr-12">
+                <DialogTitle className="leading-snug">
+                  이미지 {previewImage.index + 1}
+                </DialogTitle>
+                <DialogDescription id="setup-asset-image-description">
+                  제공 이미지 원본 미리보기
+                </DialogDescription>
+              </DialogHeader>
+              <div className="flex max-h-[calc(100vh-8rem)] flex-col gap-4 overflow-y-auto p-5">
+                <div className="flex items-center justify-center rounded-xl bg-slate-100 p-3">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={previewImage.image.url}
+                    alt={previewImage.image.note?.trim() || `이미지 ${previewImage.index + 1}`}
+                    className="max-h-[60vh] max-w-full rounded-lg object-contain"
+                  />
+                </div>
+                {previewImage.image.note?.trim() && (
+                  <p className="whitespace-pre-wrap text-sm leading-relaxed text-slate-600">
+                    {previewImage.image.note.trim()}
+                  </p>
+                )}
+              </div>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

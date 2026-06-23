@@ -124,7 +124,7 @@
 - **이미지 주도 생성**: 사용자가 참고 이미지를 첨부/붙여넣거나(Phase 1) 신규 목업 요청에 URL을 주면(Phase 2 — 채팅 메시지 내 URL 또는 인용 레퍼런스의 URL), 텍스트 design.md 단계 없이 그 화면을 Stitch에 `upload`→`edit`로 재구성해 목업을 만들고 결과에서 design.md를 역추출·저장한다. URL은 서버가 스크린샷(Microlink 무키, `captureScreenshot` 추상화)으로 캡처하며 첨부 이미지가 우선. 모바일 목업이면 URL 캡처도 390×844 모바일 viewport, 데스크톱이면 1280×900 viewport로 찍는다. 이미지/URL이 있으면 "디자인 스타일 필수" 게이트를 우회한다. `src/app/api/stitch/route.ts`의 `isImageLed` 분기 참고 `[현행 2026-06-15 → 15.81/15.83]`
 - **콘텐츠 자산 주도 생성(asset-led)**: 미션 옵션에 어드민이 등록한 콘텐츠 이미지(`assetImages`, 실제 상품 사진·UI 캡쳐)가 있으면 신규 목업 생성 시 그 URL과 설명(`note`)을 `/api/stitch`로 넘겨, 서버가 다운로드→`upload`→`edit`하면서 asset manifest와 함께 "이 이미지들을 그대로 콘텐츠로 박아 넣어라"(`assetImageEmbedPrompt`)로 생성한다. 이미지 주도 생성과 달리 이미지를 스타일로 재구성하지 않고 콘텐츠 자산으로 보존하며, 레이아웃·스타일은 brief와 디자인 시스템을 따른다. 그래서 디자인 스타일을 미리 적용하고 결과 기반 design.md 역추출은 하지 않는다. 사용자가 그 턴에 스타일 이미지/URL을 첨부하면 그쪽(isImageLed)이 우선. `src/app/api/stitch/route.ts`의 `isAssetLed` 분기 참고 `[현행 2026-06-18 → 15.89/15.93]`
 - **액션/화면 완료 보장**: `CREATE_DESIGN_SPEC`는 JSON 뒤 닫는 대괄호가 빠지거나 일반 마크다운 payload로 와도 균형 스캔과 loose parser로 복구하며, 복구 불가능하면 영구적인 작성 중 상태 대신 명시적 실패로 표시한다. Stitch가 screen metadata만 먼저 반환하면 HTML을 재조회한 뒤 아트보드를 확정하고, 저장된 screen의 HTML 복원 중에는 빈 iframe 대신 로딩/실패 상태를 표시한다. `src/lib/session/chat-content.ts`와 `src/app/main/[missionId]/page.tsx`를 직접 확인 `[현행 2026-06-21 → 15.97]`
-- **캔버스**: 드래그 패닝, 휠 줌, Fit 버튼, 확대(fullscreen) 모드. 선택 스크립트는 iframe HTML에 항상 주입하고, 편집 모드 토글은 pointer event와 선택 해제 메시지로 제어해 iframe `srcDoc` reload를 피한다 `[현행 2026-06-15 → 15.78]`
+- **캔버스**: 드래그 패닝, 휠 줌, Fit 버튼, 확대(fullscreen) 모드. 선택 스크립트는 iframe HTML에 항상 주입하고, 편집 모드 토글은 pointer event와 선택 해제 메시지로 제어해 iframe `srcDoc` reload를 피한다. 동적 문서 높이를 측정할 때 원본 `html/body` height를 덮어쓰지 않고, viewport 단위와 `h-screen` 계열만 artboard device 크기에 고정해 원본/Final Design과 같은 첫 화면 레이아웃을 보존한다 `[현행 2026-06-23 → 15.78/15.113]`
 - **편집 모드**: 특정 UI 요소 클릭 선택 → `[EDIT_MOCKUP: {prompt}]`로 수정. 선택 요소가 있는 상태에서 "크게/색/문구/삭제" 등 짧은 타깃 편집 요청이 오면 planner 판단과 무관하게 현재 목업 HTML과 선택 요소 컨텍스트를 함께 주입한다 `[현행 2026-06-15 → 15.77]`
 - Stitch edit가 기존 screen을 mutate하지 않고 새 screen을 만들면 기존 artboard를 덮어쓰지 않고 새 artboard로 추가한 뒤 active로 전환한다 `[현행 2026-06-15 → 15.79]`
 - 선택 요소를 인용해 chat에 전송하면 해당 turn의 `citedElement`에는 포함하되, 입력 UI와 iframe outline에서는 즉시 선택 해제한다 `[현행 2026-06-15 → 15.80]`
@@ -3429,3 +3429,17 @@ type ChatPlan = {
   - 현재 선택과 다른 final-design draft 및 최종 선택 해제 상태의 draft는 `skipped_superseded`와 completion timestamp로 닫아 session review와 장기 memory에서 제외한다.
 - 불변식: 한 session completion에서 `final_design_select` memory는 최대 하나이며, 최종 디자인이 없으면 0개다.
 - 검증: `./node_modules/.bin/tsc --noEmit`, 변경 파일 ESLint(0 error, 기존 page warning만), `git diff --check`, `npm run build` 통과. Build의 기존 presentation route NFT trace warning은 유지. A→B→C 선택 변경 후 종료, 선택 해제 후 경고 종료, legacy draft가 있는 진행 중 세션 종료는 라이브 확인이 필요하다.
+
+### 15.113 목업 캔버스 height reporter의 viewport layout 보존 `[implemented 2026-06-23]`
+
+- 배경(QA Note `이미지가 목업에서 뭔가 잘 반영이 안되는 건에 대하여`): 같은 artboard가 raw HTML을 고정 viewport로 축소하는 Final Design에서는 정상인데, 캔버스에서는 이미지 grid가 세로로 길게 늘어나고 Fit 결과가 10%의 가느다란 열처럼 보였다.
+- 원인:
+  - 캔버스 전용 `injectHeightReporter`가 resize feedback loop를 막기 위해 원본 `html/body`를 `height: auto`로 강제하고 `h-screen`/`min-h-screen` 계열을 auto/0으로 무효화했다.
+  - full-screen hero와 image grid가 viewport 높이 및 percentage height 기준을 잃어 intrinsic image 높이로 늘어났고, 동적 artboard height와 Fit scale도 함께 과대 계산됐다. Final Design은 이 injection 없이 raw HTML을 1280×900 또는 390×844로 렌더해 정상으로 보였다.
+- 수정:
+  - height reporter가 artboard device viewport width/height를 명시적으로 받도록 변경했다.
+  - 원본 `html/body` height override를 제거하고, `h-screen`/`h-dvh`/`h-svh`/`h-lvh` 및 min-height variants만 device viewport pixel 값에 고정한다.
+  - `window.innerWidth/innerHeight`와 inline/style tag의 vh units도 실제 iframe resize 값이 아니라 전달된 design viewport를 기준으로 freeze해 feedback loop 방지는 유지한다.
+  - Tailwind CDN처럼 늦게 삽입되는 runtime style도 scheduled measurement 직전에 다시 freeze한 뒤 overflow height를 계산한다.
+  - canvas render path는 이미 계산한 artboard viewport를 wrapper width, iframe width, height reporter에 공통 사용해 device 기준 불일치를 막는다.
+- 검증: isolated helper fixture에서 1280×900 viewport 고정, 기존 auto override 제거, width freeze를 확인했다. `./node_modules/.bin/tsc --noEmit`, 변경 파일 ESLint(0 error, 기존 page warning만), `git diff --check`, `npm run build` 통과. Build의 기존 presentation route NFT trace warning은 유지. 문제를 재현한 실제 Stitch HTML에서 canvas/Final Design 레이아웃 일치와 긴 scroll page의 overflow height 측정은 라이브 확인이 필요하다.

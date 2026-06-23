@@ -5549,10 +5549,13 @@ export default function MainScreenPage() {
       >
         {ideaArtboards.map((artboard) => {
           const isActive = artboard.id === activeArtboardId;
+          const artboardViewport =
+            DEVICE_SIZE[artboard.device ?? "desktop"];
           const artboardHeight = getArtboardRenderHeight(artboard);
           const artboardHtml = injectHeightReporter(
             injectNoNavigation(injectSelectionScript(artboard.html, artboard.id)),
             artboard.id,
+            artboardViewport,
           );
           return (
             <div key={artboard.id}>
@@ -5578,7 +5581,7 @@ export default function MainScreenPage() {
                   position: "absolute",
                   left: artboard.x,
                   top: artboard.y,
-                  width: DEVICE_SIZE[artboard.device ?? "desktop"].width,
+                  width: artboardViewport.width,
                   height: artboardHeight,
                   borderRadius: artboard.device === "mobile" ? 24 : 12,
                   overflow: "hidden",
@@ -5612,7 +5615,7 @@ export default function MainScreenPage() {
                     sandbox="allow-scripts"
                     scrolling="no"
                     style={{
-                      width: DEVICE_SIZE[artboard.device ?? "desktop"].width,
+                      width: artboardViewport.width,
                       height: artboardHeight,
                       border: "none",
                       display: "block",

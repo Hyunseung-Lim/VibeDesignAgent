@@ -18,14 +18,22 @@ export function injectNoNavigation(html: string): string {
     : html + script;
 }
 
-export function injectHeightReporter(html: string, artboardId: string): string {
+export function injectHeightReporter(
+  html: string,
+  artboardId: string,
+  viewport: { width: number; height: number },
+): string {
+  const viewportWidth = Math.max(1, Math.round(viewport.width));
+  const viewportHeight = Math.max(1, Math.round(viewport.height));
   const script = `<style>
-/* Prevent viewport-relative heights from creating feedback loop with iframe resize */
-html, body { min-height: 0 !important; height: auto !important; }
-.h-screen, .h-dvh, .h-svh, .h-lvh,
+/* Keep viewport utilities tied to the design device while the outer iframe
+   grows to reveal document overflow. Using auto here changes the authored
+   layout and can stretch full-screen image grids into very tall columns. */
+.h-screen, .h-dvh, .h-svh, .h-lvh {
+  height: ${viewportHeight}px !important;
+}
 .min-h-screen, .min-h-dvh, .min-h-svh, .min-h-lvh {
-  height: auto !important;
-  min-height: 0 !important;
+  min-height: ${viewportHeight}px !important;
 }
 </style>
 <script>
@@ -33,8 +41,8 @@ html, body { min-height: 0 !important; height: auto !important; }
   var lastHeight = 0;
   var reportCount = 0;
   var MAX_REPORTS = 6;
-  var initialVh = window.innerHeight || 900;
-  var initialVw = window.innerWidth || 1512;
+  var initialVh = ${viewportHeight};
+  var initialVw = ${viewportWidth};
   /* Freeze window.innerHeight/innerWidth so that resize handlers triggered by
      parent iframe resizing cannot update --vh / --vw CSS custom properties,
      which would cause a feedback loop where the artboard grows on every report. */
@@ -59,6 +67,9 @@ html, body { min-height: 0 !important; height: auto !important; }
   freezeVhUnits();
   function measure(){
     if (reportCount >= MAX_REPORTS) return;
+    /* Tailwind CDN and other runtime styles may arrive after parsing. Freeze
+       newly inserted viewport units before each scheduled measurement too. */
+    freezeVhUnits();
     var body = document.body;
     var root = document.documentElement;
     var height = Math.max(

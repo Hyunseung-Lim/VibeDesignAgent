@@ -1,20 +1,39 @@
 "use client";
 
+import { useState } from "react";
 import { ChevronDown, Monitor, Smartphone } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import { Badge } from "@/components/ui/badge";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 
 type MissionBriefDevice = "desktop" | "mobile";
+
+type MissionBriefAssetImage = {
+  url: string;
+  path?: string;
+  note?: string;
+};
+
+const ASSET_NOTE_PREVIEW_MAX = 48;
+
+function truncateAssetNote(note: string) {
+  const collapsed = note.replace(/\s+/g, " ").trim();
+  return collapsed.length > ASSET_NOTE_PREVIEW_MAX
+    ? `${collapsed.slice(0, ASSET_NOTE_PREVIEW_MAX).trimEnd()}...`
+    : collapsed;
+}
 
 export type MissionBriefOption = {
   title: string;
   description?: string;
   content?: string;
-  assetImages?: Array<{
-    url: string;
-    path?: string;
-    note?: string;
-  }>;
+  assetImages?: MissionBriefAssetImage[];
 };
 
 type MissionBriefSectionProps = {
@@ -77,6 +96,11 @@ export function MissionBriefSection({
   optionExpanded,
   onToggleOption,
 }: MissionBriefSectionProps) {
+  const [previewImage, setPreviewImage] = useState<{
+    image: MissionBriefAssetImage;
+    index: number;
+  } | null>(null);
+
   return (
     <div
       data-tour="mission-brief"
@@ -173,25 +197,24 @@ export function MissionBriefSection({
                       </p>
                       <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
                         {option.assetImages?.map((image, index) => (
-                          <a
+                          <button
                             key={image.path || image.url || index}
-                            href={image.url}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="group overflow-hidden rounded-2xl border border-slate-100 bg-slate-50 transition hover:border-slate-200"
+                            type="button"
+                            onClick={() => setPreviewImage({ image, index })}
+                            className="group cursor-pointer overflow-hidden rounded-2xl border border-slate-100 bg-slate-50 text-left transition hover:border-slate-300 hover:shadow-md"
                           >
                             {/* eslint-disable-next-line @next/next/no-img-element */}
                             <img
                               src={image.url}
                               alt={image.note?.trim() || `미션 콘텐츠 이미지 ${index + 1}`}
-                              className="aspect-square w-full object-cover"
+                              className="aspect-square w-full object-cover transition-transform duration-200 group-hover:scale-105"
                             />
                             {image.note?.trim() && (
-                              <p className="line-clamp-2 border-t border-slate-100 px-3 py-2 text-xs text-slate-500">
-                                {image.note}
+                              <p className="border-t border-slate-100 px-3 py-2 text-xs text-slate-500">
+                                {truncateAssetNote(image.note)}
                               </p>
                             )}
-                          </a>
+                          </button>
                         ))}
                       </div>
                     </div>
@@ -202,6 +225,49 @@ export function MissionBriefSection({
           </div>
         )}
       </div>
+
+      <Dialog
+        open={Boolean(previewImage)}
+        onOpenChange={(open) => {
+          if (!open) setPreviewImage(null);
+        }}
+      >
+        <DialogContent
+          aria-describedby="mission-brief-asset-image-description"
+          className="max-w-3xl overflow-hidden p-0"
+        >
+          {previewImage && (
+            <>
+              <DialogHeader className="border-b border-slate-100 px-5 py-4 pr-12">
+                <DialogTitle className="leading-snug">
+                  콘텐츠 이미지 {previewImage.index + 1}
+                </DialogTitle>
+                <DialogDescription id="mission-brief-asset-image-description">
+                  미션 콘텐츠 이미지 원본 미리보기
+                </DialogDescription>
+              </DialogHeader>
+              <div className="flex max-h-[calc(100vh-8rem)] flex-col gap-4 overflow-y-auto p-5">
+                <div className="flex items-center justify-center rounded-xl bg-slate-100 p-3">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={previewImage.image.url}
+                    alt={
+                      previewImage.image.note?.trim() ||
+                      `콘텐츠 이미지 ${previewImage.index + 1}`
+                    }
+                    className="max-h-[60vh] max-w-full rounded-lg object-contain"
+                  />
+                </div>
+                {previewImage.image.note?.trim() && (
+                  <p className="whitespace-pre-wrap text-sm leading-relaxed text-slate-600">
+                    {previewImage.image.note.trim()}
+                  </p>
+                )}
+              </div>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
