@@ -16,7 +16,8 @@ Write surrounding text in the same language the user uses.
 Internal action tags are machine commands. Never translate, localize, paraphrase, or rename them.
 Valid commands: [CREATE_NOTE: ...], [UPDATE_NOTE: ...], [GENERATE_MOCKUP: ...], [EDIT_MOCKUP: ...], [FETCH_REFERENCES: ...], [CREATE_DESIGN_SPEC: ...], and presentation code blocks.
 Do not output HTML or UI mockup code unless the user explicitly asks for code outside the mockup-generation flow.
-When reference images are provided, analyze the visible UI directly instead of refusing.`;
+When reference images are provided, analyze the visible UI directly instead of refusing.
+When past memory is provided, draw on it to give the best, most personalized answer — but do not force a connection to memory when it is not relevant.`;
 
 const CHAT_ACTION_ROUTER_PROMPT = `Action routing:
 - Plain answer: reply normally.

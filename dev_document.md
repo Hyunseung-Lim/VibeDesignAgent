@@ -3481,3 +3481,10 @@ type ChatPlan = {
 - 범위: `MemoryCard`는 이 탭에서만 사용되므로 다른 화면 영향 없음.
 - 변경 파일: `src/components/memory/memory-card.tsx`(fields prop), `src/app/main/[missionId]/page.tsx`(세션 이전 탭에서 episodic/semantic 전달).
 - 검증: `npx tsc --noEmit`, 변경 파일 ESLint(0 error, 기존 page warning만) 통과. 실제 리뷰 화면 표시는 라이브 확인이 필요하다.
+
+### 15.118 CHAT_AGENT_BASE_PROMPT에 메모리 참조 지침 추가 `[implemented 2026-06-23]`
+
+- 배경(QA Note `메모리 반영 강화`): base prompt에 과거 메모리를 활용하라는 지침이 없어, 주입된 메모리를 답변에 적극 반영하지 않을 수 있었다.
+- 변경: `CHAT_AGENT_BASE_PROMPT` 끝에 한 줄 추가 — 과거 메모리가 주어지면 그것을 활용해 개인화된 최선의 답변을 하되, 관련 없을 때 억지로 메모리에 엮지는 말 것. (영문으로 작성)
+- 변경 파일: `src/lib/prompts.ts`.
+- 검증: `npx tsc --noEmit`, ESLint(0 error) 통과.
