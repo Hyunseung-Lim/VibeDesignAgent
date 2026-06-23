@@ -973,9 +973,16 @@ export async function POST(request: Request) {
   }
   if (normalizedMention?.ideaId) {
     markContext("mentionedArtifact");
+    const mentionTargetLabel: Record<string, string> = {
+      idea: "the mentioned idea (시안)",
+      design_brief: "the mentioned Design Brief",
+      design_style: "the mentioned Design Style",
+      mockup: "the mentioned Mockup",
+    };
+    const target = mentionTargetLabel[normalizedMention.kind] ?? "the mentioned artifact";
     systemMessages.push({
       role: "system",
-      content: `The user explicitly mentioned an existing workspace artifact. Kind: ${normalizedMention.kind}; ideaId: ${normalizedMention.ideaId}; artifactId: ${normalizedMention.artifactId || "(none)"}. The client has already aligned activeIdea to this target. Treat the structured target as authoritative.`,
+      content: `The user explicitly mentioned an existing workspace artifact. Kind: ${normalizedMention.kind}; ideaId: ${normalizedMention.ideaId}; artifactId: ${normalizedMention.artifactId || "(none)"}. The client has already aligned activeIdea to this target. Treat the structured target as authoritative. Scope this turn to ${target}: work on that artifact itself and prefer the matching action for its kind. Do not branch into other artifacts or run unrelated actions (for example, generating a Design Style or Mockup when the user mentioned the Design Brief) unless the user explicitly asks for them this turn.`,
     });
   }
   markContext("actionInstruction");

@@ -3488,3 +3488,10 @@ type ChatPlan = {
 - 변경: `CHAT_AGENT_BASE_PROMPT` 끝에 한 줄 추가 — 과거 메모리가 주어지면 그것을 활용해 개인화된 최선의 답변을 하되, 관련 없을 때 억지로 메모리에 엮지는 말 것. (영문으로 작성)
 - 변경 파일: `src/lib/prompts.ts`.
 - 검증: `npx tsc --noEmit`, ESLint(0 error) 통과.
+
+### 15.119 @ 언급 시 해당 artifact로 작업 범위 한정 강화 `[implemented 2026-06-23]`
+
+- 배경(QA Note `언급 기능 강화`): @디자인브리프를 언급했는데도 디자인 스타일과 목업 생성까지 수행하는 경우가 있었다. 강제까지는 아니고 프롬프트 표현 강화로 언급된 요소 안에서 작업하도록 유도한다.
+- 변경: `/api/chat`의 mention system 메시지에 kind별 대상 라벨(idea/design_brief/design_style/mockup)과 범위 한정 지침을 추가했다. 언급된 artifact 자체에 대해 그 종류에 맞는 액션을 우선하고, 사용자가 이번 턴에 명시적으로 요청하지 않는 한 다른 artifact나 무관한 액션(예: 디자인 브리프 언급 시 스타일·목업 생성)으로 분기하지 말라고 명시. planner의 explicit 명령 우선 규칙과 별개로 답변 단계 표현만 강화.
+- 변경 파일: `src/app/api/chat/route.ts`.
+- 검증: `npx tsc --noEmit`, ESLint(0 error) 통과. 실제 @ 언급 turn 동작은 라이브 확인이 필요하다.
