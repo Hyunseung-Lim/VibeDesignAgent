@@ -177,13 +177,13 @@
 #### 메모리 클러스터링
 
 - 경로: 일반 사용자 본인 memory는 `GET/POST /api/memory/clusters`, admin의 타인 memory 진단은 `GET/POST /api/admin/users/[uid]/memory/clusters`
-- 입력 계약: keyword + episodic + semantic만 `text-embedding-3-large`의 clustering embedding 입력으로 사용한다. 원문 interaction, input/output, link, timestamp는 embedding에서 제외한다 `[현행 2026-06-22 → 15.105]`
+- 입력 variant: clustering embedding 입력은 두 가지 중 선택한다 — `compact-context`(keyword + episodic + semantic, 기본값)와 `full-context`(compact + 원문 interaction + link). 과거의 `semantic-only`는 제외했다 `[현행 2026-06-24 → 15.120]`
 - 1단계: 구조화된 keyword + episodic + semantic 텍스트를 `text-embedding-3-large`로 embedding
 - 2단계: cosine similarity graph 생성. 강한 유사도 edge와 node별 KNN edge를 함께 사용
 - 3단계: similarity graph에서 label propagation으로 community를 찾고, community가 너무 많으면 centroid similarity 기준으로 최대 16개까지 merge
 - 4단계: LLM은 cluster membership을 바꾸지 않고 최종 cluster label/summary만 생성한다. summary는 작업 목록을 일반적으로 요약하지 않고 Firestore profile의 실제 displayName을 사용해 그 사람의 반복되는 성격, 습관, 작업 방식, 의사결정 패턴과 디자인 취향을 근거와 함께 서술한다. 단일·약한 근거에는 consistently/always 같은 반복 표현을 쓰지 않는다 `[현행 2026-06-21 → 15.99]`
-- `/agent` UI는 입력 variant 비교 컨트롤 없이 단일 clustering 결과만 표시하고, 헤더에 고정 입력 필드 Keyword · Episodic · Semantic을 작은 보조 문구로 안내한다 `[현행 2026-06-22 → 15.106]`
-- 캐시 키는 memory version + item signature + clustering method version으로 관리한다. method version에는 고정 입력 계약인 compact-context가 포함된다 `[현행 2026-06-22 → 15.105]`
+- `/agent`(self·admin 공용) UI 헤더에 입력 variant 비교 탭(compact-context / full-context)이 있어 입력 종류별 clustering 결과를 전환해 본다. 탭 전환은 해당 variant의 캐시를 GET하고, 재생성은 선택된 variant로 POST한다 `[현행 2026-06-24 → 15.120]`
+- 캐시 키는 memory version + item signature + clustering method version으로 관리하고, method version에 선택된 입력 variant가 포함된다. compact-context는 과거 키(`...:compact-context`)를 그대로 유지해 기존 캐시와 planner cluster summary 조회가 깨지지 않고, full-context만 별도 네임스페이스를 가진다 `[현행 2026-06-24 → 15.120]`
 - Self/admin API는 `loadUserMemoryItems`와 `loadClusterInputItems`를 공유하며, admin 전용 cluster route도 `generateAndStoreClusters`를 호출한다. 별도 admin clustering 알고리즘은 두지 않는다 `[현행 2026-06-22 → 15.107]`
 
 ---
@@ -3495,3 +3495,15 @@ type ChatPlan = {
 - 변경: `/api/chat`의 mention system 메시지에 kind별 대상 라벨(idea/design_brief/design_style/mockup)과 범위 한정 지침을 추가했다. 언급된 artifact 자체에 대해 그 종류에 맞는 액션을 우선하고, 사용자가 이번 턴에 명시적으로 요청하지 않는 한 다른 artifact나 무관한 액션(예: 디자인 브리프 언급 시 스타일·목업 생성)으로 분기하지 말라고 명시. planner의 explicit 명령 우선 규칙과 별개로 답변 단계 표현만 강화.
 - 변경 파일: `src/app/api/chat/route.ts`.
 - 검증: `npx tsc --noEmit`, ESLint(0 error) 통과. 실제 @ 언급 turn 동작은 라이브 확인이 필요하다.
+
+### 15.120 클러스터링 입력 variant 비교 복원 (compact-context / full-context) `[implemented 2026-06-24]`
+
+- 배경: 15.105/15.106(커밋 30915a0)에서 클러스터링 입력을 keyword+episodic+semantic 단일로 통합했는데, 입력 종류에 따라 clustering이 어떻게 달라지는지 다시 비교하고 싶다는 요구가 생겼다.
+- 결정: variant 비교를 복원하되 과거 3개 중 `semantic-only`는 제외하고 2개만 둔다 — `compact-context`(keyword+episodic+semantic, 기본), `full-context`(compact + 원문 interaction + link).
+- 클러스터링 코어(`memoryClustering.ts`): `CLUSTERING_INPUT_VARIANTS`/타입/`normalizeClusteringInputVariant` 복원, `embeddingText`·`embedItems`·`generateAndStoreClusters`·`clusteringMethodVersion`·`clusterCacheId`·`clusterDocumentPath`에 variant 인자 추가. 기본값은 compact-context.
+- 캐시 호환: compact-context의 method version 문자열을 기존과 동일(`...:compact-context`)하게 유지해 기존 캐시와 planner cluster summary(15.114)가 그대로 동작. full-context만 별도 캐시 네임스페이스.
+- planner/retrieve 영향 차단: `loadLatestStoredClusters`에 variant 인자(기본 compact-context)를 추가하고 `clusteringInputVariant`로 필터링해, 여러 variant 캐시가 섞여도 planner는 항상 compact-context만 사용.
+- 라우트: self `GET/POST /api/memory/clusters`와 admin `.../memory/clusters`가 GET은 `?variant=`, POST는 body `variant`를 받아 처리.
+- UI: `/agent`(self·admin 공용) 헤더에 variant 탭 추가. 탭 전환 시 해당 variant 캐시 GET, 재생성은 선택 variant로 POST.
+- 변경 파일: `src/lib/server/memoryClustering.ts`, `src/app/api/memory/clusters/route.ts`, `src/app/api/admin/users/[uid]/memory/clusters/route.ts`, `src/app/agent/page.tsx`.
+- 검증: `npx tsc --noEmit`, 변경 파일 ESLint(0 error), `npm run build` 통과. full-context 탭의 실제 클러스터 생성·비교는 라이브 확인이 필요하다.

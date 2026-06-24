@@ -18,7 +18,25 @@ export const GRAPH_COMMUNITY_ITERATIONS = 30;
 export const CLUSTER_COLLECTION = "memoryClusters";
 export const CLUSTERING_METHOD_VERSION = "similarity-graph-v3-persona-summary";
 export const MEMORY_VERSION = "0.1.2";
-export const CLUSTERING_INPUT_VARIANT = "compact-context" as const;
+
+// Clustering input variants are kept so we can compare how the embedding input
+// changes clustering. "semantic-only" was dropped; only the two below remain:
+// - compact-context: keyword + episodic + semantic (the default / current behavior)
+// - full-context:    everything (compact fields + original interaction + link)
+export const CLUSTERING_INPUT_VARIANTS = [
+  "compact-context",
+  "full-context",
+] as const;
+export type ClusteringInputVariant = (typeof CLUSTERING_INPUT_VARIANTS)[number];
+export const CLUSTERING_INPUT_VARIANT: ClusteringInputVariant = "compact-context";
+
+export function normalizeClusteringInputVariant(
+  value: unknown,
+): ClusteringInputVariant {
+  return CLUSTERING_INPUT_VARIANTS.includes(value as ClusteringInputVariant)
+    ? (value as ClusteringInputVariant)
+    : "compact-context";
+}
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
@@ -81,8 +99,12 @@ export type GraphCommunityDiagnostics = {
 
 type ClusterLabel = { id: string; label: string; summary: string };
 
-export function clusteringMethodVersion() {
-  return `${CLUSTERING_METHOD_VERSION}:${CLUSTERING_INPUT_VARIANT}`;
+export function clusteringMethodVersion(
+  variant: ClusteringInputVariant = CLUSTERING_INPUT_VARIANT,
+) {
+  // compact-context keeps the historical key (`...:compact-context`) so existing
+  // caches and the planner cluster summary lookup stay valid.
+  return `${CLUSTERING_METHOD_VERSION}:${variant}`;
 }
 
 export function stringArray(value: unknown) {
@@ -94,10 +116,11 @@ export function stringArray(value: unknown) {
 export function clusterCacheId(
   memoryVersion: string,
   itemSignature: string,
+  variant: ClusteringInputVariant = CLUSTERING_INPUT_VARIANT,
 ) {
   const versionKey = memoryVersion.replace(/[^a-zA-Z0-9_-]/g, "_");
   const signatureHash = createHash("sha256")
-    .update(`${clusteringMethodVersion()}:${itemSignature}`)
+    .update(`${clusteringMethodVersion(variant)}:${itemSignature}`)
     .digest("hex")
     .slice(0, 24);
   return `${versionKey}-${signatureHash}`;
@@ -107,10 +130,12 @@ export function clusterDocumentPath(
   uid: string,
   memoryVersion: string,
   itemSignature: string,
+  variant: ClusteringInputVariant = CLUSTERING_INPUT_VARIANT,
 ) {
   return `users/${uid}/${CLUSTER_COLLECTION}/${clusterCacheId(
     memoryVersion,
     itemSignature,
+    variant,
   )}`;
 }
 
@@ -146,6 +171,7 @@ export function parseStoredClusters(value: unknown) {
 export async function loadLatestStoredClusters(
   uid: string,
   token: string,
+  variant: ClusteringInputVariant = CLUSTERING_INPUT_VARIANT,
 ): Promise<MemoryCluster[]> {
   const ids = await listFirestoreDocumentIds(
     `users/${uid}/${CLUSTER_COLLECTION}`,
@@ -159,6 +185,12 @@ export async function loadLatestStoredClusters(
         token,
       )) as Record<string, unknown> | null;
       if (!data) return null;
+      // Only consider the requested input variant so consumers (e.g. the chat
+      // planner) get a consistent clustering, not a mix across variants.
+      const docVariant = normalizeClusteringInputVariant(
+        data.clusteringInputVariant,
+      );
+      if (docVariant !== variant) return null;
       return {
         generatedAt: typeof data.generatedAt === "number" ? data.generatedAt : 0,
         clusters: parseStoredClusters(data.graphClusters),
@@ -214,16 +246,42 @@ export function parseStoredGraphEdges(value: unknown): ClusterGraphEdge[] {
     );
 }
 
-function embeddingText(item: ClusterInputItem) {
-  // Timestamp and original interaction content stay metadata-only. Clustering
-  // vectors use only the structured keyword, episode, and semantic fields.
-  return [
+function embeddingText(
+  item: ClusterInputItem,
+  variant: ClusteringInputVariant = CLUSTERING_INPUT_VARIANT,
+) {
+  // compact-context: structured keyword + episodic + semantic only.
+  // full-context: also includes the original interaction content and link.
+  const compactFields = [
     item.keyword?.length ? `Keywords: ${item.keyword.join(", ")}` : "",
     item.episodic ? `Episodic: ${item.episodic}` : "",
     item.semantic ? `Semantic: ${item.semantic}` : "",
-  ]
-    .filter(Boolean)
-    .join("\n") || item.id;
+  ];
+
+  if (variant === "compact-context") {
+    return compactFields.filter(Boolean).join("\n") || item.id;
+  }
+
+  const originalInteractionContent =
+    item.originalInteractionContent ||
+    [
+      item.input ? `User input:\n${item.input}` : "",
+      item.output ? `Agent output:\n${item.output}` : "",
+    ]
+      .filter(Boolean)
+      .join("\n\n");
+
+  return (
+    [
+      ...compactFields,
+      originalInteractionContent
+        ? `Original interaction content:\n${originalInteractionContent}`
+        : "",
+      item.link ? `Link: ${item.link}` : "",
+    ]
+      .filter(Boolean)
+      .join("\n") || item.id
+  );
 }
 
 function itemSummary(item: ClusterInputItem) {
@@ -362,10 +420,11 @@ export async function labelClusters(
 
 export async function embedItems(
   items: ClusterInputItem[],
+  variant: ClusteringInputVariant = CLUSTERING_INPUT_VARIANT,
 ) {
   const response = await openai.embeddings.create({
     model: EMBEDDING_MODEL,
-    input: items.map(embeddingText),
+    input: items.map((item) => embeddingText(item, variant)),
   });
   return response.data.map((item) => l2Normalize(item.embedding));
 }
@@ -529,8 +588,9 @@ export async function generateAndStoreClusters(
   token: string,
   generatedBy: string,
   subjectName?: string,
+  variant: ClusteringInputVariant = CLUSTERING_INPUT_VARIANT,
 ) {
-  const vectors = await embedItems(items);
+  const vectors = await embedItems(items, variant);
   const graphCommunity = buildGraphCommunityClusters(items, vectors);
   const itemsById = new Map(items.map((item) => [item.id, item]));
   const graphClusters = await labelClusters(
@@ -545,12 +605,12 @@ export async function generateAndStoreClusters(
   const itemSignature = memoryClusterItemSignature(items);
 
   await patchFirestoreDocument(
-    clusterDocumentPath(uid, MEMORY_VERSION, itemSignature),
+    clusterDocumentPath(uid, MEMORY_VERSION, itemSignature, variant),
     {
       itemSignature,
       memoryVersion: MEMORY_VERSION,
-      clusteringMethodVersion: clusteringMethodVersion(),
-      clusteringInputVariant: CLUSTERING_INPUT_VARIANT,
+      clusteringMethodVersion: clusteringMethodVersion(variant),
+      clusteringInputVariant: variant,
       sourceItemCount: items.length,
       graphClusters,
       graphEdges,

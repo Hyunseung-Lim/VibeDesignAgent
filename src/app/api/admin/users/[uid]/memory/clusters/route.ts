@@ -6,13 +6,13 @@ import {
 } from "@/lib/server/firebaseAdminRest";
 import { loadClusterInputItems } from "@/lib/server/memoryItems";
 import {
-  CLUSTERING_INPUT_VARIANT,
   MAX_ITEMS,
   MEMORY_VERSION,
   clusterDocumentPath,
   generateAndStoreClusters,
   isMemoryCluster,
   memoryClusterItemSignature,
+  normalizeClusteringInputVariant,
   parseStoredGraphEdges,
 } from "@/lib/server/memoryClustering";
 
@@ -34,6 +34,9 @@ export async function GET(
 ) {
   const target = await adminTarget(request, params);
   if (!target) return Response.json({ error: "forbidden" }, { status: 403 });
+  const variant = normalizeClusteringInputVariant(
+    new URL(request.url).searchParams.get("variant"),
+  );
 
   try {
     const token = await getFirebaseAccessToken();
@@ -43,7 +46,7 @@ export async function GET(
         clusters: [],
         edges: [],
         found: false,
-        variant: CLUSTERING_INPUT_VARIANT,
+        variant,
         memoryVersion: MEMORY_VERSION,
         itemSignature: null,
         generatedAt: null,
@@ -52,7 +55,7 @@ export async function GET(
 
     const itemSignature = memoryClusterItemSignature(items);
     const data = (await getFirestoreDocument(
-      clusterDocumentPath(target.uid, MEMORY_VERSION, itemSignature),
+      clusterDocumentPath(target.uid, MEMORY_VERSION, itemSignature, variant),
       token,
     )) as Record<string, unknown> | null;
 
@@ -61,7 +64,7 @@ export async function GET(
         clusters: [],
         edges: [],
         found: false,
-        variant: CLUSTERING_INPUT_VARIANT,
+        variant,
         memoryVersion: MEMORY_VERSION,
         itemSignature,
         generatedAt: null,
@@ -75,7 +78,7 @@ export async function GET(
       clusters,
       edges: parseStoredGraphEdges(data.graphEdges),
       found: clusters.length > 0,
-      variant: CLUSTERING_INPUT_VARIANT,
+      variant,
       memoryVersion:
         typeof data.memoryVersion === "string"
           ? data.memoryVersion
@@ -99,6 +102,8 @@ export async function POST(
 ) {
   const target = await adminTarget(request, params);
   if (!target) return Response.json({ error: "forbidden" }, { status: 403 });
+  const body = (await request.json().catch(() => ({}))) as { variant?: unknown };
+  const variant = normalizeClusteringInputVariant(body.variant);
 
   try {
     const token = await getFirebaseAccessToken();
@@ -118,13 +123,14 @@ export async function POST(
       token,
       target.admin.email ?? target.admin.localId,
       subjectName,
+      variant,
     );
 
     return Response.json({
       clusters: graphClusters,
       edges: graphEdges,
       found: graphClusters.length > 0,
-      variant: CLUSTERING_INPUT_VARIANT,
+      variant,
       memoryVersion: MEMORY_VERSION,
       generatedAt: Date.now(),
     });
