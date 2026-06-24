@@ -4,6 +4,11 @@ import { useState } from "react";
 import Link from "next/link";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  deriveMissionProgressStatus,
+  type MissionProgress,
+  type MissionProgressStatus,
+} from "@/lib/mission-progress";
 
 export type Participant = {
   id: string; // userId
@@ -20,6 +25,7 @@ export type AdminUser = Participant & {
   sessionMissionIds: string[];
   completedSessionMissionIds: string[];
   missionOrder: string[];
+  missionProgressById: Record<string, MissionProgress>;
 };
 
 export function onboardingBadge(
@@ -34,10 +40,43 @@ export function onboardingBadge(
   return { label: "온보딩 확인 불가", variant: "secondary" };
 }
 
+// Mirror the lobby status rule (src/app/lobby/page.tsx): the onboarding mission
+// reflects its real session progress, falling back to a synthesized "completed"
+// only from the onboarding profile flag. Other missions read their session
+// progress directly.
+function adminMissionProgress(
+  user: AdminUser,
+  missionId: string,
+  onboardingMissionId: string,
+  durationMinutes?: number,
+): MissionProgressStatus {
+  const progress =
+    missionId === onboardingMissionId
+      ? user.missionProgressById[missionId] ??
+        (user.onboardingStatus === "completed"
+          ? { hasActivity: true, timerStartedAt: null, status: "completed" }
+          : null)
+      : user.missionProgressById[missionId];
+  return deriveMissionProgressStatus(progress, durationMinutes);
+}
+
+// Completion drives the sequential lock, matching the lobby: onboarding counts
+// as complete only via its profile flag; other missions via a completed session.
+function isMissionCompleted(
+  user: AdminUser,
+  missionId: string,
+  onboardingMissionId: string,
+): boolean {
+  return missionId === onboardingMissionId
+    ? user.onboardingStatus === "completed"
+    : user.missionProgressById[missionId]?.status === "completed";
+}
+
 interface AdminUserCardProps {
   user: AdminUser;
   onboardingMissionId: string;
   missionTitle: (missionId: string) => string;
+  missionDurationMinutes: (missionId: string) => number | undefined;
   isDeletingSessions: boolean;
   onBackupAndDeleteSessions: () => void;
 }
@@ -47,6 +86,7 @@ export function AdminUserCard({
   user,
   onboardingMissionId,
   missionTitle,
+  missionDurationMinutes,
   isDeletingSessions,
   onBackupAndDeleteSessions,
 }: AdminUserCardProps) {
@@ -56,10 +96,20 @@ export function AdminUserCard({
   const [avatarFailed, setAvatarFailed] = useState(false);
   const missionIds = Array.from(
     new Set([
-      ...(user.onboardingStatus === "completed" ? [onboardingMissionId] : []),
+      onboardingMissionId,
+      ...user.missionOrder,
       ...user.missionIds,
+      ...user.sessionMissionIds,
     ]),
   );
+  // Sequential-lock rule from the lobby: onboarding first, then the user's
+  // order; the first incomplete mission is "current" and everything after it is
+  // locked. Admin is read-only, so locks are surfaced as a badge, not enforced.
+  const completedFlags = missionIds.map((missionId) =>
+    isMissionCompleted(user, missionId, onboardingMissionId),
+  );
+  const currentMissionIndex = completedFlags.findIndex((done) => !done);
+  const completedMissionCount = completedFlags.filter(Boolean).length;
   return (
     <div className="rounded-3xl border border-border bg-card p-5 shadow-sm">
       <div className="flex items-start gap-3">
@@ -103,60 +153,79 @@ export function AdminUserCard({
         </div>
       </div>
 
-      {user.missionOrder?.length > 0 && (
-        <div className="mt-3">
-          <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-            미션 순서 (유저별 랜덤)
+      <div className="mt-4">
+        <div className="mb-2 flex items-center justify-between gap-3">
+          <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+            미션 순서 · 진행상황
           </p>
-          <ol className="flex flex-wrap gap-1.5">
-            {user.missionOrder.map((mid, i) => (
-              <li
-                key={mid}
-                className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-[11px] text-foreground"
-              >
-                <span className="font-semibold text-muted-foreground">
-                  {i + 1}
-                </span>
-                <span className="truncate max-w-40">{missionTitle(mid)}</span>
-              </li>
-            ))}
-          </ol>
+          {missionIds.length > 0 && (
+            <span className="text-[10px] font-medium text-muted-foreground">
+              {completedMissionCount}/{missionIds.length} 완료
+            </span>
+          )}
         </div>
-      )}
-
-      <div className="mt-4 flex flex-wrap gap-2">
         {missionIds.length === 0 ? (
           <span className="text-xs text-muted-foreground">
             연결된 미션 없음
           </span>
         ) : (
-          missionIds.map((missionId) => {
-            const isCompleted =
-              missionId === onboardingMissionId
-                ? user.onboardingStatus === "completed"
-                : user.completedSessionMissionIds.includes(missionId);
-            return (
-              <span
-                key={missionId}
-                className="inline-flex overflow-hidden rounded-full border border-border text-xs font-semibold"
-              >
-                <Link
-                  href={`/main/${missionId}?viewAs=${user.id}`}
-                  className="px-3 py-1 text-muted-foreground transition hover:bg-muted hover:text-foreground"
+          <ol className="grid gap-2 sm:grid-cols-2">
+            {missionIds.map((missionId, index) => {
+              const progress = adminMissionProgress(
+                user,
+                missionId,
+                onboardingMissionId,
+                missionDurationMinutes(missionId),
+              );
+              const isCompleted = completedFlags[index];
+              const isCurrent = index === currentMissionIndex;
+              const isLocked =
+                !isCompleted &&
+                (currentMissionIndex === -1 || index > currentMissionIndex);
+              return (
+                <li
+                  key={missionId}
+                  className={`flex min-w-0 items-center gap-2 rounded-xl border border-border bg-background px-2.5 py-2 ${
+                    isLocked ? "opacity-60" : ""
+                  }`}
                 >
-                  {missionTitle(missionId)}
-                </Link>
-                {isCompleted && (
+                  <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-muted text-[10px] font-semibold text-muted-foreground">
+                    {index + 1}
+                  </span>
                   <Link
-                    href={`/main/${missionId}?viewAs=${user.id}&review=1`}
-                    className="border-l border-border px-2.5 py-1 text-indigo-500 transition hover:bg-indigo-50 hover:text-indigo-700"
+                    href={`/main/${missionId}?viewAs=${user.id}`}
+                    prefetch={false}
+                    className="min-w-0 flex-1 truncate text-xs font-medium text-foreground transition hover:text-indigo-600 hover:underline"
                   >
-                    리뷰
+                    {missionTitle(missionId)}
                   </Link>
-                )}
-              </span>
-            );
-          })
+                  {isLocked ? (
+                    <Badge
+                      variant="secondary"
+                      className="h-5 shrink-0 px-1.5 text-[10px]"
+                    >
+                      잠김
+                    </Badge>
+                  ) : (
+                    isCurrent && (
+                      <Badge
+                        variant="outline"
+                        className="h-5 shrink-0 border-transparent bg-indigo-50 px-1.5 text-[10px] text-indigo-700"
+                      >
+                        현재
+                      </Badge>
+                    )
+                  )}
+                  <Badge
+                    variant={progress.variant}
+                    className="h-5 shrink-0 px-1.5 text-[10px]"
+                  >
+                    {progress.label}
+                  </Badge>
+                </li>
+              );
+            })}
+          </ol>
         )}
       </div>
 

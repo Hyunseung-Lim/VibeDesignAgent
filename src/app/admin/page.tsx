@@ -58,6 +58,7 @@ import {
   type AdminUser,
   type Participant,
 } from "@/components/admin/admin-user-card";
+import { missionProgressFromSession } from "@/lib/mission-progress";
 import {
   MemoryArchivedView,
   MemoryForgettingView,
@@ -918,6 +919,8 @@ export default function AdminPage() {
           prev?.completedSessionMissionIds ??
           [],
         missionOrder: changes.missionOrder ?? prev?.missionOrder ?? [],
+        missionProgressById:
+          changes.missionProgressById ?? prev?.missionProgressById ?? {},
       });
     };
 
@@ -956,25 +959,47 @@ export default function AdminPage() {
       }),
     );
 
+    // Session progress lives under sessions/{uid}/missions/{missionId}; the
+    // parent sessions/{uid} doc is never written, so getDocs(collection("sessions"))
+    // misses those "phantom" parents and the lobby (which reads each known
+    // uid's subcollection directly) would show completions the admin doesn't.
+    // Read the missions subcollection for every known user instead, unioned
+    // with any real parent docs that do exist.
     const sessionsSnap = await getDocs(collection(db, "sessions")).catch(
       () => null,
     );
+    const sessionUserIds = Array.from(
+      new Set([
+        ...users.keys(),
+        ...(sessionsSnap?.docs ?? []).map((userDoc) => userDoc.id),
+      ]),
+    );
     await Promise.all(
-      (sessionsSnap?.docs ?? []).map(async (userDoc) => {
-        const existing = users.get(userDoc.id);
+      sessionUserIds.map(async (sessionUserId) => {
+        const existing = users.get(sessionUserId);
         const sessionMissionSnap = await getDocs(
-          collection(db, "sessions", userDoc.id, "missions"),
+          collection(db, "sessions", sessionUserId, "missions"),
         ).catch(() => null);
-        const sessionMissionIds =
-          sessionMissionSnap?.docs.map((missionDoc) => missionDoc.id) ?? [];
-        const completedSessionMissionIds = (sessionMissionSnap?.docs ?? [])
+        if (!sessionMissionSnap || sessionMissionSnap.empty) return;
+        const sessionMissionIds = sessionMissionSnap.docs.map(
+          (missionDoc) => missionDoc.id,
+        );
+        const missionProgressById = Object.fromEntries(
+          sessionMissionSnap.docs.map((missionDoc) => [
+            missionDoc.id,
+            missionProgressFromSession(
+              missionDoc.data() as Record<string, unknown>,
+            ),
+          ]),
+        );
+        const completedSessionMissionIds = sessionMissionSnap.docs
           .filter(
             (missionDoc) =>
               (missionDoc.data() as Record<string, unknown>).status ===
               "completed",
           )
           .map((missionDoc) => missionDoc.id);
-        upsertUser(userDoc.id, {
+        upsertUser(sessionUserId, {
           missionIds: Array.from(
             new Set([...(existing?.missionIds ?? []), ...sessionMissionIds]),
           ),
@@ -990,6 +1015,10 @@ export default function AdminPage() {
               ...completedSessionMissionIds,
             ]),
           ),
+          missionProgressById: {
+            ...(existing?.missionProgressById ?? {}),
+            ...missionProgressById,
+          },
         });
       }),
     );
@@ -2185,13 +2214,19 @@ export default function AdminPage() {
                     : "아직 유저 데이터가 없습니다."}
                 </div>
               ) : (
-                <div className="grid gap-3 lg:grid-cols-2">
+                <div className="grid gap-3">
                   {adminUsers.map((user) => (
                     <AdminUserCard
                       key={user.id}
                       user={user}
                       onboardingMissionId={ONBOARDING_MISSION_ID}
                       missionTitle={missionTitle}
+                      missionDurationMinutes={(missionId) =>
+                        missionId === ONBOARDING_MISSION_ID
+                          ? onboardingSettings.durationMinutes
+                          : missions.find((mission) => mission.id === missionId)
+                              ?.durationMinutes ?? undefined
+                      }
                       isDeletingSessions={deletingSessionsUserId === user.id}
                       onBackupAndDeleteSessions={() =>
                         requestBackupAndDeleteSessions(user)

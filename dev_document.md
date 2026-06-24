@@ -59,6 +59,7 @@
 - 참여자 목록 조회 및 세션 열람 (읽기 전용 뷰)
 - 참여자 카드의 X는 해당 미션 세션과 하위 `memoryDrafts`/`reviewTurns`만 삭제하며, 유저 정보/장기 메모리/다른 미션 기록은 유지
 - 사용자 카드의 `세션 백업 후 삭제`는 세션/참여 기록/Storage 파일/장기 메모리(`memories_0_1_2`)/클러스터 캐시(`memoryClusters`)/retrieval logs를 백업 후 삭제한다 `[현행 2026-06-18 → 15.94]`
+- 사용자 카드는 1열 전체 폭으로 배치한다. 카드의 미션 영역은 온보딩을 첫 행에 두고 `missionOrder` 순서를 기준으로 참여/세션 미션을 보완한 단일 진행 목록이다. Lobby와 같은 session snapshot 판정으로 `대기`/`준비중`/`진행중`/`시간 초과`/`완료`를 표시하고, 온보딩 미션도 Lobby처럼 실제 세션 진행을 반영하되 완료 판정만 onboarding profile flag로 한다. Lobby의 순차 잠금 규칙(온보딩→`missionOrder` 순서, 첫 미완료가 `현재`, 그 이후는 `잠김`)도 같은 판정으로 계산해 `현재`/`잠김` 배지와 흐릿 처리로 표시한다(관리/조회용이라 잠금은 표시만 하고 링크는 막지 않음). 각 행의 미션 제목 링크는 `/main/{id}?viewAs={uid}`로 해당 세션을 읽기 전용 view-as로 연다(별도 리뷰 링크는 제거 — admin viewAs는 이미 읽기 전용+리뷰 탭 노출이라 `review=1`은 초기 탭만 바꿔 중복이었다) `[현행 2026-06-24 → 15.122/15.123/15.124/15.125/15.127]`
 - 참여자 모달의 개별 `미션 기록 삭제`는 해당 미션 세션, participant record, `memoryDrafts`/`reviewTurns`, 그 미션의 `source.missionId`를 가진 장기 메모리와 mission-scoped retrieval logs를 삭제하고, `memoryClusters` cache를 비운다 `[현행 2026-06-18 → 15.94]`
 - 유저 카드의 `메모리 보기`는 모달을 열지 않고 `/admin/users/[uid]/memory` 전용 페이지로 이동한다. 이 페이지는 `/agent`와 같은 `MemoryClusterPage`를 렌더링해 헤더, 세션 누적 필터, cluster list, similarity graph, detail side panel, empty/loading state를 동일하게 유지한다 `[현행 2026-06-22 → 15.107]`
 - Admin 대상 메모리 목록과 clustering API는 self `/agent` 경로와 같은 normalization 및 clustering helper를 사용한다. 같은 uid와 item signature에는 양쪽 화면이 같은 memory item, cache document, cluster membership/label을 읽는다 `[현행 2026-06-22 → 15.107]`
@@ -3518,3 +3519,51 @@ type ChatPlan = {
 - 재마운트 보강(`src/app/main/[missionId]/page.tsx`): 보드의 `htmlUpdatedAt`이 갱신되면(목업 재생성/편집) 저장된 grown 높이를 drop해, 재마운트된 iframe도 device 높이에서 시작하고 box 고정이 올바른 크기를 캡처하도록 한다.
 - 검증: 실제 저장 HTML(Design 2)을 실제 srcdoc iframe + 부모 성장 하니스로 headless Chrome에서 렌더해 비교. 수정 전에는 hero 이미지가 759x10152로 늘어나고 보고 높이가 3258 → 5616 → 7974 → 10332 → 12690으로 발산했고, 수정 후에는 이미지가 759x720으로 고정되고 보고 높이가 3258 한 번으로 안정했다. 스크린샷으로 hero가 Final Design과 동일한 첫 화면 레이아웃임도 확인. `npx tsc --noEmit`, 변경 파일 ESLint(0 error, 기존 page warning 6건만), `npm run build` 통과.
 - 이력: 1차 시도는 이미지 box만 고정해 sliver는 막았으나 `h-[80vh]` 컨테이너가 계속 부풀어 빈 박스+높이 발산이 남았고, vh 요소 box 고정을 추가해 루프를 완전히 차단했다.
+
+### 15.122 관리자 사용자 카드 미션 순서·진행상황 통합 `[implemented 2026-06-24]`
+
+- 배경(QA Note `관리자 페이지 관련 UI`): 사용자 카드에서 유저별 랜덤 미션 순서와 아래 세션/리뷰 chip 목록이 분리돼 같은 미션 정보를 두 번 읽어야 했고, 각 미션의 현재 진행상황도 바로 알 수 없었다.
+- 변경: `missionOrder`를 먼저 유지하고 participant/session에만 존재하는 미션을 뒤에 보완한 단일 `미션 순서 · 진행상황` 목록으로 합쳤다. 카드 폭에 따라 1~2열로 표시하며 각 행에 순번, 미션 제목, 상태 배지를 둔다. 상단에는 완료 수/전체 수를 요약한다.
+- 상태 계약: `completedSessionMissionIds`면 `완료`, session 또는 participant 기록이 있으면 `진행 중`, 어느 기록도 없으면 `시작 전`이다. 완료 행에만 review 링크를 제공하고, 일반 제목 링크는 read-only viewAs 세션으로 이동한다.
+- 온보딩: 이미 카드 상단에 별도 상태 배지가 있으므로 통합 미션 목록에서는 onboarding mission을 제외해 기존 중복 chip과 잘못 붙던 review 링크를 제거했다.
+- 변경 파일: `src/components/admin/admin-user-card.tsx`.
+
+### 15.123 관리자 사용자 카드 1열 배치와 온보딩 미션 복원 `[implemented 2026-06-24]`
+
+- 후속 피드백: 통합 목록에서도 온보딩 미션을 열 수 있어야 하고, 사용자 카드는 2열이 아니라 1열 전체 폭으로 보여야 한다. `[15.122의 온보딩 목록 제외 결정 stale 2026-06-24 → 15.123]`
+- 변경: 사용자 목록의 `lg:grid-cols-2`를 제거했다. 통합 미션 ID의 첫 항목에 onboarding mission을 항상 넣어 제목 링크로 read-only viewAs 화면을 열 수 있게 했다.
+- 상태: onboarding status가 completed면 `완료`, participant/session 기록이 있으면 `진행 중`, 그 외에는 `시작 전`으로 표시한다. 완료 수 요약과 완료 행 review 링크에도 같은 상태 판정을 사용한다.
+- 변경 파일: `src/app/admin/page.tsx`, `src/components/admin/admin-user-card.tsx`.
+
+### 15.124 Lobby와 Admin 미션 진행상태 판정 통합 `[implemented 2026-06-24]`
+
+- 문제: Lobby는 session activity와 timer/duration으로 화면 상태를 파생하고, Admin은 completed status 또는 session/participant 문서 존재 여부만 사용했다. 특히 activity가 있으면서 duration이 없는 세션은 Lobby가 `완료`, Admin이 `진행 중`으로 표시했다. 준비중, 시간 초과, participant만 있는 상태도 서로 달랐다. `[15.123의 Admin 3단계 상태 계약 stale 2026-06-24 → 15.124]`
+- 공통 계약: `missionProgressFromSession`이 activity/timer/status snapshot을 만들고 `deriveMissionProgressStatus`가 `대기`/`준비중`/`진행중`/`시간 초과`/`완료`를 판정한다. 완료는 오직 persisted status가 completed인 경우다. activity가 있고 duration이 없으면 완료로 추정하지 않고 진행중이다.
+- 데이터: Admin도 session mission 문서 ID만 보지 않고 각 문서의 snapshot을 `missionProgressById`에 저장한다. participant record만 있고 session activity가 없으면 Lobby와 동일하게 대기다. mission별 duration은 Admin mission 설정에서 전달한다.
+- 온보딩: 양쪽 모두 user profile의 onboardingCompleted를 synthetic completed progress로 취급하고, 미완료는 대기로 표시한다. `[stale 2026-06-24 → 15.125: Admin도 Lobby처럼 온보딩 미완료 시 실제 세션 진행(진행중/준비중/시간 초과)을 반영하도록 변경]`
+- 변경 파일: `src/lib/mission-progress.ts`, `src/app/lobby/page.tsx`, `src/app/admin/page.tsx`, `src/components/admin/admin-user-card.tsx`.
+
+### 15.125 Admin 사용자 카드에 Lobby 온보딩 status·순차 잠금 규칙 적용 `[implemented 2026-06-24]`
+
+- 배경: 일반 미션 status 배지는 이미 Admin도 Lobby와 동일한 `deriveMissionProgressStatus`(duration 포함)로 표시 중이었으나, 두 가지가 어긋났다. (1) 온보딩 미션은 Admin이 onboardingStatus만 보고 완료/대기로만 표시했고(Lobby는 실제 세션 진행 반영), (2) Lobby의 순차 잠금(현재/잠김) 상태가 Admin 사용자 카드에는 전혀 없었다.
+- 온보딩 정렬: `adminMissionProgress`의 온보딩 분기를 Lobby와 동일하게 `missionProgressById[onboarding] ?? (onboardingStatus===completed ? synthetic completed : null)`로 바꿔, 온보딩도 진행중/준비중/시간 초과까지 표시한다. 완료 판정(잠금 계산용)은 Lobby처럼 onboarding profile flag만 사용한다.
+- 순차 잠금: `isMissionCompleted` 헬퍼로 미션별 완료 플래그 배열을 만들고 `currentMissionIndex`(첫 미완료)를 구한다. `index===current`는 `현재`, `!completed && (current===-1 || index>current)`는 `잠김`으로 Lobby와 같은 규칙으로 표시한다. Admin은 관리/조회용이라 잠금은 배지+흐릿(opacity) 표시만 하고 viewAs 링크는 그대로 둔다. 완료 수 집계도 라벨 매칭 대신 완료 플래그 기준으로 바꿨다.
+- 변경 파일: `src/components/admin/admin-user-card.tsx`.
+- 검증: `npx tsc --noEmit`, 변경 파일 ESLint(0 error), `npm run build` 통과. 온보딩 진행중 유저와 순차 잠금 표시는 라이브 확인이 필요하다.
+
+### 15.126 Admin 세션 진행 누락 수정 (phantom parent 열거 문제) `[implemented 2026-06-24]`
+
+- 증상: 같은 유저인데 Lobby는 6/10 완료로 보이고 Admin 사용자 카드는 1/10 완료(온보딩만)로, 완료한 미션이 전부 대기/잠김으로 표시됐다. 15.124에서 판정 계약은 통합했지만 Admin이 읽는 진행 데이터 자체가 비어 있었다.
+- 원인: 세션 진행은 `sessions/{uid}/missions/{missionId}`에만 기록되고 부모 `sessions/{uid}` 문서는 필드 없이 비어 있다(Firestore phantom parent). Admin은 `getDocs(collection("sessions"))`로 부모를 열거해 유저를 찾은 뒤 그 하위 missions를 읽었는데, 부모가 컬렉션 쿼리에 안 잡혀 해당 유저의 mission 문서를 하나도 못 읽었다. Lobby는 로그인한 본인 uid로 `sessions/{uid}/missions`를 직접 구독하므로 영향이 없었다.
+- 수정(`src/app/admin/page.tsx` loadUsers): 부모 컬렉션 열거 결과에만 의존하지 않고, 이미 모은 모든 known user id(registered + participants + missionOrder)와 실제 존재하는 sessions 부모 문서 id를 union한 뒤, 각 uid의 `sessions/{uid}/missions`를 직접 읽어 `missionProgressById`/`completedSessionMissionIds`/`sessionMissionIds`를 채운다. 빈 서브컬렉션은 건너뛴다.
+- 결과: Admin도 Lobby와 동일하게 완료/시간 초과/진행중을 반영하고, 그 위에서 15.125의 순차 잠금(현재/잠김)이 올바르게 계산된다.
+- 변경 파일: `src/app/admin/page.tsx`.
+- 검증: `npx tsc --noEmit`, 변경 파일 ESLint(0 error, 기존 warning만), `npm run build` 통과. 실제 Admin 카드의 완료 수가 Lobby와 일치하는지 라이브 확인이 필요하다.
+
+### 15.127 Admin 사용자 카드 중복 리뷰 링크 제거 `[implemented 2026-06-24]`
+
+- 배경(QA Note 피드백): 완료 미션 행의 미션 제목 링크(`viewAs`)와 `리뷰` 링크(`viewAs&review=1`)가 사실상 같은 화면을 열어 차이가 없다는 지적.
+- 확인: `review=1`(`isReviewMode`)이 동작에 영향을 주는 곳은 우측 패널 초기 탭 선택 한 군데뿐(`isReviewMode ? before : chat`). 읽기 전용/리뷰 주석/리뷰 탭 노출은 모두 `isReadOnly`/`showReviewAnnotations`/`isViewingAsAdmin`로 게이팅되는데 admin이 `viewAs`로 열면 `review=1` 유무와 무관하게 이미 true다. 즉 admin 맥락에서 두 링크의 유일한 차이는 처음 열리는 탭(chat vs before)뿐이고 어느 쪽이든 탭 전환으로 같은 내용을 본다.
+- 수정: 중복인 `리뷰` 링크를 제거하고 미션 제목 링크만 남겼다(`/main/{id}?viewAs={uid}`). 리뷰 회고는 거기서 before/리뷰 탭으로 보면 된다.
+- 변경 파일: `src/components/admin/admin-user-card.tsx`.
+- 검증: `npx tsc --noEmit`, 변경 파일 ESLint(0 error) 통과.

@@ -16,6 +16,11 @@ import {
   type LobbyMission,
 } from "@/components/lobby/mission-card";
 import type { MissionStatusVariant } from "@/components/lobby/status-badge";
+import {
+  deriveMissionProgressStatus,
+  missionProgressFromSession,
+  type MissionProgress,
+} from "@/lib/mission-progress";
 const ONBOARDING_MISSION_ID = "onboarding";
 
 type Mission = {
@@ -38,55 +43,11 @@ type OnboardingSettings = {
   durationMinutes: number;
 };
 
-type MissionProgress = {
-  hasActivity: boolean;
-  timerStartedAt: number | null;
-  status: string | null;
-};
-
-
-function missionProgress(data: Record<string, unknown>): MissionProgress {
-  const timerStartedAt =
-    typeof data.timerStartedAt === "number" ? data.timerStartedAt : null;
-  return {
-    timerStartedAt,
-    status: typeof data.status === "string" ? data.status : null,
-    hasActivity: Boolean(
-      data.selectedOptionId ||
-      data.timerStartedAt ||
-      (Array.isArray(data.messages) && data.messages.length > 0) ||
-      (Array.isArray(data.ideas) && data.ideas.length > 0) ||
-      (Array.isArray(data.artboards) && data.artboards.length > 0) ||
-      (Array.isArray(data.references) && data.references.length > 0),
-    ),
-  };
-}
-
 function derivedStatus(
   progress: MissionProgress | null,
   durationMinutes?: number,
 ): { label: string; variant: MissionStatusVariant } {
-  if (progress?.status === "completed") {
-    return { label: "완료", variant: "success" };
-  }
-  if (progress?.hasActivity && !progress.timerStartedAt) {
-    return { label: "준비중", variant: "secondary" };
-  }
-  if (progress?.hasActivity) {
-    if (
-      progress.timerStartedAt &&
-      durationMinutes &&
-      Date.now() - progress.timerStartedAt < durationMinutes * 60 * 1000
-    ) {
-      return { label: "진행중", variant: "warning" };
-    }
-    if (durationMinutes) {
-      return { label: "시간 초과", variant: "destructive" };
-    }
-    return { label: "완료", variant: "success" };
-  }
-
-  return { label: "대기", variant: "secondary" };
+  return deriveMissionProgressStatus(progress, durationMinutes);
 }
 
 function defaultOnboardingSettings(): OnboardingSettings {
@@ -192,7 +153,10 @@ export default function LobbyPage() {
       (snap) => {
         setMissionProgressById(
           Object.fromEntries(
-            snap.docs.map((d) => [d.id, missionProgress(d.data() as Record<string, unknown>)]),
+            snap.docs.map((d) => [
+              d.id,
+              missionProgressFromSession(d.data() as Record<string, unknown>),
+            ]),
           ),
         );
       },
