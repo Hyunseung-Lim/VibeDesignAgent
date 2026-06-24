@@ -2266,6 +2266,28 @@ export default function MainScreenPage() {
   useEffect(() => {
     artboardsRef.current = artboards;
   }, [artboards]);
+  // When a board's HTML is regenerated its iframe remounts and re-measures from
+  // the device height. Drop the stale (grown) height so the fresh iframe mounts
+  // at the device height and its image-box pinning captures correct sizes.
+  const lastHtmlUpdatedAtRef = useRef<Record<string, number>>({});
+  useEffect(() => {
+    const changed: string[] = [];
+    for (const board of artboards) {
+      const stamp = board.htmlUpdatedAt ?? 0;
+      if (lastHtmlUpdatedAtRef.current[board.id] !== stamp) {
+        if (lastHtmlUpdatedAtRef.current[board.id] !== undefined) {
+          changed.push(board.id);
+        }
+        lastHtmlUpdatedAtRef.current[board.id] = stamp;
+      }
+    }
+    if (changed.length === 0) return;
+    setArtboardHeights((prev) => {
+      const next = { ...prev };
+      for (const id of changed) delete next[id];
+      return next;
+    });
+  }, [artboards]);
   useEffect(() => {
     activeIdeaIdRef.current = activeIdeaId;
   }, [activeIdeaId]);
