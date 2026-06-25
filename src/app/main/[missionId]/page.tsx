@@ -3612,8 +3612,8 @@ export default function MainScreenPage() {
     });
     const manualReference = parseManualReferencePrompt(text);
     const memoryInput = [
-      commandForTurn ? `명시적 생성 명령: ${commandForTurn.label}` : "",
-      mentionForTurn ? `언급한 기존 산출물: ${mentionForTurn.label}` : "",
+      commandForTurn ? `explicit command: ${commandForTurn.label}` : "",
+      mentionForTurn ? `mentioned artifact: ${mentionForTurn.label}` : "",
       `user input: ${text}`,
     ]
       .filter(Boolean)

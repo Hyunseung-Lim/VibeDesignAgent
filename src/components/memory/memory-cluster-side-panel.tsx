@@ -62,7 +62,7 @@ function MemoryField({
       <p className="mb-1 text-[10px] font-semibold uppercase text-muted-foreground">
         {label}
       </p>
-      <p className="wrap-anywhere text-xs leading-relaxed text-foreground">
+      <p className="wrap-anywhere whitespace-pre-line text-xs leading-relaxed text-foreground">
         {value}
       </p>
     </div>
@@ -225,7 +225,7 @@ export function MemoryClusterSidePanel({
                                 ) : null}
                               </div>
                               <p
-                                className={`min-w-0 leading-relaxed ${
+                                className={`min-w-0 whitespace-pre-line leading-relaxed ${
                                   selected
                                     ? "wrap-anywhere font-semibold text-slate-950"
                                     : "line-clamp-2 text-foreground"
