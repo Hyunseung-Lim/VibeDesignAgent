@@ -1339,6 +1339,16 @@ function isReferenceSearchRequest(text: string) {
   return asksForExamples && externalDesignTarget && inspirationQualifier;
 }
 
+// Corrective / pivot turn: the user is redirecting the reference search away
+// from the current direction (e.g. "브랜드 말고 개인 포트폴리오", "그게 아니라",
+// "instead"). On these turns the latest intent should lead the query so the
+// unchanged persona/mission boilerplate doesn't dilute the correction.
+function isCorrectiveReferenceTurn(text: string) {
+  return /(말고|아니라|아니야|아냐|대신에?|그게\s*아니|그건\s*아니|그거\s*말고|that['’]?s not|not that|instead|rather than)/i.test(
+    text,
+  );
+}
+
 // Explicit reference count the user asked for (e.g. "3개", "두 개", "5 references").
 // Returns null when unspecified; the server clamps and defaults.
 function parseRequestedReferenceCount(text: string): number | null {
@@ -1400,7 +1410,19 @@ function buildReferenceSearchQuery(
   missionTitle: string | undefined,
   activeOption: MissionOption | null,
   targetDevice: Device,
+  corrective = false,
 ) {
+  const deviceLabel =
+    targetDevice === "mobile" ? "mobile app UI" : "desktop website UI";
+  // Pivot turn: lead with the new intent and drop the long persona description/
+  // content so the corrected direction isn't buried under unchanged boilerplate.
+  // Keep only the short option title for minimal grounding.
+  if (corrective) {
+    return [baseQuery, cleanSearchText(activeOption?.title ?? ""), deviceLabel]
+      .filter(Boolean)
+      .join(" ")
+      .slice(0, 500);
+  }
   const optionContext = activeOption
     ? [
         cleanSearchText(activeOption.title),
@@ -1410,12 +1432,7 @@ function buildReferenceSearchQuery(
         .filter(Boolean)
         .join(" ")
     : "";
-  return [
-    missionTitle,
-    optionContext,
-    targetDevice === "mobile" ? "mobile app UI" : "desktop website UI",
-    baseQuery,
-  ]
+  return [missionTitle, optionContext, deviceLabel, baseQuery]
     .filter(Boolean)
     .join(" ")
     .slice(0, 500);
@@ -4282,11 +4299,13 @@ export default function MainScreenPage() {
         );
       };
       if (fetchRefMatch) {
+        const corrective = isCorrectiveReferenceTurn(text);
         const customQuery = buildReferenceSearchQuery(
           fetchRefMatch[1]?.trim() || text,
           effectiveMissionTitle,
           activeOption,
           device,
+          corrective,
         );
         setReferenceLoadingMessageId(assistantId);
         void fetchReferences(
@@ -4294,6 +4313,7 @@ export default function MainScreenPage() {
           effectiveMissionBrief ?? "",
           customQuery,
           parseRequestedReferenceCount(text),
+          text,
         )
           .then((result) => appendReferenceResult(result))
           .finally(() =>
@@ -4302,11 +4322,13 @@ export default function MainScreenPage() {
             ),
           );
       } else if (isReferenceSearchRequest(text)) {
+        const corrective = isCorrectiveReferenceTurn(text);
         const fallbackReferenceQuery = buildReferenceSearchQuery(
           text,
           effectiveMissionTitle,
           activeOption,
           device,
+          corrective,
         );
         setReferenceLoadingMessageId(assistantId);
         void fetchReferences(
@@ -4314,6 +4336,7 @@ export default function MainScreenPage() {
           effectiveMissionBrief ?? "",
           fallbackReferenceQuery || text,
           parseRequestedReferenceCount(text),
+          text,
         )
           .then((result) => appendReferenceResult(result))
           .finally(() =>
@@ -4957,6 +4980,7 @@ export default function MainScreenPage() {
       brief: string,
       customQuery?: string | null,
       requestedCount?: number | null,
+      userRequestText?: string | null,
     ): Promise<ReferenceFetchResult> => {
       if (isFetchingRefs || isReadOnly) return { references: [] };
       setIsFetchingRefs(true);
@@ -4975,6 +4999,7 @@ export default function MainScreenPage() {
             missionTitle: title,
             missionBrief: brief,
             customQuery,
+            userRequest: userRequestText ?? undefined,
             requestedCount: requestedCount ?? undefined,
             existingReferences: [...references, ...loggedReferenceLinks],
             referencePreferenceContext: missionId

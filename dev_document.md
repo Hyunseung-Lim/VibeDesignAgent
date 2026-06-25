@@ -3580,3 +3580,12 @@ type ChatPlan = {
 - 동작: enrichment 실패/데이터 없음 시 null을 반환하고 호출자가 보낸 단순 input(`최종 디자인 확정: {label}`)으로 폴백한다. final-design payload가 없는 기존 draft 호출은 동작 변화 없음.
 - 변경 파일: 신규 `src/lib/memory-final-design.ts`(공유 타입), `src/lib/server/finalDesignMemoryInput.ts`(enrichment 패스, gpt-5.4-mini), `src/lib/prompts.ts`(`FINAL_DESIGN_INPUT_PROMPT`), `src/app/api/memory/drafts/route.ts`(optional `finalDesign` 수신 후 input 대체), `src/app/main/[missionId]/page.tsx`(`encodeMemoryDraft`에 finalDesign 인자 추가, 세션 종료 시 boards+chat 수집·전달).
 - 검증: `npx tsc --noEmit`, 변경 파일 ESLint(0 error, 기존 warning 유지) 통과.
+
+### 15.129 레퍼런스 검색 정정 턴 반영 (사용자 입력 우선·제외 의도) `[implemented 2026-06-25]`
+
+- 배경(QA Note 389d): "브랜드 말고 개인 포트폴리오"처럼 방향을 트는 입력을 보내도 검색 쿼리가 이전과 거의 같았다.
+- 원인: 실제 검색 쿼리는 `buildReferenceSearchQuery`가 `missionTitle + optionContext(페르소나 title+설명+content 240자) + device + baseQuery` 순으로 조립하는데, 앞쪽 고정 컨텍스트가 길고 매 턴 동일해 사용자의 새 의도(맨 뒤 baseQuery)를 희석했다. 또한 파이프라인이 덧붙이기만 해서 "말고/제외" 의도를 표현할 수 없었고, 쿼리 빌더 단계에 사용자의 raw 입력이 전달되지도 않았다(전달되는 customQuery는 에이전트가 쓴 FETCH_REFERENCES 내용).
+- 수정 1(정정 턴 우선): `isCorrectiveReferenceTurn`로 정정/전환 신호(말고/아니라/대신/instead 등)를 감지해, 그 턴에서는 `buildReferenceSearchQuery`가 baseQuery(새 의도)를 앞세우고 긴 페르소나 컨텍스트는 빼고 옵션 title만 남긴다.
+- 수정 2(제외 의도 처리): raw 사용자 입력을 `userRequest`로 references 라우트까지 흘려보내 쿼리 빌더 user 메시지에 "Current user request (authoritative; may contain corrections or exclusions)"로 명시하고, `referenceQueryBuilderPrompt`에 정정/부정이 있으면 거부된 방향 X를 버리고 요청한 대안 Y로 피벗하라는 규칙을 추가했다. 이 라인이 assembled context·preference context보다 우선한다.
+- 변경 파일: `src/app/main/[missionId]/page.tsx`(`isCorrectiveReferenceTurn`, `buildReferenceSearchQuery` corrective 분기, `fetchReferences`에 `userRequestText` 추가, 두 호출부에서 raw text·corrective 전달), `src/app/api/references/route.ts`(`userRequest` 수신→`buildSearchQueries`), `src/lib/prompts.ts`(`referenceQueryBuilderPrompt` 제외/정정 규칙).
+- 검증: `npx tsc --noEmit`, 변경 파일 ESLint(0 error, 기존 warning 유지) 통과.

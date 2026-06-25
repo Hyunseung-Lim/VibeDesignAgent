@@ -597,6 +597,7 @@ If the project brief contains fictional people/personas, do not search or return
 Never return pages for these fictional names: ${omittedNames.join(", ") || "(none)"}.
 Avoid stock image sites, Pinterest, Instagram/social posts, generic tag/search pages, template marketplaces, and thin SEO listicles.
 If same-mission reference preference context is provided, use it as mission-local evidence for source type, UX pattern, structure, and visual direction. Do not treat it as a global user preference.
+The "Current user request" line is authoritative for this turn and overrides the assembled search context and the preference context when they conflict. If it corrects or negates an earlier direction (e.g. "X 말고 Y", "그게 아니라 Y", "not X, but Y", "instead of X"), every query MUST drop the rejected direction X and pivot to the requested alternative Y — do not keep X's terms or sources out of momentum. When the rejected direction is a category like brand/official/company pages, actively steer toward the requested alternative (e.g. individual/personal portfolios) instead.
 Descriptions must be short Korean phrases explaining what the reference is.
 Rationales must be short Korean phrases explaining the concrete design/UX value for the current mission.`;
 }

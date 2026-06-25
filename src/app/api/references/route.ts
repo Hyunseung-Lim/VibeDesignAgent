@@ -391,6 +391,7 @@ async function buildSearchQueries(
   mode: ReferenceMode,
   omittedNames: string[],
   referencePreferenceContext: unknown,
+  userRequest: string | null,
 ): Promise<string[]> {
   const fallbackQuery =
     stripFictionalPersonaNames(
@@ -406,7 +407,7 @@ async function buildSearchQueries(
       },
       {
         role: "user",
-        content: `Mission title: ${missionTitle ?? ""}\nMission brief: ${missionBrief ?? ""}\nUser requested reference search: ${customQuery ?? ""}\nSame-mission reference preference context: ${JSON.stringify(referencePreferenceContext ?? null)}`,
+        content: `Mission title: ${missionTitle ?? ""}\nMission brief: ${missionBrief ?? ""}\nCurrent user request (authoritative for this turn; may contain corrections or exclusions): ${userRequest ?? customQuery ?? ""}\nAssembled search context: ${customQuery ?? ""}\nSame-mission reference preference context: ${JSON.stringify(referencePreferenceContext ?? null)}`,
       },
     ],
   });
@@ -781,6 +782,7 @@ export async function POST(request: Request) {
     missionTitle?: unknown;
     missionBrief?: unknown;
     customQuery?: unknown;
+    userRequest?: unknown;
     existingReferences?: unknown;
     referencePreferenceContext?: unknown;
     requestedCount?: unknown;
@@ -795,6 +797,10 @@ export async function POST(request: Request) {
   const missionTitle = sanitizeInput(body.missionTitle);
   const missionBrief = sanitizeInput(body.missionBrief);
   const customQuery = sanitizeInput(body.customQuery) || null;
+  // The raw latest user message. Authoritative for the current turn's intent and
+  // may carry corrections/exclusions ("브랜드 말고 개인 포트폴리오") that the
+  // assembled customQuery cannot express on its own.
+  const userRequest = sanitizeInput(body.userRequest) || null;
   const { existingReferences } = body;
   // Honor an explicit requested count (clamped); default to FINAL_REFERENCE_COUNT.
   const rawCount = Number(body.requestedCount);
@@ -845,6 +851,7 @@ export async function POST(request: Request) {
       referenceMode,
       omittedNames,
       referencePreferenceContext,
+      userRequest,
     );
 
     const productReferences =
