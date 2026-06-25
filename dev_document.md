@@ -139,6 +139,7 @@
 - 세션 종료 전 생성된 목업 중 하나를 최종 디자인으로 선택
 - 최종 디자인은 mission session의 `finalArtboardId`로 저장
 - 선택을 바꾸는 중간 클릭은 memory draft를 만들지 않는다. 세션 종료 직전에 현재 `finalArtboardId` 하나만 final-design memory로 기록하며, 종료 API도 과거 방식으로 누적된 선택 draft 중 현재 최종안 하나만 승격한다 `[현행 2026-06-23 → 15.112]`
+- final-design memory의 input은 라벨만이 아니라, 세션 종료 시 비교 대상 목업 전체와 세션 채팅을 서버 enrichment LLM 패스에 보내 만든다. 패스는 각 board HTML을 직접 조사해 문구/구조/UI 스타일을 정리하고(디자인 스타일 메타데이터는 무시), 후보 비교와 채팅에서 드러난 선호를 사실 위주로 기록한다. semantic 생성 프롬프트는 그대로 두고 input만 보강하는 방식이다. 구현은 `src/lib/server/finalDesignMemoryInput.ts`와 `src/app/api/memory/drafts/route.ts`를 직접 확인한다 `[현행 2026-06-25 → 15.128]`
 - 최종 디자인 미선택 상태로 세션 종료 시 확인 경고를 표시
 
 ### 4.6 AI 채팅
@@ -3567,3 +3568,15 @@ type ChatPlan = {
 - 수정: 중복인 `리뷰` 링크를 제거하고 미션 제목 링크만 남겼다(`/main/{id}?viewAs={uid}`). 리뷰 회고는 거기서 before/리뷰 탭으로 보면 된다.
 - 변경 파일: `src/components/admin/admin-user-card.tsx`.
 - 검증: `npx tsc --noEmit`, 변경 파일 ESLint(0 error) 통과.
+
+### 15.128 Final Design memory input 보강 (후보 비교·HTML 특징·채팅 선호) `[implemented 2026-06-25]`
+
+- 배경(QA Note 384d 0623 NEW): 클릭 단위 저장을 세션 종료 단위 저장으로 바꾸는 일은 15.112에서 끝났으나, 남은 요구는 input을 잘 제공해 semantic이 선호 이유를 추론하게 하는 것이었다. 기존 final-design draft의 input/output은 라벨·시안명·생성일뿐이라 선택 이유나 화면 특징이 없었다.
+- 결정: semantic 생성 프롬프트는 건드리지 않고 input만 보강한다(문서 철학). 세션 종료 시 비교 대상 목업 전체와 세션 채팅을 서버 enrichment LLM 패스 1회로 보내 사실 위주의 풍부한 input 텍스트를 만들고, 그 결과를 memory draft input으로 쓴다.
+- 후보 범위: Final Design 셀렉터에 실제 노출된 목업(=목업이 있는 모든 시안의 board) 전체. 목업 없는 시안은 선택 불가였으므로 후보가 아니다(제외).
+- HTML 조사: Design Style 메타데이터는 무시하고 각 board HTML을 직접 읽어 문구/구조/UI 스타일을 정리한다. 한 시안에 목업이 여럿이고 스타일이 균일 적용 안 될 수 있어서다. 선택안은 HTML을 크게(12000자), 나머지 후보는 작게(5000자) 자른다.
+- 채팅: cleaned된 최근 16턴을 보내 사용자가 실제로 언급한 선호/반응을 추출한다. 명확한 선호가 없으면 없다고 적는다(억지 추론 금지).
+- 역할 분리: enrichment 패스는 사실(무엇이 있었나)만 정리하고, 선호 이유 해석은 기존 MEMORY_ENCODE_PROMPT semantic 단계가 한다.
+- 동작: enrichment 실패/데이터 없음 시 null을 반환하고 호출자가 보낸 단순 input(`최종 디자인 확정: {label}`)으로 폴백한다. final-design payload가 없는 기존 draft 호출은 동작 변화 없음.
+- 변경 파일: 신규 `src/lib/memory-final-design.ts`(공유 타입), `src/lib/server/finalDesignMemoryInput.ts`(enrichment 패스, gpt-5.4-mini), `src/lib/prompts.ts`(`FINAL_DESIGN_INPUT_PROMPT`), `src/app/api/memory/drafts/route.ts`(optional `finalDesign` 수신 후 input 대체), `src/app/main/[missionId]/page.tsx`(`encodeMemoryDraft`에 finalDesign 인자 추가, 세션 종료 시 boards+chat 수집·전달).
+- 검증: `npx tsc --noEmit`, 변경 파일 ESLint(0 error, 기존 warning 유지) 통과.

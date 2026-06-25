@@ -101,6 +101,7 @@ import type {
   MemoryDraftSources,
   MemorySourceLink,
 } from "@/lib/memory-sources";
+import type { FinalDesignEnrichmentPayload } from "@/lib/memory-final-design";
 import {
   CHAT_COMPOSER_COMMANDS,
   type ChatComposerCommand,
@@ -2145,6 +2146,7 @@ export default function MainScreenPage() {
       output: string,
       timestamp: number,
       sources?: MemoryDraftSources,
+      finalDesign?: FinalDesignEnrichmentPayload,
     ) => {
       if (isReadOnly || !missionId || !input.trim() || !output.trim())
         return false;
@@ -2165,6 +2167,7 @@ export default function MainScreenPage() {
             output,
             timestamp,
             sources,
+            finalDesign,
           }),
         });
         if (!response.ok) {
@@ -5195,6 +5198,30 @@ export default function MainScreenPage() {
         ? ideas.find((idea) => idea.id === finalBoard.ideaId) ?? null
         : null;
       if (finalBoard && finalIdea) {
+        // Send every compared candidate mockup plus the session chat so the
+        // server can investigate each board's HTML (copy/structure/UI style)
+        // and the chat-revealed preference, then encode a rich memory input
+        // instead of a bare label.
+        const finalDesignPayload: FinalDesignEnrichmentPayload = {
+          boards: artboards
+            .filter((board) => board.html?.trim())
+            .map((board) => ({
+              artboardId: board.id,
+              ideaTitle:
+                ideas.find((idea) => idea.id === board.ideaId)?.title ?? "",
+              label: board.label,
+              device: board.device === "mobile" ? "mobile" : "desktop",
+              html: board.html,
+              chosen: board.id === finalBoard.id,
+            })),
+          chat: messages
+            .filter((m) => m.role === "user" || m.role === "assistant")
+            .map((m) => ({
+              role: m.role,
+              content: cleanMessageContentForModel(m.content),
+            }))
+            .filter((m) => m.content.trim()),
+        };
         const finalMemoryCreated = await encodeMemoryDraft(
           `final-design-selection-${finalBoard.id}`,
           `최종 디자인 확정: ${finalBoard.label}`,
@@ -5204,6 +5231,8 @@ export default function MainScreenPage() {
               : "미상"
           }`,
           Date.now(),
+          undefined,
+          finalDesignPayload,
         );
         if (!finalMemoryCreated) {
           throw new Error("Unable to create the final-design memory draft.");

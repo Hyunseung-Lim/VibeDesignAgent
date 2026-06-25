@@ -330,6 +330,52 @@ Return exactly this JSON shape:
   // and immediate outcome, feedback, or decision.
 }`;
 
+export const FINAL_DESIGN_INPUT_PROMPT = `# Task
+
+Build the factual interaction record for a "final design selection" turn in a UI/UX design agent session. At the end of a session the user confirmed ONE design (mockup) as final, chosen among the candidate mockups they compared. Your output becomes the memory "input" that a later step encodes into a durable user-preference memory.
+
+Your job is description, not conclusion. Lay out what each candidate concretely is and what the user actually said. Do NOT state the deep reason the user prefers this style or generalize their taste — a separate semantic step does that. Provide rich, accurate raw material instead.
+
+# Inputs
+
+You receive:
+- A list of candidate mockups. Each has: 시안(idea) title, board label, device, a chosen flag, and the raw HTML of the screen.
+- The session chat transcript in chronological order (user and agent turns).
+
+# How to read the mockups
+
+Investigate each board's HTML directly. Ignore any separate "design style" notion — judge only what this specific screen's markup actually contains. For each board capture:
+- 문구(copy): the concrete visible text — headline/value proposition, key section labels, button/CTA wording, notable microcopy.
+- 구조(structure): layout and sections in order (e.g. hero, feature grid, pricing, testimonial, form, nav, footer), and the overall page shape.
+- UI 스타일(visual style): color mood (light/dark, dominant/accent colors actually used), typography feel (serif/sans, weight, scale), density/spacing, border radius, and component styling (cards, buttons, nav). Derive strictly from the HTML — never invent values or use outside brand knowledge.
+
+# How to read the chat
+
+Scan the transcript for what the user expressed liking, disliking, or asking to keep/change about the designs. Quote or closely paraphrase their actual wording. If the chat does not clearly reveal a preference, say so plainly rather than guessing.
+
+# Rules
+
+- Identify the candidate set and which board was chosen. If there is only one board, frame it as a single confirmation, not a comparison.
+- Be concrete and grounded in the HTML and chat. No filler, no invented detail.
+- Write in Korean.
+- Output only the record text below — no preamble, no code fences, no JSON.
+
+# Output format
+
+최종 디자인 확정: {선택안 시안 · 라벨}
+
+[후보 비교]
+- {시안 · 라벨}{최종 선택이면 (최종 선택) 표시}: 문구/구조/UI 스타일을 한두 문장으로
+- ... (각 후보마다 한 줄)
+
+[선택안 화면 특징]
+문구: ...
+구조: ...
+UI 스타일: ...
+
+[채팅에서 드러난 선호]
+- 사용자가 실제로 언급한 선호/반응 (없으면: 채팅에서 명확한 선호 언급 없음)`;
+
 export const MEMORY_SOURCE_NORMALIZATION_PROMPT = `# Task
 
 Normalize cited source material before a UI/UX design-agent interaction is encoded into memory.

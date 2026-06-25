@@ -8,6 +8,8 @@ import {
 } from "@/lib/server/firebaseAdminRest";
 import { MEMORY_ENCODE_PROMPT } from "@/lib/prompts";
 import type { MemoryDraftSources } from "@/lib/memory-sources";
+import type { FinalDesignEnrichmentPayload } from "@/lib/memory-final-design";
+import { buildFinalDesignMemoryInput } from "@/lib/server/finalDesignMemoryInput";
 import {
   MEMORY_SOURCE_NORMALIZATION_VERSION,
   memorySourceFingerprint,
@@ -234,17 +236,27 @@ export async function POST(request: Request) {
     output?: string;
     timestamp?: number;
     sources?: MemoryDraftSources;
+    finalDesign?: FinalDesignEnrichmentPayload;
   };
   const missionId = body.missionId?.trim();
   const interactionId = body.interactionId?.trim();
-  const input = body.input?.trim() ?? "";
+  const fallbackInput = body.input?.trim() ?? "";
   const output = body.output?.trim() ?? "";
-  if (!missionId || !interactionId || !input || !output) {
+  if (!missionId || !interactionId || !fallbackInput || !output) {
     return Response.json(
       { error: "missionId, interactionId, input, and output required" },
       { status: 400 },
     );
   }
+
+  // Final-design selection turns carry the compared candidate mockups and the
+  // session chat. Run the input-enrichment pass so the encoded memory reflects
+  // the candidate comparison and the user's expressed preference instead of a
+  // bare label. Best-effort: fall back to the provided input on failure.
+  const enrichedInput = body.finalDesign
+    ? await buildFinalDesignMemoryInput(body.finalDesign)
+    : null;
+  const input = enrichedInput || fallbackInput;
 
   const createdAt = Date.now();
   const timestamp = Number(body.timestamp ?? createdAt);
