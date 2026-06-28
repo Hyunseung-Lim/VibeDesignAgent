@@ -249,6 +249,8 @@ type SessionMemoryItem = {
   output?: string | null;
   originalInteractionContent?: string | null;
   agentActionCategory?: string | null;
+  keyword?: string[];
+  keywords?: string[];
   status?: string | null;
   promotedAt?: number | null;
   timestamp?: number | null;
@@ -6174,6 +6176,9 @@ export default function MainScreenPage() {
         memoryGraphPhase === "before" && referenced?.weightBefore != null
           ? referenced.weightBefore
           : memory.weight;
+      const memoryKeywords = Array.from(
+        new Set([...(memory.keyword ?? []), ...(memory.keywords ?? [])]),
+      );
       return {
         id: memory.id,
         memoryId: memory.id,
@@ -6184,6 +6189,7 @@ export default function MainScreenPage() {
         originalInteractionContent: memory.originalInteractionContent ?? "",
         sourceType: memory.sourceType ?? null,
         action: [
+          memory.agentActionCategory ?? "",
           referenced ? "referenced" : "",
           promotedIds.has(memory.id) ? "promoted" : "",
           sessionArchivedIds.has(memory.id) && memoryGraphPhase === "after"
@@ -6193,18 +6199,9 @@ export default function MainScreenPage() {
           .filter(Boolean)
           .join(" / "),
         timestamp: memory.timestamp ?? 0,
-        keyword: [
-          phaseWeight != null ? `weight ${formatReviewScore(phaseWeight)}` : "",
-          referenced?.weightDelta != null
-            ? `delta ${formatReviewDelta(referenced.weightDelta)}`
-            : "",
-        ].filter(Boolean),
-        keywords: [
-          phaseWeight != null ? `weight ${formatReviewScore(phaseWeight)}` : "",
-          referenced?.weightDelta != null
-            ? `delta ${formatReviewDelta(referenced.weightDelta)}`
-            : "",
-        ].filter(Boolean),
+        weight: phaseWeight ?? null,
+        keyword: memoryKeywords,
+        keywords: memoryKeywords,
         row: {
           source: memory.source ?? undefined,
         },
@@ -6276,9 +6273,11 @@ export default function MainScreenPage() {
           input: memory.input ?? null,
           output: memory.output ?? null,
           originalInteractionContent: memory.originalInteractionContent ?? null,
-          action: null,
+          action: memory.agentActionCategory ?? null,
           sourceType: memory.sourceType ?? null,
-          keywords: [],
+          keywords: Array.from(
+            new Set([...(memory.keyword ?? []), ...(memory.keywords ?? [])]),
+          ),
           weight: memory.weight ?? null,
           timestamp: memory.timestamp ?? null,
           archivedAt: memory.archivedAt ?? null,
@@ -6360,6 +6359,13 @@ export default function MainScreenPage() {
               memories={sidePanelMemories}
               selectedMemoryId={selectedGraphMemoryId}
               onSelectMemory={setSelectedGraphMemoryId}
+              getMissionLabel={(originMissionId) => {
+                if (originMissionId === ONBOARDING_MISSION_ID) return "온보딩";
+                if (originMissionId === missionId && missionTitle) {
+                  return missionTitle;
+                }
+                return `미션 ${originMissionId.slice(0, 10)}`;
+              }}
               mentionMode={memoryReviewMentionMode}
               onMentionCluster={(selected) =>
                 chooseMemoryReviewMention({

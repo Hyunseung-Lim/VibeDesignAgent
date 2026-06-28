@@ -2131,6 +2131,7 @@ export default function AdminPage() {
                       selectedMemoryId={selectedAdminGraphMemoryId}
                       onSelectMemory={setSelectedAdminGraphMemoryId}
                       onDeleteMemory={deleteAdminMemory}
+                      getMissionLabel={missionTitle}
                     />
                   </div>
                 </div>

@@ -34,6 +34,18 @@ function numberArray(value: unknown) {
     : [];
 }
 
+function stringArray(value: unknown) {
+  return Array.isArray(value)
+    ? value.map((item) => String(item).trim()).filter(Boolean)
+    : [];
+}
+
+function memoryKeywords(doc: Record<string, unknown>) {
+  return Array.from(
+    new Set([...stringArray(doc.keyword), ...stringArray(doc.keywords)]),
+  );
+}
+
 function scoreDeltaArray(value: unknown) {
   return Array.isArray(value)
     ? value
@@ -117,6 +129,7 @@ function memoryWeight(doc: Record<string, unknown>) {
 }
 
 function compactMemory(id: string, doc: Record<string, unknown>) {
+  const keyword = memoryKeywords(doc);
   return {
     id,
     episodic: stringOrNull(doc.episodic ?? doc.episode ?? doc.content),
@@ -125,6 +138,8 @@ function compactMemory(id: string, doc: Record<string, unknown>) {
     output: stringOrNull(doc.output),
     originalInteractionContent: stringOrNull(doc.originalInteractionContent),
     agentActionCategory: stringOrNull(doc.agentActionCategory ?? doc.action),
+    keyword,
+    keywords: keyword,
     weight: memoryWeight(doc),
     archivedAt: numberOrNull(doc.archivedAt),
     archiveReason: stringOrNull(doc.archiveReason),
@@ -146,6 +161,9 @@ function compactGraphMemory(item: ReturnType<typeof compactMemory>) {
     semantic: item.semantic,
     input: item.input,
     output: item.output,
+    agentActionCategory: item.agentActionCategory,
+    keyword: item.keyword,
+    keywords: item.keywords,
     weight: item.weight,
     archivedAt: item.archivedAt,
     archiveReason: item.archiveReason,

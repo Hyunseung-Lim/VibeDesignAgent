@@ -878,6 +878,8 @@ archiveReason = "low-weight" | "duplicate" | "manual";
   - 구현: `/api/memory/session-summary`가 전체 memory node와 기존 retrieval log 기반 `referenced` diff를 반환
   - UI: 오른쪽 메모리 변화 패널은 요약/진입점만 표시하고, `전체 메모리 변화 보기` 버튼으로 full-screen overlay를 열어 `세션 이전`/`세션 이후` 전체 노드 변화를 비교
   - Overlay: `변화만/전체/참고/기억됨/보관됨` 필터와 선택 노드 상세를 제공. `보관됨`은 이번 세션에서 referenced/promoted된 memory와 관련된 archive만 표시
+  - Overlay node detail의 `Keyword` 영역은 memory document의 실제 `keyword`/`keywords` 값만 표시하고, `weight`/`weightDelta`는 별도 metadata/Weight 영역으로 분리한다.
+  - Overlay 단위 memory card는 접힌 상태에서 미션 출처, 생성 시간, 한글 source/action 태그, 실제 사용자 입력만 표시한다. `weight`는 선택 상세에서만 표시하고 `referenced`/`promoted` 같은 리뷰 상태 토큰은 행동 태그로 노출하지 않는다.
   - Cluster: 기존 admin memory cluster cache가 있으면 similarity cluster별로 묶어 표시하고, cache가 없으면 Regenerate 안내와 fallback 배치를 표시
   - 재검토 조건: node view에서 정확한 세션 단위 before/after가 제품적으로 중요해질 때만 touched-memory diff event 저장을 검토
 
@@ -3608,3 +3610,19 @@ type ChatPlan = {
 - 저장: `/api/memory/review-feedback`는 Firebase ID token으로 본인 uid를 검증하고 `users/{uid}/memoryReviewFeedback/{missionId}`에 `{ schemaVersion: 1, answers, updatedAt, submittedAt }`를 저장한다. `answers[questionId]`는 `{ text, mentions[] }`이며 mention은 `{ type, id, label, start, end }`를 가진다. UI는 draft autosave를 수행하고, `제출` 버튼은 contenteditable DOM의 최신 payload를 수집한 뒤 POST 완료를 await하고 성공 시 같은 문서의 `submittedAt`을 갱신한다.
 - 변경 파일: 신규 `src/components/memory/memory-review-panel.tsx`, 신규 `src/app/api/memory/review-feedback/route.ts`, `src/app/main/[missionId]/page.tsx`, `dev_document.md`.
 - 검증: `npx tsc --noEmit`, 변경 파일 ESLint(0 error), `npm run build` 통과. Build의 기존 presentation route NFT trace warning은 유지.
+
+### 15.132 SessionMemoryDiff keyword/weight 표시 분리 `[implemented 2026-06-28]`
+
+- 배경(Page Feedback `/main/mission-20260611-103001?review=1`): 메모리 변화 overlay의 `MemoryClusterSidePanel`에서 Keyword 영역에 실제 keyword가 아니라 `weight ...`, `delta ...` 문자열이 보였다.
+- 원인: `/main/[missionId]`의 review graph item mapping이 `keyword`/`keywords` 배열을 weight badge 대용 문자열로 채웠고, `/api/memory/session-summary`의 `graphMemories` 응답도 실제 keyword를 내려주지 않았다.
+- 수정: `/api/memory/session-summary`가 memory document의 `keyword`와 `keywords`를 합쳐 dedupe한 배열을 `graphMemories.keyword`/`graphMemories.keywords`에 포함한다. `/main` review graph item은 이 값을 그대로 넘기고 `weight`는 `ClusterGraphItem.weight`에만 둔다. `MemoryClusterSidePanel` 선택 상세는 Keyword chip 블록과 Weight progress 블록을 분리한다.
+- 변경 파일: `src/app/api/memory/session-summary/route.ts`, `src/app/main/[missionId]/page.tsx`, `src/components/memory/memory-cluster-side-panel.tsx`, `dev_document.md`.
+- 검증: `npm run lint` 통과(0 error, 기존 warning 유지).
+
+### 15.133 단위 memory card 접힌 상태 간소화 `[implemented 2026-06-28]`
+
+- 배경(Notion `메모리 리뷰 개편` Request 4): 단위 memory card는 접힌 상태에서 미션 출처, 생성 시간, source/action 태그, 사용자 입력만 남기고 weight는 눌렀을 때 상세에서만 보여야 했다. source/action 태그도 영어 대신 한글이어야 했다.
+- 변경: `MemoryClusterSidePanel` card header를 미션 라벨 + 시간으로 정리하고, source label을 `세션 전`/`세션 중`으로 한글화했다. action은 `references_fetch → 레퍼런스 검색` 등으로 매핑하며 `referenced`/`promoted`/`archived` 같은 리뷰 상태 토큰은 action tag에서 숨긴다. `이번 세션 신규` 텍스트 배지는 제거하고 상태는 얇은 색 막대로만 남겼다.
+- 데이터: `/api/memory/session-summary`의 `graphMemories`에 `agentActionCategory`를 포함하고, `/main` review graph item이 실제 action token과 keyword를 side panel에 전달하도록 보정했다. `/agent`, `/admin`, `/main`은 가능한 경우 미션 제목을 card 출처 라벨로 넘긴다.
+- 변경 파일: `src/components/memory/memory-cluster-side-panel.tsx`, `src/components/memory/memory-cluster-types.ts`, `src/app/api/memory/session-summary/route.ts`, `src/app/main/[missionId]/page.tsx`, `src/app/agent/page.tsx`, `src/app/admin/page.tsx`, `dev_document.md`.
+- 검증: `npx tsc --noEmit`, `npm run lint` 통과(0 error, 기존 warning 유지).

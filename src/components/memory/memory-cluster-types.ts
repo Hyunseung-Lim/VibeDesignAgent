@@ -13,7 +13,7 @@ export type MemoryItem = {
   timestamp: number | null;
   archivedAt: number | null;
   archiveReason: string | null;
-  source: { missionId?: string; draftId?: string } | null;
+  source: { missionId?: string; draftId?: string; missionTitle?: string } | null;
 };
 
 export type MemoryCluster = {
@@ -48,6 +48,6 @@ export type ClusterGraphItem = {
   keyword: string[];
   keywords: string[];
   row: {
-    source?: { missionId?: string; draftId?: string };
+    source?: { missionId?: string; draftId?: string; missionTitle?: string };
   };
 };

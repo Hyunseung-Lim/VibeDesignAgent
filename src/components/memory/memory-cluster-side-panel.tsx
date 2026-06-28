@@ -17,6 +17,7 @@ type MemoryClusterSidePanelProps = {
   mentionMode?: boolean;
   onMentionCluster?: (cluster: MemoryCluster) => void;
   onMentionMemory?: (item: ClusterGraphItem) => void;
+  getMissionLabel?: (missionId: string) => string;
 };
 
 function formatDate(timestamp: number) {
@@ -35,12 +36,12 @@ function formatWeight(weight: number | null | undefined) {
 
 function sourceLabel(sourceType: string | null | undefined) {
   if (sourceType === "before_session") {
-    return "Before session";
+    return "세션 전";
   }
   if (sourceType === "during_session") {
-    return "During session";
+    return "세션 중";
   }
-  return "Unknown source";
+  return "출처 없음";
 }
 
 function sourceBadgeClass(sourceType: string | null | undefined) {
@@ -51,6 +52,35 @@ function sourceBadgeClass(sourceType: string | null | undefined) {
     return "border-slate-300 bg-slate-100 text-slate-700";
   }
   return "border-slate-200 bg-slate-50 text-slate-500";
+}
+
+const hiddenActionTokens = new Set(["promoted", "referenced", "archived"]);
+
+function actionLabel(action: string) {
+  const labels: Record<string, string> = {
+    agent_response: "대화",
+    references_fetch: "레퍼런스 검색",
+    reference_cite: "레퍼런스 선택",
+    reference_delete: "레퍼런스 삭제",
+    note_delete: "노트 삭제",
+    mockup_delete: "목업 삭제",
+    final_design_select: "최종 디자인 선택",
+    style_image_preference: "스타일 이미지",
+  };
+  return labels[action] ?? action.replaceAll("_", " ");
+}
+
+function visibleActionLabels(action: string | null | undefined) {
+  return (action ?? "")
+    .split(" / ")
+    .map((token) => token.trim())
+    .filter((token) => token && !hiddenActionTokens.has(token))
+    .map(actionLabel);
+}
+
+function defaultMissionLabel(missionId: string) {
+  if (missionId === "onboarding") return "온보딩";
+  return `미션 ${missionId.slice(0, 10)}`;
 }
 
 function MemoryField({
@@ -72,28 +102,20 @@ function MemoryField({
   );
 }
 
-function eventTarget(item: ClusterGraphItem) {
-  return item.input || item.episodic || item.semantic || item.id;
+// The genuine user input only - stored input is sometimes prefixed with
+// "user input:" or carries action/reference wrappers. Strip those so both the
+// card headline and the Original input field show just what the user typed.
+function userInputText(item: ClusterGraphItem) {
+  const raw = (item.input || "").trim().replace(/^user input:\s*/i, "").trim();
+  return raw || item.episodic || item.semantic || item.id;
 }
 
-function actionSummary(item: ClusterGraphItem) {
-  const target = eventTarget(item);
-  switch (item.action) {
-    case "reference_delete":
-      return `Deleted reference: ${target}`;
-    case "reference_cite":
-      return `Cited reference: ${target}`;
-    case "references_fetch":
-      return `Reference search context: ${target}`;
-    case "note_delete":
-      return `Deleted note: ${target}`;
-    case "mockup_delete":
-      return `Deleted mockup: ${target}`;
-    case "final_design_select":
-      return `Selected final design: ${target}`;
-    default:
-      return target;
-  }
+function missionIdFor(item: ClusterGraphItem, memory: MemoryItem | null) {
+  return (
+    item.row.source?.missionId ??
+    memory?.source?.missionId ??
+    null
+  );
 }
 
 export function MemoryClusterSidePanel({
@@ -106,6 +128,7 @@ export function MemoryClusterSidePanel({
   mentionMode = false,
   onMentionCluster,
   onMentionMemory,
+  getMissionLabel = defaultMissionLabel,
 }: MemoryClusterSidePanelProps) {
   // Scroll the detail list to the item selected from the graph/node click.
   const selectedItemRef = useRef<HTMLDivElement | null>(null);
@@ -168,7 +191,7 @@ export function MemoryClusterSidePanel({
                       variant="warning"
                       className="rounded-full border-amber-200 bg-amber-50"
                     >
-                      {action}
+                      {actionLabel(action)}
                     </Badge>
                   ))}
                 </div>
@@ -188,6 +211,11 @@ export function MemoryClusterSidePanel({
                   const weightLabel = formatWeight(item.weight);
                   const isNewThisSession =
                     item.action?.split(" / ").includes("promoted") ?? false;
+                  const missionId = missionIdFor(item, memory);
+                  const missionLabel = missionId
+                    ? getMissionLabel(missionId)
+                    : "미션 출처 없음";
+                  const actionLabels = visibleActionLabels(item.action);
                   return (
                     <div
                       key={item.id}
@@ -223,6 +251,38 @@ export function MemoryClusterSidePanel({
                               : "border-border bg-background hover:border-slate-300 hover:bg-muted/30"
                         }`}
                       >
+                      <div className="mb-2 flex items-center justify-between gap-3 text-[11px] text-muted-foreground">
+                        <span className="min-w-0 truncate font-medium text-slate-500">
+                          {missionLabel}
+                        </span>
+                        {item.timestamp ? (
+                          <span className="shrink-0 tabular-nums">
+                            {formatDate(item.timestamp)}
+                          </span>
+                        ) : null}
+                      </div>
+                      <div className="mb-2 flex flex-wrap items-center gap-1.5">
+                        <Badge
+                          variant="secondary"
+                          className={`rounded-full ${sourceBadgeClass(item.sourceType)}`}
+                        >
+                          {sourceLabel(item.sourceType)}
+                        </Badge>
+                        {actionLabels.map((label) => (
+                          <Badge
+                            key={label}
+                            variant="warning"
+                            className="rounded-full border-amber-200 bg-amber-50"
+                          >
+                            {label}
+                          </Badge>
+                        ))}
+                        {memory?.archivedAt ? (
+                          <Badge variant="secondary" className="rounded-full">
+                            보관됨
+                          </Badge>
+                        ) : null}
+                      </div>
                       <div className="flex gap-2">
                         <span
                           className={`mt-0.5 w-1 shrink-0 rounded-full ${
@@ -237,16 +297,6 @@ export function MemoryClusterSidePanel({
                         <div className="min-w-0 flex-1">
                           <div className="flex items-start gap-2">
                             <div className="min-w-0 flex-1">
-                              <div className="mb-1 flex flex-wrap items-center gap-1.5">
-                                {isNewThisSession ? (
-                                  <Badge
-                                    variant="secondary"
-                                    className="rounded-full border-emerald-300 bg-emerald-100 text-[10px] font-semibold text-emerald-700"
-                                  >
-                                    ◆ 이번 세션 신규
-                                  </Badge>
-                                ) : null}
-                              </div>
                               <p
                                 className={`min-w-0 whitespace-pre-line leading-relaxed ${
                                   selected
@@ -254,7 +304,7 @@ export function MemoryClusterSidePanel({
                                     : "line-clamp-2 text-foreground"
                                 }`}
                               >
-                                {actionSummary(item)}
+                                {userInputText(item)}
                               </p>
                             </div>
                             {selected ? (
@@ -272,56 +322,37 @@ export function MemoryClusterSidePanel({
                           </div>
                         </div>
                       </div>
-                      <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
-                        {item.timestamp ? <span>{formatDate(item.timestamp)}</span> : null}
-                        <Badge
-                          variant="secondary"
-                          className={`rounded-full ${sourceBadgeClass(item.sourceType)}`}
-                        >
-                          {sourceLabel(item.sourceType)}
-                        </Badge>
-                        {(() => {
-                          // "promoted" is surfaced by the dedicated "이번 세션 신규"
-                          // badge above; drop it from the raw action chip.
-                          const displayAction = item.action
-                            ?.split(" / ")
-                            .filter((token) => token && token !== "promoted")
-                            .join(" / ");
-                          return displayAction ? (
-                            <Badge
-                              variant="warning"
-                              className="rounded-full border-amber-200 bg-amber-50"
-                            >
-                              {displayAction}
-                            </Badge>
-                          ) : null;
-                        })()}
-                        {!item.embedding?.length ? (
-                          <Badge variant="secondary" className="rounded-full">
-                            Fallback position
-                          </Badge>
-                        ) : null}
-                        {weightLabel ? (
-                          <Badge variant="secondary" className="rounded-full">
-                            weight {weightLabel}
-                          </Badge>
-                        ) : null}
-                        {memory?.archivedAt ? (
-                          <Badge variant="secondary" className="rounded-full">
-                            보관됨
-                          </Badge>
-                        ) : null}
-                      </div>
                       {selected ? (
                         <div className="mt-3 space-y-3">
-                          {item.episodic ? (
-                            <MemoryField label="Episodic" value={item.episodic} />
-                          ) : null}
                           {item.semantic ? (
                             <MemoryField label="Semantic" value={item.semantic} />
                           ) : null}
+                          {item.episodic ? (
+                            <MemoryField label="Episodic" value={item.episodic} />
+                          ) : null}
                           {item.input ? (
-                            <MemoryField label="Original input" value={item.input} />
+                            <MemoryField
+                              label="Original input"
+                              value={userInputText(item)}
+                            />
+                          ) : null}
+                          {item.keywords.length > 0 ? (
+                            <div className="rounded-lg border border-border bg-background px-3 py-2">
+                              <p className="mb-1.5 text-[10px] font-semibold uppercase text-muted-foreground">
+                                Keyword
+                              </p>
+                              <div className="flex flex-wrap gap-1.5">
+                                {item.keywords.map((keyword) => (
+                                  <Badge
+                                    key={keyword}
+                                    variant="secondary"
+                                    className="rounded-full"
+                                  >
+                                    {keyword}
+                                  </Badge>
+                                ))}
+                              </div>
+                            </div>
                           ) : null}
                           {weightLabel ? (
                             <div className="rounded-lg border border-border bg-background px-3 py-2">
@@ -343,22 +374,9 @@ export function MemoryClusterSidePanel({
                               </div>
                             </div>
                           ) : null}
-                          {item.keywords.length > 0 ? (
-                            <div className="flex flex-wrap gap-1.5">
-                              {item.keywords.map((keyword) => (
-                                <Badge
-                                  key={keyword}
-                                  variant="secondary"
-                                  className="rounded-full"
-                                >
-                                  {keyword}
-                                </Badge>
-                              ))}
-                            </div>
-                          ) : null}
                           {memory?.source?.missionId ? (
                             <p className="text-[11px] text-muted-foreground">
-                              {memory.source.missionId}
+                              {getMissionLabel(memory.source.missionId)}
                             </p>
                           ) : null}
                         </div>

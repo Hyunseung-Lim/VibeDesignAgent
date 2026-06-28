@@ -505,6 +505,9 @@ export function MemoryClusterPage({
                 memories={memories}
                 selectedMemoryId={selectedMemoryId}
                 onSelectMemory={setSelectedMemoryId}
+                getMissionLabel={(missionId) =>
+                  sessionFilterLabel(missionId, missionTitleById[missionId])
+                }
               />
               <div className="min-w-0 flex-1 overflow-hidden">
                 <MemoryClusterGraph
