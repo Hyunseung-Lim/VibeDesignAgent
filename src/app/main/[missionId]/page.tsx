@@ -23,7 +23,6 @@ import {
 import {
   ArrowLeftIcon,
   ArrowDownIcon,
-  Maximize2Icon,
   Minimize2Icon,
   BrainIcon,
   EyeIcon,
@@ -73,7 +72,6 @@ import {
   SetupMissionSummaryCard,
 } from "@/components/session/session-setup-cards";
 import { SessionProductTour } from "@/components/session/session-product-tour";
-import { MemoryScoreBar } from "@/components/memory/memory-score-bar";
 import { MemoryCard } from "@/components/memory/memory-card";
 import { SessionMemoryDiff } from "@/components/memory/session-memory-diff";
 import { PromptViewer } from "@/components/admin/prompt-viewer";
@@ -1924,7 +1922,7 @@ export default function MainScreenPage() {
   >({});
   const [sessionMemorySummary, setSessionMemorySummary] =
     useState<SessionMemorySummary>(EMPTY_SESSION_MEMORY_SUMMARY);
-  const [rightPanelTab, setRightPanelTab] = useState<"before" | "chat" | "memory">(
+  const [rightPanelTab, setRightPanelTab] = useState<"before" | "chat">(
     isReviewMode ? "before" : "chat",
   );
   const [memoryGraphPhase, setMemoryGraphPhase] = useState<"before" | "after">(
@@ -6455,152 +6453,6 @@ export default function MainScreenPage() {
     );
   };
 
-  const renderTimelineItems = (
-    items: Array<SessionMemoryItem | ReviewTurnMemory | ReferencedSessionMemoryItem>,
-    kind: "retrieved" | "promoted" | "draft",
-    emptyLabel: string,
-  ) => {
-    if (items.length === 0) {
-      return <p className="pl-5 text-xs text-slate-400">{emptyLabel}</p>;
-    }
-    const visible = items.slice(0, 5);
-    return (
-      <div>
-        {visible.map((item, idx) => {
-          const id = "memoryId" in item ? item.memoryId : item.id;
-          const archiveStatus =
-            "memoryId" in item
-              ? reviewMemoryArchiveById[item.memoryId]
-              : (item as SessionMemoryItem);
-          const isArchived =
-            kind !== "draft" &&
-            Boolean(
-              archiveStatus?.archivedAt ??
-              ("archivedAt" in item ? item.archivedAt : null),
-            );
-
-          const isBeforeSessionMemory =
-            kind === "retrieved" &&
-            "type" in item &&
-            ((item as Record<string, unknown>).type ===
-              "before_session_memory" ||
-              (item as Record<string, unknown>).sourceType ===
-                "before_session");
-
-          const dotClass = isArchived
-            ? "bg-rose-300"
-            : isBeforeSessionMemory
-              ? "bg-violet-400"
-              : kind === "retrieved"
-                ? "bg-blue-400"
-                : kind === "promoted"
-                  ? "bg-emerald-400"
-                  : "border-2 border-slate-300 bg-white";
-
-          const weight = "weight" in item ? item.weight : null;
-          const similarity = "similarity" in item ? item.similarity : null;
-          const weightDelta = "weightDelta" in item ? item.weightDelta : null;
-          const weightBefore = "weightBefore" in item ? item.weightBefore : null;
-          const weightAfter = "weightAfter" in item ? item.weightAfter : weight;
-
-          return (
-            <div key={`${kind}-${id}`} className="flex gap-3">
-              <div className="flex flex-col items-center">
-                <div
-                  className={`mt-1 h-2 w-2 shrink-0 rounded-full ${dotClass}`}
-                />
-                {idx < visible.length - 1 && (
-                  <div className="my-1 w-px flex-1 bg-slate-100" />
-                )}
-              </div>
-              <div
-                className={`min-w-0 flex-1 ${idx < visible.length - 1 ? "pb-3" : ""}`}
-              >
-                <p
-                  className={`line-clamp-2 text-xs leading-relaxed ${
-                    isArchived
-                      ? "text-slate-400 line-through decoration-rose-300"
-                      : "text-slate-700"
-                  }`}
-                >
-                  {memorySummaryText(item)}
-                </p>
-                <div className="mt-1 space-y-0.5">
-                  {isViewingAsAdmin && kind === "retrieved" &&
-                    similarity != null && (
-                      <MemoryScoreBar
-                        value={similarity}
-                        label={formatReviewScore(similarity)}
-                        colorClass="bg-blue-300"
-                      />
-                    )}
-                  {isViewingAsAdmin &&
-                    kind === "retrieved" &&
-                    weightBefore != null &&
-                    weightAfter != null && (
-                      <p className="text-[10px] font-semibold text-slate-400">
-                        weight {formatReviewScore(weightBefore)} →{" "}
-                        {formatReviewScore(weightAfter)}
-                      </p>
-                    )}
-                  {isViewingAsAdmin &&
-                    kind === "retrieved" &&
-                    weightDelta != null &&
-                    weightDelta !== 0 && (
-                      <p
-                        className={`text-[10px] font-semibold ${
-                          weightDelta > 0
-                            ? "text-blue-500"
-                            : "text-slate-400"
-                        }`}
-                      >
-                        {formatReviewDelta(weightDelta)}
-                      </p>
-                    )}
-                  {isViewingAsAdmin && kind === "promoted" &&
-                    !isArchived &&
-                    weight != null && (
-                      <MemoryScoreBar
-                        value={weight}
-                        label={formatReviewScore(weight)}
-                        colorClass="bg-emerald-400"
-                      />
-                    )}
-                  {isViewingAsAdmin && kind === "promoted" &&
-                    !isArchived &&
-                    weightDelta != null &&
-                    weightDelta !== 0 && (
-                      <p
-                        className={`text-[10px] font-semibold ${
-                          weightDelta > 0
-                            ? "text-emerald-500"
-                            : "text-slate-400"
-                        }`}
-                      >
-                        {formatReviewDelta(weightDelta)}
-                      </p>
-                    )}
-                  {isArchived && (
-                    <p className="text-[10px] text-rose-400">
-                      {archiveStatus?.archiveReason ?? "보관됨"}
-                      {isViewingAsAdmin && archiveStatus?.duplicate?.similarity != null &&
-                        ` · 유사도 ${formatReviewScore(archiveStatus.duplicate.similarity)}`}
-                    </p>
-                  )}
-                </div>
-              </div>
-            </div>
-          );
-        })}
-        {items.length > 5 && (
-          <p className="mt-1 pl-5 text-[11px] text-slate-400">
-            외 {items.length - 5}개 더 있음
-          </p>
-        )}
-      </div>
-    );
-  };
-
   const destructiveDialogCopy = destructiveAction
     ? destructiveAction.type === "idea"
       ? {
@@ -6846,6 +6698,20 @@ export default function MainScreenPage() {
                 ? `⏱ ${timerDisplay}`
                 : `${timerDisplay} 경과`}
             </span>
+          )}
+          {showReviewAnnotations && (
+            <button
+              type="button"
+              onClick={() => setIsMemoryDiffOpen(true)}
+              className="inline-flex cursor-pointer items-center gap-2 rounded-full bg-slate-900 px-3 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-700"
+            >
+              <BrainIcon size={15} />
+              메모리 리뷰하기
+              <span className="rounded-full bg-white/15 px-1.5 py-0.5 text-[10px] font-semibold text-white/80">
+                {sessionMemorySummary.referenced.length +
+                  sessionMemorySummary.promoted.length}
+              </span>
+            </button>
           )}
           {!isReadOnly && selectedOptionId && (
             <div data-tour="session-finish" className="flex items-center gap-2">
@@ -7492,10 +7358,6 @@ export default function MainScreenPage() {
             showReviewTabs={showReviewAnnotations}
             activeTab={rightPanelTab}
             messageCount={messages.length}
-            memoryChangeCount={
-              sessionMemorySummary.referenced.length +
-              sessionMemorySummary.promoted.length
-            }
             beforeMemoryCount={beforeSessionMemoryImpact.availableCount}
             showScrollToBottom={showScrollToBottom}
             onTabChange={setRightPanelTab}
@@ -7623,119 +7485,11 @@ export default function MainScreenPage() {
                 )}
               </div>
             )}
-            {/* Memory panel */}
-            {showReviewAnnotations && rightPanelTab === "memory" && (
-              <div className="flex-1 space-y-5 overflow-y-auto p-5">
-                <section>
-                  <div className="mb-2.5 flex items-center justify-between gap-3">
-                    <div className="flex items-center gap-2">
-                      <div className="h-2 w-2 shrink-0 rounded-full bg-slate-500" />
-                      <p className="text-xs font-semibold text-slate-600">
-                        전체 메모리 노드
-                      </p>
-                    </div>
-                    <div className="flex shrink-0 gap-1.5 text-[10px] font-semibold text-slate-400">
-                      <span>전체 {cumulativeGraphMemories.length}</span>
-                      <span>참고 {sessionMemorySummary.referenced.length}</span>
-                      <span>기억 {sessionMemorySummary.promoted.length}</span>
-                    </div>
-                  </div>
-                  <div className="grid grid-cols-2 gap-2">
-                    <div className="rounded-lg bg-slate-50 px-3 py-2">
-                      <p className="text-[10px] font-semibold uppercase text-slate-400">
-                        전체
-                      </p>
-                      <p className="mt-1 text-lg font-semibold text-slate-900">
-                        {cumulativeGraphMemories.length}
-                      </p>
-                    </div>
-                    <div className="rounded-lg bg-blue-50 px-3 py-2">
-                      <p className="text-[10px] font-semibold uppercase text-blue-400">
-                        참고
-                      </p>
-                      <p className="mt-1 text-lg font-semibold text-blue-700">
-                        {sessionMemorySummary.referenced.length}
-                      </p>
-                    </div>
-                    <div className="rounded-lg bg-emerald-50 px-3 py-2">
-                      <p className="text-[10px] font-semibold uppercase text-emerald-500">
-                        기억됨
-                      </p>
-                      <p className="mt-1 text-lg font-semibold text-emerald-700">
-                        {sessionMemorySummary.promoted.length}
-                      </p>
-                    </div>
-                    <div className="rounded-lg bg-rose-50 px-3 py-2">
-                      <p className="text-[10px] font-semibold uppercase text-rose-400">
-                        보관됨
-                      </p>
-                      <p className="mt-1 text-lg font-semibold text-rose-700">
-                        {sessionArchivedMemories.length}
-                      </p>
-                    </div>
-                  </div>
-                  {sessionMemorySummary.idleDecaySummary.memoryCount > 0 && (
-                    <p className="mt-3 rounded-lg bg-slate-50 px-3 py-2 text-[11px] leading-relaxed text-slate-500">
-                      이번 세션에서 자주 참고되지 않은 기억{" "}
-                      <span className="font-semibold text-slate-600">
-                        {sessionMemorySummary.idleDecaySummary.memoryCount}개
-                      </span>
-                      가 자연스럽게 약해졌어요.
-                    </p>
-                  )}
-                  <button
-                    type="button"
-                    onClick={() => setIsMemoryDiffOpen(true)}
-                    className="mt-3 flex w-full items-center justify-center gap-2 rounded-lg bg-slate-900 px-3 py-2 text-xs font-semibold text-white transition hover:bg-slate-700"
-                  >
-                    <Maximize2Icon size={14} />
-                    전체 메모리 변화 보기
-                  </button>
-                </section>
-                {isViewingAsAdmin && (
-                  <section>
-                    <div className="mb-2.5 flex items-center gap-2">
-                      <div className="h-2 w-2 shrink-0 rounded-full bg-blue-400" />
-                      <p className="text-xs font-semibold text-slate-600">
-                        세션 중 참고됨
-                      </p>
-                      <span className="text-[11px] text-slate-300">
-                        {sessionMemorySummary.referenced.length}
-                      </span>
-                    </div>
-                    {renderTimelineItems(
-                      sessionMemorySummary.referenced,
-                      "retrieved",
-                      "이 세션에서 참고한 기억이 없습니다.",
-                    )}
-                  </section>
-                )}
-                {sessionMemorySummary.drafts.length > 0 && (
-                  <section>
-                    <div className="mb-2.5 flex items-center gap-2">
-                      <div className="h-1.5 w-1.5 shrink-0 rounded-full border-2 border-slate-300" />
-                      <p className="text-xs font-semibold text-slate-400">
-                        기억 후보
-                      </p>
-                      <span className="text-[11px] text-slate-300">
-                        {sessionMemorySummary.drafts.length}
-                      </span>
-                    </div>
-                    {renderTimelineItems(
-                      sessionMemorySummary.drafts,
-                      "draft",
-                      "",
-                    )}
-                  </section>
-                )}
-              </div>
-            )}
             {/* Messages */}
             <div
               ref={chatScrollRef}
               className={`flex-1 space-y-4 overflow-y-auto p-6 ${
-                showReviewAnnotations &&
-                (rightPanelTab === "memory" || rightPanelTab === "before")
+                showReviewAnnotations && rightPanelTab === "before"
                   ? "hidden"
                   : ""
               }`}

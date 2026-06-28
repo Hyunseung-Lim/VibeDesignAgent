@@ -68,7 +68,7 @@
 
 - 좌측 패널 (스크롤 가능): Mission → Reference → 아이디어 탭 (Idea/Mockup)
 - 우측 패널 (고정): AI 에이전트 채팅
-- 완료 세션 리뷰에서 `전체 메모리 변화 보기`를 열면 cluster list → detail panel → memory graph → `메모리 리뷰하기` 순서의 오버레이가 열린다. 리뷰 입력창에서 `@`를 입력하면 별도 dropdown 없이 메모리뷰 자체가 선택 모드가 되며, cluster list/detail panel/graph에서 cluster나 memory를 클릭해 답변 본문에 inline mention을 삽입한다. 삽입된 mention은 굵게 표시되고 클릭하면 해당 cluster나 memory로 focus된다. 답변은 질문별 plain text와 structured mentions로 `users/{uid}/memoryReviewFeedback/{missionId}`에 draft autosave되고, 제출 시 `submittedAt`이 찍힌다 `[현행 2026-06-28 → 15.131]`
+- 완료 세션 리뷰 우측 패널은 `세션 이전`/`채팅` 탭만 제공하고, 상단 타이머 오른쪽의 `메모리 리뷰하기` CTA가 cluster list → detail panel → memory graph → review panel 순서의 full-screen memory overlay를 바로 연다. 리뷰 입력창에서 `@`를 입력하면 별도 dropdown 없이 메모리뷰 자체가 선택 모드가 되며, cluster list/detail panel/graph에서 cluster나 memory를 클릭해 답변 본문에 inline mention을 삽입한다. 삽입된 mention은 굵게 표시되고 클릭하면 해당 cluster나 memory로 focus된다. 답변은 질문별 plain text와 structured mentions로 `users/{uid}/memoryReviewFeedback/{missionId}`에 draft autosave되고, 제출 시 `submittedAt`이 찍힌다 `[현행 2026-06-28 → 15.131/15.134]`
 - 작업 화면에는 실제 화면 영역을 하이라이트하는 제품 투어가 있다. 온보딩 미션에서는 작업 화면 진입 시 자동으로 열리고, 일반 미션에서는 헤더의 `튜토리얼` 버튼을 눌러야 열린다. 튜토리얼은 미션 설명 공간, 채팅 공간, 레퍼런스 섹션, 시안을 여러 개 만들 수 있다는 점, 각 시안이 Design Brief/디자인 스타일/Mockup으로 구성된다는 점, 목업 편집 버튼 사용, Final Design 선택, 타이머와 세션 종료 버튼을 안내한 뒤 마지막에 튜토리얼 버튼 위치를 다시 안내한다 `[현행 2026-06-16 → 15.88]`
 - 제품 투어가 `mission-brief` 단계를 표시할 때는 선택된 옵션 토글을 강제로 접어 미션 설명 본문이 먼저 보이게 한다 `[현행 2026-06-16 → 15.88]`
 
@@ -712,8 +712,8 @@ archiveReason = "low-weight" | "duplicate" | "manual";
 구현 메모:
 
 - `/api/memory/session-summary`에서 session `memoryDrafts`와 `source.missionId`가 현재 mission인 promoted memory를 조회한다.
-- 리뷰 모드에서 우측 패널 상단에 **채팅 / 메모리 변화** 탭 바를 추가한다. 탭 바는 `showReviewAnnotations`(리뷰 모드 또는 admin 뷰어)일 때만 표시된다.
-- **메모리 변화 탭** 섹션 구성:
+- 리뷰 모드에서 우측 패널 상단에 **채팅 / 메모리 변화** 탭 바를 추가한다. 탭 바는 `showReviewAnnotations`(리뷰 모드 또는 admin 뷰어)일 때만 표시된다. `[stale 2026-06-28 → 15.134: 우측 패널 탭은 세션 이전/채팅만 남기고, 메모리 변화 탭 대신 메모리 리뷰하기 CTA가 full-screen overlay를 바로 연다]`
+- **메모리 변화 탭** 섹션 구성: `[stale 2026-06-28 → 15.134: 섹션 자체를 제거하고 overlay에서 graph/review를 직접 본다]`
   - `직접 입력한 정보` (보라색 점): `/api/memory/profile`에서 조회한 해당 미션의 profile items
   - `세션 중 참고됨` (파랑 점): `reviewTurns.retrieved` 기반, profile/profile_input 타입은 보라색으로 구분
   - `세션에서 기억됨` (초록 점): promoted memory. archived 항목은 취소선 + 로즈색 표시
@@ -3626,3 +3626,10 @@ type ChatPlan = {
 - 데이터: `/api/memory/session-summary`의 `graphMemories`에 `agentActionCategory`를 포함하고, `/main` review graph item이 실제 action token과 keyword를 side panel에 전달하도록 보정했다. `/agent`, `/admin`, `/main`은 가능한 경우 미션 제목을 card 출처 라벨로 넘긴다.
 - 변경 파일: `src/components/memory/memory-cluster-side-panel.tsx`, `src/components/memory/memory-cluster-types.ts`, `src/app/api/memory/session-summary/route.ts`, `src/app/main/[missionId]/page.tsx`, `src/app/agent/page.tsx`, `src/app/admin/page.tsx`, `dev_document.md`.
 - 검증: `npx tsc --noEmit`, `npm run lint` 통과(0 error, 기존 warning 유지).
+
+### 15.134 메모리 리뷰하기 CTA 직접 진입 `[implemented 2026-06-28]`
+
+- 배경(Notion `메모리 리뷰 개편` Request 5): 사용자가 `메모리 리뷰하기`를 누르면 바로 메모리뷰가 보여야 하고, 기존 우측 리뷰탭의 `메모리 변화` 탭은 제거해야 했다.
+- 변경: `ChatPanel`의 리뷰 탭을 `세션 이전`/`채팅` 두 개로 줄이고, 상단 타이머 오른쪽에 `메모리 리뷰하기` CTA를 추가했다. CTA는 기존 `SessionMemoryDiff` full-screen overlay를 바로 열며, overlay 안에서 graph와 review panel을 함께 본다.
+- 제거: `/main/[missionId]`의 우측 `메모리 변화` 탭 전용 요약/리스트 UI를 삭제했다. 채팅 숨김 조건도 `세션 이전` 탭에만 적용하도록 단순화했다.
+- 변경 파일: `src/components/session/chat-panel.tsx`, `src/app/main/[missionId]/page.tsx`, `dev_document.md`.

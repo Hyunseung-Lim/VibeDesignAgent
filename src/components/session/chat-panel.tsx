@@ -1,12 +1,11 @@
 import type { ReactNode } from "react";
 
-type ChatPanelTab = "before" | "chat" | "memory";
+type ChatPanelTab = "before" | "chat";
 
 type ChatPanelProps = {
   showReviewTabs: boolean;
   activeTab: ChatPanelTab;
   messageCount: number;
-  memoryChangeCount: number;
   beforeMemoryCount: number;
   showScrollToBottom: boolean;
   /** Explicit width in px (resizable). Falls back to w-full max-w-md when unset. */
@@ -20,7 +19,6 @@ export function ChatPanel({
   showReviewTabs,
   activeTab,
   messageCount,
-  memoryChangeCount,
   beforeMemoryCount,
   showScrollToBottom,
   width,
@@ -37,45 +35,33 @@ export function ChatPanel({
       }`}
     >
       {showReviewTabs && (
-        <div className="flex shrink-0 border-b border-slate-200">
-          <button
-            type="button"
-            onClick={() => onTabChange("before")}
-            className={`flex flex-1 items-center justify-center gap-1.5 py-3 text-sm font-medium transition ${
-              activeTab === "before"
-                ? "border-b-2 border-sky-600 text-sky-700"
-                : "text-slate-400 hover:text-slate-600"
-            }`}
-          >
-            세션 이전
-            <span className="text-xs text-slate-300">{beforeMemoryCount}</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => onTabChange("chat")}
-            className={`flex flex-1 items-center justify-center gap-1.5 py-3 text-sm font-medium transition ${
-              activeTab === "chat"
-                ? "border-b-2 border-slate-900 text-slate-900"
-                : "text-slate-400 hover:text-slate-600"
-            }`}
-          >
-            채팅
-            <span className="text-xs text-slate-300">{messageCount}</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => onTabChange("memory")}
-            className={`flex flex-1 items-center justify-center gap-1.5 py-3 text-sm font-medium transition ${
-              activeTab === "memory"
-                ? "border-b-2 border-slate-900 text-slate-900"
-                : "text-slate-400 hover:text-slate-600"
-            }`}
-          >
-            메모리 변화
-            <span className="text-xs text-slate-300">
-              {memoryChangeCount}
-            </span>
-          </button>
+        <div className="shrink-0 border-b border-slate-200">
+          <div className="flex">
+            <button
+              type="button"
+              onClick={() => onTabChange("before")}
+              className={`flex flex-1 items-center justify-center gap-1.5 py-3 text-sm font-medium transition ${
+                activeTab === "before"
+                  ? "border-b-2 border-sky-600 text-sky-700"
+                  : "text-slate-400 hover:text-slate-600"
+              }`}
+            >
+              세션 이전
+              <span className="text-xs text-slate-300">{beforeMemoryCount}</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => onTabChange("chat")}
+              className={`flex flex-1 items-center justify-center gap-1.5 py-3 text-sm font-medium transition ${
+                activeTab === "chat"
+                  ? "border-b-2 border-slate-900 text-slate-900"
+                  : "text-slate-400 hover:text-slate-600"
+              }`}
+            >
+              채팅
+              <span className="text-xs text-slate-300">{messageCount}</span>
+            </button>
+          </div>
         </div>
       )}
       {children}
