@@ -6,6 +6,7 @@ import type {
   MemoryCluster,
   MemoryItem,
 } from "./memory-cluster-types";
+import { visibleMemoryActionLabels } from "./memory-action-labels";
 
 type MemoryClusterSidePanelProps = {
   cluster: MemoryCluster | null;
@@ -52,30 +53,6 @@ function sourceBadgeClass(sourceType: string | null | undefined) {
     return "border-slate-300 bg-slate-100 text-slate-700";
   }
   return "border-slate-200 bg-slate-50 text-slate-500";
-}
-
-const hiddenActionTokens = new Set(["promoted", "referenced", "archived"]);
-
-function actionLabel(action: string) {
-  const labels: Record<string, string> = {
-    agent_response: "대화",
-    references_fetch: "레퍼런스 검색",
-    reference_cite: "레퍼런스 선택",
-    reference_delete: "레퍼런스 삭제",
-    note_delete: "노트 삭제",
-    mockup_delete: "목업 삭제",
-    final_design_select: "최종 디자인 선택",
-    style_image_preference: "스타일 이미지",
-  };
-  return labels[action] ?? action.replaceAll("_", " ");
-}
-
-function visibleActionLabels(action: string | null | undefined) {
-  return (action ?? "")
-    .split(" / ")
-    .map((token) => token.trim())
-    .filter((token) => token && !hiddenActionTokens.has(token))
-    .map(actionLabel);
 }
 
 function defaultMissionLabel(missionId: string) {
@@ -130,6 +107,9 @@ export function MemoryClusterSidePanel({
   onMentionMemory,
   getMissionLabel = defaultMissionLabel,
 }: MemoryClusterSidePanelProps) {
+  const relatedActionLabels = visibleMemoryActionLabels(
+    cluster?.relatedActions.join(" / "),
+  );
   // Scroll the detail list to the item selected from the graph/node click.
   const selectedItemRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
@@ -179,19 +159,19 @@ export function MemoryClusterSidePanel({
       <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-5">
         {cluster ? (
           <div className="space-y-5">
-            {cluster.relatedActions.length > 0 ? (
+            {relatedActionLabels.length > 0 ? (
               <section>
                 <p className="mb-2 text-xs font-semibold uppercase text-muted-foreground">
-                  Related actions
+                  관련 작업
                 </p>
                 <div className="flex flex-wrap gap-1.5">
-                  {cluster.relatedActions.map((action) => (
+                  {relatedActionLabels.map((label) => (
                     <Badge
-                      key={action}
+                      key={label}
                       variant="warning"
                       className="rounded-full border-amber-200 bg-amber-50"
                     >
-                      {actionLabel(action)}
+                      {label}
                     </Badge>
                   ))}
                 </div>
@@ -215,7 +195,7 @@ export function MemoryClusterSidePanel({
                   const missionLabel = missionId
                     ? getMissionLabel(missionId)
                     : "미션 출처 없음";
-                  const actionLabels = visibleActionLabels(item.action);
+                  const actionLabels = visibleMemoryActionLabels(item.action);
                   return (
                     <div
                       key={item.id}

@@ -31,6 +31,7 @@ const FIRST_SESSION_TURN = "This is the first turn of this session.";
 type EncodedMemory = {
   keywords: string[];
   episode: string;
+  semantic: string | null;
 };
 
 function stringArray(value: unknown, fallback: string[] = []) {
@@ -52,6 +53,12 @@ function jsonStringArray(value: unknown) {
 function parseMemory(raw: string): EncodedMemory {
   try {
     const parsed = JSON.parse(raw) as Partial<EncodedMemory>;
+    const semantic =
+      typeof parsed.semantic === "string"
+        ? parsed.semantic.trim()
+        : Array.isArray(parsed.semantic)
+          ? stringArray(parsed.semantic)[0]
+          : null;
     return {
       keywords: stringArray(parsed.keywords, [
         "conversation",
@@ -59,11 +66,13 @@ function parseMemory(raw: string): EncodedMemory {
         "response",
       ]).slice(0, 10),
       episode: String(parsed.episode ?? "").trim(),
+      semantic: semantic || null,
     };
   } catch {
     return {
       keywords: ["conversation", "request", "response"],
       episode: "",
+      semantic: null,
     };
   }
 }
@@ -351,6 +360,10 @@ export async function POST(request: Request) {
       timestamp,
       keywordsJson: JSON.stringify(encoded.keywords),
       episode: encoded.episode.slice(0, 2000),
+      semanticJson: JSON.stringify(
+        encoded.semantic ? [encoded.semantic.slice(0, 2000)] : [],
+      ),
+      semantic: encoded.semantic?.slice(0, 2000) ?? "",
       previousEpisode: String(previousDraft?.episode ?? "").slice(0, 2000),
       agentActionCategory,
       agentActionsJson: JSON.stringify(agentActions),
@@ -358,7 +371,7 @@ export async function POST(request: Request) {
       createdAt,
     },
     token,
-    ["semanticJson", "semantic", "interpretationConfidence"],
+    ["interpretationConfidence"],
   );
 
   return Response.json({ ok: true, memory: encoded });

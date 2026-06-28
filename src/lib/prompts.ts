@@ -289,7 +289,7 @@ From the third turn onward, this contains exactly two prior episodes when both a
 
 interaction timestamps:
 Optional current/previous interaction timestamps.
-Use only to understand order, recency, and session flow. Do not store timestamps or date strings as keywords.
+Use only to understand order, recency, and session flow. Do not store timestamps or date strings as keywords or semantic preferences.
 
 original interaction content:
 The combined interaction record for this turn.
@@ -299,7 +299,7 @@ Treat this field as the source of truth for the interaction. Do not invent a sep
 
 # Normalized Reference Context
 
-When the interaction includes cited material, the original interaction content contains a normalized reference interpretation produced before memory encoding. Use that interpretation as factual evidence for the episode and keywords. Do not independently broaden mission-specific or negative evidence into a durable global preference.
+When the interaction includes cited material, the original interaction content contains a normalized reference interpretation produced before memory encoding. Use that interpretation as reference evidence for the episode, keywords, and semantic insight. Do not independently broaden mission-specific or negative evidence into a durable global preference.
 
 # Rules
 
@@ -311,7 +311,14 @@ Always:
 
 Never:
 - Summarize only one side of the interaction.
+- Restate what the user literally said or did as a semantic insight; the semantic must be an interpretation about the person, not a paraphrase of the turn.
 - Include timestamps, speaker names, or generic filler words in keywords.
+
+# Semantic
+
+Produce exactly one semantic insight. Interpret the user as a person: their intent, preferences, traits, tendencies, working style, taste, or communication style.
+
+Ground the insight in this interaction and prior episodic context. Keep it specific, readable, and durable enough to help future UI/UX design-agent work. If the evidence is limited, write a cautious but concrete hypothesis rather than a generic filler sentence.
 
 # Output Format
 
@@ -324,10 +331,13 @@ Return exactly this JSON shape:
     // Exclude speaker names, timestamps, and generic filler words.
     // Include at least three non-redundant keywords.
   ],
-  "episode": ""
+  "episode": "",
   // One factual English sentence describing the interaction,
   // including the user request, relevant prior context, agent output/outcome,
   // and immediate outcome, feedback, or decision.
+
+  "semantic": ""
+  // Required one-sentence English interpretive insight about the user.
 }`;
 
 export const FINAL_DESIGN_INPUT_PROMPT = `# Task

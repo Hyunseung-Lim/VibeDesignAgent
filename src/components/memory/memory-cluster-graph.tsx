@@ -12,6 +12,7 @@ import { ZoomOutIcon, ZoomInIcon, MaximizeIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { memoryClusterColor } from "@/components/memory/memory-cluster-colors";
 import type { ClusterGraphEdge } from "@/components/memory/memory-cluster-types";
+import { visibleMemoryActionLabels } from "@/components/memory/memory-action-labels";
 
 type MemoryCluster = {
   id: string;
@@ -751,6 +752,9 @@ export default function MemoryClusterGraph({
   const selectedCluster =
     clusters.find((cluster) => cluster.id === selectedClusterId) ?? null;
   const embeddedCount = pointData.points.filter((point) => point.hasEmbedding).length;
+  const selectedPointActionLabels = visibleMemoryActionLabels(
+    selectedPoint?.item.action,
+  );
   // Only show the shape legend when diamond (new) nodes are actually present, so
   // it never appears on views that don't distinguish new vs existing memories.
   const hasNewNodes = items.some((item) =>
@@ -943,11 +947,14 @@ export default function MemoryClusterGraph({
               {selectedPoint.item.timestamp ? (
                 <span>{itemDate(selectedPoint.item.timestamp)}</span>
               ) : null}
-              {selectedPoint.item.action ? (
-                <span className="rounded-full bg-amber-50 px-2 py-0.5 font-medium text-amber-700">
-                  {selectedPoint.item.action}
+              {selectedPointActionLabels.map((label) => (
+                <span
+                  key={label}
+                  className="rounded-full bg-amber-50 px-2 py-0.5 font-medium text-amber-700"
+                >
+                  {label}
                 </span>
-              ) : null}
+              ))}
               <span>
                 {selectedPoint.hasEmbedding ? "embedding" : "fallback"}
               </span>

@@ -142,7 +142,9 @@ export async function POST(request: Request) {
               episodic,
               episode: episodic,
               content: episodic,
-              ...(semantic ? { semantic } : {}),
+              ...(semantic
+                ? { semantic, semanticJson: JSON.stringify([semantic]) }
+                : {}),
               input: draft.input ?? "",
               output: draft.output ?? "",
               originalInteractionContent,

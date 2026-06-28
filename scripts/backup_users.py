@@ -8,9 +8,12 @@ later, then deleted safely:
   - users/{uid}/memories_0_1_2           (current long-term memory)
   - users/{uid}/memories_0_1_1, episodicMemories, semanticMemories (legacy)
   - users/{uid}/profile_memories/{mid}   (+ revisions subcollection)
+  - users/{uid}/memoryReviewFeedback
+  - users/{uid}/referenceSourceAnalyses
   - users/{uid}/memoryRetrievalLogs
   - users/{uid}/memoryClusters
-  - Storage: presentations/{uid}/*
+  - users/{uid} root profile document
+  - Storage: presentations/{uid}/*       (+ file metadata in firestore.json)
   - Stitch mockup HTML (re-fetched from Stitch, which session docs do NOT store)
 
 Usage:
@@ -98,11 +101,13 @@ def backup_user(uid: str, email: str, base_dir: Path) -> dict:
 
     missions = dump_session_docs(uid, "missions")
     runs = dump_session_docs(uid, "missionRuns")
+    user_profile = user_ref.get().to_dict() or {}
 
     payload = {
         "uid": uid,
         "email": email,
         "exportedAt": datetime.now(timezone.utc).isoformat(),
+        "userProfile": user_profile,
         "sessions": {"missions": missions, "missionRuns": runs},
         "memories": {
             "memories_0_1_2": dump_collection(user_ref.collection("memories_0_1_2")),
@@ -111,15 +116,19 @@ def backup_user(uid: str, email: str, base_dir: Path) -> dict:
             "semanticMemories": dump_collection(user_ref.collection("semanticMemories")),
         },
         "profile_memories": dump_profile_memories(uid),
+        "memoryReviewFeedback": dump_collection(
+            user_ref.collection("memoryReviewFeedback")
+        ),
+        "referenceSourceAnalyses": dump_collection(
+            user_ref.collection("referenceSourceAnalyses")
+        ),
         "memoryRetrievalLogs": dump_collection(user_ref.collection("memoryRetrievalLogs")),
         "memoryClusters": dump_collection(user_ref.collection("memoryClusters")),
+        "storageFiles": [],
     }
-    with open(user_dir / "firestore.json", "w", encoding="utf-8") as f:
-        json.dump(payload, f, ensure_ascii=False, indent=2, default=str)
 
     # Storage: presentation slides
     pres_dir = user_dir / "presentations"
-    storage_count = 0
     for blob in bucket.list_blobs(prefix=f"presentations/{uid}/"):
         rel = blob.name.removeprefix(f"presentations/{uid}/")
         if not rel:
@@ -127,16 +136,29 @@ def backup_user(uid: str, email: str, base_dir: Path) -> dict:
         dest = pres_dir / safe_name(rel.replace("/", "__"), blob.name)
         dest.parent.mkdir(parents=True, exist_ok=True)
         blob.download_to_filename(str(dest))
-        storage_count += 1
+        payload["storageFiles"].append(
+            {
+                "name": blob.name,
+                "backupPath": str(dest.relative_to(user_dir)),
+                "size": blob.size,
+                "contentType": blob.content_type,
+                "updated": blob.updated.isoformat() if blob.updated else None,
+            }
+        )
+
+    with open(user_dir / "firestore.json", "w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False, indent=2, default=str)
 
     counts = {
         "missions": len(missions),
         "missionRuns": len(runs),
         "memories_0_1_2": len(payload["memories"]["memories_0_1_2"]),
         "profile_memories": len(payload["profile_memories"]),
+        "reviewFeedback": len(payload["memoryReviewFeedback"]),
+        "referenceAnalyses": len(payload["referenceSourceAnalyses"]),
         "retrievalLogs": len(payload["memoryRetrievalLogs"]),
         "clusters": len(payload["memoryClusters"]),
-        "presentationFiles": storage_count,
+        "presentationFiles": len(payload["storageFiles"]),
     }
     print(f"  {email}: " + ", ".join(f"{k}={v}" for k, v in counts.items()))
     return {"email": email, "missions": missions, "runs": runs}
@@ -161,7 +183,10 @@ def main():
             print(f"  ! {email}: cannot resolve uid ({exc}) — skipped")
             continue
         result = backup_user(uid, email, base_dir)
-        sessions_for_html[email] = session_export_for_html(result["runs"], result["missions"])
+        sessions_for_html[email] = session_export_for_html(
+            result["missions"],
+            result["runs"],
+        )
 
     # Write a scoped sessions.json and fetch Stitch HTML into this backup dir.
     sessions_path = base_dir / "sessions.json"

@@ -4,6 +4,7 @@ import type {
   MemoryCluster,
   MemoryItem,
 } from "./memory-cluster-types";
+import { visibleMemoryActionLabels } from "./memory-action-labels";
 
 type MemoryClusterDetailProps = {
   cluster: MemoryCluster;
@@ -16,6 +17,9 @@ export function MemoryClusterDetail({
   items,
   memories,
 }: MemoryClusterDetailProps) {
+  const relatedActionLabels = visibleMemoryActionLabels(
+    cluster.relatedActions.join(" / "),
+  );
   return (
     <div className="flex-1 overflow-y-auto overscroll-contain p-5">
       <div className="space-y-5">
@@ -31,15 +35,15 @@ export function MemoryClusterDetail({
           <p className="mt-2 max-w-3xl text-sm leading-relaxed text-muted-foreground">
             {cluster.summary}
           </p>
-          {cluster.relatedActions.length > 0 ? (
+          {relatedActionLabels.length > 0 ? (
             <div className="mt-3 flex flex-wrap gap-1.5">
-              {cluster.relatedActions.map((action) => (
+              {relatedActionLabels.map((label) => (
                 <Badge
-                  key={action}
+                  key={label}
                   variant="warning"
                   className="rounded-full border-amber-200 bg-amber-50"
                 >
-                  {action}
+                  {label}
                 </Badge>
               ))}
             </div>
@@ -71,6 +75,7 @@ export function MemoryClusterDetail({
           <div className="space-y-3">
             {items.map((item) => {
               const mem = memories.find((memory) => memory.id === item.id);
+              const actionLabels = visibleMemoryActionLabels(item.action);
               return (
                 <div
                   key={item.id}
@@ -90,14 +95,15 @@ export function MemoryClusterDetail({
                         })}
                       </span>
                     ) : null}
-                    {item.action ? (
+                    {actionLabels.map((label) => (
                       <Badge
+                        key={label}
                         variant="warning"
                         className="rounded-full border-amber-200 bg-amber-50"
                       >
-                        {item.action}
+                        {label}
                       </Badge>
-                    ) : null}
+                    ))}
                     {item.keyword.slice(0, 3).map((kw) => (
                       <Badge
                         key={kw}
