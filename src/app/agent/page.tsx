@@ -499,6 +499,13 @@ export function MemoryClusterPage({
             />
 
             <div className="flex min-w-0 flex-1 overflow-hidden">
+              <MemoryClusterSidePanel
+                cluster={selectedCluster}
+                items={selectedClusterItems}
+                memories={memories}
+                selectedMemoryId={selectedMemoryId}
+                onSelectMemory={setSelectedMemoryId}
+              />
               <div className="min-w-0 flex-1 overflow-hidden">
                 <MemoryClusterGraph
                   clusters={clusters}
@@ -512,13 +519,6 @@ export function MemoryClusterPage({
                   fill
                 />
               </div>
-              <MemoryClusterSidePanel
-                cluster={selectedCluster}
-                items={selectedClusterItems}
-                memories={memories}
-                selectedMemoryId={selectedMemoryId}
-                onSelectMemory={setSelectedMemoryId}
-              />
             </div>
           </div>
         </div>

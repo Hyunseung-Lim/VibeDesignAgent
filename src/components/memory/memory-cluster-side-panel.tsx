@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { Trash2Icon } from "lucide-react";
+import { AtSignIcon, Trash2Icon } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import type {
   ClusterGraphItem,
@@ -14,6 +14,9 @@ type MemoryClusterSidePanelProps = {
   selectedMemoryId: string | null;
   onSelectMemory: (memoryId: string) => void;
   onDeleteMemory?: (memoryId: string) => void;
+  mentionMode?: boolean;
+  onMentionCluster?: (cluster: MemoryCluster) => void;
+  onMentionMemory?: (item: ClusterGraphItem) => void;
 };
 
 function formatDate(timestamp: number) {
@@ -100,6 +103,9 @@ export function MemoryClusterSidePanel({
   selectedMemoryId,
   onSelectMemory,
   onDeleteMemory,
+  mentionMode = false,
+  onMentionCluster,
+  onMentionMemory,
 }: MemoryClusterSidePanelProps) {
   // Scroll the detail list to the item selected from the graph/node click.
   const selectedItemRef = useRef<HTMLDivElement | null>(null);
@@ -111,7 +117,7 @@ export function MemoryClusterSidePanel({
     });
   }, [selectedMemoryId]);
   return (
-    <aside className="flex w-88 shrink-0 flex-col border-l border-border bg-card xl:w-96">
+    <aside className="flex w-88 shrink-0 flex-col border-r border-border bg-card xl:w-96">
       <div className="border-b border-border px-5 py-4">
         <p className="text-[11px] font-semibold uppercase text-muted-foreground">
           Detail panel
@@ -135,6 +141,16 @@ export function MemoryClusterSidePanel({
             왼쪽 목록이나 그래프의 점을 선택하면 상세가 여기에 표시됩니다.
           </p>
         )}
+        {cluster && mentionMode ? (
+          <button
+            type="button"
+            onClick={() => onMentionCluster?.(cluster)}
+            className="mt-3 inline-flex items-center gap-1.5 rounded-full border border-amber-200 bg-amber-50 px-3 py-1.5 text-[11px] font-semibold text-amber-700 transition hover:border-amber-300 hover:bg-amber-100"
+          >
+            <AtSignIcon size={12} />
+            이 클러스터 멘션
+          </button>
+        ) : null}
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-5">
@@ -191,15 +207,22 @@ export function MemoryClusterSidePanel({
                           <Trash2Icon size={12} />
                         </button>
                       ) : null}
-                    <button
-                      type="button"
-                      onClick={() => onSelectMemory(item.id)}
-                      className={`w-full rounded-lg border p-3 text-left text-xs transition ${
-                        selected
-                          ? "border-slate-400 bg-slate-100 shadow-sm ring-2 ring-slate-200"
-                          : "border-border bg-background hover:border-slate-300 hover:bg-muted/30"
-                      }`}
-                    >
+                      <button
+                        type="button"
+                        onClick={() => {
+                          onSelectMemory(item.id);
+                          if (mentionMode) onMentionMemory?.(item);
+                        }}
+                        className={`w-full rounded-lg border p-3 text-left text-xs transition ${
+                          selected
+                            ? mentionMode
+                              ? "border-amber-300 bg-amber-50 shadow-sm ring-2 ring-amber-100"
+                              : "border-slate-400 bg-slate-100 shadow-sm ring-2 ring-slate-200"
+                            : mentionMode
+                              ? "border-amber-100 bg-amber-50/50 hover:border-amber-300 hover:bg-amber-50"
+                              : "border-border bg-background hover:border-slate-300 hover:bg-muted/30"
+                        }`}
+                      >
                       <div className="flex gap-2">
                         <span
                           className={`mt-0.5 w-1 shrink-0 rounded-full ${
@@ -237,9 +260,13 @@ export function MemoryClusterSidePanel({
                             {selected ? (
                               <Badge
                                 variant="secondary"
-                                className="shrink-0 rounded-full border-slate-300 bg-slate-200 text-slate-700"
+                                className={`shrink-0 rounded-full ${
+                                  mentionMode
+                                    ? "border-amber-300 bg-amber-100 text-amber-700"
+                                    : "border-slate-300 bg-slate-200 text-slate-700"
+                                }`}
                               >
-                                선택됨
+                                {mentionMode ? "멘션 선택" : "선택됨"}
                               </Badge>
                             ) : null}
                           </div>

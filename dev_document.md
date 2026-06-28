@@ -61,20 +61,21 @@
 - 사용자 카드의 `세션 백업 후 삭제`는 세션/참여 기록/Storage 파일/장기 메모리(`memories_0_1_2`)/클러스터 캐시(`memoryClusters`)/retrieval logs를 백업 후 삭제한다 `[현행 2026-06-18 → 15.94]`
 - 사용자 카드는 1열 전체 폭으로 배치한다. 카드의 미션 영역은 온보딩을 첫 행에 두고 `missionOrder` 순서를 기준으로 참여/세션 미션을 보완한 단일 진행 목록이다. Lobby와 같은 session snapshot 판정으로 `대기`/`준비중`/`진행중`/`시간 초과`/`완료`를 표시하고, 온보딩 미션도 Lobby처럼 실제 세션 진행을 반영하되 완료 판정만 onboarding profile flag로 한다. Lobby의 순차 잠금 규칙(온보딩→`missionOrder` 순서, 첫 미완료가 `현재`, 그 이후는 `잠김`)도 같은 판정으로 계산해 `현재`/`잠김` 배지와 흐릿 처리로 표시한다(관리/조회용이라 잠금은 표시만 하고 링크는 막지 않음). 각 행의 미션 제목 링크는 `/main/{id}?viewAs={uid}`로 해당 세션을 읽기 전용 view-as로 연다(별도 리뷰 링크는 제거 — admin viewAs는 이미 읽기 전용+리뷰 탭 노출이라 `review=1`은 초기 탭만 바꿔 중복이었다) `[현행 2026-06-24 → 15.122/15.123/15.124/15.125/15.127]`
 - 참여자 모달의 개별 `미션 기록 삭제`는 해당 미션 세션, participant record, `memoryDrafts`/`reviewTurns`, 그 미션의 `source.missionId`를 가진 장기 메모리와 mission-scoped retrieval logs를 삭제하고, `memoryClusters` cache를 비운다 `[현행 2026-06-18 → 15.94]`
-- 유저 카드의 `메모리 보기`는 모달을 열지 않고 `/admin/users/[uid]/memory` 전용 페이지로 이동한다. 이 페이지는 `/agent`와 같은 `MemoryClusterPage`를 렌더링해 헤더, 세션 누적 필터, cluster list, similarity graph, detail side panel, empty/loading state를 동일하게 유지한다 `[현행 2026-06-22 → 15.107]`
+- 유저 카드의 `메모리 보기`는 모달을 열지 않고 `/admin/users/[uid]/memory` 전용 페이지로 이동한다. 이 페이지는 `/agent`와 같은 `MemoryClusterPage`를 렌더링해 헤더, 세션 누적 필터, 좁은 cluster list, 좌측 cluster detail panel, similarity graph, empty/loading state를 동일하게 유지한다 `[현행 2026-06-27 → 15.130]`
 - Admin 대상 메모리 목록과 clustering API는 self `/agent` 경로와 같은 normalization 및 clustering helper를 사용한다. 같은 uid와 item signature에는 양쪽 화면이 같은 memory item, cache document, cluster membership/label을 읽는다 `[현행 2026-06-22 → 15.107]`
 
 ### `/main/[missionId]` — 메인 디자인 세션
 
 - 좌측 패널 (스크롤 가능): Mission → Reference → 아이디어 탭 (Idea/Mockup)
 - 우측 패널 (고정): AI 에이전트 채팅
+- 완료 세션 리뷰에서 `전체 메모리 변화 보기`를 열면 cluster list → detail panel → memory graph → `메모리 리뷰하기` 순서의 오버레이가 열린다. 리뷰 입력창에서 `@`를 입력하면 별도 dropdown 없이 메모리뷰 자체가 선택 모드가 되며, cluster list/detail panel/graph에서 cluster나 memory를 클릭해 답변 본문에 inline mention을 삽입한다. 삽입된 mention은 굵게 표시되고 클릭하면 해당 cluster나 memory로 focus된다. 답변은 질문별 plain text와 structured mentions로 `users/{uid}/memoryReviewFeedback/{missionId}`에 draft autosave되고, 제출 시 `submittedAt`이 찍힌다 `[현행 2026-06-28 → 15.131]`
 - 작업 화면에는 실제 화면 영역을 하이라이트하는 제품 투어가 있다. 온보딩 미션에서는 작업 화면 진입 시 자동으로 열리고, 일반 미션에서는 헤더의 `튜토리얼` 버튼을 눌러야 열린다. 튜토리얼은 미션 설명 공간, 채팅 공간, 레퍼런스 섹션, 시안을 여러 개 만들 수 있다는 점, 각 시안이 Design Brief/디자인 스타일/Mockup으로 구성된다는 점, 목업 편집 버튼 사용, Final Design 선택, 타이머와 세션 종료 버튼을 안내한 뒤 마지막에 튜토리얼 버튼 위치를 다시 안내한다 `[현행 2026-06-16 → 15.88]`
 - 제품 투어가 `mission-brief` 단계를 표시할 때는 선택된 옵션 토글을 강제로 접어 미션 설명 본문이 먼저 보이게 한다 `[현행 2026-06-16 → 15.88]`
 
 ### `/agent` — Agent Manage
 
 - 에이전트 메모리/상태 관리 뷰
-- memory cluster graph, cluster list/detail, included memory items 표시
+- memory cluster graph, 좁은 cluster list, 그래프 좌측 detail panel, included memory items 표시 `[현행 2026-06-27 → 15.130]`
 
 ---
 
@@ -172,7 +173,7 @@
 - **Prompt 주입 방식**: profile input은 `profile_memories`에 source of truth로 보관한 뒤 derived memory로 쪼개 interaction memory와 같은 retrieved memory system message에 주입. prompt compact JSON은 `episodic`/`semantic` 배열만 포함한다. 같은 memory document에 episodic/semantic이 모두 있어도 prompt에서는 각각 `episodic[].episodic`, `semantic[].semantic`으로 분리해 넣고 memory id/weight/similarity/source metadata는 제외
 - **Legacy**: `GET /api/memory/bootstrap`은 세션 시작 시 memory를 preload하던 구 방식이며, 현재 main client에서는 호출하지 않음
 - **Retrieval 쿼리 구성**: `[user text] + Mission: [parentMissionTitle] + Active idea: [description]` — 선택된 옵션 이름(페르소나 등)은 제외해 임베딩 노이즈 방지
-- **Admin 관측**: researcher가 `/admin/users/[uid]/memory`에서 `/agent`와 동일한 user별 memory cluster graph/list/detail을 확인 가능 `[현행 2026-06-22 → 15.107]`
+- **Admin 관측**: researcher가 `/admin/users/[uid]/memory`에서 `/agent`와 동일한 user별 memory cluster graph/list/detail을 확인 가능. detail panel은 그래프 왼쪽에 있고 cluster list는 요약 없이 색상 점·제목·개수만 표시한다 `[현행 2026-06-27 → 15.130]`
 - **Retrieval MVP**: v0.1.2 memory document에 embedding과 `weight` metadata를 저장하고, retrieve된 memory의 weight를 천천히 올림
 - **Forgetting MVP**: low-weight/duplicate 후보를 `archivedAt` 기반으로 soft archive
 
@@ -185,6 +186,7 @@
 - 3단계: similarity graph에서 label propagation으로 community를 찾고, community가 너무 많으면 centroid similarity 기준으로 최대 16개까지 merge
 - 4단계: LLM은 cluster membership을 바꾸지 않고 최종 cluster label/summary만 생성한다. summary는 작업 목록을 일반적으로 요약하지 않고 Firestore profile의 실제 displayName을 사용해 그 사람의 반복되는 성격, 습관, 작업 방식, 의사결정 패턴과 디자인 취향을 근거와 함께 서술한다. 단일·약한 근거에는 consistently/always 같은 반복 표현을 쓰지 않는다 `[현행 2026-06-21 → 15.99]`
 - `/agent`(self·admin 공용) UI 헤더에 입력 variant 비교 탭(compact-context / full-context)이 있어 입력 종류별 clustering 결과를 전환해 본다. 탭 전환은 해당 variant의 캐시를 GET하고, 재생성은 선택된 variant로 POST한다 `[현행 2026-06-24 → 15.120]`
+- `/agent` cluster UI는 좌측에서 cluster list → detail panel → graph 순서로 배치한다. cluster list는 폭을 줄이고 cluster summary와 선택됨 badge를 숨겨, 색상 점·cluster label·memory count만 빠르게 스캔하게 한다 `[현행 2026-06-27 → 15.130]`
 - 캐시 키는 memory version + item signature + clustering method version으로 관리하고, method version에 선택된 입력 variant가 포함된다. compact-context는 과거 키(`...:compact-context`)를 그대로 유지해 기존 캐시와 planner cluster summary 조회가 깨지지 않고, full-context만 별도 네임스페이스를 가진다 `[현행 2026-06-24 → 15.120]`
 - Self/admin API는 `loadUserMemoryItems`와 `loadClusterInputItems`를 공유하며, admin 전용 cluster route도 `generateAndStoreClusters`를 호출한다. 별도 admin clustering 알고리즘은 두지 않는다 `[현행 2026-06-22 → 15.107]`
 
@@ -3589,3 +3591,20 @@ type ChatPlan = {
 - 수정 2(제외 의도 처리): raw 사용자 입력을 `userRequest`로 references 라우트까지 흘려보내 쿼리 빌더 user 메시지에 "Current user request (authoritative; may contain corrections or exclusions)"로 명시하고, `referenceQueryBuilderPrompt`에 정정/부정이 있으면 거부된 방향 X를 버리고 요청한 대안 Y로 피벗하라는 규칙을 추가했다. 이 라인이 assembled context·preference context보다 우선한다.
 - 변경 파일: `src/app/main/[missionId]/page.tsx`(`isCorrectiveReferenceTurn`, `buildReferenceSearchQuery` corrective 분기, `fetchReferences`에 `userRequestText` 추가, 두 호출부에서 raw text·corrective 전달), `src/app/api/references/route.ts`(`userRequest` 수신→`buildSearchQueries`), `src/lib/prompts.ts`(`referenceQueryBuilderPrompt` 제외/정정 규칙).
 - 검증: `npx tsc --noEmit`, 변경 파일 ESLint(0 error, 기존 warning 유지) 통과.
+
+### 15.130 메모리 클러스터 화면 좌측 상세 패널화 `[implemented 2026-06-27]`
+
+- 배경(Notion `메모리 리뷰 개편` Request 1): 기존 화면은 cluster list가 비교적 넓고 cluster summary·선택됨 badge를 표시하며, detail panel이 graph 오른쪽에 붙어 있었다. 리뷰 UI를 붙일 여지를 만들고 cluster/detail 탐색 흐름을 왼쪽에 모으기 위해 배치와 밀도를 조정했다.
+- 변경: `/agent`와 `/admin/users/[uid]/memory` 공용 `MemoryClusterPage`의 본문 순서를 cluster list → cluster detail panel → similarity graph로 바꿨다. `MemoryClusterSidePanel`은 좌측 배치에 맞게 오른쪽 border를 사용한다.
+- cluster list: 폭을 줄이고 summary 문장을 제거했다. 각 cluster button은 색상 점, label, memory count만 표시하고 선택 상태는 배경/border 변화로만 표현한다. 별도 `선택됨` badge는 제거했다.
+- 변경 파일: `src/app/agent/page.tsx`, `src/components/memory/memory-cluster-list.tsx`, `src/components/memory/memory-cluster-side-panel.tsx`, `dev_document.md`.
+- 검증: `npx tsc --noEmit`, 변경 파일 ESLint(0 error), `npm run build` 통과. Build의 기존 presentation route NFT trace warning은 유지.
+
+### 15.131 메모리 리뷰하기 우측 패널 추가 `[implemented 2026-06-27]`
+
+- 배경(Notion `메모리 리뷰 개편` Request 2): 완료 세션의 메모리 리뷰 화면 오른쪽에 별도 UI처럼 보이는 `메모리 리뷰하기` 영역을 추가하고, 세션별 저장 품질과 cluster 품질을 사용자가 직접 답변할 수 있어야 했다. 특정 cluster나 단위 memory를 답변 맥락에 붙일 수 있는 `@` 언급형 참조도 필요했다.
+- 변경: `MemoryReviewPanel`을 추가해 `/main/[missionId]`의 `SessionMemoryDiff` overlay에서 cluster list → detail panel → graph → review panel 순서로 배치했다. 리뷰 패널은 graph 오른쪽에 rounded card + shadow 형태로 dock된다. 질문은 `세션별로 기억해야 할 정보`와 `메모리 클러스터` 두 섹션으로 나누고 각 질문에 textarea를 제공한다.
+- mention 선택: 입력창 커서 앞에 pending `@` token이 있으면 review panel이 mention mode를 켠다. dropdown 후보를 만들지 않고 실제 메모리뷰의 cluster list와 detail panel memory card를 amber 선택 상태로 바꾸며, 사용자가 항목을 클릭하면 `@cluster(...)` 또는 `@memory(...)`가 해당 답변 안에 삽입된다. graph node 클릭도 선택 모드에서는 같은 memory mention으로 동작한다. 삽입된 mention token은 굵은 amber text로 표시되고, token 클릭 시 cluster는 해당 cluster를 선택하고 memory는 포함 cluster를 열어 해당 memory card를 선택/scroll focus한다. Esc는 선택 모드를 취소한다. `[updated 2026-06-28: 문제 표시/자동 연결 방식 대체]`
+- 저장: `/api/memory/review-feedback`는 Firebase ID token으로 본인 uid를 검증하고 `users/{uid}/memoryReviewFeedback/{missionId}`에 `{ schemaVersion: 1, answers, updatedAt, submittedAt }`를 저장한다. `answers[questionId]`는 `{ text, mentions[] }`이며 mention은 `{ type, id, label, start, end }`를 가진다. UI는 draft autosave를 수행하고, `제출` 버튼은 contenteditable DOM의 최신 payload를 수집한 뒤 POST 완료를 await하고 성공 시 같은 문서의 `submittedAt`을 갱신한다.
+- 변경 파일: 신규 `src/components/memory/memory-review-panel.tsx`, 신규 `src/app/api/memory/review-feedback/route.ts`, `src/app/main/[missionId]/page.tsx`, `dev_document.md`.
+- 검증: `npx tsc --noEmit`, 변경 파일 ESLint(0 error), `npm run build` 통과. Build의 기존 presentation route NFT trace warning은 유지.

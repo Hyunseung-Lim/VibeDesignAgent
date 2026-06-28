@@ -80,6 +80,11 @@ import { PromptViewer } from "@/components/admin/prompt-viewer";
 import { MemoryClusterList } from "@/components/memory/memory-cluster-list";
 import { MemoryClusterSidePanel } from "@/components/memory/memory-cluster-side-panel";
 import {
+  MemoryReviewPanel,
+  type MemoryReviewAnswers,
+  type MemoryReviewMentionTarget,
+} from "@/components/memory/memory-review-panel";
+import {
   cleanMessageContentForModel,
   extractChatPhases,
   normalizeActionBlockAliases,
@@ -1934,6 +1939,24 @@ export default function MainScreenPage() {
   const [selectedReferencedMemoryId, setSelectedReferencedMemoryId] = useState<
     string | null
   >(null);
+  const [memoryReviewMentionMode, setMemoryReviewMentionMode] = useState(false);
+  const [memoryReviewMentionTarget, setMemoryReviewMentionTarget] =
+    useState<MemoryReviewMentionTarget | null>(null);
+  const memoryReviewMentionEventIdRef = useRef(0);
+  const [memoryReviewAnswers, setMemoryReviewAnswers] =
+    useState<MemoryReviewAnswers | null>(null);
+  const [memoryReviewSaveStatus, setMemoryReviewSaveStatus] = useState<
+    "idle" | "saving" | "saved" | "error"
+  >("idle");
+  const [memoryReviewSubmittedAt, setMemoryReviewSubmittedAt] = useState<
+    number | null
+  >(null);
+  const memoryReviewAnswersRef = useRef<MemoryReviewAnswers>({});
+  const memoryReviewDirtyRef = useRef(false);
+  const memoryReviewSaveKeyRef = useRef("");
+  // Most recently obtained ID token, kept so the unload flush can fire a
+  // keepalive request synchronously without awaiting getIdToken.
+  const memoryReviewTokenRef = useRef<string | null>(null);
   const sessionMemorySummaryKeyRef = useRef<string | null>(null);
   const [reviewProfileItems, setReviewProfileItems] = useState<
     { id: string; input: string }[]
@@ -2141,6 +2164,104 @@ export default function MainScreenPage() {
       availableCount: beforeSessionMemories.length,
     };
   }, [sessionMemorySummary, cumulativeGraphMemories]);
+  const chooseMemoryReviewMention = useCallback(
+    (target: Omit<MemoryReviewMentionTarget, "eventId">) => {
+      memoryReviewMentionEventIdRef.current += 1;
+      setMemoryReviewMentionTarget({
+        ...target,
+        eventId: memoryReviewMentionEventIdRef.current,
+      });
+      setMemoryReviewMentionMode(false);
+    },
+    [],
+  );
+  const saveMemoryReviewFeedback = useCallback(
+    async (submitted: boolean, nextAnswers?: MemoryReviewAnswers) => {
+      if (!missionId || isViewingAsAdmin) return false;
+      const currentUser = firebaseAuth.currentUser;
+      if (!currentUser) return false;
+
+      const answers = nextAnswers ?? memoryReviewAnswersRef.current;
+      if (nextAnswers) {
+        memoryReviewAnswersRef.current = nextAnswers;
+        setMemoryReviewAnswers(nextAnswers);
+      }
+      const payloadKey = JSON.stringify({ answers, submitted });
+      if (!submitted && payloadKey === memoryReviewSaveKeyRef.current) {
+        return true;
+      }
+
+      setMemoryReviewSaveStatus("saving");
+      try {
+        const token = await getIdToken(currentUser);
+        memoryReviewTokenRef.current = token;
+        const response = await fetch("/api/memory/review-feedback", {
+          method: "POST",
+          keepalive: submitted,
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            missionId,
+            answers,
+            submitted,
+          }),
+        });
+        if (!response.ok) throw new Error("save_failed");
+        const data = (await response.json()) as {
+          feedback?: { submittedAt?: number | null };
+        };
+        memoryReviewSaveKeyRef.current = payloadKey;
+        memoryReviewDirtyRef.current = false;
+        setMemoryReviewSubmittedAt(data.feedback?.submittedAt ?? null);
+        setMemoryReviewSaveStatus("saved");
+        return true;
+      } catch {
+        setMemoryReviewSaveStatus("error");
+        return false;
+      }
+    },
+    [isViewingAsAdmin, missionId],
+  );
+  // Best-effort synchronous save for page unload / tab hide, when the 300ms
+  // debounce has not yet fired. Uses keepalive so the request survives the
+  // document being torn down, and a cached token because getIdToken is async.
+  const flushMemoryReviewFeedback = useCallback(() => {
+    if (!missionId || isViewingAsAdmin) return;
+    if (!memoryReviewDirtyRef.current) return;
+    const token = memoryReviewTokenRef.current;
+    if (!token) return;
+    const answers = memoryReviewAnswersRef.current;
+    const payloadKey = JSON.stringify({ answers, submitted: false });
+    if (payloadKey === memoryReviewSaveKeyRef.current) return;
+    try {
+      void fetch("/api/memory/review-feedback", {
+        method: "POST",
+        keepalive: true,
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ missionId, answers, submitted: false }),
+      });
+      memoryReviewSaveKeyRef.current = payloadKey;
+      memoryReviewDirtyRef.current = false;
+    } catch {
+      // Unload path: nothing actionable if the keepalive request cannot start.
+    }
+  }, [isViewingAsAdmin, missionId]);
+  const handleMemoryReviewAnswersChange = useCallback(
+    (answers: MemoryReviewAnswers) => {
+      memoryReviewAnswersRef.current = answers;
+      memoryReviewDirtyRef.current = true;
+      setMemoryReviewAnswers(answers);
+      if (memoryReviewSaveStatus !== "saving") {
+        setMemoryReviewSaveStatus("idle");
+      }
+    },
+    [memoryReviewSaveStatus],
+  );
   const activeOption =
     missionOptions.find((option) => option.id === selectedOptionId) ??
     (missionOptions.length === 1 ? missionOptions[0] : null);
@@ -2854,6 +2975,121 @@ export default function MainScreenPage() {
       cancelled = true;
     };
   }, [showReviewAnnotations, targetSessionUserId, missionId]);
+
+  useEffect(() => {
+    // Admins viewing as a user (viewAs) load that user's feedback read-only;
+    // reviewers load their own. Other modes have no feedback to show.
+    if ((!isReviewMode && !isViewingAsAdmin) || !missionId) {
+      memoryReviewAnswersRef.current = {};
+      memoryReviewDirtyRef.current = false;
+      memoryReviewSaveKeyRef.current = "";
+      setMemoryReviewAnswers(null);
+      setMemoryReviewSubmittedAt(null);
+      setMemoryReviewSaveStatus("idle");
+      return;
+    }
+    // On refresh the Firebase session restores asynchronously, so currentUser
+    // is often null on the first run. Bail and let the effect re-run once
+    // onAuthStateChanged sets userId (a dependency below).
+    const currentUser = firebaseAuth.currentUser;
+    if (!currentUser) return;
+    if (isViewingAsAdmin && !targetSessionUserId) return;
+
+    let cancelled = false;
+    const load = async () => {
+      const maxAttempts = 3;
+      for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+        try {
+          const token = await getIdToken(currentUser);
+          if (cancelled) return;
+          memoryReviewTokenRef.current = token;
+          const targetQuery =
+            isViewingAsAdmin && targetSessionUserId
+              ? `&targetUid=${encodeURIComponent(targetSessionUserId)}`
+              : "";
+          const response = await fetch(
+            `/api/memory/review-feedback?missionId=${encodeURIComponent(missionId)}${targetQuery}`,
+            {
+              cache: "no-store",
+              headers: { Authorization: `Bearer ${token}` },
+            },
+          );
+          if (cancelled) return;
+          if (!response.ok) throw new Error(`load_failed_${response.status}`);
+          const data = await response.json();
+          if (cancelled) return;
+          const feedback =
+            data?.feedback && typeof data.feedback === "object"
+              ? (data.feedback as {
+                  answers?: MemoryReviewAnswers;
+                  submittedAt?: number | null;
+                })
+              : null;
+          const answers = feedback?.answers ?? {};
+          memoryReviewAnswersRef.current = answers;
+          memoryReviewDirtyRef.current = false;
+          memoryReviewSaveKeyRef.current = JSON.stringify({
+            answers,
+            submitted: false,
+          });
+          setMemoryReviewAnswers(answers);
+          setMemoryReviewSubmittedAt(feedback?.submittedAt ?? null);
+          setMemoryReviewSaveStatus(feedback ? "saved" : "idle");
+          return;
+        } catch {
+          if (cancelled) return;
+          if (attempt === maxAttempts - 1) {
+            setMemoryReviewSaveStatus("error");
+            return;
+          }
+          await new Promise((resolve) =>
+            window.setTimeout(resolve, 500 * 2 ** attempt),
+          );
+        }
+      }
+    };
+    void load();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    isReviewMode,
+    isViewingAsAdmin,
+    missionId,
+    userId,
+    targetSessionUserId,
+  ]);
+
+  useEffect(() => {
+    if (!isReviewMode || isViewingAsAdmin || !memoryReviewDirtyRef.current) {
+      return;
+    }
+    const timeoutId = window.setTimeout(() => {
+      void saveMemoryReviewFeedback(false);
+    }, 300);
+    return () => window.clearTimeout(timeoutId);
+  }, [
+    isReviewMode,
+    isViewingAsAdmin,
+    memoryReviewAnswers,
+    saveMemoryReviewFeedback,
+  ]);
+
+  // Flush pending edits before the page is torn down or backgrounded, so the
+  // 300ms autosave debounce does not lose the last keystrokes on refresh.
+  useEffect(() => {
+    if (!isReviewMode || isViewingAsAdmin) return;
+    const handleHide = () => {
+      if (document.visibilityState === "hidden") flushMemoryReviewFeedback();
+    };
+    window.addEventListener("pagehide", flushMemoryReviewFeedback);
+    document.addEventListener("visibilitychange", handleHide);
+    return () => {
+      window.removeEventListener("pagehide", flushMemoryReviewFeedback);
+      document.removeEventListener("visibilitychange", handleHide);
+    };
+  }, [isReviewMode, isViewingAsAdmin, flushMemoryReviewFeedback]);
 
   // When the memory diff overlay opens, default to "after" if this session created
   // any new memories, so they are visible (highlighted) right away. With the
@@ -6050,6 +6286,52 @@ export default function MainScreenPage() {
           source: memory.source ?? null,
         }),
       );
+      const mentionMemoryLabel = (memory: {
+        semantic?: string;
+        episodic?: string;
+        input?: string;
+        output?: string;
+        action?: string;
+        id: string;
+      }) =>
+        (memory.semantic ||
+          memory.episodic ||
+          memory.input ||
+          memory.output ||
+          memory.action ||
+          memory.id).replace(/\s+/g, " ").trim();
+      const selectReviewMentionMemory = (memoryId: string) => {
+        setSelectedGraphMemoryId(memoryId);
+        if (!memoryReviewMentionMode) return;
+        const item = graphItems.find((candidate) => candidate.id === memoryId);
+        if (!item) return;
+        chooseMemoryReviewMention({
+          id: item.id,
+          type: "memory",
+          label: mentionMemoryLabel(item),
+        });
+      };
+      const focusReviewMention = (
+        target: Omit<MemoryReviewMentionTarget, "eventId">,
+      ) => {
+        if (target.type === "cluster") {
+          if (graphClusters.some((cluster) => cluster.id === target.id)) {
+            setSelectedSessionGraphClusterId(target.id);
+            setSelectedGraphMemoryId(null);
+          }
+          return;
+        }
+
+        const containingCluster = graphClusters.find((cluster) =>
+          cluster.itemIds.includes(target.id),
+        );
+        if (containingCluster) {
+          setSelectedSessionGraphClusterId(containingCluster.id);
+        }
+        if (graphItems.some((item) => item.id === target.id)) {
+          setSelectedGraphMemoryId(target.id);
+        }
+      };
       return (
         <div className="flex h-full w-full min-h-0 overflow-hidden">
           <MemoryClusterList
@@ -6062,8 +6344,38 @@ export default function MainScreenPage() {
               setSelectedSessionGraphClusterId(clusterId);
               setSelectedGraphMemoryId(null);
             }}
+            mentionMode={memoryReviewMentionMode}
+            onMentionCluster={(cluster) =>
+              chooseMemoryReviewMention({
+                id: cluster.id,
+                type: "cluster",
+                label: cluster.label,
+              })
+            }
           />
           <div className="flex min-w-0 flex-1 overflow-hidden">
+            <MemoryClusterSidePanel
+              cluster={selectedCluster}
+              items={selectedClusterItems}
+              memories={sidePanelMemories}
+              selectedMemoryId={selectedGraphMemoryId}
+              onSelectMemory={setSelectedGraphMemoryId}
+              mentionMode={memoryReviewMentionMode}
+              onMentionCluster={(selected) =>
+                chooseMemoryReviewMention({
+                  id: selected.id,
+                  type: "cluster",
+                  label: selected.label,
+                })
+              }
+              onMentionMemory={(item) =>
+                chooseMemoryReviewMention({
+                  id: item.id,
+                  type: "memory",
+                  label: mentionMemoryLabel(item),
+                })
+              }
+            />
             <div className="relative min-w-0 flex-1 overflow-hidden">
               {graphItems.length === 0 ? (
                 emptyState
@@ -6075,18 +6387,26 @@ export default function MainScreenPage() {
                   selectedClusterId={selectedClusterId}
                   selectedMemoryId={selectedGraphMemoryId}
                   onSelectCluster={setSelectedSessionGraphClusterId}
-                  onSelectMemory={setSelectedGraphMemoryId}
+                  onSelectMemory={selectReviewMentionMemory}
                   showInlineDetail={false}
                   fill
                 />
               )}
             </div>
-            <MemoryClusterSidePanel
-              cluster={selectedCluster}
-              items={selectedClusterItems}
-              memories={sidePanelMemories}
-              selectedMemoryId={selectedGraphMemoryId}
-              onSelectMemory={setSelectedGraphMemoryId}
+            <MemoryReviewPanel
+              mentionTarget={memoryReviewMentionTarget}
+              onMentionModeChange={setMemoryReviewMentionMode}
+              onMentionFocus={focusReviewMention}
+              initialAnswers={memoryReviewAnswers ?? undefined}
+              saveStatus={memoryReviewSaveStatus}
+              submittedAt={memoryReviewSubmittedAt}
+              readOnly={isViewingAsAdmin}
+              onAnswersChange={handleMemoryReviewAnswersChange}
+              onSubmitFeedback={
+                isViewingAsAdmin
+                  ? undefined
+                  : (answers) => saveMemoryReviewFeedback(true, answers)
+              }
             />
           </div>
         </div>

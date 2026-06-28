@@ -21,6 +21,8 @@ type MemoryClusterListProps = {
   isRegenerating: boolean;
   onSelectCluster: (id: string) => void;
   onRegenerate?: () => void;
+  mentionMode?: boolean;
+  onMentionCluster?: (cluster: MemoryCluster) => void;
 };
 
 export function MemoryClusterList({
@@ -31,19 +33,26 @@ export function MemoryClusterList({
   isRegenerating,
   onSelectCluster,
   onRegenerate,
+  mentionMode = false,
+  onMentionCluster,
 }: MemoryClusterListProps) {
   return (
-    <aside className="flex w-72 shrink-0 flex-col gap-2 overflow-y-auto border-r border-border bg-card p-4">
-      <div className="mb-1 flex items-center justify-between gap-2">
-        <p className="text-xs font-semibold text-muted-foreground">
-          {clusters.length}개 클러스터
-        </p>
-        <div className="flex items-center gap-2">
+    <aside className="flex w-44 shrink-0 flex-col gap-2 overflow-y-auto border-r border-border bg-card p-3 xl:w-48">
+      <div className="mb-1 space-y-2">
+        <div className="flex items-center justify-between gap-2">
+          <p className="text-xs font-semibold text-muted-foreground">
+            {clusters.length}개 클러스터
+          </p>
           {generatedAt ? (
             <p className="text-[10px] text-muted-foreground/70">
               {formatDate(generatedAt)}
             </p>
           ) : null}
+        </div>
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-[10px] text-muted-foreground/60">
+            클러스터 목록
+          </span>
           {onRegenerate && (
             <Button
               type="button"
@@ -70,41 +79,38 @@ export function MemoryClusterList({
           <button
             key={cluster.id}
             type="button"
-            onClick={() => onSelectCluster(cluster.id)}
-            className={`w-full rounded-lg border px-3 py-3 text-left transition ${
+            onClick={() => {
+              onSelectCluster(cluster.id);
+              if (mentionMode) onMentionCluster?.(cluster);
+            }}
+            className={`w-full rounded-md border px-2.5 py-2.5 text-left transition ${
               selected
-                ? "border-slate-400 bg-slate-100 shadow-sm ring-2 ring-slate-200"
+                ? mentionMode
+                  ? "border-amber-300 bg-amber-50 shadow-sm ring-2 ring-amber-100"
+                  : "border-slate-300 bg-slate-100 shadow-sm"
+                : mentionMode
+                  ? "border-amber-100 bg-amber-50/60 hover:border-amber-300 hover:bg-amber-50"
                 : "border-transparent bg-muted/40 hover:border-border hover:bg-background"
             }`}
           >
-            <div className="flex items-start justify-between gap-2">
-              <div className="flex min-w-0 flex-1 items-start gap-2">
+            <div className="space-y-1">
+              <div className="flex min-w-0 items-start gap-2">
                 <span
                   className="mt-1.5 size-2.5 shrink-0 rounded-full ring-2 ring-white"
                   style={{ backgroundColor: color }}
                   aria-hidden="true"
                 />
-                <p className="min-w-0 text-sm font-semibold text-foreground">
+                <p className="min-w-0 flex-1 truncate text-xs font-semibold leading-5 text-foreground">
                   {cluster.label}
                 </p>
               </div>
-              <div className="flex shrink-0 items-center gap-1.5">
-                {selected ? (
-                  <Badge
-                    variant="secondary"
-                    className="rounded-full border-slate-300 bg-slate-200 text-slate-700"
-                  >
-                    선택됨
-                  </Badge>
-                ) : null}
-                <Badge variant="secondary" className="rounded-full">
-                  {cluster.count}
-                </Badge>
-              </div>
+              <Badge
+                variant="secondary"
+                className="ml-4 rounded-full px-2 py-0 text-[10px]"
+              >
+                {mentionMode ? "멘션 선택" : cluster.count}
+              </Badge>
             </div>
-            <p className="mt-1 line-clamp-2 text-xs leading-relaxed text-muted-foreground">
-              {cluster.summary}
-            </p>
           </button>
         );
       })}
