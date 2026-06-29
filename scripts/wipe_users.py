@@ -14,6 +14,8 @@ Deletes (Auth accounts are NOT touched, only their data):
 Usage:
     python3 scripts/wipe_users.py <email> [<email> ...]            # dry run (counts only)
     python3 scripts/wipe_users.py <email> [<email> ...] --write    # actually delete
+    python3 scripts/wipe_users.py --all-participants               # dry run all users with app data
+    python3 scripts/wipe_users.py --all-participants --write       # delete all users with app data
 """
 
 import sys
@@ -29,10 +31,14 @@ USER_SUBCOLLECTIONS = [
     "memories_0_1_1",
     "episodicMemories",
     "semanticMemories",
+    "profile_memories",
+    "memoryReviewFeedback",
+    "referenceSourceAnalyses",
     "memoryRetrievalLogs",
     "memoryClusters",
 ]
 SESSION_SUBCOLLECTIONS = ["memoryDrafts", "reviewTurns"]
+ADMIN_EMAILS = {"03leesun@gmail.com", "charlie9807@gmail.com"}
 
 firebase_admin.initialize_app(
     credentials.Certificate(KEY_FILE), {"storageBucket": STORAGE_BUCKET}
@@ -48,6 +54,32 @@ def count_or_delete_collection(collection_ref, write: bool) -> int:
         if write:
             doc.reference.delete()
     return n
+
+
+def auth_email_for_uid(uid: str) -> str:
+    try:
+        return auth.get_user(uid).email or uid
+    except Exception:
+        profile = db.collection("users").document(uid).get()
+        if profile.exists:
+            email = (profile.to_dict() or {}).get("email")
+            if isinstance(email, str) and email:
+                return email
+        return uid
+
+
+def resolve_all_participants() -> list[tuple[str, str]]:
+    """Users with session, profile/memory, or mission participant data."""
+    uids: set[str] = set()
+    for doc in db.collection("sessions").stream():
+        uids.add(doc.id)
+    for doc in db.collection("users").stream():
+        uids.add(doc.id)
+    for mission_doc in db.collection("missions").stream():
+        for part_doc in mission_doc.reference.collection("participants").stream():
+            uids.add(part_doc.id)
+    targets = [(uid, auth_email_for_uid(uid)) for uid in sorted(uids)]
+    return sorted(targets, key=lambda pair: pair[1].lower())
 
 
 def wipe_user(uid: str, email: str, write: bool) -> dict:
@@ -74,6 +106,8 @@ def wipe_user(uid: str, email: str, write: bool) -> dict:
     # users subcollections
     user_root = db.collection("users").document(uid)
     for sub in USER_SUBCOLLECTIONS:
+        if sub == "profile_memories":
+            continue
         counts[f"users/{sub}"] = count_or_delete_collection(
             user_root.collection(sub), write
         )
@@ -91,16 +125,25 @@ def wipe_user(uid: str, email: str, write: bool) -> dict:
     counts["users/profile_memories"] = pm_total
     counts["users/profile_memories/*revisions"] = rev_total
 
-    # onboarding completion flag lives on the users/{uid} profile doc itself.
-    # We keep account identity (displayName/email/photoURL) but reset onboarding
-    # so the user is treated as never-onboarded (clean slate), matching the
-    # app's own "reset onboarding" behavior.
+    # Profile fields live on the users/{uid} document itself. Auth identity is
+    # kept, but onboarding and mission order are removed for a clean slate.
     profile = user_root.get()
-    onboarded = bool((profile.to_dict() or {}).get("onboardingCompleted")) if profile.exists else False
-    counts["users/onboardingCompleted(reset)"] = 1 if onboarded else 0
-    if write and onboarded:
+    profile_data = profile.to_dict() or {} if profile.exists else {}
+    had_onboarding_completed = "onboardingCompleted" in profile_data
+    had_onboarding_completed_at = "onboardingCompletedAt" in profile_data
+    had_mission_order = "missionOrder" in profile_data
+    counts["users/onboardingCompleted(delete)"] = 1 if had_onboarding_completed else 0
+    counts["users/onboardingCompletedAt(delete)"] = (
+        1 if had_onboarding_completed_at else 0
+    )
+    counts["users/missionOrder(reset)"] = 1 if had_mission_order else 0
+    if write and profile.exists:
         user_root.update(
-            {"onboardingCompleted": False, "onboardingCompletedAt": None}
+            {
+                "missionOrder": firestore.DELETE_FIELD,
+                "onboardingCompleted": firestore.DELETE_FIELD,
+                "onboardingCompletedAt": firestore.DELETE_FIELD,
+            }
         )
 
     # mission participation records: missions/{missionId}/participants/{uid}
@@ -131,20 +174,33 @@ def wipe_user(uid: str, email: str, write: bool) -> dict:
 def main():
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
     write = "--write" in sys.argv
+    all_participants = "--all-participants" in sys.argv
     if not args:
-        print("Usage: python3 scripts/wipe_users.py <email> [<email> ...] [--write]")
-        sys.exit(1)
+        if not all_participants:
+            print("Usage: python3 scripts/wipe_users.py <email> [<email> ...] [--write]")
+            print("       python3 scripts/wipe_users.py --all-participants [--write]")
+            sys.exit(1)
 
     mode = "DELETE (--write)" if write else "DRY RUN"
-    print(f"Mode: {mode}\nTargets: {', '.join(args)}")
+    targets: list[tuple[str, str]]
+    if all_participants:
+        targets = resolve_all_participants()
+        print(f"Mode: {mode}\nTargets: all participants with app data ({len(targets)} users)")
+    else:
+        targets = []
+        for email in args:
+            try:
+                targets.append((auth.get_user_by_email(email).uid, email))
+            except Exception as exc:
+                print(f"\n  ! {email}: cannot resolve uid ({exc}) — skipped")
+        print(f"Mode: {mode}\nTargets: {', '.join(email for _, email in targets)}")
+
+    admin_targets = [email for _, email in targets if email in ADMIN_EMAILS]
+    if admin_targets:
+        print(f"Admin emails included: {', '.join(admin_targets)}")
 
     grand = 0
-    for email in args:
-        try:
-            uid = auth.get_user_by_email(email).uid
-        except Exception as exc:
-            print(f"\n  ! {email}: cannot resolve uid ({exc}) — skipped")
-            continue
+    for uid, email in targets:
         counts = wipe_user(uid, email, write)
         grand += sum(counts.values())
 

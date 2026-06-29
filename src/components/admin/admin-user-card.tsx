@@ -3,7 +3,6 @@
 import { useState } from "react";
 import Link from "next/link";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import {
   deriveMissionProgressStatus,
   type MissionProgress,
@@ -28,18 +27,6 @@ export type AdminUser = Participant & {
   missionProgressById: Record<string, MissionProgress>;
 };
 
-export function onboardingBadge(
-  status?: Participant["onboardingStatus"],
-): { label: string; variant: "success" | "warning" | "secondary" } {
-  if (status === "completed") {
-    return { label: "온보딩 완료", variant: "success" };
-  }
-  if (status === "required") {
-    return { label: "온보딩 필요", variant: "warning" };
-  }
-  return { label: "온보딩 확인 불가", variant: "secondary" };
-}
-
 // Mirror the lobby status rule (src/app/lobby/page.tsx): the onboarding mission
 // reflects its real session progress, falling back to a synthesized "completed"
 // only from the onboarding profile flag. Other missions read their session
@@ -54,7 +41,12 @@ function adminMissionProgress(
     missionId === onboardingMissionId
       ? user.missionProgressById[missionId] ??
         (user.onboardingStatus === "completed"
-          ? { hasActivity: true, timerStartedAt: null, status: "completed" }
+          ? {
+              hasActivity: true,
+              timerStartedAt: null,
+              endedAt: null,
+              status: "completed",
+            }
           : null)
       : user.missionProgressById[missionId];
   return deriveMissionProgressStatus(progress, durationMinutes);
@@ -72,13 +64,40 @@ function isMissionCompleted(
     : user.missionProgressById[missionId]?.status === "completed";
 }
 
+function formatSessionDateTime(timestamp: number) {
+  return new Intl.DateTimeFormat("ko-KR", {
+    month: "numeric",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(new Date(timestamp));
+}
+
+function formatSessionMinutes(startedAt: number, endedAt: number) {
+  const minutes = Math.max(0, Math.round((endedAt - startedAt) / 60000));
+  return `${minutes}분`;
+}
+
+function missionTimingParts(progress: MissionProgress | undefined) {
+  const startedAt = progress?.timerStartedAt ?? null;
+  const endedAt = progress?.endedAt ?? null;
+  const parts: string[] = [];
+  if (startedAt) parts.push(`시작 ${formatSessionDateTime(startedAt)}`);
+  if (endedAt) parts.push(`종료 ${formatSessionDateTime(endedAt)}`);
+  if (startedAt && endedAt) {
+    parts.push(`소요 ${formatSessionMinutes(startedAt, endedAt)}`);
+  } else if (startedAt) {
+    parts.push(`경과 ${formatSessionMinutes(startedAt, Date.now())}`);
+  }
+  return parts;
+}
+
 interface AdminUserCardProps {
   user: AdminUser;
   onboardingMissionId: string;
   missionTitle: (missionId: string) => string;
   missionDurationMinutes: (missionId: string) => number | undefined;
-  isDeletingSessions: boolean;
-  onBackupAndDeleteSessions: () => void;
 }
 
 /** Per-user card on the admin users tab: profile, mission order, session links, actions. */
@@ -87,10 +106,7 @@ export function AdminUserCard({
   onboardingMissionId,
   missionTitle,
   missionDurationMinutes,
-  isDeletingSessions,
-  onBackupAndDeleteSessions,
 }: AdminUserCardProps) {
-  const badge = onboardingBadge(user.onboardingStatus);
   // Google profile photos (lh3.googleusercontent.com) intermittently 403/429;
   // fall back to the initial-letter badge when the image fails to load.
   const [avatarFailed, setAvatarFailed] = useState(false);
@@ -132,9 +148,6 @@ export function AdminUserCard({
             <p className="truncate text-sm font-semibold text-foreground">
               {user.displayName ?? user.email ?? user.id}
             </p>
-            <Badge variant={badge.variant} className="rounded-full">
-              {badge.label}
-            </Badge>
             {user.isAdmin && (
               <Badge
                 variant="outline"
@@ -177,6 +190,8 @@ export function AdminUserCard({
                 onboardingMissionId,
                 missionDurationMinutes(missionId),
               );
+              const rawProgress = user.missionProgressById[missionId];
+              const timingParts = missionTimingParts(rawProgress);
               const isCompleted = completedFlags[index];
               const isCurrent = index === currentMissionIndex;
               const isLocked =
@@ -185,43 +200,54 @@ export function AdminUserCard({
               return (
                 <li
                   key={missionId}
-                  className={`flex min-w-0 items-center gap-2 rounded-xl border border-border bg-background px-2.5 py-2 ${
+                  className={`flex min-w-0 items-start gap-2 rounded-xl border border-border bg-background px-2.5 py-2 ${
                     isLocked ? "opacity-60" : ""
                   }`}
                 >
-                  <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-muted text-[10px] font-semibold text-muted-foreground">
+                  <span className="mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full bg-muted text-[10px] font-semibold text-muted-foreground">
                     {index + 1}
                   </span>
-                  <Link
-                    href={`/main/${missionId}?viewAs=${user.id}`}
-                    prefetch={false}
-                    className="min-w-0 flex-1 truncate text-xs font-medium text-foreground transition hover:text-indigo-600 hover:underline"
-                  >
-                    {missionTitle(missionId)}
-                  </Link>
-                  {isLocked ? (
-                    <Badge
-                      variant="secondary"
-                      className="h-5 shrink-0 px-1.5 text-[10px]"
-                    >
-                      잠김
-                    </Badge>
-                  ) : (
-                    isCurrent && (
-                      <Badge
-                        variant="outline"
-                        className="h-5 shrink-0 border-transparent bg-indigo-50 px-1.5 text-[10px] text-indigo-700"
+                  <div className="min-w-0 flex-1">
+                    <div className="flex min-w-0 items-center gap-2">
+                      <Link
+                        href={`/main/${missionId}?viewAs=${user.id}`}
+                        prefetch={false}
+                        className="min-w-0 flex-1 truncate text-xs font-medium text-foreground transition hover:text-indigo-600 hover:underline"
                       >
-                        현재
-                      </Badge>
-                    )
-                  )}
-                  <Badge
-                    variant={progress.variant}
-                    className="h-5 shrink-0 px-1.5 text-[10px]"
-                  >
-                    {progress.label}
-                  </Badge>
+                        {missionTitle(missionId)}
+                      </Link>
+                      <div className="flex shrink-0 items-center gap-1">
+                        {isLocked ? (
+                          <Badge
+                            variant="secondary"
+                            className="h-5 shrink-0 px-1.5 text-[10px]"
+                          >
+                            잠김
+                          </Badge>
+                        ) : (
+                          isCurrent && (
+                            <Badge
+                              variant="outline"
+                              className="h-5 shrink-0 border-transparent bg-indigo-50 px-1.5 text-[10px] text-indigo-700"
+                            >
+                              현재
+                            </Badge>
+                          )
+                        )}
+                        <Badge
+                          variant={progress.variant}
+                          className="h-5 shrink-0 px-1.5 text-[10px]"
+                        >
+                          {progress.label}
+                        </Badge>
+                      </div>
+                    </div>
+                    {timingParts.length > 0 && (
+                      <p className="mt-1 truncate text-[10px] leading-4 text-muted-foreground">
+                        {timingParts.join(" · ")}
+                      </p>
+                    )}
+                  </div>
                 </li>
               );
             })}
@@ -236,15 +262,6 @@ export function AdminUserCard({
         >
           메모리 보기 →
         </Link>
-        <Button
-          type="button"
-          variant="link"
-          onClick={onBackupAndDeleteSessions}
-          disabled={isDeletingSessions}
-          className="h-auto rounded-md px-3 py-1.5 text-[11px] font-semibold text-red-400 hover:bg-red-50 hover:text-red-600 hover:no-underline disabled:text-muted-foreground"
-        >
-          {isDeletingSessions ? "백업/삭제 중..." : "세션 백업 후 삭제"}
-        </Button>
       </div>
     </div>
   );

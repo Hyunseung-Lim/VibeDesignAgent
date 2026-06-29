@@ -3655,3 +3655,21 @@ type ChatPlan = {
 - 배경(Notion `UI` 0626 추가): 레퍼런스 검색 memory에서 reference search context가 비어 보이거나 title/tag/url/description/rationale이 한 줄에 붙어 보여 읽기 어려웠다.
 - 수정: `formatReferenceMemoryDetail`이 각 reference의 title, tag, url, imageUrl, mode, provider, purpose, card description, rationale, agent rationale을 줄 단위로 저장하도록 변경했다. 검색 결과 memory output의 섹션명도 `reference search context:`로 맞췄다.
 - 검증: `npx tsc --noEmit`, `npm run lint` 통과(0 error, 기존 warning 20개 유지).
+
+### 15.138 admin 유저 카드 온보딩 배지 제거 `[implemented 2026-06-29]`
+
+- 배경: 전체 참가자 세션/메모리 초기화 후 `users/{uid}`의 `onboardingCompleted`/`onboardingCompletedAt`도 삭제하기로 결정하면서, `/admin`의 유저 카드와 참가자 목록에 별도 `온보딩 필요` 배지를 표시하는 의미가 약해졌다.
+- 수정: `AdminUserCard`와 `/admin` 참가자 목록에서 온보딩 상태 배지 렌더링을 제거했다. 온보딩 미션 자체의 진행 상태와 잠김/현재/완료 표시는 기존 mission progress 계산을 그대로 사용한다.
+- 검증: `npx tsc --noEmit`, `npm run lint` 통과(0 error, 기존 warning 유지).
+
+### 15.139 admin 세션 백업 후 삭제 버튼 제거 `[implemented 2026-06-29]`
+
+- 배경: 전체 참가자 세션/메모리 데이터는 별도 백업 후 스크립트로 초기화했으며, admin 유저 카드에 destructive `세션 백업 후 삭제` 버튼을 계속 노출하면 운영 중 실수로 재실행될 수 있다.
+- 수정: `AdminUserCard`에서 `세션 백업 후 삭제` 버튼을 제거하고, `/admin` 클라이언트의 해당 요청 핸들러/상태/destructive dialog 분기를 정리했다. 서버 API와 스크립트는 필요 시 명시적으로 실행할 수 있도록 유지한다.
+- 검증: `npx tsc --noEmit`, `npm run lint` 통과(0 error, 기존 warning 유지).
+
+### 15.140 admin 미션 row 세션 시간 메타 표시 `[implemented 2026-06-29]`
+
+- 배경: `/admin` 유저 카드의 미션 진행 row에서 각 세션이 언제 시작/종료됐고 몇 분 걸렸는지 확인하고 싶지만, 기존 한 줄 레이아웃은 `온보딩현재대기`처럼 상태 badge가 붙어 보여 여유 공간이 부족했다.
+- 수정: `MissionProgress`가 `endedAt`을 포함하고 `timerStartedAt`이 없으면 legacy `startedAt`도 읽도록 했다. `AdminUserCard`의 미션 row는 제목/상태 badge 첫 줄과 `시작 ... · 종료 ... · 소요 ...` 작은 메타 줄로 나뉘며, 종료 전 세션은 `경과 ...`로 표시한다. 시간이 없는 미션은 메타 줄을 숨긴다.
+- 검증: `npx tsc --noEmit`, `npm run lint` 통과(0 error, 기존 warning 유지).

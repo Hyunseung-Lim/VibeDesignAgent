@@ -1,6 +1,7 @@
 export type MissionProgress = {
   hasActivity: boolean;
   timerStartedAt: number | null;
+  endedAt: number | null;
   status: string | null;
 };
 
@@ -13,13 +14,20 @@ export function missionProgressFromSession(
   data: Record<string, unknown>,
 ): MissionProgress {
   const timerStartedAt =
-    typeof data.timerStartedAt === "number" ? data.timerStartedAt : null;
+    typeof data.timerStartedAt === "number"
+      ? data.timerStartedAt
+      : typeof data.startedAt === "number"
+        ? data.startedAt
+        : null;
+  const endedAt = typeof data.endedAt === "number" ? data.endedAt : null;
   return {
     timerStartedAt,
+    endedAt,
     status: typeof data.status === "string" ? data.status : null,
     hasActivity: Boolean(
       data.selectedOptionId ||
       data.timerStartedAt ||
+      data.startedAt ||
       (Array.isArray(data.messages) && data.messages.length > 0) ||
       (Array.isArray(data.ideas) && data.ideas.length > 0) ||
       (Array.isArray(data.artboards) && data.artboards.length > 0) ||

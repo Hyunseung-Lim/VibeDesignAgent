@@ -261,7 +261,12 @@ export default function LobbyPage() {
     const progress =
       missionProgressById[mission.id] ??
       (onboardingCompleted
-        ? { hasActivity: true, timerStartedAt: null, status: "completed" }
+        ? {
+            hasActivity: true,
+            timerStartedAt: null,
+            endedAt: null,
+            status: "completed",
+          }
         : null);
     const status = derivedStatus(progress, mission.durationMinutes);
     const isMissionCompleted = isOnboardingMission

@@ -118,13 +118,11 @@ export function MissionCard({
           </p>
         ) : null;
       })()}
-      <p className="mt-3 text-xs text-muted-foreground">
-        {isOnboardingMission
-          ? `PC/모바일 중 선택 · 제한 시간 ${mission.durationMinutes ?? 20}분`
-          : mission.durationMinutes
-            ? `제한 시간 ${mission.durationMinutes}분`
-            : "제한 시간 없음"}
-      </p>
+      {isOnboardingMission && (
+        <p className="mt-3 text-xs text-muted-foreground">
+          PC/모바일 중 선택
+        </p>
+      )}
       {isLocked && lockReason && (
         <p className="mt-3 flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
           <LockIcon size={12} aria-hidden />

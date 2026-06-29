@@ -54,7 +54,6 @@ import { Textarea } from "@/components/ui/textarea";
 import { AdminDataTable } from "@/components/admin/admin-data-table";
 import {
   AdminUserCard,
-  onboardingBadge,
   type AdminUser,
   type Participant,
 } from "@/components/admin/admin-user-card";
@@ -141,8 +140,7 @@ type DestructiveAdminAction =
       missionId: string;
       label: string;
     }
-  | { type: "all-memory"; userId: string; version: string }
-  | { type: "sessions"; user: AdminUser; label: string };
+  | { type: "all-memory"; userId: string; version: string };
 
 type MemoryCluster = {
   id: string;
@@ -502,9 +500,6 @@ export default function AdminPage() {
     string | null
   >(null);
   const [isDeletingMemory, setIsDeletingMemory] = useState(false);
-  const [deletingSessionsUserId, setDeletingSessionsUserId] = useState<
-    string | null
-  >(null);
   const [onboardingSettings, setOnboardingSettings] =
     useState<OnboardingSettings>(defaultOnboardingSettings);
   const [isSavingOnboardingSettings, setIsSavingOnboardingSettings] =
@@ -852,44 +847,6 @@ export default function AdminPage() {
       toast.success("메모리 항목을 삭제했어요.");
     } catch {
       toast.error("메모리 삭제에 실패했습니다.");
-    }
-  };
-
-  const requestBackupAndDeleteSessions = (user: AdminUser) => {
-    const label = user.displayName ?? user.email ?? user.id;
-    setDestructiveAction({ type: "sessions", user, label });
-  };
-
-  const backupAndDeleteSessions = async (user: AdminUser) => {
-    const token = await getAdminToken();
-    if (!token) return;
-    setDeletingSessionsUserId(user.id);
-    try {
-      const res = await fetch(`/api/admin/users/${user.id}/sessions`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ confirm: "backup-and-delete-sessions" }),
-      });
-      const data = await res.json().catch(() => null);
-      if (!res.ok) throw new Error(data?.error ?? "세션 삭제 실패");
-      toast.success("백업 후 세션 삭제가 완료됐습니다.", {
-        description: [
-          `세션 ${data.deletedSessionMissions ?? 0}개`,
-          `참여 기록 ${data.deletedParticipantRecords ?? 0}개`,
-          `메모리 ${data.deletedMemories ?? 0}개`,
-          `클러스터 ${data.deletedMemoryClusters ?? 0}개`,
-          `Storage ${data.deletedStorageFiles ?? 0}개`,
-        ].join(" · "),
-      });
-      await loadUsers();
-    } catch (e) {
-      console.error(e);
-      toast.error("세션 백업/삭제에 실패했습니다.");
-    } finally {
-      setDeletingSessionsUserId(null);
     }
   };
 
@@ -1659,11 +1616,7 @@ export default function AdminPage() {
               description: `선택한 사용자의 v${destructiveAction.version} 메모리를 전체 삭제합니다. 이 작업은 되돌릴 수 없습니다.`,
               actionLabel: "메모리 삭제",
             }
-          : {
-              title: "세션 데이터를 백업 후 삭제할까요?",
-              description: `${destructiveAction.label}의 세션, 참여 기록, Storage 파일, 장기 메모리와 클러스터 캐시를 백업한 뒤 삭제합니다. 이 작업은 되돌릴 수 없습니다.`,
-              actionLabel: "백업 후 삭제",
-            }
+          : null
     : null;
 
   const runDestructiveAction = async () => {
@@ -1682,7 +1635,6 @@ export default function AdminPage() {
       await deleteAllMemory(action.userId, action.version);
       return;
     }
-    await backupAndDeleteSessions(action.user);
   };
 
   if (!ready) return null;
@@ -2228,10 +2180,6 @@ export default function AdminPage() {
                           : missions.find((mission) => mission.id === missionId)
                               ?.durationMinutes ?? undefined
                       }
-                      isDeletingSessions={deletingSessionsUserId === user.id}
-                      onBackupAndDeleteSessions={() =>
-                        requestBackupAndDeleteSessions(user)
-                      }
                     />
                   ))}
                 </div>
@@ -2699,7 +2647,6 @@ export default function AdminPage() {
                 </div>
               ) : (
                 participants.map((p) => {
-                  const badge = onboardingBadge(p.onboardingStatus);
                   return (
                     <div
                       key={p.id}
@@ -2735,12 +2682,6 @@ export default function AdminPage() {
                             {p.email}
                           </p>
                         )}
-                        <Badge
-                          variant={badge.variant}
-                          className="mt-1 rounded-full"
-                        >
-                          {badge.label}
-                        </Badge>
                         {p.isAdmin && (
                           <Badge
                             variant="outline"
