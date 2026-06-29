@@ -1460,30 +1460,40 @@ function referenceRationale(reference: Reference) {
   return "현재 미션과 관련된 UI/UX 패턴을 확인하기 위해 선택했습니다.";
 }
 
+function referenceMemoryField(label: string, value: string | null | undefined) {
+  const text = value?.trim();
+  return text ? `  ${label}: ${text}` : "";
+}
+
 function formatReferenceMemoryDetail(reference: Reference, index?: number) {
+  const title = reference.title?.trim() || "Untitled reference";
+  const header = `${index ? `${index}. ` : ""}${title}`;
   return [
-    `${index ? `${index}. ` : ""}${reference.title || "Untitled reference"}`,
-    reference.tag ? `tag: ${reference.tag}` : "",
-    reference.url ? `url: ${reference.url}` : "",
-    reference.imageUrl ? `imageUrl: ${reference.imageUrl}` : "",
-    reference.referenceMode ? `mode: ${reference.referenceMode}` : "",
-    reference.searchProvider ? `provider: ${reference.searchProvider}` : "",
-    reference.referencePurpose
-      ? `purpose: ${reference.referencePurposeLabel ?? reference.referencePurpose}`
-      : "",
-    reference.description ? `card description: ${reference.description}` : "",
-    reference.rationale ? `rationale: ${reference.rationale}` : "",
-    `agent rationale: ${referenceRationale(reference)}`,
+    header,
+    referenceMemoryField("tag", reference.tag),
+    referenceMemoryField("url", reference.url),
+    referenceMemoryField("imageUrl", reference.imageUrl),
+    referenceMemoryField("mode", reference.referenceMode),
+    referenceMemoryField("provider", reference.searchProvider),
+    referenceMemoryField(
+      "purpose",
+      reference.referencePurpose
+        ? (reference.referencePurposeLabel ?? reference.referencePurpose)
+        : "",
+    ),
+    referenceMemoryField("card description", reference.description),
+    referenceMemoryField("rationale", reference.rationale),
+    referenceMemoryField("agent rationale", referenceRationale(reference)),
   ]
     .filter(Boolean)
-    .join(" / ");
+    .join("\n");
 }
 
 function formatReferenceMemoryDetails(references: Reference[]) {
   return references
     .slice(0, 8)
     .map((reference, index) => formatReferenceMemoryDetail(reference, index + 1))
-    .join("\n");
+    .join("\n\n");
 }
 
 function normalizeArtboardPositionsByIdea(boards: Artboard[]) {
@@ -4519,7 +4529,7 @@ export default function MainScreenPage() {
           memoryInput,
           [
             fullText,
-            "reference result rationale:",
+            "reference search context:",
             formatReferenceMemoryDetails(result.references),
           ]
             .filter(Boolean)

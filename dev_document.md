@@ -3649,3 +3649,9 @@ type ChatPlan = {
 - 배경: action 값은 Firestore와 내부 계약상 `references_fetch`, `final_design_select` 같은 영어 token으로 유지하되, 메모리 UI chip 표시가 일부 화면에서 그대로 영어로 노출됐다.
 - 수정: `memory-action-labels.ts`를 추가해 action token → 한국어 표시 라벨과 `promoted`/`referenced`/`archived` 상태 token 숨김 규칙을 공통화했다. 현행 UI 플로우에서 제거된 `presentation_create`도 표시 chip에서는 숨긴다. `style_image_preference`는 첨부 이미지가 주도한 목업 생성 후 derivedDesignStyle을 별도 memory evidence로 남기는 내부 category라 `첨부 이미지 스타일`로 표시한다. `MemoryClusterSidePanel`, `MemoryClusterDetail`, `MemoryClusterGraph` inline detail이 모두 이 formatter를 사용한다.
 - 검증: `npx tsc --noEmit`, `npm run lint` 통과(0 error, 기존 warning 20개 유지).
+
+### 15.137 레퍼런스 검색 memory context 줄바꿈 저장 `[implemented 2026-06-29]`
+
+- 배경(Notion `UI` 0626 추가): 레퍼런스 검색 memory에서 reference search context가 비어 보이거나 title/tag/url/description/rationale이 한 줄에 붙어 보여 읽기 어려웠다.
+- 수정: `formatReferenceMemoryDetail`이 각 reference의 title, tag, url, imageUrl, mode, provider, purpose, card description, rationale, agent rationale을 줄 단위로 저장하도록 변경했다. 검색 결과 memory output의 섹션명도 `reference search context:`로 맞췄다.
+- 검증: `npx tsc --noEmit`, `npm run lint` 통과(0 error, 기존 warning 20개 유지).
