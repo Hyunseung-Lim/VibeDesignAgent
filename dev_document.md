@@ -3685,3 +3685,9 @@ type ChatPlan = {
 - 배경(Notion `38dd5dc81f6680598f23c4068183182f`): 메모리 리뷰의 `세션 이전 항목` 영역에서 `세션 중 참고됨` 카운트와 카드 강조가 표시되어 채팅 영역 카드와 UI 결이 달랐다. 사용자는 세션 중 참고 여부를 별도로 표시하지 않아도 된다고 판단했다.
 - 수정: `세션 중 참고됨` 통계 카드와 `세션 이전 항목` count 카드를 제거하고, 세션 이전 memory 카드의 referenced 파란 강조/상태 라벨/weight delta 표시를 없앴다. `MemoryCard`의 status bar는 라벨/weight가 있을 때만 표시되며, 목록 정렬도 referenced 우선이 아니라 weight 기준으로만 정렬한다.
 - 검증: `npx tsc --noEmit`, `npm run lint` 통과(0 error, 기존 warning 20개 유지).
+
+### 15.143 main/review 왼쪽 패널 디자인 톤 정리 `[implemented 2026-06-29]`
+
+- 배경(Notion `UI 38dd5dc81f6680308d6fc65258f8d0e2`): main 화면의 왼쪽 작업 패널을 첨부 예시처럼 더 통일된 패널 디자인으로 정리해야 했다.
+- 수정: main 왼쪽 content panel에 은은한 slate 배경과 sticky top tab bar를 적용하고, Mission/Reference/Workspace/Final 외곽 카드를 `rounded-2xl border bg-white shadow-sm p-5` 톤으로 통일했다. 추가 피드백에 따라 세션 리뷰 overlay(`SessionMemoryDiff`)의 body도 slate 배경 + padding을 적용했다. `MemoryClusterList`는 review presentation에서 shadcn sidebar 토큰(`bg-sidebar`, `border-sidebar-border`, `sidebar-accent`)을 사용하며, 둥근 패널 안에 왼쪽 컬러 숫자 블록이 있는 클러스터 카드로 표시한다. shadcn `ScrollArea` wrapper가 중첩 레이어처럼 보일 수 있어 해당 목록은 native overflow scroll을 사용하고, 패널/아이템의 중첩 shadow는 제거해 border/selected ring 중심으로 상태를 표현한다. 기존 섹션 구조와 내부 동작은 유지한다.
+- 검증: `npx tsc --noEmit`, `npm run lint` 통과(0 error, 기존 warning 유지).

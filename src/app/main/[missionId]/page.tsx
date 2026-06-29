@@ -6353,7 +6353,7 @@ export default function MainScreenPage() {
         }
       };
       return (
-        <div className="flex h-full w-full min-h-0 overflow-hidden">
+        <div className="flex h-full w-full min-h-0 gap-4 overflow-hidden">
           <MemoryClusterList
             clusters={graphClusters}
             selectedClusterId={selectedClusterId}
@@ -6372,8 +6372,9 @@ export default function MainScreenPage() {
                 label: cluster.label,
               })
             }
+            presentation="review"
           />
-          <div className="flex min-w-0 flex-1 overflow-hidden">
+          <div className="flex min-w-0 flex-1 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
             <MemoryClusterSidePanel
               cluster={selectedCluster}
               items={selectedClusterItems}
@@ -7002,10 +7003,10 @@ export default function MainScreenPage() {
           <section
             ref={missionPanelRef}
             data-tour="content-panel"
-            className="flex-1 space-y-6 overflow-y-auto pb-32 pt-8 pl-10 pr-6"
+            className="flex-1 space-y-5 overflow-y-auto bg-slate-50 px-6 pb-32 pt-6"
           >
-            <div className="sticky top-0 z-10 pb-3">
-              <div className="inline-flex rounded-xl border border-slate-200 bg-white p-1 shadow-sm">
+            <div className="sticky top-0 z-10 -mx-6 border-b border-slate-200 bg-slate-50/95 px-6 py-3 backdrop-blur">
+              <div className="flex w-fit items-center gap-1 rounded-2xl border border-slate-200 bg-white p-1 shadow-sm">
                 {[
                   { id: "mission", label: "Mission", ref: missionSectionRef },
                   {
@@ -7040,10 +7041,10 @@ export default function MainScreenPage() {
                         behavior: "smooth",
                       });
                     }}
-                    className={`rounded-lg px-3 py-1.5 text-xs font-medium transition ${
+                    className={`rounded-xl px-3 py-1.5 text-xs font-semibold transition ${
                       activeLeftPanelSection === section.id
                         ? "bg-slate-900 text-white"
-                        : "text-slate-500 hover:bg-slate-50 hover:text-slate-700"
+                        : "text-slate-500 hover:bg-slate-100 hover:text-slate-800"
                     }`}
                   >
                     {section.label}

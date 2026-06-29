@@ -38,7 +38,7 @@ export function IdeaWorkspace({
   return (
     <div
       data-tour="idea-workspace"
-      className="rounded-3xl border border-slate-200 bg-white p-6"
+      className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"
     >
       <div className="mb-5 border-b border-slate-100 pb-4">
         <p className="text-base font-semibold text-slate-900">{title}</p>
