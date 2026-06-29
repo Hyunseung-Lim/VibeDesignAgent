@@ -3673,3 +3673,9 @@ type ChatPlan = {
 - 배경: `/admin` 유저 카드의 미션 진행 row에서 각 세션이 언제 시작/종료됐고 몇 분 걸렸는지 확인하고 싶지만, 기존 한 줄 레이아웃은 `온보딩현재대기`처럼 상태 badge가 붙어 보여 여유 공간이 부족했다.
 - 수정: `MissionProgress`가 `endedAt`을 포함하고 `timerStartedAt`이 없으면 legacy `startedAt`도 읽도록 했다. `AdminUserCard`의 미션 row는 제목/상태 badge 첫 줄과 `시작 ... · 종료 ... · 소요 ...` 작은 메타 줄로 나뉘며, 종료 전 세션은 `경과 ...`로 표시한다. 시간이 없는 미션은 메타 줄을 숨긴다.
 - 검증: `npx tsc --noEmit`, `npm run lint` 통과(0 error, 기존 warning 유지).
+
+### 15.141 레퍼런스 재검색 weak kept context 억제 `[implemented 2026-06-29]`
+
+- 배경: 레퍼런스 검색 결과가 빗나간 뒤 사용자가 `실제 ... 판매하는 웹사이트 없나?`처럼 현재 요청을 교정해도, 남아 있는 기존 reference 카드들이 `Kept (weak signal)`로 raw prompt와 `/api/references` query builder에 들어가 다음 검색을 흐릴 수 있었다.
+- 수정: `buildReferencePreferenceContext`가 현재 user request를 받아 `실제`/`공식`/`판매`/`찾아`/`real`/`official`/`store` 등 교정·구체화 신호가 있으면 weak kept references를 제외한다. 사용자가 실제로 메시지에 인용한 cited references와 삭제된 negative references는 계속 전달한다.
+- 검증: `npx tsc --noEmit`, `npm run lint` 통과(0 error, 기존 warning 유지).

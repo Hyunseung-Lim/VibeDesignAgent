@@ -688,7 +688,16 @@ function buildReferencePreferenceContext(
   references: Reference[],
   activityLog: ActivityLogEvent[],
   messages: Message[],
+  currentRequest?: string,
 ): ReferencePreferenceContext | null {
+  const request = currentRequest?.trim() ?? "";
+  const shouldSuppressWeakKept =
+    /\b(real|actual|official|live|store|shop|selling|ecommerce|product)\b/i.test(
+      request,
+    ) ||
+    /실제|공식|판매|파는|스토어|상점|쇼핑몰|웹사이트|사이트|없나|찾아|검색|다시/.test(
+      request,
+    );
   const citedIds = new Set(
     messages.flatMap((message) =>
       (message.citedReferences ?? []).map((reference) => reference.id),
@@ -721,21 +730,23 @@ function buildReferencePreferenceContext(
       signal: "strong_cited" as const,
     }));
   const citedUrls = new Set(cited.map((reference) => reference.url).filter(Boolean));
-  const kept = references
-    .filter((reference) => !citedUrls.has(reference.url))
-    .slice(-8)
-    .map((reference) => ({
-      title: reference.title,
-      description: reference.description,
-      rationale: reference.rationale,
-      tag: reference.tag,
-      url: reference.url,
-      referenceMode: reference.referenceMode,
-      searchProvider: reference.searchProvider,
-      referencePurpose: reference.referencePurpose,
-      referencePurposeLabel: reference.referencePurposeLabel,
-      signal: "weak_kept" as const,
-    }));
+  const kept = shouldSuppressWeakKept
+    ? []
+    : references
+        .filter((reference) => !citedUrls.has(reference.url))
+        .slice(-8)
+        .map((reference) => ({
+          title: reference.title,
+          description: reference.description,
+          rationale: reference.rationale,
+          tag: reference.tag,
+          url: reference.url,
+          referenceMode: reference.referenceMode,
+          searchProvider: reference.searchProvider,
+          referencePurpose: reference.referencePurpose,
+          referencePurposeLabel: reference.referencePurposeLabel,
+          signal: "weak_kept" as const,
+        }));
   const deleted = activityLog
     .filter((event) => event.section === "reference" && event.action === "delete")
     .slice(-6)
@@ -4055,7 +4066,13 @@ export default function MainScreenPage() {
               : undefined,
           citedTexts: citedTexts.length > 0 ? citedTexts : undefined,
           referencePreferenceContext: missionId
-            ? buildReferencePreferenceContext(missionId, references, activityLog, messages)
+            ? buildReferencePreferenceContext(
+                missionId,
+                references,
+                activityLog,
+                messages,
+                text,
+              )
             : undefined,
           designSpec: (() => {
             const idea = ideas.find((i) => i.id === activeIdeaId);
@@ -5254,6 +5271,7 @@ export default function MainScreenPage() {
                   references,
                   activityLog,
                   messages,
+                  userRequestText ?? customQuery ?? undefined,
                 )
               : null,
           }),
