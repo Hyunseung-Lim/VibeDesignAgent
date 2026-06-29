@@ -3679,3 +3679,9 @@ type ChatPlan = {
 - 배경: 레퍼런스 검색 결과가 빗나간 뒤 사용자가 `실제 ... 판매하는 웹사이트 없나?`처럼 현재 요청을 교정해도, 남아 있는 기존 reference 카드들이 `Kept (weak signal)`로 raw prompt와 `/api/references` query builder에 들어가 다음 검색을 흐릴 수 있었다.
 - 수정: `buildReferencePreferenceContext`가 현재 user request를 받아 `실제`/`공식`/`판매`/`찾아`/`real`/`official`/`store` 등 교정·구체화 신호가 있으면 weak kept references를 제외한다. 사용자가 실제로 메시지에 인용한 cited references와 삭제된 negative references는 계속 전달한다.
 - 검증: `npx tsc --noEmit`, `npm run lint` 통과(0 error, 기존 warning 유지).
+
+### 15.142 세션 이전 memory 참고 여부 표시 제거 `[implemented 2026-06-29]`
+
+- 배경(Notion `38dd5dc81f6680598f23c4068183182f`): 메모리 리뷰의 `세션 이전 항목` 영역에서 `세션 중 참고됨` 카운트와 카드 강조가 표시되어 채팅 영역 카드와 UI 결이 달랐다. 사용자는 세션 중 참고 여부를 별도로 표시하지 않아도 된다고 판단했다.
+- 수정: `세션 중 참고됨` 통계 카드와 `세션 이전 항목` count 카드를 제거하고, 세션 이전 memory 카드의 referenced 파란 강조/상태 라벨/weight delta 표시를 없앴다. `MemoryCard`의 status bar는 라벨/weight가 있을 때만 표시되며, 목록 정렬도 referenced 우선이 아니라 weight 기준으로만 정렬한다.
+- 검증: `npx tsc --noEmit`, `npm run lint` 통과(0 error, 기존 warning 20개 유지).

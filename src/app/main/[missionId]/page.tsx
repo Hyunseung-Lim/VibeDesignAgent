@@ -2172,16 +2172,11 @@ export default function MainScreenPage() {
         promoted: promotedById.get(memory.id) ?? null,
       }))
       .sort((a, b) => {
-        const aTouched = a.referenced ? 1 : 0;
-        const bTouched = b.referenced ? 1 : 0;
-        if (aTouched !== bTouched) return bTouched - aTouched;
         return Number(b.memory.weight ?? 0) - Number(a.memory.weight ?? 0);
       });
 
     return {
       items: beforeSessionMemories,
-      referencedCount: beforeSessionMemories.filter((item) => item.referenced)
-        .length,
       availableCount: beforeSessionMemories.length,
     };
   }, [sessionMemorySummary, cumulativeGraphMemories]);
@@ -7416,36 +7411,12 @@ export default function MainScreenPage() {
                   ) : null;
                 })()}
 
-                {/* Stats row */}
-                <div className="mb-5 grid grid-cols-2 gap-3">
-                  <div className="rounded-xl border border-sky-100 bg-sky-50 px-4 py-3">
-                    <p className="text-[10px] font-semibold uppercase tracking-wide text-sky-500">
-                      세션 이전 항목
-                    </p>
-                    <p className="mt-1.5 text-2xl font-bold text-sky-700">
-                      {beforeSessionMemoryImpact.availableCount}
-                    </p>
-                  </div>
-                  <div className="rounded-xl border border-blue-100 bg-blue-50 px-4 py-3">
-                    <p className="text-[10px] font-semibold uppercase tracking-wide text-blue-500">
-                      세션 중 참고됨
-                    </p>
-                    <p className="mt-1.5 text-2xl font-bold text-blue-700">
-                      {beforeSessionMemoryImpact.referencedCount}
-                    </p>
-                  </div>
-                </div>
-
                 {beforeSessionMemoryImpact.availableCount > 0 ? (
                   <div className="space-y-3">
                     {beforeSessionMemoryImpact.items.map(
-                      ({ memory, referenced }) => (
+                      ({ memory }) => (
                         <MemoryCard
                           key={memory.id}
-                          referenced={Boolean(referenced)}
-                          statusLabel={
-                            referenced ? "세션 중 참고됨" : "세션 전 정보로 유지"
-                          }
                           summary={memorySummaryText(memory)}
                           fields={[
                             memory.episodic
@@ -7468,24 +7439,9 @@ export default function MainScreenPage() {
                               ? formatReviewScore(memory.weight)
                               : null
                           }
-                          weightDeltaLabel={
-                            referenced?.weightDelta != null &&
-                            referenced.weightDelta !== 0
-                              ? formatReviewDelta(referenced.weightDelta)
-                              : null
-                          }
-                          weightDeltaPositive={
-                            referenced?.weightDelta != null &&
-                            referenced.weightDelta > 0
-                          }
                           onClick={() => {
                             setSelectedGraphMemoryId(memory.id);
                             setIsMemoryDiffOpen(true);
-                            if (referenced) {
-                              setSelectedReferencedMemoryId(
-                                referenced.memoryId,
-                              );
-                            }
                           }}
                         />
                       ),
