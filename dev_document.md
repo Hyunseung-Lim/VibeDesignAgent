@@ -3753,3 +3753,8 @@ type ChatPlan = {
 
 - 배경(Notion `Card UI`): 세션 리뷰 timeline의 최종 디자인 확정 카드가 `artboardId`, 생성일 등 세부 정보를 카드 요약에 길게 노출했다. 해당 세부 정보는 Original input 영역에서 확인할 수 있으므로 카드에는 확정 대상만 보여주면 된다.
 - 수정: `final_design_select` 이벤트 요약은 memory input의 첫 줄만 사용하고, `최종 디자인 확정: 시안 · 라벨`을 `최종디자인 시안 확정: 시안 * 라벨` 형태로 정리한다. output의 `artboardId / 시안 / 생성일` 상세는 카드 요약에서 사용하지 않는다.
+
+### 15.152 Memory side panel minor UI 정리 `[implemented 2026-06-30]`
+
+- 배경(Notion `UI minor`): 메모리 side panel 카드의 선택 상태와 weight/출처 정보가 중복되거나 과하게 보여 스캔성이 떨어졌다.
+- 수정: included memory item 선택 시 `선택됨` visible badge를 제거하고 border/ring 상태만 유지한다. 새 기억을 나타내는 왼쪽 막대는 초록색 대신 검정 계열로 통일했다. 펼친 상세의 Weight는 게이지 없이 숫자만 표시하고, 카드 상단에 이미 미션명이 있으므로 하단의 중복 미션 라벨은 제거했다. Design Style 헤더의 `미정의`/`설정됨` badge를 제거하고 empty-state padding도 Design Brief empty-state와 맞췄다. `/agent`의 onboarding mission label은 raw id 축약(`onboarding…`) 대신 `온보딩`으로 표시한다.

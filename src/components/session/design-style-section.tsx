@@ -4,7 +4,6 @@ import type { RefObject, ReactElement, ReactNode } from "react";
 import React from "react";
 import { ChevronDown } from "lucide-react";
 import ReactMarkdown from "react-markdown";
-import { Badge } from "@/components/ui/badge";
 
 export type DesignStyleSectionStyle = {
   id: string;
@@ -91,12 +90,6 @@ export function DesignStyleSection({
             Design Style <span className="text-slate-400">(디자인 스타일)</span>
           </p>
           <div className="flex shrink-0 items-center gap-2">
-            <Badge
-              variant={style ? "secondary" : "outline"}
-              className={style ? undefined : "text-slate-400"}
-            >
-              {style ? "설정됨" : "미정의"}
-            </Badge>
             <span className="flex size-7 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500">
               <ChevronDown
                 size={14}
@@ -108,7 +101,7 @@ export function DesignStyleSection({
         </button>
 
         {open && (
-          <div className="space-y-3 border-t border-slate-100 px-4 py-3">
+          <div className="space-y-3 border-t border-slate-100 px-5 py-4">
             {!style ? (
               <p className="text-sm text-slate-400">
                 아직 정의된 Design Style이 없어요. 에이전트에게 디자인 스타일

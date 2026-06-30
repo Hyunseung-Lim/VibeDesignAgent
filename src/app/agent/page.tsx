@@ -43,6 +43,7 @@ function isWithinCumulative(
 
 function sessionFilterLabel(missionId: string | null, missionTitle?: string) {
   if (!missionId) return "세션 외";
+  if (missionId === ONBOARDING_MISSION_ID) return "온보딩";
   return missionTitle ?? `${missionId.slice(0, 10)}…`;
 }
 

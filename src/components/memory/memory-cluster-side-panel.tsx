@@ -298,7 +298,7 @@ export function MemoryClusterSidePanel({
                             selected
                               ? "bg-slate-700"
                               : isNewThisSession
-                                ? "bg-emerald-400"
+                                ? "bg-slate-900"
                                 : "bg-transparent"
                           }`}
                           aria-hidden="true"
@@ -317,16 +317,9 @@ export function MemoryClusterSidePanel({
                               </p>
                             </div>
                             {selected ? (
-                              <Badge
-                                variant="secondary"
-                                className={`shrink-0 rounded-full ${
-                                  mentionMode
-                                    ? "border-amber-300 bg-amber-100 text-amber-700"
-                                    : "border-slate-300 bg-slate-200 text-slate-700"
-                                }`}
-                              >
-                                {mentionMode ? "멘션 선택" : "선택됨"}
-                              </Badge>
+                              <span className="sr-only">
+                                {mentionMode ? "멘션 선택됨" : "선택됨"}
+                              </span>
                             ) : null}
                           </div>
                         </div>
@@ -365,7 +358,7 @@ export function MemoryClusterSidePanel({
                           ) : null}
                           {weightLabel ? (
                             <div className="rounded-lg border border-border bg-background px-3 py-2">
-                              <div className="mb-1 flex items-center justify-between gap-2">
+                              <div className="flex items-center justify-between gap-2">
                                 <p className="text-[10px] font-semibold uppercase text-muted-foreground">
                                   Weight
                                 </p>
@@ -373,20 +366,7 @@ export function MemoryClusterSidePanel({
                                   {weightLabel}
                                 </p>
                               </div>
-                              <div className="h-1.5 overflow-hidden rounded-full bg-slate-200">
-                                <div
-                                  className="h-full rounded-full bg-slate-700"
-                                  style={{
-                                    width: `${Math.min(100, Math.max(0, Math.round((item.weight ?? 0) * 100)))}%`,
-                                  }}
-                                />
-                              </div>
                             </div>
-                          ) : null}
-                          {memory?.source?.missionId ? (
-                            <p className="text-[11px] text-muted-foreground">
-                              {getMissionLabel(memory.source.missionId)}
-                            </p>
                           ) : null}
                         </div>
                       ) : null}
