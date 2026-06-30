@@ -153,9 +153,9 @@
 - **웹 검색 표시**: 검색 발생 시 `[WEB_SEARCHED]` 마커 → "웹 검색 완료" 배지 표시
 - **인용 링크**: 웹 검색 출처 `(domain.com)` 자동으로 클릭 가능한 마크다운 링크로 변환
 - **특수 블록 처리**:
-  - `[CREATE_NOTE: ...]` → 새 아이디어(시안) 생성. 저장 payload는 목표/대상 사용자, 핵심 경험, 화면 구조, 미션 필수 콘텐츠, 제약을 포함한 독립적인 Design Brief여야 한다. 모델이 한 줄 작업 지시문을 반환하면 클라이언트가 미션 맥락과 현재 사용자 요청으로 시작 가능한 브리프를 복구한다. 단, 현재 시안이 빈 shell이면(디자인 스타일만 먼저 작성된 경우, 또는 세션 시작 시 시드된 빈 디폴트 시안 1: description·designStyle·artboard 모두 없음) 새 시안을 만들지 않고 해당 시안 내용을 채움 `[현행 2026-06-23 → 15.98/15.116]`
+  - `[CREATE_NOTE: ...]` → 새 아이디어(시안) 생성. 저장 payload는 목표/대상 사용자, 핵심 경험, 화면 구조, 미션 필수 콘텐츠, 제약을 포함한 독립적인 Design Brief여야 한다. 모델이 한 줄 작업 지시문을 반환하면 클라이언트가 먼저 assistant 응답 본문에서 실질 브리프를 복구하고, 없을 때 미션 맥락과 현재 사용자 요청으로 시작 가능한 브리프를 복구한다. 단, 현재 시안이 빈 shell이면(디자인 스타일만 먼저 작성된 경우, 또는 세션 시작 시 시드된 빈 디폴트 시안 1: description·designStyle·artboard 모두 없음) 새 시안을 만들지 않고 해당 시안 내용을 채움 `[현행 2026-06-30 → 15.98/15.116/15.153]`
   - 세션은 빈 디폴트 시안 1로 시작한다(read-only/완료 세션 제외). 워크스페이스·탭·Brief/Style/Mockup 구조를 처음부터 노출하고, 첫 brief가 위 shell-fill 규칙으로 이 시안을 채운다 `[현행 2026-06-23 → 15.116]`
-  - `[UPDATE_NOTE: ...]` → 현재 아이디어 내용 업데이트
+  - `[UPDATE_NOTE: ...]` → 현재 아이디어 내용 업데이트. 의도적인 짧은 수정은 허용하되, 디자인 브리프 생성/작성 성격의 턴에서 payload가 한 줄 상태문으로 축약되면 assistant 응답 본문 또는 미션 맥락으로 실질 Design Brief를 복구한 뒤 저장한다 `[현행 2026-06-30 → 15.153]`
   - `[CREATE_DESIGN_SPEC: ...]` → 현재 아이디어의 디자인 스타일 정의/교체. 현재 아이디어가 없으면 빈 시안을 자동 생성하고 그 시안에 스타일을 저장
   - `[GENERATE_MOCKUP: ...]` → Stitch 목업 생성
   - `[EDIT_MOCKUP: ...]` → 목업 수정
@@ -3758,3 +3758,10 @@ type ChatPlan = {
 
 - 배경(Notion `UI minor`): 메모리 side panel 카드의 선택 상태와 weight/출처 정보가 중복되거나 과하게 보여 스캔성이 떨어졌다.
 - 수정: included memory item 선택 시 `선택됨` visible badge를 제거하고 border/ring 상태만 유지한다. 새 기억을 나타내는 왼쪽 막대는 초록색 대신 검정 계열로 통일했다. 펼친 상세의 Weight는 게이지 없이 숫자만 표시하고, 카드 상단에 이미 미션명이 있으므로 하단의 중복 미션 라벨은 제거했다. Design Style 헤더의 `미정의`/`설정됨` badge를 제거하고 empty-state padding도 Design Brief empty-state와 맞췄다. `/agent`의 onboarding mission label은 raw id 축약(`onboarding…`) 대신 `온보딩`으로 표시한다.
+
+### 15.153 UPDATE_NOTE 얇은 Design Brief payload 복구 `[implemented 2026-06-30]`
+
+- 배경(Notion `38ed5dc81f6680308818d1231aa47eb9`): 사용자가 디자인 브리프 생성을 요청했을 때 채팅 응답 본문에는 긴 브리프가 표시됐지만, 실제 Design Brief 영역에는 `Design brief updated...` 같은 짧은 상태 문구만 저장되는 사례가 있었다.
+- 원인: 15.98의 한 줄 브리프 방어는 `CREATE_NOTE` 경로에만 적용됐다. 기존 빈 시안/활성 시안 갱신처럼 모델이 `UPDATE_NOTE`를 emit하는 경로에서는 payload가 얇아도 그대로 저장했고, action 밖 assistant 본문에 있는 실제 브리프를 저장 후보로 보지 않았다.
+- 수정: note action 저장 전에 공통 `resolveDesignBriefPayload()`를 거치게 했다. payload가 실질 브리프가 아니면 먼저 action block을 제거한 assistant 응답 본문에서 실질 브리프를 복구하고, `CREATE_NOTE` 또는 디자인 브리프 생성/작성 성격의 `UPDATE_NOTE`에 한해 미션 맥락 기반 복구를 fallback으로 적용한다. 일반적인 의도적 짧은 `UPDATE_NOTE`는 그대로 허용한다.
+- 문서: 4.6 Current Snapshot의 `CREATE_NOTE`/`UPDATE_NOTE` 저장 계약을 새 복구 순서에 맞게 갱신했다.

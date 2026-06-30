@@ -108,6 +108,7 @@ import type { FinalDesignEnrichmentPayload } from "@/lib/memory-final-design";
 import {
   CHAT_COMPOSER_COMMANDS,
   type ChatComposerCommand,
+  type ChatComposerCommandId,
   type ChatComposerMention,
 } from "@/lib/session/chat-composer";
 
@@ -1061,6 +1062,81 @@ function parseCreateNoteBlock(text: string): CreateNoteData | null {
   return parseNoteBlock(text, "CREATE_NOTE");
 }
 
+const NOTE_ACTION_TAGS = [
+  "CREATE_NOTE",
+  "UPDATE_NOTE",
+  "CREATE_DESIGN_SPEC",
+] as const;
+
+function actionBlockEnd(text: string, start: number, tag: string) {
+  const marker = `[${tag}:`;
+  const payloadStart = start + marker.length;
+  const jsonStart = text.indexOf("{", payloadStart);
+  const bracketEnd = (() => {
+    let depth = 1;
+    for (let i = payloadStart; i < text.length; i += 1) {
+      if (text[i] === "[") depth += 1;
+      else if (text[i] === "]") {
+        depth -= 1;
+        if (depth === 0) return i + 1;
+      }
+    }
+    return -1;
+  })();
+
+  if (jsonStart !== -1 && (bracketEnd === -1 || jsonStart < bracketEnd)) {
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+    for (let i = jsonStart; i < text.length; i += 1) {
+      const char = text[i];
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+      if (char === "\\") {
+        escaped = true;
+        continue;
+      }
+      if (char === '"') {
+        inString = !inString;
+        continue;
+      }
+      if (inString) continue;
+      if (char === "{") depth += 1;
+      if (char === "}") {
+        depth -= 1;
+        if (depth === 0) {
+          let end = i + 1;
+          while (/\s/.test(text[end] ?? "")) end += 1;
+          if (text[end] === "]") end += 1;
+          return end;
+        }
+      }
+    }
+  }
+
+  return bracketEnd === -1 ? text.length : bracketEnd;
+}
+
+function stripNoteActionBlocks(text: string) {
+  let result = text;
+  for (;;) {
+    const starts = NOTE_ACTION_TAGS.map((tag) => ({
+      tag,
+      index: result.indexOf(`[${tag}:`),
+    })).filter((entry) => entry.index !== -1);
+    const next = starts.sort((a, b) => a.index - b.index)[0];
+    if (!next) break;
+    const end = actionBlockEnd(result, next.index, next.tag);
+    result = `${result.slice(0, next.index)}${result.slice(end)}`;
+  }
+  return result
+    .replace(/\n{3,}/g, "\n\n")
+    .replace(/^\s*(?:좋아요\.?|알겠습니다\.?)\s*/i, "")
+    .trim();
+}
+
 function isSubstantiveDesignBrief(description: string) {
   const normalized = description.replace(/\s+/g, " ").trim();
   const substantiveUnits = description
@@ -1102,6 +1178,53 @@ function recoverThinDesignBrief(
     .filter(Boolean)
     .join("\n\n")
     .slice(0, 8000);
+}
+
+function resolveDesignBriefPayload(
+  description: string,
+  assistantText: string,
+  userRequest: string,
+  missionContext: string | undefined,
+  options?: { allowMissionRecovery?: boolean },
+) {
+  const trimmed = description.trim();
+  if (isSubstantiveDesignBrief(trimmed)) {
+    return { description: trimmed, source: "payload" as const };
+  }
+
+  const assistantBrief = stripNoteActionBlocks(assistantText);
+  if (isSubstantiveDesignBrief(assistantBrief)) {
+    return {
+      description: assistantBrief.slice(0, 8000),
+      source: "assistant_text" as const,
+    };
+  }
+
+  if (options?.allowMissionRecovery) {
+    return {
+      description: recoverThinDesignBrief(
+        trimmed,
+        userRequest,
+        missionContext,
+      ),
+      source: "mission_recovery" as const,
+    };
+  }
+
+  return { description: trimmed, source: "payload" as const };
+}
+
+function shouldRecoverThinUpdateNote(
+  userRequest: string,
+  commandId?: ChatComposerCommandId,
+  activeIdea?: Idea | null,
+) {
+  if (commandId === "create_idea") return true;
+  if (activeIdea && !activeIdea.description.trim()) return true;
+  return /(?:디자인\s*)?브리프|design\s*brief|시안/i.test(userRequest) &&
+    /(?:만들|생성|작성|정리|써줘|만들어|create|generate|write)/i.test(
+      userRequest,
+    );
 }
 
 function parseUpdateNoteBlock(text: string): UpdateNoteData | null {
@@ -4252,22 +4375,26 @@ export default function MainScreenPage() {
       const createNoteBlock = parseCreateNoteBlock(fullText);
       const parsedCreateNoteDescription =
         createNoteBlock?.description?.trim() ?? "";
-      const createNoteDescription = parsedCreateNoteDescription
-        ? recoverThinDesignBrief(
+      const createNotePayload = parsedCreateNoteDescription
+        ? resolveDesignBriefPayload(
             parsedCreateNoteDescription,
+            fullText,
             text,
             effectiveMissionBrief,
+            { allowMissionRecovery: true },
           )
-        : "";
+        : { description: "", source: "payload" as const };
+      const createNoteDescription = createNotePayload.description;
       if (
         parsedCreateNoteDescription &&
-        createNoteDescription !== parsedCreateNoteDescription
+        createNotePayload.source !== "payload"
       ) {
         console.warn(
-          "[create_note] Thin or task-like Design Brief recovered with mission context.",
+          "[create_note] Thin or task-like Design Brief recovered before saving.",
           {
             originalLength: parsedCreateNoteDescription.length,
             recoveredLength: createNoteDescription.length,
+            source: createNotePayload.source,
           },
         );
       }
@@ -4350,8 +4477,38 @@ export default function MainScreenPage() {
 
       const updateNoteBlock = parseUpdateNoteBlock(fullText);
       if (updateNoteBlock) {
-        const updateNoteDescription = updateNoteBlock.description?.trim() ?? "";
+        const parsedUpdateNoteDescription =
+          updateNoteBlock.description?.trim() ?? "";
         const targetNoteId = createdNote?.id ?? activeIdeaId;
+        const updateNotePayload = parsedUpdateNoteDescription
+          ? resolveDesignBriefPayload(
+              parsedUpdateNoteDescription,
+              fullText,
+              text,
+              effectiveMissionBrief,
+              {
+                allowMissionRecovery: shouldRecoverThinUpdateNote(
+                  text,
+                  commandForTurn?.id,
+                  activeIdeaAtTurnStart,
+                ),
+              },
+            )
+          : { description: "", source: "payload" as const };
+        const updateNoteDescription = updateNotePayload.description;
+        if (
+          parsedUpdateNoteDescription &&
+          updateNotePayload.source !== "payload"
+        ) {
+          console.warn(
+            "[update_note] Thin or task-like Design Brief recovered before saving.",
+            {
+              originalLength: parsedUpdateNoteDescription.length,
+              recoveredLength: updateNoteDescription.length,
+              source: updateNotePayload.source,
+            },
+          );
+        }
         if (!updateNoteDescription) {
           const blockStart = fullText.indexOf("[UPDATE_NOTE:");
           console.warn(
