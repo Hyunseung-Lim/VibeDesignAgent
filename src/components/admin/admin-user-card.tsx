@@ -26,6 +26,7 @@ export type AdminUser = Participant & {
   completedSessionMissionIds: string[];
   missionOrder: string[];
   missionProgressById: Record<string, MissionProgress>;
+  memoryReviewSubmittedByMissionId: Record<string, number | null>;
 };
 
 // Mirror the lobby status rule (src/app/lobby/page.tsx): the onboarding mission
@@ -194,6 +195,9 @@ export function AdminUserCard({
               const rawProgress = user.missionProgressById[missionId];
               const timingParts = missionTimingParts(rawProgress);
               const isCompleted = completedFlags[index];
+              const isReviewSubmitted = Boolean(
+                user.memoryReviewSubmittedByMissionId[missionId],
+              );
               const isCurrent = index === currentMissionIndex;
               const isLocked =
                 !isCompleted &&
@@ -241,6 +245,18 @@ export function AdminUserCard({
                         >
                           {progress.label}
                         </Badge>
+                        {isCompleted && (
+                          <Badge
+                            variant="outline"
+                            className={
+                              isReviewSubmitted
+                                ? "h-5 shrink-0 px-1.5 text-[10px] text-muted-foreground"
+                                : "h-5 shrink-0 border-amber-200 bg-amber-50 px-1.5 text-[10px] text-amber-700"
+                            }
+                          >
+                            {isReviewSubmitted ? "리뷰 완료" : "리뷰 필요"}
+                          </Badge>
+                        )}
                       </div>
                     </div>
                     {timingParts.length > 0 && (

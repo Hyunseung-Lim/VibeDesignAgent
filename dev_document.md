@@ -68,7 +68,7 @@
 
 - 좌측 패널 (스크롤 가능): Mission → Reference → 아이디어 탭 (Idea/Mockup)
 - 우측 패널 (고정): AI 에이전트 채팅
-- 완료 세션 리뷰 우측 패널은 `세션 이전`/`채팅` 탭만 제공하고, 상단 타이머 오른쪽의 `메모리 리뷰하기` CTA가 cluster list → detail panel → memory graph → review panel 순서의 full-screen memory overlay를 바로 연다. 리뷰 입력창에서 `@`를 입력하면 별도 dropdown 없이 메모리뷰 자체가 선택 모드가 되며, cluster list/detail panel/graph에서 cluster나 memory를 클릭해 답변 본문에 inline mention을 삽입한다. 삽입된 mention은 굵게 표시되고 클릭하면 해당 cluster나 memory로 focus된다. 답변은 7개 단일 번호 질문별 plain text와 structured mentions로 `users/{uid}/memoryReviewFeedback/{missionId}`에 draft autosave된다. 모든 질문을 입력해야 제출할 수 있고, 제출 확인 팝업에서 확정하면 `submittedAt` 저장 후 로비로 이동한다. 로비 완료 미션 카드는 상단 상태 배지 영역에 `submittedAt` 여부에 따라 `리뷰 필요` 또는 `리뷰 완료`를 표시하고, admin 참여자 row의 프로필 메타 영역은 `submittedAt`이 있는 항목에만 작은 `리뷰 완료` 배지를 표시한다 `[현행 2026-06-30 → 15.131/15.134/15.155/15.156/15.165]`
+- 완료 세션 리뷰 우측 패널은 `세션 이전`/`채팅` 탭만 제공하고, 상단 타이머 오른쪽의 `메모리 리뷰하기` CTA가 cluster list → detail panel → memory graph → review panel 순서의 full-screen memory overlay를 바로 연다. 리뷰 입력창에서 `@`를 입력하면 별도 dropdown 없이 메모리뷰 자체가 선택 모드가 되며, cluster list/detail panel/graph에서 cluster나 memory를 클릭해 답변 본문에 inline mention을 삽입한다. 삽입된 mention은 굵게 표시되고 클릭하면 해당 cluster나 memory로 focus된다. 답변은 7개 단일 번호 질문별 plain text와 structured mentions로 `users/{uid}/memoryReviewFeedback/{missionId}`에 draft autosave된다. 모든 질문을 입력해야 제출할 수 있고, 제출 확인 팝업에서 확정하면 `submittedAt` 저장 후 로비로 이동한다. 로비 완료 미션 카드, admin 유저 카드의 완료 미션 row, admin 참여자 row는 `submittedAt` 여부에 따라 `리뷰 필요` 또는 `리뷰 완료`를 표시한다 `[현행 2026-06-30 → 15.131/15.134/15.155/15.156/15.165/15.166/15.167]`
 - 작업 화면에는 실제 화면 영역을 하이라이트하는 제품 투어가 있다. 온보딩 미션에서는 작업 화면 진입 시 자동으로 열리고, 일반 미션에서는 헤더의 `튜토리얼` 버튼을 눌러야 열린다. 튜토리얼은 미션 설명 공간, 채팅 공간, 레퍼런스 섹션, 시안을 여러 개 만들 수 있다는 점, 각 시안이 Design Brief/디자인 스타일/Mockup으로 구성된다는 점, 목업 편집 버튼 사용, Final Design 선택, 타이머와 세션 종료 버튼을 안내한 뒤 마지막에 튜토리얼 버튼 위치를 다시 안내한다 `[현행 2026-06-16 → 15.88]`
 - 제품 투어가 `mission-brief` 단계를 표시할 때는 선택된 옵션 토글을 강제로 접어 미션 설명 본문이 먼저 보이게 한다 `[현행 2026-06-16 → 15.88]`
 
@@ -175,7 +175,7 @@
 - **Prompt 주입 방식**: profile input은 `profile_memories`에 source of truth로 보관한 뒤 derived memory로 쪼개 interaction memory와 같은 retrieved memory system message에 주입. prompt compact JSON은 `episodic`/`semantic` 배열만 포함한다. 같은 memory document에 episodic/semantic이 모두 있어도 prompt에서는 각각 `episodic[].episodic`, `semantic[].semantic`으로 분리해 넣고 memory id/weight/similarity/source metadata는 제외
 - **Legacy**: `GET /api/memory/bootstrap`은 세션 시작 시 memory를 preload하던 구 방식이며, 현재 main client에서는 호출하지 않음
 - **Retrieval 쿼리 구성**: `[user text] + Mission: [parentMissionTitle] + Active idea: [description]` — 선택된 옵션 이름(페르소나 등)은 제외해 임베딩 노이즈 방지
-- **Admin 관측**: researcher가 `/admin/users/[uid]/memory`에서 `/agent`와 동일한 user별 memory cluster graph/list/detail을 확인 가능. detail panel은 그래프 왼쪽에 있고 cluster list는 요약 없이 색상 점·제목·개수만 표시한다 `[현행 2026-06-27 → 15.130]`
+- **Admin 관측**: researcher가 `/admin/users/[uid]/memory`에서 `/agent`와 동일한 user별 memory cluster graph/list/detail을 확인 가능. detail panel은 그래프 왼쪽에 있고 cluster list는 요약 없이 색상·제목·개수만 표시한다 `[현행 2026-06-27 → 15.130]` `[stale 2026-06-30 → 15.169: cluster list가 main 세션리뷰와 동일한 review presentation(rounded card + 색상 count rail + 접기 rail)로 통일됨]`
 - **Retrieval MVP**: v0.1.2 memory document에 embedding과 `weight` metadata를 저장하고, retrieve된 memory의 weight를 천천히 올림
 - **Forgetting MVP**: low-weight/duplicate 후보를 `archivedAt` 기반으로 soft archive
 
@@ -188,7 +188,7 @@
 - 3단계: similarity graph에서 label propagation으로 community를 찾고, community가 너무 많으면 centroid similarity 기준으로 최대 16개까지 merge
 - 4단계: LLM은 cluster membership을 바꾸지 않고 최종 cluster label/summary만 생성한다. summary는 작업 목록을 일반적으로 요약하지 않고 Firestore profile의 실제 displayName을 사용해 그 사람의 반복되는 성격, 습관, 작업 방식, 의사결정 패턴과 디자인 취향을 근거와 함께 서술한다. 단일·약한 근거에는 consistently/always 같은 반복 표현을 쓰지 않는다 `[현행 2026-06-21 → 15.99]`
 - `/agent`(self·admin 공용) UI 헤더에 입력 variant 비교 탭(compact-context / full-context)이 있어 입력 종류별 clustering 결과를 전환해 본다. 탭 전환은 해당 variant의 캐시를 GET하고, 재생성은 선택된 variant로 POST한다 `[현행 2026-06-24 → 15.120]`
-- `/agent` cluster UI는 좌측에서 cluster list → detail panel → graph 순서로 배치한다. cluster list는 폭을 줄이고 cluster summary와 선택됨 badge를 숨겨, 색상 점·cluster label·memory count만 빠르게 스캔하게 한다 `[현행 2026-06-27 → 15.130]`
+- `/agent` cluster UI는 좌측에서 cluster list → detail panel → graph 순서로 배치한다. cluster list는 main 세션 리뷰와 동일한 `MemoryClusterList` review presentation을 사용한다 — 색상 count rail이 달린 rounded card, cluster label만 표시, 좌측 접기 rail 제공. cluster summary와 선택됨 badge는 숨긴다 `[현행 2026-06-30 → 15.169]`
 - `/agent`의 세션 필터와 세션 리뷰 overlay는 모두 유저별 `missionOrder` 기준의 누적 메모리 집합을 사용한다. 예를 들어 세션 2를 선택하면 세션 2까지의 누적 메모리를 보여주고, 세션 2에서 새로 생성된 메모리만 다이아몬드로 표시한다. 세션 리뷰 overlay도 `/agent`와 같은 두 입력 variant 탭을 제공하고, 기본 그래프 필터는 전체 메모리다. 같은 variant + 같은 세션 기준이면 `/agent` 세션 필터와 리뷰의 `세션 이후` cluster membership을 비교할 수 있어야 한다 `[현행 2026-06-30 → 15.149]`
 - 캐시 키는 memory version + item signature + clustering method version으로 관리하고, method version에 선택된 입력 variant가 포함된다. compact-context는 과거 키(`...:compact-context`)를 그대로 유지해 기존 캐시와 planner cluster summary 조회가 깨지지 않고, full-context만 별도 네임스페이스를 가진다 `[현행 2026-06-24 → 15.120]`
 - Self/admin API는 `loadUserMemoryItems`와 `loadClusterInputItems`를 공유하며, admin 전용 cluster route도 `generateAndStoreClusters`를 호출한다. 별도 admin clustering 알고리즘은 두지 않는다 `[현행 2026-06-22 → 15.107]`
@@ -3843,3 +3843,36 @@ type ChatPlan = {
 - 배경: 로비 완료 미션 카드에는 `리뷰 완료` 배지는 있었지만 아직 제출하지 않은 완료 미션의 `리뷰 필요` 상태가 상단 메타 영역에 보이지 않았다.
 - 수정: `MissionCard`는 완료 미션이면 항상 리뷰 상태 배지를 표시한다. `submittedAt`이 있으면 `리뷰 완료`, 없으면 amber tone의 `리뷰 필요` 배지를 보여준다. CTA는 기존처럼 제출 전 `리뷰하기`, 제출 후 `리뷰 보기`를 유지한다.
 - 의도: 완료 미션의 다음 행동 필요 여부를 CTA 영역뿐 아니라 카드 상단 상태 메타에서도 즉시 읽히게 한다.
+
+### 15.166 admin 유저 카드 미션 row 리뷰 상태 배지 추가 `[implemented 2026-06-30]`
+
+- 배경(Page Feedback `/admin`): admin 유저 카드의 미션별 list item에도 로비처럼 `리뷰 필요`/`리뷰 완료` 상태가 보여야 했다.
+- 수정: admin user loading 시 완료 미션별 `/api/memory/review-feedback` 제출 상태를 hydrate해 `memoryReviewSubmittedByMissionId` map으로 저장한다. `AdminUserCard`는 완료된 미션 row에 `submittedAt` 여부에 따라 `리뷰 필요` 또는 `리뷰 완료` 배지를 표시한다.
+- 의도: 관리자가 유저별 미션 진행 목록만 봐도 어떤 완료 세션에 리뷰가 남았는지 바로 알 수 있게 한다.
+
+### 15.167 admin 참여자 모달 높이 제한 및 리뷰 상태 배지 정리 `[implemented 2026-06-30]`
+
+- 배경(Page Feedback `/admin`): 참여자 모달이 긴 목록만큼 커져 viewport 위아래가 잘렸고, row에는 `리뷰 완료`만 보여 `리뷰 필요` 상태가 드러나지 않았다.
+- 수정: 참여자 모달 overlay에 viewport padding을 주고, modal card를 `max-height: calc(100vh - 3rem)` flex column으로 바꿨다. 헤더는 고정하고 참여자 list 영역만 내부 스크롤한다. 각 참여자 row는 `submittedAt` 여부에 따라 `리뷰 필요` 또는 `리뷰 완료` 배지를 표시한다.
+- 의도: 긴 참여자 목록에서도 모달 상단/하단 CTA가 잘리지 않고, admin이 리뷰 미제출 참여자를 바로 식별할 수 있게 한다.
+
+### 15.168 /agent cluster list와 graph 색상 기준 통일 `[implemented 2026-06-30]`
+
+- 배경(Page Feedback `/agent`): 세션 필터 선택 시 왼쪽 cluster list와 오른쪽 graph의 cluster 색이 서로 달랐다. 화면에서도 list는 `3개 클러스터`, graph는 `5 clusters`로 서로 다른 cluster 집합을 기준으로 렌더되고 있었다.
+- 원인: list에는 `filteredClusters`를 전달했지만 graph에는 전체 `clusters`를 전달했다. 두 컴포넌트 모두 공용 `memoryClusterColor(index)`를 쓰지만, index를 계산하는 cluster 배열이 달라 색이 어긋났다.
+- 수정: `/agent`의 `MemoryClusterGraph`도 `filteredClusters`를 받도록 변경했다.
+- 의도: 세션 필터가 적용된 상태에서 list, side panel, graph가 같은 cluster 집합과 같은 색상 index를 공유하게 한다.
+
+### 15.169 /agent·admin cluster list를 review presentation으로 통일 `[implemented 2026-06-30]`
+
+- 배경(Page Feedback): main 세션 리뷰의 `MemoryClusterList`(`presentation="review"`)를 가리키며 이것처럼 해줘, `/agent`의 cluster list를 가리키며 이걸 — 즉 `/agent` cluster list를 review 스타일로 맞춰달라는 요청.
+- 기존: `/agent`(와 이를 재사용하는 `/admin/users/[uid]/memory`)는 default presentation을 써서 폭 좁은 w-44 목록에 색상 점·label·count badge만 표시했다. main 세션 리뷰는 색상 count rail이 달린 rounded card와 좌측 접기 rail을 쓰는 review presentation이었다.
+- 수정: `MemoryClusterPage`의 `MemoryClusterList`에 `presentation="review"`를 전달하고, 감싸는 행에 `gap-4 p-4`를 주어 floating rounded card에 여백을 확보했다. 오른쪽 detail/graph 영역도 main 리뷰처럼 rounded-2xl border bg-white shadow-sm 카드로 감쌌다.
+- 영향 범위: `MemoryClusterPage`가 공용이라 `/agent`와 admin memory 진단 페이지 양쪽이 동시에 바뀐다.
+
+### 15.170 /agent cluster list 재생성 버튼 제거 `[implemented 2026-06-30]`
+
+- 배경(Page Feedback `/agent`): cluster list 안의 재생성 버튼을 없애달라는 요청.
+- 수정: `MemoryClusterPage`의 `MemoryClusterList` 호출에서 `onRegenerate`를 더 이상 전달하지 않는다. `MemoryClusterList`는 `onRegenerate`가 없으면 버튼을 렌더하지 않으므로 추가 컴포넌트 변경은 없다.
+- 결과: 클러스터가 이미 있을 때 list 상단의 재생성 트리거가 사라진다. clustering 재생성은 클러스터가 비어 있을 때의 `MemoryClusterEmptyState` 생성 버튼(`handleRegenerate`)으로만 남는다.
+- 영향 범위: `MemoryClusterPage` 공용이라 `/agent`와 admin memory 진단 페이지 양쪽에서 버튼이 사라진다.

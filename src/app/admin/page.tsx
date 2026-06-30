@@ -915,6 +915,10 @@ export default function AdminPage() {
         missionOrder: changes.missionOrder ?? prev?.missionOrder ?? [],
         missionProgressById:
           changes.missionProgressById ?? prev?.missionProgressById ?? {},
+        memoryReviewSubmittedByMissionId:
+          changes.memoryReviewSubmittedByMissionId ??
+          prev?.memoryReviewSubmittedByMissionId ??
+          {},
       });
     };
 
@@ -1027,9 +1031,52 @@ export default function AdminPage() {
       onboardingStatus:
         statuses[user.id]?.onboardingStatus ?? user.onboardingStatus,
     }));
+    const token = await getAdminToken();
+    const enrichedUsersWithReviewStatus = token
+      ? await Promise.all(
+          enrichedUsers.map(async (user) => {
+            const userMissionIds = Array.from(
+              new Set([
+                ONBOARDING_MISSION_ID,
+                ...user.missionOrder,
+                ...user.missionIds,
+                ...user.sessionMissionIds,
+              ]),
+            );
+            const completedMissionIds = userMissionIds.filter((missionId) =>
+              missionId === ONBOARDING_MISSION_ID
+                ? user.onboardingStatus === "completed"
+                : user.missionProgressById[missionId]?.status === "completed",
+            );
+            const reviewEntries = await Promise.all(
+              completedMissionIds.map(async (missionId) => {
+                const response = await fetch(
+                  `/api/memory/review-feedback?missionId=${encodeURIComponent(
+                    missionId,
+                  )}&targetUid=${encodeURIComponent(user.id)}`,
+                  { headers: { Authorization: `Bearer ${token}` } },
+                ).catch(() => null);
+                if (!response?.ok) return [missionId, null] as const;
+                const data = (await response.json().catch(() => null)) as {
+                  feedback?: { submittedAt?: number | null } | null;
+                } | null;
+                return [
+                  missionId,
+                  data?.feedback?.submittedAt ?? null,
+                ] as const;
+              }),
+            );
+            return {
+              ...user,
+              memoryReviewSubmittedByMissionId:
+                Object.fromEntries(reviewEntries),
+            };
+          }),
+        )
+      : enrichedUsers;
 
     setAdminUsers(
-      enrichedUsers.sort((a, b) =>
+      enrichedUsersWithReviewStatus.sort((a, b) =>
         (a.displayName ?? a.email ?? a.id).localeCompare(
           b.displayName ?? b.email ?? b.id,
         ),
@@ -2650,14 +2697,14 @@ export default function AdminPage() {
       {/* Participants modal */}
       {participantsMissionId && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-6 backdrop-blur-sm"
           onClick={closeParticipants}
         >
           <div
-            className="w-full max-w-sm rounded-3xl bg-card p-8 shadow-2xl"
+            className="flex max-h-[calc(100vh-3rem)] w-full max-w-sm flex-col rounded-3xl bg-card p-6 shadow-2xl"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="flex items-center justify-between">
+            <div className="flex shrink-0 items-center justify-between">
               <h3 className="text-lg font-semibold text-foreground">
                 {missionTitle(participantsMissionId)} 참여자
               </h3>
@@ -2672,7 +2719,7 @@ export default function AdminPage() {
                 ✕
               </Button>
             </div>
-            <div className="mt-4 space-y-2">
+            <div className="mt-4 min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
               {isLoadingParticipants ? (
                 <div className="flex items-center justify-center gap-2 py-8 text-sm text-muted-foreground">
                   <Spinner className="size-4" />
@@ -2719,26 +2766,28 @@ export default function AdminPage() {
                             {p.email}
                           </p>
                         )}
-                        {(p.isAdmin || p.memoryReviewSubmittedAt) && (
-                          <div className="mt-1 flex flex-wrap items-center gap-1.5">
-                            {p.isAdmin && (
-                              <Badge
-                                variant="outline"
-                                className="rounded-full border-transparent bg-indigo-50 text-indigo-700"
-                              >
-                                관리자
-                              </Badge>
-                            )}
-                            {p.memoryReviewSubmittedAt ? (
-                              <Badge
-                                variant="outline"
-                                className="rounded-full text-muted-foreground"
-                              >
-                                리뷰 완료
-                              </Badge>
-                            ) : null}
-                          </div>
-                        )}
+                        <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                          {p.isAdmin && (
+                            <Badge
+                              variant="outline"
+                              className="rounded-full border-transparent bg-indigo-50 text-indigo-700"
+                            >
+                              관리자
+                            </Badge>
+                          )}
+                          <Badge
+                            variant="outline"
+                            className={
+                              p.memoryReviewSubmittedAt
+                                ? "rounded-full text-muted-foreground"
+                                : "rounded-full border-amber-200 bg-amber-50 text-amber-700"
+                            }
+                          >
+                            {p.memoryReviewSubmittedAt
+                              ? "리뷰 완료"
+                              : "리뷰 필요"}
+                          </Badge>
+                        </div>
                       </div>
                       <div className="ml-auto flex items-center gap-1">
                         <Link

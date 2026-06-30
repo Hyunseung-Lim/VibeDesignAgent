@@ -495,7 +495,7 @@ export function MemoryClusterPage({
             </div>
           ) : null}
 
-          <div className="flex min-h-0 flex-1 overflow-hidden">
+          <div className="flex min-h-0 flex-1 gap-4 overflow-hidden p-4">
             <MemoryClusterList
               clusters={filteredClusters}
               selectedClusterId={selectedClusterId}
@@ -506,10 +506,10 @@ export function MemoryClusterPage({
                 setSelectedClusterId(clusterId);
                 setSelectedMemoryId(null);
               }}
-              onRegenerate={handleRegenerate}
+              presentation="review"
             />
 
-            <div className="flex min-w-0 flex-1 overflow-hidden">
+            <div className="flex min-w-0 flex-1 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
               <MemoryClusterSidePanel
                 cluster={selectedCluster}
                 items={selectedClusterItems}
@@ -522,7 +522,7 @@ export function MemoryClusterPage({
               />
               <div className="min-w-0 flex-1 overflow-hidden">
                 <MemoryClusterGraph
-                  clusters={clusters}
+                  clusters={filteredClusters}
                   items={filteredClusterItems}
                   edges={clusterEdges}
                   selectedClusterId={selectedClusterId}
