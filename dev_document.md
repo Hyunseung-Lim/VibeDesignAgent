@@ -145,7 +145,7 @@
 
 ### 4.6 AI 채팅
 
-- **구조화 composer 문법**: `/`는 새 산출물 생성 명령(`/시안생성`, `/디자인스타일생성`, `/목업생성`, `/레퍼런스검색`), `@`는 현재 세션에 이미 존재하는 시안/Design Brief/Design Style/Mockup 언급이다. 대상이 없으면 현재 활성 시안을 사용하고, `@디자인스타일` 같은 검색은 dropdown에서 `시안 N · 디자인 스타일` 실제 대상을 확인한 뒤 ID 기반 chip으로 고정한다. 레퍼런스 카드·텍스트 하이라이트·목업 요소는 기존 전용 선택/인용 UI를 유지하며 `@`에 중복 노출하지 않는다. 명령/언급은 plain text 파싱이 아니라 구조화 metadata로 `/api/chat`과 review/memory context에 전달되고 명시적 `/` 명령이 planner 추론보다 우선한다. `src/lib/session/chat-composer.ts`, `src/components/session/chat-input.tsx`, `src/app/api/chat/route.ts`를 직접 확인 `[현행 2026-06-22 → 15.108]`
+- **구조화 composer 문법**: `/`는 새 산출물 생성 명령(`/시안생성`, `/디자인스타일생성`, `/목업생성`, `/레퍼런스검색`), `@`는 현재 세션에 이미 존재하는 시안/Design Brief/Design Style/Mockup 언급이다. 대상이 없으면 현재 활성 시안을 사용하고, `@디자인스타일` 같은 검색은 dropdown에서 `시안 N · 디자인 스타일` 실제 대상을 확인한 뒤 ID 기반 metadata로 고정한다. 자동완성 선택값은 별도 상단 chip이 아니라 textarea 안에 `/시안생성`, `@시안 1 · 디자인 브리프` 같은 inline token으로 삽입되고, token 부분만 bold/color highlight로 표시된다. 레퍼런스 카드·텍스트 하이라이트·목업 요소는 기존 전용 선택/인용 UI를 유지하며 `@`에 중복 노출하지 않는다. 명령/언급은 raw token 파싱이 아니라 구조화 metadata로 `/api/chat`에 전달되고 명시적 `/` 명령이 planner 추론보다 우선한다. memory draft input에는 command/mention 메타 라인을 붙이지 않고 사용자가 본 실제 입력문만 저장한다. `src/lib/session/chat-composer.ts`, `src/components/session/chat-input.tsx`, `src/app/api/chat/route.ts`를 직접 확인 `[현행 2026-06-30 → 15.108/15.157]`
 - **응답 생성 provider**: 기본 OpenAI `gpt-5.4` (Responses API). `CHAT_RESPONSE_PROVIDER=anthropic` 또는 `LLM_PROVIDER=anthropic`이면 최종 chat 응답 생성만 Claude Messages API로 전환
 - **Provider 범위**: planner, embedding, memory retrieval/encoding, clustering label은 기존 OpenAI 경로 유지. `/api/chat`의 최종 assistant response streaming만 provider switch 대상. Admin UI에서는 메인 채팅 헤더의 LLM selector로 turn별 provider override 가능
 - **웹 검색**: OpenAI provider일 때 `web_search_preview` 툴 활성화, 레퍼런스 URL 인용 시 `tool_choice: "required"`로 강제. Anthropic provider일 때는 prompt에 포함된 reference title/url context를 사용하고 web search tool은 호출하지 않음
@@ -3356,7 +3356,7 @@ type ChatPlan = {
 - composer UX:
   - textarea에서 단어 시작 위치의 `/` 또는 `@`를 감지해 입력창 위 dropdown을 연다. `/`는 생성 명령, `@`는 현재 세션에 실제로 존재하는 시안/산출물만 검색한다.
   - 방향키 이동, Enter/Tab 선택, Escape 닫기, 바깥 클릭 닫기를 지원한다. IME 조합 중에는 확정/전송 단축키를 실행하지 않는다.
-  - 1차 구현에서는 textarea를 `contenteditable` 기반 리치 에디터로 바꾸지 않는다. 자동완성 선택 시 trigger query를 textarea에서 제거하고, 기존 citation tray와 같은 composer chip으로 명령/언급을 표시한다. chip 삭제 시 구조화 상태도 함께 제거한다.
+  - 1차 구현에서는 textarea를 `contenteditable` 기반 리치 에디터로 바꾸지 않는다. 자동완성 선택 시 trigger query를 textarea에서 제거하고, 기존 citation tray와 같은 composer chip으로 명령/언급을 표시한다. chip 삭제 시 구조화 상태도 함께 제거한다. `[stale 2026-06-30 → 15.157: 자동완성 선택값은 textarea 안 inline token으로 삽입되고 별도 composer chip은 제거됨]`
   - 한 turn에는 생성 명령을 최대 1개만 허용한다. 명령 chip과 언급 chip은 일반 요청 텍스트, 기존 citation tray, 첨부 이미지와 함께 사용할 수 있다.
   - 현재 시안 contextual shortcut은 선택 당시 `ideaId`를 chip에 저장한다. 다른 시안을 선택하면 해당 탭도 활성화하고, 사용자가 이후 탭을 직접 바꾸면 이전 언급 chip을 해제해 화면의 활성 대상과 숨은 target이 어긋나지 않게 한다.
   - ✨ 카탈로그 버튼은 `/` 명령 팔레트를 여는 slash/command 아이콘으로 교체한다. 클릭은 `/`를 직접 입력한 것과 같은 dropdown을 열고, 이미지 첨부 버튼은 유지한다. placeholder는 `/로 만들기 · @로 기존 항목 언급`의 의미를 짧게 안내한다.
@@ -3380,7 +3380,7 @@ type ChatPlan = {
   - 존재/미존재 Design Style과 Mockup에 따라 `@` 결과와 `/` 생성 안내가 올바르게 달라지는지 확인한다.
   - `/시안생성`이 새 시안 + substantive Design Brief를 한 번만 만들고 새 탭을 활성화하는지, `/디자인스타일생성`과 `/목업생성`이 현재 또는 명시된 시안만 갱신하는지 확인한다.
   - 레퍼런스 카드, 텍스트 인용, 선택 요소의 현행 선택·해제·전송이 바뀌지 않고 `@` 목록에 중복 노출되지 않는지 회귀 검증한다.
-  - 한글 IME, Enter 전송, Shift+Enter 줄바꿈, dropdown 키보드 탐색, 명령/언급 chip 삭제, 요청 취소 후 composer 초기화를 확인한다.
+  - 한글 IME, Enter 전송, Shift+Enter 줄바꿈, dropdown 키보드 탐색, 명령/언급 chip 삭제, 요청 취소 후 composer 초기화를 확인한다. `[stale 2026-06-30 → 15.157: chip 삭제 대신 textarea inline token 삭제 시 metadata clearing을 확인]`
   - TypeScript, 변경 파일 ESLint, `git diff --check`, production build와 실제 provider를 통한 command별 라이브 요청을 검증한다.
 - 구현/검증 결과:
   - `src/lib/session/chat-composer.ts`에 공용 command/mention 계약과 검색 normalization을 추가하고, `ChatInput`에 `/`·`@` dropdown, 키보드/IME 처리, 구조화 chip, slash toolbar 버튼을 연결했다.
@@ -3786,3 +3786,10 @@ type ChatPlan = {
 - 수정: 로비 완료 미션 카드는 `/api/memory/review-feedback`의 `submittedAt`을 확인해 제출 완료된 미션에만 상단 상태 배지 영역에 `리뷰 완료`를 표시한다. CTA는 오른쪽 아래에 유지하며, 제출 전에는 `리뷰하기`, 제출 후에는 `리뷰 보기`로 표시한다.
 - 관리자: admin 참여자 팝업은 각 participant의 `memoryReviewFeedback/{missionId}.submittedAt`을 admin GET API로 조회하고, 제출 완료 row에만 작은 `리뷰 완료` 배지를 프로필 메타 영역에 표시한다. 오른쪽 액션 영역은 세션 보기, 리뷰, 삭제 같은 조작만 유지한다.
 - source of truth: 완료 여부는 `users/{uid}/memoryReviewFeedback/{missionId}.submittedAt` 존재 여부다.
+
+### 15.157 composer 명령/언급 inline token화 `[implemented 2026-06-30]`
+
+- 배경(Notion `38ed5dc81f6680ebb58ad55c795fe1b0`): `@`/`/` 선택 후 선택값이 입력창 위 chip으로 올라가는 인터랙션이 어색했다. 사용자가 쓴 문장 안에 `@시안 1 ... 업데이트`처럼 자연스럽게 보이고, memory summary에도 `mentioned artifact`/`user input` 메타 라인이 아니라 실제 입력문만 보여야 했다.
+- 수정: `ChatInput`의 자동완성 선택은 trigger text를 제거하지 않고 textarea 안에 `/명령` 또는 `@대상 라벨` inline token을 삽입한다. 별도 composer chip UI는 제거했다. token 부분은 textarea overlay highlight layer로 bold/color 처리한다. 사용자가 inline token을 지우면 구조화 `composerCommand`/`composerMention` metadata도 함께 clear된다.
+- 메모리: chat turn의 memory draft input은 `explicit command`, `mentioned artifact`, `user input`을 합친 문자열 대신 사용자가 본 실제 `text`만 저장한다. 구조화 command/mention metadata는 기존처럼 `/api/chat` 요청과 user message 객체에 별도로 보존해 planner와 mention scoping에는 계속 사용한다.
+- 문서: 4.6 Current Snapshot을 inline token 계약으로 갱신하고, 15.108의 composer chip 전제를 stale 처리했다.

@@ -4066,13 +4066,7 @@ export default function MainScreenPage() {
       return next;
     });
     const manualReference = parseManualReferencePrompt(text);
-    const memoryInput = [
-      commandForTurn ? `explicit command: ${commandForTurn.label}` : "",
-      mentionForTurn ? `mentioned artifact: ${mentionForTurn.label}` : "",
-      `user input: ${text}`,
-    ]
-      .filter(Boolean)
-      .join("\n");
+    const memoryInput = text;
     const memorySources: MemoryDraftSources = {
       texts: [...citedTexts],
       links: selectedReferences.map(memorySourceLinkFromReference),
@@ -7748,6 +7742,11 @@ export default function MainScreenPage() {
                       commands={composerCommandOptions}
                       onPick={(command) => {
                         setComposerCommand(command);
+                        setInputText((current) =>
+                          current.trim()
+                            ? current
+                            : `${command.label} `,
+                        );
                         textareaRef.current?.focus();
                       }}
                     />

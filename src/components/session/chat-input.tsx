@@ -1,7 +1,7 @@
 "use client";
 
 import type { ChangeEvent, KeyboardEvent, RefObject } from "react";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { ArrowUp, ImagePlus, X } from "lucide-react";
 import { Spinner } from "@/components/ui/spinner";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -79,6 +79,59 @@ function findComposerTrigger(value: string, caret: number): ComposerTrigger | nu
   };
 }
 
+function commandToken(command: ChatComposerCommand) {
+  return command.label;
+}
+
+function mentionToken(mention: ChatComposerMention) {
+  return `@${mention.label}`;
+}
+
+type HighlightSegment = {
+  text: string;
+  kind: "plain" | "command" | "mention";
+};
+
+function highlightedInputSegments(
+  value: string,
+  commandOptions: ChatComposerCommand[],
+  mentionOptions: ChatComposerMention[],
+): HighlightSegment[] {
+  if (!value) return [];
+  const tokens = [
+    ...commandOptions.map((command) => ({
+      text: commandToken(command),
+      kind: "command" as const,
+    })),
+    ...mentionOptions.map((mention) => ({
+      text: mentionToken(mention),
+      kind: "mention" as const,
+    })),
+  ]
+    .filter((token) => token.text)
+    .sort((a, b) => b.text.length - a.text.length);
+  const segments: HighlightSegment[] = [];
+  let cursor = 0;
+
+  while (cursor < value.length) {
+    const match = tokens.find((token) => value.startsWith(token.text, cursor));
+    if (!match) {
+      const nextIndex = tokens
+        .map((token) => value.indexOf(token.text, cursor + 1))
+        .filter((index) => index !== -1)
+        .sort((a, b) => a - b)[0];
+      const end = nextIndex ?? value.length;
+      segments.push({ text: value.slice(cursor, end), kind: "plain" });
+      cursor = end;
+      continue;
+    }
+    segments.push({ text: match.text, kind: match.kind });
+    cursor += match.text.length;
+  }
+
+  return segments;
+}
+
 export function ChatInput({
   readOnly,
   selectedElement,
@@ -116,6 +169,10 @@ export function ChatInput({
 }: ChatInputProps) {
   const [trigger, setTrigger] = useState<ComposerTrigger | null>(null);
   const [activeOptionIndex, setActiveOptionIndex] = useState(0);
+  const highlightSegments = useMemo(
+    () => highlightedInputSegments(inputText, commandOptions, mentionOptions),
+    [commandOptions, inputText, mentionOptions],
+  );
   const filteredOptions = trigger
     ? trigger.mode === "command"
       ? commandOptions.filter((option) =>
@@ -140,14 +197,30 @@ export function ChatInput({
     if (!option || ("disabledReason" in option && option.disabledReason)) return;
     const before = inputText.slice(0, trigger.start);
     const after = inputText.slice(trigger.end);
-    onInputTextChange(`${before}${after}`.replace(/\s{2,}/g, " "));
+    const token =
+      trigger.mode === "command"
+        ? commandToken(option as ChatComposerCommand)
+        : mentionToken(option as ChatComposerMention);
+    const needsSpaceBefore = before.length > 0 && !/\s$/.test(before);
+    const needsSpaceAfter = after.length > 0 && !/^\s/.test(after);
+    const next = `${before}${needsSpaceBefore ? " " : ""}${token}${
+      needsSpaceAfter ? " " : ""
+    }${after}`.replace(/\s{2,}/g, " ");
+    onInputTextChange(next);
     if (trigger.mode === "command") {
       onSelectComposerCommand(option as ChatComposerCommand);
     } else {
       onSelectComposerMention(option as ChatComposerMention);
     }
     closeSuggestions();
-    window.setTimeout(() => textareaRef.current?.focus(), 0);
+    window.setTimeout(() => {
+      textareaRef.current?.focus();
+      const caret = Math.min(
+        before.length + (needsSpaceBefore ? 1 : 0) + token.length + 1,
+        next.length,
+      );
+      textareaRef.current?.setSelectionRange(caret, caret);
+    }, 0);
   };
 
   const openCommandPalette = () => {
@@ -192,37 +265,6 @@ export function ChatInput({
           >
             <X size={12} />
           </button>
-        </div>
-      )}
-
-      {!readOnly && (composerCommand || composerMention) && (
-        <div className="mb-2 flex flex-wrap gap-1.5 text-xs">
-          {composerCommand && (
-            <span className="flex items-center gap-1 rounded-full bg-slate-900 px-2.5 py-1 font-medium text-white">
-              {composerCommand.label}
-              <button
-                type="button"
-                onClick={onClearComposerCommand}
-                aria-label={`${composerCommand.label} 해제`}
-                className="text-white/60 hover:text-white"
-              >
-                <X size={12} />
-              </button>
-            </span>
-          )}
-          {composerMention && (
-            <span className="flex items-center gap-1 rounded-full bg-indigo-50 px-2.5 py-1 font-medium text-indigo-700">
-              @{composerMention.label}
-              <button
-                type="button"
-                onClick={onClearComposerMention}
-                aria-label={`${composerMention.label} 언급 해제`}
-                className="text-indigo-400 hover:text-indigo-700"
-              >
-                <X size={12} />
-              </button>
-            </span>
-          )}
         </div>
       )}
 
@@ -407,77 +449,113 @@ export function ChatInput({
               </div>
             </>
           )}
-          <textarea
-            ref={textareaRef}
-            rows={1}
-            value={inputText}
-            onChange={(event) => {
-              onInputChange(event);
-              const caret = event.currentTarget.selectionStart;
-              const nextTrigger = findComposerTrigger(
-                event.currentTarget.value,
-                caret,
-              );
-              setTrigger(nextTrigger);
-              setActiveOptionIndex(0);
-            }}
-            onKeyDown={(event) => {
-              if (
-                trigger &&
-                filteredOptions.length > 0 &&
-                !event.nativeEvent.isComposing
-              ) {
-                if (event.key === "ArrowDown") {
-                  event.preventDefault();
-                  setActiveOptionIndex((index) =>
-                    (index + 1) % filteredOptions.length,
-                  );
-                  return;
+          <div className="relative">
+            {inputText ? (
+              <div
+                aria-hidden
+                className="pointer-events-none absolute inset-0 z-0 max-h-40 overflow-hidden whitespace-pre-wrap break-words px-1 text-sm leading-6 text-slate-700"
+              >
+                {highlightSegments.map((segment, index) => (
+                  <span
+                    key={`${segment.kind}-${index}-${segment.text}`}
+                    className={
+                      segment.kind === "command"
+                        ? "font-semibold text-indigo-700"
+                        : segment.kind === "mention"
+                          ? "font-semibold text-sky-700"
+                          : undefined
+                    }
+                  >
+                    {segment.text}
+                  </span>
+                ))}
+                {"\u200b"}
+              </div>
+            ) : null}
+            <textarea
+              ref={textareaRef}
+              rows={1}
+              value={inputText}
+              onChange={(event) => {
+                onInputChange(event);
+                if (
+                  composerCommand &&
+                  !event.currentTarget.value.includes(commandToken(composerCommand))
+                ) {
+                  onClearComposerCommand();
                 }
-                if (event.key === "ArrowUp") {
-                  event.preventDefault();
-                  setActiveOptionIndex((index) =>
-                    (index - 1 + filteredOptions.length) %
-                    filteredOptions.length,
-                  );
-                  return;
+                if (
+                  composerMention &&
+                  !event.currentTarget.value.includes(mentionToken(composerMention))
+                ) {
+                  onClearComposerMention();
                 }
-                if (event.key === "Enter" || event.key === "Tab") {
-                  event.preventDefault();
-                  selectOption(activeOptionIndex);
-                  return;
-                }
-              }
-              if (trigger && event.key === "Escape") {
-                event.preventDefault();
-                closeSuggestions();
-                return;
-              }
-              onKeyDown(event);
-            }}
-            onPaste={(event) => {
-              const items = event.clipboardData?.items;
-              if (!items) return;
-              for (let i = 0; i < items.length; i += 1) {
-                const item = items[i];
-                if (item.kind === "file" && item.type.startsWith("image/")) {
-                  const file = item.getAsFile();
-                  if (file) {
+                const caret = event.currentTarget.selectionStart;
+                const nextTrigger = findComposerTrigger(
+                  event.currentTarget.value,
+                  caret,
+                );
+                setTrigger(nextTrigger);
+                setActiveOptionIndex(0);
+              }}
+              onKeyDown={(event) => {
+                if (
+                  trigger &&
+                  filteredOptions.length > 0 &&
+                  !event.nativeEvent.isComposing
+                ) {
+                  if (event.key === "ArrowDown") {
                     event.preventDefault();
-                    onAttachStyleImage(file);
+                    setActiveOptionIndex((index) =>
+                      (index + 1) % filteredOptions.length,
+                    );
+                    return;
                   }
-                  break;
+                  if (event.key === "ArrowUp") {
+                    event.preventDefault();
+                    setActiveOptionIndex((index) =>
+                      (index - 1 + filteredOptions.length) %
+                      filteredOptions.length,
+                    );
+                    return;
+                  }
+                  if (event.key === "Enter" || event.key === "Tab") {
+                    event.preventDefault();
+                    selectOption(activeOptionIndex);
+                    return;
+                  }
                 }
+                if (trigger && event.key === "Escape") {
+                  event.preventDefault();
+                  closeSuggestions();
+                  return;
+                }
+                onKeyDown(event);
+              }}
+              onPaste={(event) => {
+                const items = event.clipboardData?.items;
+                if (!items) return;
+                for (let i = 0; i < items.length; i += 1) {
+                  const item = items[i];
+                  if (item.kind === "file" && item.type.startsWith("image/")) {
+                    const file = item.getAsFile();
+                    if (file) {
+                      event.preventDefault();
+                      onAttachStyleImage(file);
+                    }
+                    break;
+                  }
+                }
+              }}
+              disabled={!missionContextReady}
+              placeholder={
+                missionContextReady
+                  ? "/로 만들기 · @로 기존 항목 언급"
+                  : "미션 정보를 불러오는 중입니다..."
               }
-            }}
-            disabled={!missionContextReady}
-            placeholder={
-              missionContextReady
-                ? "/로 만들기 · @로 기존 항목 언급"
-                : "미션 정보를 불러오는 중입니다..."
-            }
-            className="max-h-40 w-full resize-none bg-transparent px-1 text-sm text-slate-700 outline-none focus-visible:outline-none placeholder:text-slate-400"
-          />
+              className="relative z-10 max-h-40 w-full resize-none bg-transparent px-1 text-sm leading-6 text-transparent caret-slate-700 outline-none selection:bg-sky-200/50 focus-visible:outline-none placeholder:text-slate-400"
+            />
+          </div>
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-0.5">
               <Button
