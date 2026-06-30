@@ -164,20 +164,26 @@ export function parseStoredClusters(value: unknown) {
   return Array.isArray(value) ? value.filter(isMemoryCluster) : [];
 }
 
-// Best-effort load of the most recently generated cluster cache for a user.
-// Cluster docs are keyed by item signature and accumulate over time; we pick the
-// newest by generatedAt. Returns [] when no cache exists (caller falls back).
+// Best-effort load of the most recently generated cluster cache *document* for a
+// user. Cluster docs are keyed by item signature and accumulate over time; we
+// pick the newest by generatedAt for the requested variant, ignoring whether the
+// signature still matches the current memory set. Returns null when none exists.
 // This never regenerates clusters (no LLM) — safe for the chat/retrieve hot path.
-export async function loadLatestStoredClusters(
+export async function loadLatestStoredClusterDoc(
   uid: string,
   token: string,
   variant: ClusteringInputVariant = CLUSTERING_INPUT_VARIANT,
-): Promise<MemoryCluster[]> {
+): Promise<{
+  graphClusters: MemoryCluster[];
+  graphEdges: ClusterGraphEdge[];
+  generatedAt: number;
+  itemSignature: string | null;
+} | null> {
   const ids = await listFirestoreDocumentIds(
     `users/${uid}/${CLUSTER_COLLECTION}`,
     token,
   );
-  if (ids.length === 0) return [];
+  if (ids.length === 0) return null;
   const docs = await Promise.all(
     ids.map(async (id) => {
       const data = (await getFirestoreDocument(
@@ -191,19 +197,33 @@ export async function loadLatestStoredClusters(
         data.clusteringInputVariant,
       );
       if (docVariant !== variant) return null;
+      const graphClusters = parseStoredClusters(data.graphClusters);
+      if (graphClusters.length === 0) return null;
       return {
-        generatedAt: typeof data.generatedAt === "number" ? data.generatedAt : 0,
-        clusters: parseStoredClusters(data.graphClusters),
+        graphClusters,
+        graphEdges: parseStoredGraphEdges(data.graphEdges),
+        generatedAt:
+          typeof data.generatedAt === "number" ? data.generatedAt : 0,
+        itemSignature:
+          typeof data.itemSignature === "string" ? data.itemSignature : null,
       };
     }),
   );
-  const latest = docs
-    .filter(
-      (doc): doc is { generatedAt: number; clusters: MemoryCluster[] } =>
-        Boolean(doc && doc.clusters.length > 0),
-    )
-    .sort((a, b) => b.generatedAt - a.generatedAt)[0];
-  return latest ? latest.clusters : [];
+  return (
+    docs
+      .filter((doc): doc is NonNullable<typeof doc> => Boolean(doc))
+      .sort((a, b) => b.generatedAt - a.generatedAt)[0] ?? null
+  );
+}
+
+// Convenience wrapper returning just the clusters of the latest cache document.
+export async function loadLatestStoredClusters(
+  uid: string,
+  token: string,
+  variant: ClusteringInputVariant = CLUSTERING_INPUT_VARIANT,
+): Promise<MemoryCluster[]> {
+  const doc = await loadLatestStoredClusterDoc(uid, token, variant);
+  return doc ? doc.graphClusters : [];
 }
 
 // Map each memory item id to the cluster it belongs to (first match wins).

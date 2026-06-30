@@ -1,5 +1,6 @@
 import {
   getFirebaseAccessToken,
+  getFirestoreDocument,
   verifyFirebaseIdToken,
 } from "@/lib/server/firebaseAdminRest";
 import { loadUserMemoryItems } from "@/lib/server/memoryItems";
@@ -13,8 +14,12 @@ export async function GET(request: Request) {
   try {
     const token = await getFirebaseAccessToken();
     const memories = await loadUserMemoryItems(user.localId, token);
+    const profile = await getFirestoreDocument(`users/${user.localId}`, token);
+    const missionOrder = Array.isArray(profile?.missionOrder)
+      ? profile.missionOrder.map(String)
+      : [];
 
-    return Response.json({ memories });
+    return Response.json({ memories, missionOrder });
   } catch (err) {
     console.error("[api/memory/all]", err);
     return Response.json({ error: "failed to load memories" }, { status: 500 });

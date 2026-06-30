@@ -4,8 +4,10 @@ import { useEffect, type ReactNode } from "react";
 import { XIcon } from "lucide-react";
 
 interface SessionMemoryDiffProps {
-  /** before/after phase toggle control rendered in the header. */
-  phaseToggle?: ReactNode;
+  /** Right-aligned header controls (e.g. cluster variant tabs). */
+  headerActions?: ReactNode;
+  /** Sub-bar rendered below the header, mirroring /agent's filter bar position. */
+  toolbar?: ReactNode;
   onClose: () => void;
   /** Diff body: cluster list + graph + detail panel (mirrors the /agent layout). */
   children: ReactNode;
@@ -13,7 +15,8 @@ interface SessionMemoryDiffProps {
 
 /** Full-screen overlay comparing the memory graph before and after a session. */
 export function SessionMemoryDiff({
-  phaseToggle,
+  headerActions,
+  toolbar,
   onClose,
   children,
 }: SessionMemoryDiffProps) {
@@ -47,8 +50,14 @@ export function SessionMemoryDiff({
             </p>
           </div>
         </div>
-        {phaseToggle}
+        {headerActions}
       </header>
+      {/* Sub-bar below the header (phase toggle), mirroring /agent's filter bar. */}
+      {toolbar ? (
+        <div className="flex shrink-0 items-center gap-2 border-b border-slate-200 bg-white px-6 py-2.5 lg:px-10">
+          {toolbar}
+        </div>
+      ) : null}
       {/* Body — cluster list + graph + detail panel, same as the agent page */}
       <div className="flex min-h-0 flex-1 overflow-hidden bg-slate-50 p-4">
         {children}

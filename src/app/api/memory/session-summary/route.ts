@@ -14,6 +14,16 @@ const CLUSTER_COLLECTION = "memoryClusters";
 const MAX_MEMORY_DOCS = 300;
 const MAX_RETRIEVAL_LOGS = 300;
 
+// Clustering input variants the review can toggle between, mirroring /agent.
+// Legacy/unknown variants (e.g. semantic-only, missing) normalize to the default.
+const CLUSTER_VARIANTS = ["compact-context", "full-context"] as const;
+type ClusterVariant = (typeof CLUSTER_VARIANTS)[number];
+function normalizeClusterVariant(value: unknown): ClusterVariant {
+  return CLUSTER_VARIANTS.includes(value as ClusterVariant)
+    ? (value as ClusterVariant)
+    : "compact-context";
+}
+
 function stringOrNull(value: unknown) {
   return typeof value === "string" && value.trim() ? value : null;
 }
@@ -141,6 +151,7 @@ function compactMemory(id: string, doc: Record<string, unknown>) {
     keyword,
     keywords: keyword,
     weight: memoryWeight(doc),
+    embedding: numberArray(doc.embedding),
     archivedAt: numberOrNull(doc.archivedAt),
     archiveReason: stringOrNull(doc.archiveReason),
     duplicateOf: stringOrNull(doc.duplicateOf),
@@ -165,6 +176,7 @@ function compactGraphMemory(item: ReturnType<typeof compactMemory>) {
     keyword: item.keyword,
     keywords: item.keywords,
     weight: item.weight,
+    embedding: item.embedding,
     archivedAt: item.archivedAt,
     archiveReason: item.archiveReason,
     duplicateOf: item.duplicateOf,
@@ -421,21 +433,40 @@ export async function POST(request: Request) {
         id,
         generatedAt: timestampMs(doc.generatedAt),
         sourceItemCount: numberOrNull(doc.sourceItemCount) ?? 0,
+        variant: normalizeClusterVariant(doc.clusteringInputVariant),
         graphClusters: graphClusterArray(doc.graphClusters),
         graphEdges: graphEdgeArray(doc.graphEdges),
       };
     }),
   );
-  const selectedClusterDoc =
-    clusterDocs
+  // Pick the most recently generated cache doc (by generatedAt). The full-memory
+  // view (/api/memory/clusters) uses the same "latest per variant" rule, so both
+  // screens resolve to the same document for a given variant.
+  const latestClusterDoc = (docs: typeof clusterDocs) =>
+    docs
       .filter((doc) => doc.graphClusters.length > 0)
-      .sort((a, b) => {
-        const countDiff =
-          Math.abs(graphMemories.length - a.sourceItemCount) -
-          Math.abs(graphMemories.length - b.sourceItemCount);
-        if (countDiff !== 0) return countDiff;
-        return b.generatedAt - a.generatedAt;
-      })[0] ?? null;
+      .sort((a, b) => b.generatedAt - a.generatedAt)[0] ?? null;
+  // Latest doc per variant so the review can offer the same compact/full tabs as
+  // /agent without refetching the whole summary.
+  const clustersByVariant = Object.fromEntries(
+    CLUSTER_VARIANTS.map((variant) => {
+      const latest = latestClusterDoc(
+        clusterDocs.filter((doc) => doc.variant === variant),
+      );
+      return [
+        variant,
+        {
+          graphClusters: latest?.graphClusters ?? [],
+          graphEdges: latest?.graphEdges ?? [],
+        },
+      ];
+    }),
+  ) as Record<
+    ClusterVariant,
+    { graphClusters: typeof clusterDocs[number]["graphClusters"]; graphEdges: typeof clusterDocs[number]["graphEdges"] }
+  >;
+  // Variant-agnostic default kept for backward compatibility (other consumers).
+  const selectedClusterDoc = latestClusterDoc(clusterDocs);
 
   // The target user's per-user mission order, used by the review to compute the
   // cumulative memory set (missions are ordered per user, not by id/time).
@@ -454,6 +485,7 @@ export async function POST(request: Request) {
     graphMemories,
     graphClusters: selectedClusterDoc?.graphClusters ?? [],
     graphEdges: selectedClusterDoc?.graphEdges ?? [],
+    clustersByVariant,
     missionOrder,
   });
 }

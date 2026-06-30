@@ -8,12 +8,10 @@ import { loadClusterInputItems } from "@/lib/server/memoryItems";
 import {
   MAX_ITEMS,
   MEMORY_VERSION,
-  clusterDocumentPath,
   generateAndStoreClusters,
-  isMemoryCluster,
+  loadLatestStoredClusterDoc,
   memoryClusterItemSignature,
   normalizeClusteringInputVariant,
-  parseStoredGraphEdges,
 } from "@/lib/server/memoryClustering";
 
 export const runtime = "nodejs";
@@ -41,51 +39,21 @@ export async function GET(
   try {
     const token = await getFirebaseAccessToken();
     const items = await loadClusterInputItems(target.uid, token, MAX_ITEMS);
-    if (items.length < 3) {
-      return Response.json({
-        clusters: [],
-        edges: [],
-        found: false,
-        variant,
-        memoryVersion: MEMORY_VERSION,
-        itemSignature: null,
-        generatedAt: null,
-      });
-    }
-
-    const itemSignature = memoryClusterItemSignature(items);
-    const data = (await getFirestoreDocument(
-      clusterDocumentPath(target.uid, MEMORY_VERSION, itemSignature, variant),
-      token,
-    )) as Record<string, unknown> | null;
-
-    if (!data || data.itemSignature !== itemSignature) {
-      return Response.json({
-        clusters: [],
-        edges: [],
-        found: false,
-        variant,
-        memoryVersion: MEMORY_VERSION,
-        itemSignature,
-        generatedAt: null,
-      });
-    }
-
-    const clusters = Array.isArray(data.graphClusters)
-      ? data.graphClusters.filter(isMemoryCluster)
-      : [];
+    const itemSignature =
+      items.length > 0 ? memoryClusterItemSignature(items) : null;
+    // Unified with the session review: always return the latest cache doc for
+    // this variant (by generatedAt), regardless of signature match, so both
+    // screens resolve to the same document per variant. `stale` flags drift.
+    const latest = await loadLatestStoredClusterDoc(target.uid, token, variant);
     return Response.json({
-      clusters,
-      edges: parseStoredGraphEdges(data.graphEdges),
-      found: clusters.length > 0,
+      clusters: latest?.graphClusters ?? [],
+      edges: latest?.graphEdges ?? [],
+      found: Boolean(latest?.graphClusters.length),
+      stale: latest ? latest.itemSignature !== itemSignature : false,
       variant,
-      memoryVersion:
-        typeof data.memoryVersion === "string"
-          ? data.memoryVersion
-          : MEMORY_VERSION,
+      memoryVersion: MEMORY_VERSION,
       itemSignature,
-      generatedAt:
-        typeof data.generatedAt === "number" ? data.generatedAt : null,
+      generatedAt: latest?.generatedAt || null,
     });
   } catch (error) {
     console.error("[api/admin/users/[uid]/memory/clusters GET]", error);

@@ -187,6 +187,7 @@
 - 4단계: LLM은 cluster membership을 바꾸지 않고 최종 cluster label/summary만 생성한다. summary는 작업 목록을 일반적으로 요약하지 않고 Firestore profile의 실제 displayName을 사용해 그 사람의 반복되는 성격, 습관, 작업 방식, 의사결정 패턴과 디자인 취향을 근거와 함께 서술한다. 단일·약한 근거에는 consistently/always 같은 반복 표현을 쓰지 않는다 `[현행 2026-06-21 → 15.99]`
 - `/agent`(self·admin 공용) UI 헤더에 입력 variant 비교 탭(compact-context / full-context)이 있어 입력 종류별 clustering 결과를 전환해 본다. 탭 전환은 해당 variant의 캐시를 GET하고, 재생성은 선택된 variant로 POST한다 `[현행 2026-06-24 → 15.120]`
 - `/agent` cluster UI는 좌측에서 cluster list → detail panel → graph 순서로 배치한다. cluster list는 폭을 줄이고 cluster summary와 선택됨 badge를 숨겨, 색상 점·cluster label·memory count만 빠르게 스캔하게 한다 `[현행 2026-06-27 → 15.130]`
+- `/agent`의 세션 필터와 세션 리뷰 overlay는 모두 유저별 `missionOrder` 기준의 누적 메모리 집합을 사용한다. 예를 들어 세션 2를 선택하면 세션 2까지의 누적 메모리를 보여주고, 세션 2에서 새로 생성된 메모리만 다이아몬드로 표시한다. 세션 리뷰 overlay도 `/agent`와 같은 두 입력 variant 탭을 제공하고, 기본 그래프 필터는 전체 메모리다. 같은 variant + 같은 세션 기준이면 `/agent` 세션 필터와 리뷰의 `세션 이후` cluster membership을 비교할 수 있어야 한다 `[현행 2026-06-30 → 15.149]`
 - 캐시 키는 memory version + item signature + clustering method version으로 관리하고, method version에 선택된 입력 variant가 포함된다. compact-context는 과거 키(`...:compact-context`)를 그대로 유지해 기존 캐시와 planner cluster summary 조회가 깨지지 않고, full-context만 별도 네임스페이스를 가진다 `[현행 2026-06-24 → 15.120]`
 - Self/admin API는 `loadUserMemoryItems`와 `loadClusterInputItems`를 공유하며, admin 전용 cluster route도 `generateAndStoreClusters`를 호출한다. 별도 admin clustering 알고리즘은 두지 않는다 `[현행 2026-06-22 → 15.107]`
 
@@ -1905,7 +1906,7 @@ type ChatPlan = {
 - 수정:
   - `memoryClusterItemSignature(items)` 공통 함수 추가.
   - `/api/memory/clusters` GET에서 현재 `/agent` memory items를 로드하고 signature를 계산한 뒤, 정확한 `clusterDocumentPath(uid, MEMORY_VERSION, itemSignature)`만 조회하도록 변경.
-  - matching cache가 없으면 오래된/latest cache를 반환하지 않고 `clusters: []`, `found: false`를 반환한다.
+  - matching cache가 없으면 오래된/latest cache를 반환하지 않고 `clusters: []`, `found: false`를 반환한다. `[stale 2026-06-29 → 15.144: signature mismatch 시 빈 배열 대신 해당 variant의 최신 cache로 fallback하도록 변경]`
 - 검증:
   - `npm run lint` 통과. warning 18개 유지.
   - `npm run build` 통과. 기존 Turbopack NFT tracing warning 1개 유지.
@@ -3691,3 +3692,59 @@ type ChatPlan = {
 - 배경(Notion `UI 38dd5dc81f6680308d6fc65258f8d0e2`): main 화면의 왼쪽 작업 패널을 첨부 예시처럼 더 통일된 패널 디자인으로 정리해야 했다.
 - 수정: main 왼쪽 content panel에 은은한 slate 배경과 sticky top tab bar를 적용하고, Mission/Reference/Workspace/Final 외곽 카드를 `rounded-2xl border bg-white shadow-sm p-5` 톤으로 통일했다. 추가 피드백에 따라 세션 리뷰 overlay(`SessionMemoryDiff`)의 body도 slate 배경 + padding을 적용했다. `MemoryClusterList`는 review presentation에서 shadcn sidebar 토큰(`bg-sidebar`, `border-sidebar-border`, `sidebar-accent`)을 사용하며, 둥근 패널 안에 왼쪽 컬러 숫자 블록이 있는 클러스터 카드로 표시한다. shadcn `ScrollArea` wrapper가 중첩 레이어처럼 보일 수 있어 해당 목록은 native overflow scroll을 사용하고, 패널/아이템의 중첩 shadow는 제거해 border/selected ring 중심으로 상태를 표현한다. 기존 섹션 구조와 내부 동작은 유지한다.
 - 검증: `npx tsc --noEmit`, `npm run lint` 통과(0 error, 기존 warning 유지).
+
+### 15.144 전체 메모리 데이터 보기 클러스터 미표시 수정 + 워딩 변경 `[implemented 2026-06-29]`
+
+- 배경(Notion QA `메모리 싱크` 38dd5dc81f668093996bdb07e898ed08): 같은 사용자의 메모리가 리뷰하기 화면에는 클러스터로 보이는데 로비의 `전체 메모리 데이터 보기`(`/agent`)에는 안 떴다. 또한 평가/리뷰는 리뷰하기 화면에서만 하므로 `평가하기` 워딩이 부적절했다.
+- 원인 확정(2026-06-28 백업 데이터로 검증):
+  - 두 화면 모두 `users/{uid}/memories_0_1_2`를 읽고 memory item set 자체는 동일했다(weight null 0개, 300 상한 미달).
+  - 차이는 cluster cache 조회 방식이었다. session-summary(리뷰)는 `memoryClusters` 컬렉션을 variant 무관/signature 무관하게 best-effort로 골라 보여줬고, `/api/memory/clusters` GET(전체보기)은 15.24 결정대로 `(MEMORY_VERSION, 현재 itemSignature, variant)` 정확 일치 문서만 조회해 mismatch면 빈 배열을 반환했다.
+  - 그 결과 메모리가 추가/아카이브되어 signature가 drift되거나, cluster가 다른 variant(예: full-context)로만 생성된 사용자는 전체보기에서 클러스터가 통째로 사라졌다.
+- 수정:
+  - `memoryClustering.ts`에 `loadLatestStoredClusterDoc(uid, token, variant)` 추가(해당 variant 최신 cache 문서를 graphClusters/graphEdges/generatedAt/itemSignature까지 반환). 기존 `loadLatestStoredClusters`는 이 헬퍼를 호출하도록 재구성.
+  - user/admin `/api/memory/clusters` GET 양쪽에서 정확 signature 문서가 없으면 빈 배열 대신 `loadLatestStoredClusterDoc`로 fallback하고 응답에 `stale` 플래그를 추가했다. signature 일치 시 `stale: false`. 클라이언트는 item id가 전혀 안 맞을 때만 `hasStaleCache` 경고를 띄우므로 부분 일치 시에는 클러스터가 조용히 표시된다. `[stale 2026-06-29 → 15.147: 정확 signature 우선 로직 제거, 항상 latest-per-variant 반환]`
+  - 워딩: 로비 버튼 `에이전트 메모리 평가하기` → `전체 메모리 데이터 보기`, `/agent` 헤더 `에이전트 기억` → `전체 메모리 데이터`.
+  - 의도 확인: 리뷰하기 그래프가 기본적으로 세션 변화분(`memoryGraphFilter="changed"`, phase `before`)만 보여주는 것은 의도된 동작이라 변경하지 않았다. `[stale 2026-06-29 → 15.148: /agent와 단일 세션 클러스터 비교가 가능하도록 기본 필터를 전체로 변경]`
+- 검증: `npx tsc --noEmit` 0 error.
+
+### 15.145 리뷰 클러스터 variant 탭 추가 `[implemented 2026-06-29]`
+
+- 배경: 리뷰하기(`?review=1` overlay)가 보여주는 클러스터는 `clusteringInputVariant`를 보지 않고 `sourceItemCount`가 가장 근접한 cache 문서를 골랐다. 그래서 사용자는 그 클러스터가 compact-context(keyword·episodic·semantic)인지 full-context(…input·output·link)인지 알 수 없었고, 전체보기(`/agent`)처럼 둘을 비교할 수도 없었다.
+- 수정:
+  - `/api/memory/session-summary`가 cache 문서를 variant별로 그룹핑해 각 variant의 문서를 `clustersByVariant: { compact-context, full-context }`로 반환한다. 기존 `graphClusters`/`graphEdges`(variant 무관 default)는 호환용으로 유지. `[stale 2026-06-29 → 15.147: variant별 선택을 sourceItemCount 근접에서 latest-per-variant로 변경]`
+  - main 리뷰 화면에 `reviewClusterVariant` state를 추가하고, `SessionMemoryDiff` 헤더 우측에 variant 탭(전체보기와 동일 라벨)을 둔다. 그래프/엣지는 선택 variant의 cache를 쓰되, 그 variant에 cache가 없으면 variant 무관 default로 폴백해 화면이 비지 않게 했다.
+  - `SessionMemoryDiff`는 `headerActions`(헤더 우측 variant 탭)와 `toolbar`(헤더 아래 sub-bar) prop으로 분리했다. 세션 이전/이후 phase 토글은 전체보기(`/agent`)의 필터 bar와 같은 위치인 헤더 아래 sub-bar에 배치한다.
+- 검증: `npx tsc --noEmit` 0 error.
+
+### 15.146 세션 종료 시 두 클러스터 variant 자동 생성 `[implemented 2026-06-29]`
+
+- 배경: 세션 종료 흐름의 클러스터 생성 호출(`POST /api/memory/clusters`)이 variant 없이 한 번만 불려 `compact-context`만 자동 생성됐다. `full-context`는 /agent·admin 재생성 버튼으로 수동 생성할 때만 존재해, 리뷰의 full-context 탭이 대부분 비어 있었다.
+- 수정: 세션 종료(`completeSession`)에서 `compact-context`/`full-context` 두 variant에 대해 `POST /api/memory/clusters`를 병렬 호출하도록 변경(각 variant는 별도 cache 문서). clustering 실패는 기존대로 non-fatal. 메모리 3개 미만이면 양쪽 모두 생성되지 않는 제약은 유지.
+- 검증: `npx tsc --noEmit` 0 error.
+
+### 15.147 클러스터 문서 선택 규칙 통일 (latest-per-variant) `[implemented 2026-06-29]`
+
+- 배경: 전체보기(`/agent`)와 리뷰가 같은 variant라도 서로 다른 cache 문서를 보여줄 수 있었다. 원인은 (1) variant당 cache 문서가 누적되고, (2) 두 화면의 선택 휴리스틱이 달랐기 때문이다 — 전체보기는 정확 시그니처 우선 후 fallback(15.144), 리뷰는 `sourceItemCount` 근접(15.145).
+- 수정: 양쪽 모두 해당 variant에서 **`generatedAt`이 가장 최신인 cache 문서**를 고르도록 통일했다.
+  - `/api/memory/clusters` GET(user/admin): 정확 시그니처 조회를 제거하고 항상 `loadLatestStoredClusterDoc(variant)` 결과를 반환한다. `items.length < 3` 조기 반환도 제거(리뷰처럼 문서가 있으면 보여줌). 현재 메모리 시그니처와 다르면 `stale: true`로 표시.
+  - `/api/memory/session-summary`: `clustersByVariant`를 `sourceItemCount` 근접 대신 variant별 최신 문서로 선택.
+- 효과: cache 문서가 몇 개든, 자동 생성이든 재생성 버튼이든, 같은 variant면 두 화면이 항상 같은 클러스터 문서를 본다. (노드/메모리 집합 차이는 리뷰의 의도된 필터라 별개로 유지.)
+- 검증: `npx tsc --noEmit` 0 error, 변경 라우트 eslint 통과.
+
+### 15.148 리뷰 overlay 기본 클러스터 필터 전체화 `[implemented 2026-06-29]`
+
+- 배경: 리뷰 overlay와 `/agent`가 모두 compact/full variant 탭을 제공하고 최신 variant cache 문서를 공유해도, 리뷰 overlay는 내부 `memoryGraphFilter`가 `changed`로 고정되어 있었다. 필터 UI가 없어 사용자는 이를 바꿀 수 없었고, 단일 세션만 수행한 경우에도 before-session memory처럼 참조/생성/아카이브 상태가 아닌 항목은 리뷰 클러스터에서 빠져 `/agent`와 다르게 보였다.
+- 수정: 리뷰 overlay의 기본 `memoryGraphFilter`를 `all`로 변경했다. 같은 variant와 같은 세션 범위에서는 cluster membership/count가 `/agent`와 비교 가능하게 유지된다. `세션 이전` phase에서 해당 세션 promoted memory를 제외하는 시간 비교 동작은 유지한다.
+- 문서: 4.7 Current Snapshot에 리뷰 overlay의 기본 전체 필터와 단일 세션 비교 계약을 추가하고, 15.144의 `changed` 고정 의도 문구를 stale 처리했다.
+
+### 15.149 /agent 세션 누적 필터 missionOrder 정렬 `[implemented 2026-06-30]`
+
+- 배경: `/agent`에서 세션 필터를 선택하면 선택 세션까지의 누적 메모리를 보여주고, 선택 세션에서 새로 생성된 메모리를 다이아몬드로 표시한다. 그러나 누적 판정이 미션 ID 문자열 순서를 사용하고 있어, 유저별 랜덤 `missionOrder`가 ID 시간순과 다르면 세션 리뷰 overlay의 `세션 이후`와 다른 메모리 집합을 보여줄 수 있었다.
+- 수정: `/agent`가 메모리 목록 API 응답의 `missionOrder`를 사용해 리뷰 화면과 같은 누적 판정 함수를 사용한다. 클라이언트 Firestore 직접 조회는 rules에 막힐 수 있으므로 쓰지 않는다. `missionOrder`를 읽지 못했거나 선택 미션이 order에 없으면 onboarding + 선택 미션만 보여주는 보수적 fallback을 사용한다.
+- 효과: 같은 variant에서 `/agent`의 세션 필터와 해당 세션 리뷰 overlay의 `세션 이후`가 같은 cluster membership/count를 비교할 수 있다.
+
+### 15.150 리뷰 그래프 embedding projection 입력 보존 `[implemented 2026-06-30]`
+
+- 배경: `/agent`와 리뷰 overlay가 같은 cluster membership을 쓰더라도 점 위치가 달랐다. `/agent`는 `/api/memory/all`의 memory `embedding`을 `MemoryClusterGraph`에 전달해 PCA/similarity graph layout의 초기 좌표로 쓰지만, `/api/memory/session-summary`의 `graphMemories`는 `embedding`을 누락해 리뷰 overlay가 `0/N embedded points` fallback 좌표를 사용했다.
+- 수정: `/api/memory/session-summary`의 compact memory/graph memory 응답에 `embedding`을 포함하고, `/main` 리뷰 graph item mapping에서 `MemoryClusterGraph`로 전달한다.
+- 효과: 같은 item set과 같은 cluster/edge cache를 보는 `/agent` 세션 필터와 리뷰 overlay `세션 이후`가 같은 embedding projection 입력을 사용하므로 점 위치가 일관된다.

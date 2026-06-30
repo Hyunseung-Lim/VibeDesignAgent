@@ -22,23 +22,23 @@ import type {
 
 const NO_SESSION_KEY = "__no_session__";
 const ONBOARDING_MISSION_ID = "onboarding";
-// Chronological rank for cumulative memory views. Mission ids are
-// `mission-YYYYMMDD-HHmmss`, so plain string compare = time order. Onboarding is
-// the base and always sorts first; unknown ids sort last.
-function missionOrderKey(missionId: string | null | undefined) {
-  if (missionId === ONBOARDING_MISSION_ID) return "";
-  return missionId ?? "￿";
-}
 
 // A memory belongs to the cumulative set for the selected mission when it is the
-// onboarding base, or was created in a mission at/before the selected one.
+// onboarding base, or was created in a mission at/before the selected one in the
+// user's randomized missionOrder. When missionOrder is missing, fall back to the
+// selected mission only so the view does not invent a chronology.
 function isWithinCumulative(
   memoryMissionId: string | null | undefined,
   selectedMissionId: string,
+  missionOrder: string[],
 ) {
   if (memoryMissionId === ONBOARDING_MISSION_ID) return true;
   if (!memoryMissionId) return false;
-  return missionOrderKey(memoryMissionId) <= missionOrderKey(selectedMissionId);
+  const selectedIndex = missionOrder.indexOf(selectedMissionId);
+  if (selectedIndex === -1) return memoryMissionId === selectedMissionId;
+  const memoryIndex = missionOrder.indexOf(memoryMissionId);
+  if (memoryIndex === -1) return false;
+  return memoryIndex <= selectedIndex;
 }
 
 function sessionFilterLabel(missionId: string | null, missionTitle?: string) {
@@ -117,6 +117,7 @@ export function MemoryClusterPage({
   const [missionTitleById, setMissionTitleById] = useState<
     Record<string, string>
   >({});
+  const [missionOrder, setMissionOrder] = useState<string[]>([]);
   const [clustersGeneratedAt, setClustersGeneratedAt] = useState<number | null>(
     null,
   );
@@ -171,6 +172,11 @@ export function MemoryClusterPage({
           ? memData.memories
           : [];
         setMemories(mems);
+        setMissionOrder(
+          Array.isArray(memData?.missionOrder)
+            ? memData.missionOrder.map(String)
+            : [],
+        );
         applyClusterData(clusterData);
       });
     });
@@ -335,7 +341,11 @@ export function MemoryClusterPage({
     : selectedSessionKey === NO_SESSION_KEY
       ? clusterItems.filter((item) => !item.row.source?.missionId)
       : clusterItems.filter((item) =>
-          isWithinCumulative(item.row.source?.missionId, selectedSessionKey),
+          isWithinCumulative(
+            item.row.source?.missionId,
+            selectedSessionKey,
+            missionOrder,
+          ),
         );
 
   // Narrow the cluster list (left panel) to clusters that still have at least
@@ -393,7 +403,7 @@ export function MemoryClusterPage({
 
           <div className="flex min-w-0 items-baseline gap-2">
             <p className="shrink-0 text-base font-semibold text-foreground">
-              에이전트 기억
+              전체 메모리 데이터
             </p>
             <p className="truncate text-[10px] text-muted-foreground/70">
               클러스터링 입력 비교

@@ -1,5 +1,6 @@
 import {
   getFirebaseAccessToken,
+  getFirestoreDocument,
   listFirestoreDocumentIds,
   deleteFirestoreDocument,
   verifyFirebaseIdToken,
@@ -77,8 +78,13 @@ export async function GET(
   const { uid } = await params;
   const token = await getFirebaseAccessToken();
   const memories = await loadUserMemoryItems(uid, token);
+  const profile = await getFirestoreDocument(`users/${uid}`, token);
+  const missionOrder = Array.isArray(profile?.missionOrder)
+    ? profile.missionOrder.map(String)
+    : [];
   return Response.json({
     memories,
+    missionOrder,
     counts: {
       "0.1.2": memories.length,
     },

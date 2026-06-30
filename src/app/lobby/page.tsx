@@ -334,7 +334,7 @@ export default function LobbyPage() {
                 href="/agent"
                 className={buttonVariants({ variant: "outline", size: "lg" })}
               >
-                에이전트 메모리 평가하기
+                전체 메모리 데이터 보기
               </Link>
             </div>
           </div>

@@ -253,6 +253,7 @@ type SessionMemoryItem = {
   promotedAt?: number | null;
   timestamp?: number | null;
   weight?: number | null;
+  embedding?: number[];
   archivedAt?: number | null;
   archiveReason?: string | null;
   duplicateOf?: string | null;
@@ -287,31 +288,57 @@ type IdleDecaySummary = {
   totalDelta: number;
 };
 
+type SessionGraphCluster = {
+  id: string;
+  label: string;
+  summary: string;
+  count: number;
+  relatedActions: string[];
+  itemIds: string[];
+  representativeItems: string[];
+};
+
+type SessionGraphEdge = {
+  sourceId: string;
+  targetId: string;
+  weight: number;
+};
+
+// Clustering input variants the review can toggle between, mirroring /agent.
+const REVIEW_CLUSTER_VARIANTS = [
+  { value: "compact-context", label: "keyword · episodic · semantic" },
+  {
+    value: "full-context",
+    label: "keyword · episodic · semantic · input · output · link",
+  },
+] as const;
+type ReviewClusterVariant = (typeof REVIEW_CLUSTER_VARIANTS)[number]["value"];
+
+type ReviewClusterBundle = {
+  graphClusters: SessionGraphCluster[];
+  graphEdges: SessionGraphEdge[];
+};
+
 type SessionMemorySummary = {
   drafts: SessionMemoryItem[];
   promoted: SessionMemoryItem[];
   referenced: ReferencedSessionMemoryItem[];
   idleDecaySummary: IdleDecaySummary;
   graphMemories: SessionMemoryItem[];
-  graphClusters: Array<{
-    id: string;
-    label: string;
-    summary: string;
-    count: number;
-    relatedActions: string[];
-    itemIds: string[];
-    representativeItems: string[];
-  }>;
-  graphEdges: Array<{
-    sourceId: string;
-    targetId: string;
-    weight: number;
-  }>;
+  graphClusters: SessionGraphCluster[];
+  graphEdges: SessionGraphEdge[];
+  clustersByVariant: Record<ReviewClusterVariant, ReviewClusterBundle>;
   // The target user's per-user mission order, used to compute the cumulative set.
   missionOrder: string[];
 };
 
 type MemoryGraphFilter = "changed" | "all" | "referenced" | "promoted" | "archived";
+
+const EMPTY_CLUSTERS_BY_VARIANT: Record<ReviewClusterVariant, ReviewClusterBundle> =
+  {
+    "compact-context": { graphClusters: [], graphEdges: [] },
+    "full-context": { graphClusters: [], graphEdges: [] },
+  };
 
 const EMPTY_SESSION_MEMORY_SUMMARY: SessionMemorySummary = {
   drafts: [],
@@ -321,6 +348,7 @@ const EMPTY_SESSION_MEMORY_SUMMARY: SessionMemorySummary = {
   graphMemories: [],
   graphClusters: [],
   graphEdges: [],
+  clustersByVariant: EMPTY_CLUSTERS_BY_VARIANT,
   missionOrder: [],
 };
 
@@ -421,8 +449,28 @@ async function fetchSessionMemorySummary(
       ? data.graphClusters
       : [],
     graphEdges: Array.isArray(data?.graphEdges) ? data.graphEdges : [],
+    clustersByVariant: parseClustersByVariant(data?.clustersByVariant),
     missionOrder: Array.isArray(data?.missionOrder) ? data.missionOrder : [],
   };
+}
+
+function parseClustersByVariant(
+  value: unknown,
+): Record<ReviewClusterVariant, ReviewClusterBundle> {
+  const source = (value ?? {}) as Record<string, unknown>;
+  return REVIEW_CLUSTER_VARIANTS.reduce(
+    (acc, { value: variant }) => {
+      const bundle = source[variant] as Partial<ReviewClusterBundle> | undefined;
+      acc[variant] = {
+        graphClusters: Array.isArray(bundle?.graphClusters)
+          ? bundle.graphClusters
+          : [],
+        graphEdges: Array.isArray(bundle?.graphEdges) ? bundle.graphEdges : [],
+      };
+      return acc;
+    },
+    {} as Record<ReviewClusterVariant, ReviewClusterBundle>,
+  );
 }
 
 const CHAT_MARKDOWN_COMPONENTS = {
@@ -1950,7 +1998,9 @@ export default function MainScreenPage() {
     "before",
   );
   const [memoryGraphFilter, setMemoryGraphFilter] =
-    useState<MemoryGraphFilter>("changed");
+    useState<MemoryGraphFilter>("all");
+  const [reviewClusterVariant, setReviewClusterVariant] =
+    useState<ReviewClusterVariant>("compact-context");
   const [isMemoryDiffOpen, setIsMemoryDiffOpen] = useState(false);
   const [selectedGraphMemoryId, setSelectedGraphMemoryId] = useState<
     string | null
@@ -5554,10 +5604,21 @@ export default function MainScreenPage() {
       setTimerEndedAt(completedAt);
       setSessionCompletionStep(1);
       try {
-        await fetch("/api/memory/clusters", {
-          method: "POST",
-          headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-        });
+        // Generate both clustering variants so the review and the full-memory
+        // view can show compact-context and full-context without a manual
+        // regenerate. Each variant writes a separate cache doc.
+        await Promise.all(
+          REVIEW_CLUSTER_VARIANTS.map((variant) =>
+            fetch("/api/memory/clusters", {
+              method: "POST",
+              headers: {
+                Authorization: `Bearer ${token}`,
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({ variant: variant.value }),
+            }),
+          ),
+        );
       } catch {
         // clustering failure is non-fatal
       }
@@ -6156,6 +6217,34 @@ export default function MainScreenPage() {
       ))}
     </div>
   );
+  const activeReviewClusters =
+    sessionMemorySummary.clustersByVariant[reviewClusterVariant];
+  // Use the selected variant's cache; fall back to the variant-agnostic default
+  // when that variant has no cache so the graph never goes blank on switch.
+  const reviewGraphClusters = activeReviewClusters.graphClusters.length
+    ? activeReviewClusters.graphClusters
+    : sessionMemorySummary.graphClusters;
+  const reviewGraphEdges = activeReviewClusters.graphClusters.length
+    ? activeReviewClusters.graphEdges
+    : sessionMemorySummary.graphEdges;
+  const memoryClusterVariantToggle = (
+    <div className="flex items-center gap-1 rounded-full bg-white/90 p-1 shadow-sm ring-1 ring-slate-100">
+      {REVIEW_CLUSTER_VARIANTS.map((tab) => (
+        <button
+          key={tab.value}
+          type="button"
+          onClick={() => setReviewClusterVariant(tab.value)}
+          className={`rounded-full px-2.5 py-1 text-[11px] font-semibold transition ${
+            reviewClusterVariant === tab.value
+              ? "bg-slate-900 text-white"
+              : "text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+          }`}
+        >
+          {tab.label}
+        </button>
+      ))}
+    </div>
+  );
   const renderSessionImpactGraph = (variant: "panel" | "overlay" = "overlay") => {
     const isOverlay = variant === "overlay";
     const referencedByMemoryId = new Map(
@@ -6186,7 +6275,7 @@ export default function MainScreenPage() {
       },
     );
     const visibleMemoryIds = new Set(visibleMemoryItems.map((item) => item.id));
-    const visibleGraphEdges = sessionMemorySummary.graphEdges.filter(
+    const visibleGraphEdges = reviewGraphEdges.filter(
       (edge) =>
         visibleMemoryIds.has(edge.sourceId) &&
         visibleMemoryIds.has(edge.targetId),
@@ -6221,6 +6310,7 @@ export default function MainScreenPage() {
           .join(" / "),
         timestamp: memory.timestamp ?? 0,
         weight: phaseWeight ?? null,
+        embedding: memory.embedding,
         keyword: memoryKeywords,
         keywords: memoryKeywords,
         row: {
@@ -6228,7 +6318,7 @@ export default function MainScreenPage() {
         },
       };
     });
-    const baseGraphClusters = sessionMemorySummary.graphClusters
+    const baseGraphClusters = reviewGraphClusters
       .map((cluster) => ({
         ...cluster,
         itemIds: cluster.itemIds.filter((itemId) => visibleMemoryIds.has(itemId)),
@@ -7714,7 +7804,8 @@ export default function MainScreenPage() {
 
       {isMemoryDiffOpen && (
         <SessionMemoryDiff
-          phaseToggle={memoryPhaseToggle}
+          headerActions={memoryClusterVariantToggle}
+          toolbar={memoryPhaseToggle}
           onClose={() => setIsMemoryDiffOpen(false)}
         >
           {renderSessionImpactGraph("overlay")}
