@@ -159,7 +159,6 @@ function shouldUseVision(link: MemorySourceLink) {
   }
   return (
     link.referenceMode === "style" ||
-    link.searchProvider === "serper-image" ||
     CURATION_HOST_PATTERN.test(hostname)
   );
 }

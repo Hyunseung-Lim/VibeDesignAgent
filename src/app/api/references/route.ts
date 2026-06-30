@@ -2,35 +2,21 @@ import OpenAI from "openai";
 import {
   REFERENCE_MODE_CLASSIFY_PROMPT,
   referenceQueryBuilderPrompt,
-  referenceCandidateRankingPrompt,
   referenceProductSearchPrompt,
+  referenceStyleSearchPrompt,
 } from "@/lib/prompts";
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-const SERPER_API_KEY = process.env.SERPER_API_KEY;
 const QUERY_MODEL = "gpt-5.4";
-const RERANK_MODEL = "gpt-4o";
-const MAX_RERANK_CANDIDATES = 18;
+const SEARCH_MODEL = "gpt-4o";
 const FINAL_REFERENCE_COUNT = 3;
 // Upper bound when the user asks for a specific number of references. Keeps
 // "100개" style requests from degrading search quality / flooding the panel.
 const MAX_REFERENCE_COUNT = 6;
 
-// Verified via Serper /search test: these domains return results with site: operator
-const CURATION_DOMAINS = [
-  "awwwards.com",
-  "siteinspire.com",
-  "cssdesignawards.com",
-  "godly.website",
-  "mobbin.com",
-  "refero.design",
-  "siteofsites.co",
-  "craftwork.design",
-  "component.gallery",
-];
-
 type ReferenceMode = "style" | "product";
-type SearchProvider = "openai-web" | "serper-image";
+// All references now come from a single OpenAI web_search path.
+type SearchProvider = "openai-web";
 
 const STRUCTURE_REFERENCE_PATTERN =
   /구조\s*참고|구조|레이아웃\s*참고|섹션\s*구성|화면\s*구성|정보\s*구조|와이어프레임|layout\s+reference|layout|structure|section\s+structure|content\s+structure|information\s+architecture|wireframe/i;
@@ -221,64 +207,6 @@ async function withConcurrency<T>(
   return results;
 }
 
-const GENERIC_SEARCH_TERMS = new Set([
-  "reference",
-  "references",
-  "design",
-  "style",
-  "landing",
-  "page",
-  "desktop",
-  "mobile",
-  "website",
-  "web",
-  "app",
-  "product",
-  "service",
-  "high",
-  "quality",
-  "premium",
-  "editorial",
-  "serif",
-  "beige",
-  "bright",
-  "clean",
-  "quiet",
-  "luxury",
-  "recommendation",
-  "photography",
-  "mockup",
-  "case",
-  "study",
-  "dashboard",
-  "saas",
-]);
-
-function significantQueryTerms(...parts: Array<string | null | undefined>) {
-  return (
-    parts
-      .join(" ")
-      .toLowerCase()
-      .match(/[a-z0-9가-힣]{4,}/g)
-      ?.filter((term) => !GENERIC_SEARCH_TERMS.has(term))
-      .slice(0, 6) ?? []
-  );
-}
-
-function requiredDomainPattern(...parts: Array<string | null | undefined>) {
-  const text = parts.join(" ").toLowerCase();
-  if (/wine|winery|vineyard|sommelier|vino|vivino|pour/.test(text)) {
-    return /wine|winery|vineyard|sommelier|vino|vivino|pour|oenolog|cellar|grape/i;
-  }
-  if (/fashion|outfit|wardrobe|styling|clothing|apparel/.test(text)) {
-    return /fashion|outfit|wardrobe|styling|clothing|apparel|lookbook/i;
-  }
-  if (/wellness|mental|health|meditation|therapy|fitness/.test(text)) {
-    return /wellness|mental|health|meditation|therapy|fitness|mindfulness/i;
-  }
-  return null;
-}
-
 async function inferReferenceMode(
   missionTitle: string,
   missionBrief: string,
@@ -328,17 +256,13 @@ function isLowQualityListing(title: string, link: string, source: string) {
   const text = `${title} ${link} ${source}`.toLowerCase();
   return (
     /browse thousands/.test(text) ||
-    /dashboard case study/.test(text) ||
-    /case study saas/.test(text) ||
     /freepik|shutterstock|istockphoto|alamy|pngtree|vecteezy|depositphotos|stock photo/.test(
       text,
     ) ||
     /pinterest\./.test(text) ||
     /\/search\/?/.test(text) ||
     /\/tags?\//.test(text) ||
-    /\/topics?\//.test(text) ||
-    /\/collections?\//.test(text) ||
-    /\/boards?\//.test(text)
+    /\/topics?\//.test(text)
   );
 }
 
@@ -350,6 +274,10 @@ function isLowQualityProductReference(
   const text = `${title} ${link} ${source}`.toLowerCase();
   return (
     isLowQualityListing(title, link, source) ||
+    /dashboard case study/.test(text) ||
+    /case study saas/.test(text) ||
+    /\/collections?\//.test(text) ||
+    /\/boards?\//.test(text) ||
     /instagram\.com|facebook\.com|x\.com|twitter\.com|threads\.net|tiktok\.com/.test(
       text,
     ) ||
@@ -357,31 +285,20 @@ function isLowQualityProductReference(
   );
 }
 
-function matchesReferenceIntent(
-  img: SerperImage,
-  domain: string,
-  requiredPattern: RegExp | null,
-  significantTerms: string[],
+// Style references are allowed to come from galleries/collections, so only the
+// clearly-unusable sources (stock, social, raw search/tag indexes) are filtered.
+function isLowQualityStyleReference(
+  title: string,
+  link: string,
+  source: string,
 ) {
-  const haystack =
-    `${img.title} ${img.source} ${img.link} ${domain}`.toLowerCase();
-  if (isLowQualityListing(img.title, img.link, img.source)) return false;
-  if (requiredPattern && !requiredPattern.test(haystack)) return false;
-  if (significantTerms.length === 0) return true;
-  return significantTerms.some((term) => haystack.includes(term));
-}
-
-function isAcceptableFallbackCandidate(
-  img: SerperImage,
-  domain: string,
-  requiredPattern: RegExp | null,
-  significantTerms: string[],
-) {
-  const haystack =
-    `${img.title} ${img.source} ${img.link} ${domain}`.toLowerCase();
-  if (isLowQualityListing(img.title, img.link, img.source)) return false;
-  if (requiredPattern?.test(haystack)) return true;
-  return significantTerms.some((term) => haystack.includes(term));
+  const text = `${title} ${link} ${source}`.toLowerCase();
+  return (
+    isLowQualityListing(title, link, source) ||
+    /instagram\.com|facebook\.com|x\.com|twitter\.com|threads\.net|tiktok\.com/.test(
+      text,
+    )
+  );
 }
 
 async function buildSearchQueries(
@@ -432,30 +349,7 @@ async function buildSearchQueries(
   }
 }
 
-type SerperImage = {
-  title: string;
-  imageUrl: string;
-  thumbnailUrl: string;
-  source: string;
-  link: string;
-};
-
-type ReferenceCandidate = {
-  kwIdx: number;
-  i: number;
-  img: SerperImage;
-  domain: string;
-};
-
-type RankedReference = {
-  url: string;
-  title?: string;
-  description?: string;
-  rationale?: string;
-  score?: number;
-};
-
-type ProductReference = {
+type WebReference = {
   url: string;
   title?: string;
   description?: string;
@@ -475,90 +369,6 @@ type ReferenceCard = {
   referenceMode: ReferenceMode;
   searchProvider: SearchProvider;
 };
-
-type RankedReferenceCandidate = ReferenceCandidate & {
-  ranked?: RankedReference | null;
-};
-
-async function searchCurationSites(
-  keywords: string[],
-): Promise<SerperImage[]> {
-  if (!SERPER_API_KEY) return [];
-  const siteFilter = CURATION_DOMAINS.map((d) => `site:${d}`).join(" OR ");
-  const queries = keywords.slice(0, 2).map((kw) => `${kw} ${siteFilter}`);
-  const batches = await Promise.all(
-    queries.map(async (q) => {
-      const res = await fetch("https://google.serper.dev/search", {
-        method: "POST",
-        headers: {
-          "X-API-KEY": SERPER_API_KEY!,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ q, num: 8 }),
-      });
-      if (!res.ok) return [];
-      const data = await res.json();
-      return (data.organic ?? []) as Array<{
-        link?: string;
-        title?: string;
-        snippet?: string;
-        displayLink?: string;
-      }>;
-    }),
-  );
-  const seen = new Set<string>();
-  const images: SerperImage[] = [];
-  for (const batch of batches) {
-    for (const item of batch) {
-      if (!item.link || seen.has(item.link)) continue;
-      const domain = domainFor(item.link, item.displayLink);
-      // Discard results that leaked outside the curation domains (Serper doesn't always respect site:)
-      if (!CURATION_DOMAINS.some((d) => domain.endsWith(d))) continue;
-      seen.add(item.link);
-      images.push({
-        title: item.title ?? "",
-        imageUrl: "",         // filled later via hydrateReferenceMetadata
-        thumbnailUrl: "",
-        source: domain,
-        link: item.link,
-      });
-    }
-  }
-  return images;
-}
-
-async function searchImages(
-  query: string,
-  context: string,
-  mode: ReferenceMode,
-): Promise<SerperImage[]> {
-  if (!SERPER_API_KEY) {
-    console.error("[references] SERPER_API_KEY is not configured");
-    return [];
-  }
-  const requiredPattern = requiredDomainPattern(context, query);
-  const q = requiredPattern
-    ? mode === "style"
-      ? `${query} UI visual inspiration screenshot -stock`
-      : `${query} real product UI layout structure reference -dashboard -B2B -SaaS -pinterest -instagram -template`
-    : mode === "style"
-      ? `${query} UI visual style inspiration app website screenshot -stock`
-      : `${query} real product UI website app layout structure reference -pinterest -instagram -template -stock`;
-  const res = await fetch("https://google.serper.dev/images", {
-    method: "POST",
-    headers: {
-      "X-API-KEY": SERPER_API_KEY,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ q, num: 20 }),
-  });
-  if (!res.ok) {
-    console.error("[Serper API Error]", res.status, await res.text());
-    return [];
-  }
-  const data = await res.json();
-  return (data.images ?? []) as SerperImage[];
-}
 
 function responseText(response: unknown) {
   let text = "";
@@ -582,30 +392,7 @@ function responseText(response: unknown) {
   return text;
 }
 
-function parseRankedReferences(text: string): RankedReference[] {
-  const arrayText = extractFirstJsonArray(text);
-  if (!arrayText) return [];
-  try {
-    const parsed = JSON.parse(arrayText);
-    if (!Array.isArray(parsed)) return [];
-    return parsed
-      .map((item) => ({
-        url: String(item?.url ?? ""),
-        title: item?.title ? String(item.title) : undefined,
-        description: item?.description ? String(item.description) : undefined,
-        rationale: item?.rationale ? String(item.rationale) : undefined,
-        score:
-          typeof item?.score === "number" && Number.isFinite(item.score)
-            ? item.score
-            : undefined,
-      }))
-      .filter((item) => item.url);
-  } catch {
-    return [];
-  }
-}
-
-function parseProductReferences(text: string): ProductReference[] {
+function parseWebReferences(text: string): WebReference[] {
   const arrayText = extractFirstJsonArray(text);
   if (!arrayText) return [];
   try {
@@ -626,7 +413,7 @@ function parseProductReferences(text: string): ProductReference[] {
   }
 }
 
-async function hydrateReferenceMetadata(reference: ProductReference) {
+async function hydrateReferenceMetadata(reference: WebReference) {
   let url: URL;
   try {
     url = new URL(reference.url);
@@ -665,84 +452,42 @@ async function hydrateReferenceMetadata(reference: ProductReference) {
   }
 }
 
-async function rerankReferenceCandidates(
-  candidates: ReferenceCandidate[],
-  keywords: string[],
-  searchContext: string,
+// Single OpenAI web_search path for both style and product references. The mode
+// selects the system prompt and the quality filter; thumbnails come from the
+// page og:image via hydrateReferenceMetadata.
+async function searchWebReferences(
   mode: ReferenceMode,
-  referencePreferenceContext: unknown,
-  targetCount: number,
-): Promise<RankedReferenceCandidate[]> {
-  if (candidates.length === 0) return [];
-  try {
-    const candidatePayload = candidates.map(({ img, domain }, index) => ({
-      id: index,
-      title: img.title,
-      url: img.link,
-      source: img.source,
-      domain,
-      imageUrl: img.imageUrl || img.thumbnailUrl,
-    }));
-    const response = await openai.responses.create({
-      model: RERANK_MODEL,
-      tools: [{ type: "web_search_preview" }],
-      input: [
-        {
-          role: "system",
-          content: referenceCandidateRankingPrompt(mode, targetCount),
-        },
-        {
-          role: "user",
-          content: JSON.stringify({
-            searchContext,
-            searchQueries: keywords,
-            sameMissionReferencePreferenceContext: referencePreferenceContext,
-            candidates: candidatePayload,
-          }),
-        },
-      ],
-    });
-    const ranked = parseRankedReferences(responseText(response));
-    const byUrl = new Map(
-      candidates.map((candidate) => [
-        canonicalUrl(candidate.img.link),
-        candidate,
-      ]),
-    );
-    const selected: RankedReferenceCandidate[] = [];
-    ranked.forEach((item) => {
-      const candidate = byUrl.get(canonicalUrl(item.url));
-      if (candidate) selected.push({ ...candidate, ranked: item });
-    });
-    return selected.slice(0, targetCount);
-  } catch (error) {
-    console.error("[references] rerank failed", error);
-    return [];
-  }
-}
-
-async function searchProductReferences(
   keywords: string[],
   searchContext: string,
   blockedUrls: Set<string>,
   omittedNames: string[],
   referencePreferenceContext: unknown,
   targetCount: number,
+  userRequest: string | null,
 ) {
   try {
+    const systemPrompt =
+      mode === "style"
+        ? referenceStyleSearchPrompt(omittedNames)
+        : referenceProductSearchPrompt(omittedNames);
+    const isLowQuality =
+      mode === "style"
+        ? isLowQualityStyleReference
+        : isLowQualityProductReference;
     const response = await openai.responses.create({
-      model: RERANK_MODEL,
+      model: SEARCH_MODEL,
       tools: [{ type: "web_search_preview" }],
       input: [
         {
           role: "system",
-          content: referenceProductSearchPrompt(omittedNames),
+          content: systemPrompt,
         },
         {
           role: "user",
           content: JSON.stringify({
             searchContext,
             searchQueries: keywords,
+            currentUserRequest: userRequest,
             omittedFictionalNames: omittedNames,
             sameMissionReferencePreferenceContext: referencePreferenceContext,
           }),
@@ -750,14 +495,14 @@ async function searchProductReferences(
       ],
     });
     const seen = new Set<string>();
-    const parsed = parseProductReferences(responseText(response)).filter(
+    const parsed = parseWebReferences(responseText(response)).filter(
       (reference) => {
         const canonical = canonicalUrl(reference.url);
         if (!canonical || seen.has(canonical) || blockedUrls.has(canonical)) {
           return false;
         }
         seen.add(canonical);
-        return !isLowQualityProductReference(
+        return !isLowQuality(
           reference.title ?? "",
           reference.url,
           reference.source ?? "",
@@ -771,7 +516,7 @@ async function searchProductReferences(
     );
     return hydrated.slice(0, targetCount);
   } catch (error) {
-    console.error("[references] product web search failed", error);
+    console.error(`[references] ${mode} web search failed`, error);
     return [];
   }
 }
@@ -821,13 +566,10 @@ export async function POST(request: Request) {
 
   try {
     const blockedUrls = new Set<string>();
-    const blockedImages = new Set<string>();
     if (Array.isArray(existingReferences)) {
       existingReferences.forEach((reference) => {
         const url = canonicalUrl(String(reference?.url ?? ""));
-        const imageUrl = canonicalUrl(String(reference?.imageUrl ?? ""));
         if (url) blockedUrls.add(url);
-        if (imageUrl) blockedImages.add(imageUrl);
       });
     }
 
@@ -854,161 +596,33 @@ export async function POST(request: Request) {
       userRequest,
     );
 
-    const productReferences =
-      referenceMode === "product"
-        ? await searchProductReferences(
-            keywords,
-            searchContext,
-            blockedUrls,
-            omittedNames,
-            referencePreferenceContext,
-            targetCount,
-          )
-        : [];
-    // Product mode returns exactly what the web search found (capped at
-    // targetCount) without padding from image search — so naming 2 specific
-    // products yields 2 cards, not a padded 3.
-    if (productReferences.length > 0) {
-      return Response.json({
-        mode: referenceMode,
-        references: productReferences.slice(0, targetCount).map(
-          (reference): ReferenceCard => ({
-            id: `ref-${crypto.randomUUID()}`,
-            title: reference.title || reference.url,
-            description:
-              reference.description || "실제 제품/UX 의사결정 참고 레퍼런스",
-            rationale:
-              reference.rationale ||
-              reference.description ||
-              "현재 미션의 제품/UX 의사결정에 참고하기 좋습니다.",
-            tag: domainFor(reference.url, reference.source),
-            url: reference.url,
-            imageUrl: reference.imageUrl || undefined,
-            referenceMode,
-            searchProvider: "openai-web",
-          }),
-        ),
-      });
-    }
-
-    const requiredPattern = requiredDomainPattern(searchContext);
-    const significantTerms = significantQueryTerms(searchContext);
-
-    // For style mode, search curation galleries in parallel with regular image search
-    const [imageResults, curationImages] = await Promise.all([
-      Promise.all(keywords.map((kw) => searchImages(kw, searchContext, referenceMode))),
-      referenceMode === "style" ? searchCurationSites(keywords) : Promise.resolve([] as SerperImage[]),
-    ]);
-    // Curation results appended as an extra batch (kwIdx = keywords.length)
-    const results = curationImages.length > 0
-      ? [...imageResults, curationImages]
-      : imageResults;
-
-    const seen = new Set<string>();
-    const candidates: ReferenceCandidate[] = [];
-    const fallbackCandidates: typeof candidates = [];
-    const emergencyCandidates: typeof candidates = [];
-
-    results.forEach((images, kwIdx) => {
-      images.forEach((img, i) => {
-        const url = canonicalUrl(img.link);
-        const imageUrl = canonicalUrl(img.imageUrl || img.thumbnailUrl);
-        if (!img.link || !url || seen.has(url) || blockedUrls.has(url)) return;
-        if (imageUrl && blockedImages.has(imageUrl)) return;
-        seen.add(url);
-        const domain = domainFor(img.link, img.source);
-        if (!isLowQualityListing(img.title, img.link, img.source)) {
-          emergencyCandidates.push({ kwIdx, i, img, domain });
-        }
-        if (
-          !matchesReferenceIntent(
-            img,
-            domain,
-            requiredPattern,
-            significantTerms,
-          )
-        ) {
-          if (
-            isAcceptableFallbackCandidate(
-              img,
-              domain,
-              requiredPattern,
-              significantTerms,
-            )
-          ) {
-            fallbackCandidates.push({ kwIdx, i, img, domain });
-          }
-          return;
-        }
-        candidates.push({ kwIdx, i, img, domain });
-      });
-    });
-
-    const candidatePool = (
-      candidates.length > 0
-        ? candidates
-        : fallbackCandidates.length > 0
-          ? fallbackCandidates
-          : emergencyCandidates
-    ).slice(0, MAX_RERANK_CANDIDATES);
-
-    const rankedCandidates = await rerankReferenceCandidates(
-      candidatePool,
+    const found = await searchWebReferences(
+      referenceMode,
       keywords,
       searchContext,
-      referenceMode,
+      blockedUrls,
+      omittedNames,
       referencePreferenceContext,
       targetCount,
-    );
-    const selectedCandidates =
-      rankedCandidates.length > 0
-        ? rankedCandidates
-        : candidatePool
-            .slice(0, targetCount)
-            .map((candidate) => ({ ...candidate, ranked: null }));
-
-    const resolved = await Promise.all(
-      selectedCandidates.map(async (candidate) => {
-        const { kwIdx, img, domain } = candidate;
-        let imageUrl = img.imageUrl || img.thumbnailUrl;
-        // Curation site pages (awwwards, godly, etc.) have no Serper imageUrl —
-        // try fetching the og:image from the actual page
-        if (!imageUrl && CURATION_DOMAINS.some((d) => domain.endsWith(d))) {
-          const hydrated = await hydrateReferenceMetadata({ url: img.link, title: img.title });
-          imageUrl = hydrated.imageUrl ?? "";
-        }
-        if (!imageUrl) return null;
-        const canonicalImage = canonicalUrl(imageUrl);
-        if (canonicalImage && blockedImages.has(canonicalImage)) return null;
-        const ranked = candidate.ranked;
-        const kwLabel = keywords[kwIdx] ?? searchContext.slice(0, 40);
-        return {
-          id: `ref-${crypto.randomUUID()}`,
-          title: ranked?.title || img.title || kwLabel,
-          description: ranked?.description || `${kwLabel} 관련 UI 레퍼런스`,
-          rationale:
-            ranked?.rationale ||
-            ranked?.description ||
-            `${kwLabel} 맥락에서 참고할 수 있는 UI/UX 레퍼런스입니다.`,
-          tag: domain,
-          url: img.link,
-          imageUrl,
-          referenceMode,
-          searchProvider: "serper-image" as const,
-        } satisfies ReferenceCard;
-      }),
+      userRequest,
     );
 
-    const productCards = productReferences.map(
+    const defaultDescription =
+      referenceMode === "style"
+        ? "비주얼 스타일 참고 레퍼런스"
+        : "실제 제품/UX 의사결정 참고 레퍼런스";
+    const defaultRationale =
+      referenceMode === "style"
+        ? "현재 미션의 비주얼 방향을 잡는 데 참고하기 좋습니다."
+        : "현재 미션의 제품/UX 의사결정에 참고하기 좋습니다.";
+
+    const references = found.slice(0, targetCount).map(
       (reference): ReferenceCard => ({
         id: `ref-${crypto.randomUUID()}`,
         title: reference.title || reference.url,
-        description:
-          reference.description || "실제 제품/UX 의사결정 참고 레퍼런스",
+        description: reference.description || defaultDescription,
         rationale:
-          reference.rationale ||
-          reference.description ||
-          "현재 미션의 제품/UX 의사결정에 참고하기 좋습니다.",
+          reference.rationale || reference.description || defaultRationale,
         tag: domainFor(reference.url, reference.source),
         url: reference.url,
         imageUrl: reference.imageUrl || undefined,
@@ -1016,12 +630,8 @@ export async function POST(request: Request) {
         searchProvider: "openai-web",
       }),
     );
-    const references = [...productCards, ...resolved.filter(Boolean)];
 
-    return Response.json({
-      mode: referenceMode,
-      references: references.slice(0, FINAL_REFERENCE_COUNT),
-    });
+    return Response.json({ mode: referenceMode, references });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     return Response.json({ error: message }, { status: 500 });

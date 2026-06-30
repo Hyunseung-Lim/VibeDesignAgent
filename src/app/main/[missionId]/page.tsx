@@ -548,7 +548,7 @@ type Reference = {
   url?: string;
   imageUrl?: string;
   referenceMode?: "style" | "product";
-  searchProvider?: "openai-web" | "serper-image";
+  searchProvider?: "openai-web";
   referencePurpose?: "visual_style" | "page_structure" | "content_components";
   referencePurposeLabel?: string;
 };

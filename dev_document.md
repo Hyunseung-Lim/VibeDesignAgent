@@ -31,7 +31,7 @@
 | 데이터베이스    | Firebase Firestore                                                                    |
 | AI 채팅         | OpenAI Responses API (기본 `gpt-5.4`) / Anthropic Claude 선택 + web_search_preview 툴 |
 | 목업 생성       | Google Stitch SDK                                                                     |
-| 이미지 검색     | Serper API (Google 이미지 검색)                                                       |
+| 레퍼런스 검색   | OpenAI web_search_preview (style·product 공용)                                        |
 | 마크다운 렌더링 | react-markdown                                                                        |
 
 ---
@@ -93,19 +93,16 @@
 
 ### 4.2 레퍼런스 (Reference)
 
-- 채팅에서 "레퍼런스 찾아줘" → `[FETCH_REFERENCES: {query}]` 블록 → Serper API로 이미지/웹 검색
+- 채팅에서 "레퍼런스 찾아줘" → `[FETCH_REFERENCES: {query}]` 블록 → OpenAI `web_search_preview`로 웹 검색 `[현행 2026-06-30 → 15.172]`
 - 검색당 3개씩 누적 표시 (삭제 가능, confirm 팝업)
 - 검색 중에는 해당 assistant chat bubble 안에 작은 로딩 pill을 표시한다
 - 중복 제외/빈 결과/검색 실패 메시지는 Reference 섹션이 아니라 해당 assistant chat bubble의 "레퍼런스 검색 결과"로 표시한다
 - 레퍼런스 선택(인용) 후 메시지 전송 시 이미지를 base64로 서버에서 변환해 chat provider에 전달
 - 인용된 레퍼런스 URL도 시스템 컨텍스트로 전달. OpenAI provider에서는 웹 검색으로 방문 가능
-- **검색 모드 분기**: `inferReferenceMode(query)`로 "style" vs "product" 모드를 분류
-  - **product 모드**: OpenAI `web_search_preview` JSON product 검색을 먼저 수행하고, 결과가 없을 때 Serper 이미지 검색 fallback으로 이동
-  - **style 모드**: 이미지 검색 × 3 + `searchCurationSites()` 병렬 실행
+- **검색 모드 분기**: `inferReferenceMode(query)`로 "style" vs "product" 모드를 분류한 뒤, 두 모드 모두 `searchWebReferences(mode, ...)` 단일 OpenAI `web_search_preview` 경로로 검색한다. 모드는 시스템 프롬프트(style: `referenceStyleSearchPrompt`, product: `referenceProductSearchPrompt`)와 저품질 필터만 다르게 고른다 `[현행 2026-06-30 → 15.172]`
+  - 썸네일은 결과 페이지 URL의 og:image를 `hydrateReferenceMetadata()`로 추출해 확보한다(전용 이미지 검색 없음). 모든 카드의 `searchProvider`는 `openai-web` `[현행 2026-06-30 → 15.172]`
+  - style 필터는 갤러리/포트폴리오를 허용하고 stock·소셜·검색/태그 인덱스만 제외, product 필터는 추가로 소셜 포스트와 collection/board 인덱스도 제외
 - 레퍼런스 카드에는 provider/source 정보만 표시하고, 내부 `style/product` 검색 모드는 중복 배지로 노출하지 않는다
-- **큐레이션 사이트 검색**: Serper `/search` 엔드포인트에 `site:` 연산자를 사용해 9개 큐레이션 도메인에서 웹 결과 검색
-  - 대상 도메인: awwwards.com, siteinspire.com, cssdesignawards.com, godly.website, mobbin.com, refero.design, siteofsites.co, craftwork.design, component.gallery
-  - 큐레이션 결과는 imageUrl 없이 수집 → `hydrateReferenceMetadata()`로 og:image를 fetch해 썸네일 확보
 - `withConcurrency(tasks, limit)` 함수로 병렬 fetch 수를 제한해 외부 API 과부하 방지
 - `sanitizeInput()` 로 LLM 입력 검증 및 prompt injection 방지
 
@@ -161,7 +158,7 @@
   - `[CREATE_DESIGN_SPEC: ...]` → 현재 아이디어의 디자인 스타일 정의/교체. Design Brief가 아직 없어도 세션 초반부터 생성할 수 있으며, 현재 아이디어가 없으면 빈 시안을 자동 생성하고 그 시안에 스타일을 저장한다. 이후 첫 Design Brief는 shell-fill 규칙으로 같은 시안을 채운다 `[현행 2026-06-30 → 15.154]`
   - `[GENERATE_MOCKUP: ...]` → Stitch 목업 생성
   - `[EDIT_MOCKUP: ...]` → 목업 수정
-  - `[FETCH_REFERENCES: ...]` → Serper 이미지/큐레이션 검색
+  - `[FETCH_REFERENCES: ...]` → OpenAI web_search_preview 검색
   - `[WEB_SEARCHED]` → 웹 검색 배지
 
 ### 4.7 메모리 (Memory)
@@ -277,7 +274,7 @@ type Idea = {
 | `POST /api/chat`                                  | 채팅 응답 생성 (OpenAI Responses API 기본, Anthropic 선택 가능)         |
 | `POST /api/stitch`                                | Google Stitch 목업 생성/편집                                            |
 | `GET /api/stitch/html`                            | Stitch 스크린 HTML 재조회                                               |
-| `POST /api/references`                            | Serper 이미지 검색 + 큐레이션 사이트 웹 검색 (3개 반환)                 |
+| `POST /api/references`                            | OpenAI web_search_preview로 style·product 레퍼런스 검색 (3개 반환)      |
 | `POST /api/memory/drafts`                         | interaction turn 단위 memory draft 생성                                 |
 | `POST /api/memory/complete-session`               | 세션 종료 시 draft를 장기 메모리로 확정                                 |
 | `GET /api/memory/bootstrap`                       | Legacy: 세션 시작 시 user memory preload. 현재 main client에서는 미사용 |
@@ -335,7 +332,6 @@ type Idea = {
 ## 9. 환경 변수 (`.env`)
 
 ```
-SERPER_API_KEY
 STITCH_API_KEY
 OPENAI_API_KEY
 CHAT_RESPONSE_PROVIDER # optional: openai | anthropic
@@ -388,8 +384,8 @@ FIREBASE_MEASUREMENT_ID
 - **성능**: `Promise.all` 대신 `withConcurrency(tasks, 4)`로 병렬 fetch 수 제한
 - **안정성**: `extractFirstJsonArray()` — regex 대신 bracket depth counting 파서로 URL 내 `[]` 포함 케이스 처리
 - **보안**: `sanitizeInput(value, maxLength)` 함수로 LLM 입력 길이 제한 및 prompt injection 방지
-- **큐레이션 검색**: `inferReferenceMode(query)`로 style/product 모드 분기. style 모드에서 9개 큐레이션 도메인 대상 `site:` Serper 웹 검색 병렬 실행
-- **이미지 확보**: 큐레이션 결과는 imageUrl 없이 수집 후 `hydrateReferenceMetadata()`로 og:image fetch
+- **검색 모드 분기**: `inferReferenceMode(query)`로 style/product 모드 분기. 두 모드 모두 `searchWebReferences(mode, ...)` 단일 OpenAI web_search_preview 경로로 검색하고, 모드는 시스템 프롬프트와 저품질 필터만 다르게 고른다 `[현행 2026-06-30 → 15.172]`
+- **이미지 확보**: 결과 페이지 URL의 og:image를 `hydrateReferenceMetadata()`로 fetch해 썸네일 확보
 - ID 생성을 `Date.now()`에서 `crypto.randomUUID()`로 교체
 
 ### 10.5 로비 이탈 경고 모달
@@ -3883,3 +3879,12 @@ type ChatPlan = {
 - 원인: planner intent 분류 프롬프트(`chatPlannerPrompt`)에 디자인 브리프(시안)와 디자인 스타일을 구분하는 규칙이 없었다. create_design_spec 규칙의 키워드 그물이 넓고, 디자인 브리프 작성 같은 요청이 디자인이라는 단어와 문서 작성 성격 때문에 create_design_spec으로 끌려갔다.
 - 수정: planner 규칙에 디자인 브리프 = 제품/UX 시안(create_note 또는 update_note)이고 디자인 스타일 = 시각 스타일 레이어(create_design_spec)라는 분기를 명시했다. 디자인이라는 단어만으로 디자인 스타일을 의미하지 않는다는 점도 적었다.
 - 메인 system prompt(CHAT_NOTE_ACTION_PROMPT 등)는 이미 둘을 구분하고 있어 그대로 두고, 분류 단계만 보강했다.
+
+### 15.172 레퍼런스 검색에서 Serper 제거, OpenAI web search 원툴화 `[implemented 2026-06-30]`
+
+- 배경(QA Note): Serper API가 free 계정에서 `400 Query pattern not allowed for free accounts`를 내고 사이트 검색도 막혀 style 레퍼런스 검색이 완전히 죽어 있었다. 사용자가 Serper를 제거하고 OpenAI API 원툴로 가자고 결정했다.
+- 기존: product 모드만 OpenAI `web_search_preview`를 쓰고, style 모드는 Serper `/images` 이미지 검색과 `/search` 큐레이션(`site:` 연산자) 검색으로 이미지 후보를 모은 뒤 OpenAI로 재랭킹했다. free 플랜이 이 쿼리 패턴을 거부했다.
+- 수정: style·product 모드를 모두 `searchWebReferences(mode, ...)` 단일 OpenAI `web_search_preview` 경로로 통합했다. 모드는 시스템 프롬프트(신규 `referenceStyleSearchPrompt` vs 기존 `referenceProductSearchPrompt`)와 저품질 필터만 다르게 고른다. 썸네일은 결과 페이지의 og:image를 `hydrateReferenceMetadata()`로 추출한다.
+- 제거: `SERPER_API_KEY`, `CURATION_DOMAINS`, `searchImages`, `searchCurationSites`, 이미지 후보/재랭킹 파이프라인과 `serper-image` searchProvider. 모든 카드의 provider는 이제 `openai-web`. UI 타입(`reference-card.tsx`, `main/[missionId]/page.tsx`)과 `referenceSourceAnalysis`의 serper 분기도 정리했다.
+- 트레이드오프: 전용 이미지 검색이 빠져 style 썸네일은 og:image 품질에 의존한다. 다만 기존 style 검색이 이미 깨져 있었으므로 net 개선이다.
+- 후속: `scripts/reference_source_probe.mjs`와 `.env`의 `SERPER_API_KEY`는 빌드와 무관해 손대지 않았다 — 정리는 사용자 몫.

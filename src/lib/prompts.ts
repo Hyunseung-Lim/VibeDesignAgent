@@ -579,24 +579,6 @@ Keep each query under 12 words when possible.
 Do not include duplicate queries.`;
 }
 
-export function referenceCandidateRankingPrompt(
-  mode: "style" | "product",
-  finalCount: number,
-) {
-  return `You rank UI/UX design references for a design tool.
-Return ONLY a JSON array with up to ${finalCount} objects:
-[{"url":"...","title":"...","description":"...","rationale":"...","score":0.0}]
-
-${mode === "style" ? "Choose references with strong visual style, useful mood, layout, color, typography, and aesthetic inspiration. Image quality matters." : "Choose concrete, inspectable references useful for product decisions, UX structure, feature patterns, writing a design memo, or comparing real products."}
-${mode === "style" ? "Design galleries, portfolios, screenshots, and visual case studies are acceptable when they are relevant and image-rich." : "Prefer real product pages, official websites, design systems, specific case studies, specific app/screen pages, and reputable editorial design articles."}
-When the user asks for real references, prioritize live, inspectable sources over concept-only gallery posts: official product/brand/person pages, working websites/apps, portfolios, case studies, documentation, design systems, or reputable editorial sources. Use gallery platforms only when they are the best available evidence or when the user explicitly asks for visual inspiration.
-Avoid stock asset pages, generic search/tag/category pages, thin SEO listicles, irrelevant dashboards, and pages unrelated to the user's product domain.${mode === "style" ? "" : " Avoid Pinterest pins/boards."}
-If same-mission reference preference context is provided, prefer candidates similar to cited/kept references and avoid candidates similar to deleted references. Do not apply preferences from other missions.
-Use web search when needed to verify what a candidate URL actually is.
-Descriptions must be short Korean phrases explaining what the reference is.
-Rationales must be short Korean phrases explaining why this reference is useful for the current mission, UX pattern, structure, or visual/style direction.`;
-}
-
 export function referenceProductSearchPrompt(omittedNames: string[]) {
   return `Find high-quality UI/UX product references for a design tool.
 Return ONLY a JSON array with up to 6 objects:
@@ -611,6 +593,23 @@ If same-mission reference preference context is provided, use it as mission-loca
 The "Current user request" line is authoritative for this turn and overrides the assembled search context and the preference context when they conflict. If it corrects or negates an earlier direction (e.g. "X 말고 Y", "그게 아니라 Y", "not X, but Y", "instead of X"), every query MUST drop the rejected direction X and pivot to the requested alternative Y — do not keep X's terms or sources out of momentum. When the rejected direction is a category like brand/official/company pages, actively steer toward the requested alternative (e.g. individual/personal portfolios) instead.
 Descriptions must be short Korean phrases explaining what the reference is.
 Rationales must be short Korean phrases explaining the concrete design/UX value for the current mission.`;
+}
+
+export function referenceStyleSearchPrompt(omittedNames: string[]) {
+  return `Find high-quality visual style references for a design tool.
+Return ONLY a JSON array with up to 6 objects:
+[{"url":"...","title":"...","description":"...","rationale":"...","imageUrl":null,"source":"..."}]
+
+Find image-rich pages that give strong visual style, mood, color, typography, and layout inspiration: design galleries (such as awwwards, siteinspire, godly, refero, mobbin), designer portfolios, landing-page showcases, app screenshot collections, and visual case studies.
+Each result must be a specific inspectable page with a clear design preview, not a search, tag, topic, or category index.
+Set imageUrl to a direct preview/screenshot image URL when you can identify one from the page; otherwise null and the server will extract the page og:image.
+If the project brief contains fictional people/personas, do not search or return pages for the exact fictional name. Use the persona's role, domain, mood, medium, and UI artifact instead.
+Never return pages for these fictional names: ${omittedNames.join(", ") || "(none)"}.
+Avoid stock image sites (Freepik, Shutterstock, and similar), Pinterest, Instagram/social posts, generic tag/search pages, and template marketplaces.
+If same-mission reference preference context is provided, use it as mission-local evidence for visual direction only. Do not treat it as a global user preference.
+The "Current user request" line is authoritative for this turn and overrides the assembled search context when they conflict.
+Descriptions must be short Korean phrases explaining what the reference is.
+Rationales must be short Korean phrases explaining the concrete visual/style value for the current mission.`;
 }
 
 // ────────────────────────────────────────────────────────────
