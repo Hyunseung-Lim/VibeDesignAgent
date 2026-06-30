@@ -3819,9 +3819,7 @@ export default function MainScreenPage() {
     return CHAT_COMPOSER_COMMANDS.map((command) => {
       let disabledReason: string | undefined;
       if (command.id === "create_design_style") {
-        if (!activeIdea?.description.trim()) {
-          disabledReason = "먼저 시안과 Design Brief가 필요해요";
-        } else if (activeIdea.designStyle?.content?.trim()) {
+        if (activeIdea?.designStyle?.content?.trim()) {
           disabledReason = "현재 시안에 이미 Design Style이 있어요";
         }
       }

@@ -156,7 +156,7 @@
   - `[CREATE_NOTE: ...]` → 새 아이디어(시안) 생성. 저장 payload는 목표/대상 사용자, 핵심 경험, 화면 구조, 미션 필수 콘텐츠, 제약을 포함한 독립적인 Design Brief여야 한다. 모델이 한 줄 작업 지시문을 반환하면 클라이언트가 먼저 assistant 응답 본문에서 실질 브리프를 복구하고, 없을 때 미션 맥락과 현재 사용자 요청으로 시작 가능한 브리프를 복구한다. 단, 현재 시안이 빈 shell이면(디자인 스타일만 먼저 작성된 경우, 또는 세션 시작 시 시드된 빈 디폴트 시안 1: description·designStyle·artboard 모두 없음) 새 시안을 만들지 않고 해당 시안 내용을 채움 `[현행 2026-06-30 → 15.98/15.116/15.153]`
   - 세션은 빈 디폴트 시안 1로 시작한다(read-only/완료 세션 제외). 워크스페이스·탭·Brief/Style/Mockup 구조를 처음부터 노출하고, 첫 brief가 위 shell-fill 규칙으로 이 시안을 채운다 `[현행 2026-06-23 → 15.116]`
   - `[UPDATE_NOTE: ...]` → 현재 아이디어 내용 업데이트. 의도적인 짧은 수정은 허용하되, 디자인 브리프 생성/작성 성격의 턴에서 payload가 한 줄 상태문으로 축약되면 assistant 응답 본문 또는 미션 맥락으로 실질 Design Brief를 복구한 뒤 저장한다 `[현행 2026-06-30 → 15.153]`
-  - `[CREATE_DESIGN_SPEC: ...]` → 현재 아이디어의 디자인 스타일 정의/교체. 현재 아이디어가 없으면 빈 시안을 자동 생성하고 그 시안에 스타일을 저장
+  - `[CREATE_DESIGN_SPEC: ...]` → 현재 아이디어의 디자인 스타일 정의/교체. Design Brief가 아직 없어도 세션 초반부터 생성할 수 있으며, 현재 아이디어가 없으면 빈 시안을 자동 생성하고 그 시안에 스타일을 저장한다. 이후 첫 Design Brief는 shell-fill 규칙으로 같은 시안을 채운다 `[현행 2026-06-30 → 15.154]`
   - `[GENERATE_MOCKUP: ...]` → Stitch 목업 생성
   - `[EDIT_MOCKUP: ...]` → 목업 수정
   - `[FETCH_REFERENCES: ...]` → Serper 이미지/큐레이션 검색
@@ -3765,3 +3765,10 @@ type ChatPlan = {
 - 원인: 15.98의 한 줄 브리프 방어는 `CREATE_NOTE` 경로에만 적용됐다. 기존 빈 시안/활성 시안 갱신처럼 모델이 `UPDATE_NOTE`를 emit하는 경로에서는 payload가 얇아도 그대로 저장했고, action 밖 assistant 본문에 있는 실제 브리프를 저장 후보로 보지 않았다.
 - 수정: note action 저장 전에 공통 `resolveDesignBriefPayload()`를 거치게 했다. payload가 실질 브리프가 아니면 먼저 action block을 제거한 assistant 응답 본문에서 실질 브리프를 복구하고, `CREATE_NOTE` 또는 디자인 브리프 생성/작성 성격의 `UPDATE_NOTE`에 한해 미션 맥락 기반 복구를 fallback으로 적용한다. 일반적인 의도적 짧은 `UPDATE_NOTE`는 그대로 허용한다.
 - 문서: 4.6 Current Snapshot의 `CREATE_NOTE`/`UPDATE_NOTE` 저장 계약을 새 복구 순서에 맞게 갱신했다.
+
+### 15.154 세션 초반 Design Style 생성 허용 `[implemented 2026-06-30]`
+
+- 배경(Notion `38ed5dc81f6680989f97f4fc64078732`): `/디자인스타일생성`을 세션 초반부터 사용할 수 있어야 했다.
+- 원인: runtime은 `CREATE_DESIGN_SPEC`가 현재 아이디어가 없을 때 빈 시안을 만들고 스타일을 저장할 수 있었지만, composer command UI가 Design Brief가 없으면 `/디자인스타일생성`을 비활성화했다.
+- 수정: `/디자인스타일생성`은 현재 시안에 이미 Design Style이 있을 때만 비활성화한다. 빈 디폴트 시안 또는 Design Brief 없는 시안에도 먼저 스타일을 저장할 수 있고, 이후 첫 Design Brief는 기존 shell-fill 규칙으로 같은 시안을 채운다.
+- 문서: 4.6 Current Snapshot의 `CREATE_DESIGN_SPEC` 계약을 Design Brief 선행 불필요 흐름에 맞게 갱신했다.
