@@ -3748,3 +3748,8 @@ type ChatPlan = {
 - 배경: `/agent`와 리뷰 overlay가 같은 cluster membership을 쓰더라도 점 위치가 달랐다. `/agent`는 `/api/memory/all`의 memory `embedding`을 `MemoryClusterGraph`에 전달해 PCA/similarity graph layout의 초기 좌표로 쓰지만, `/api/memory/session-summary`의 `graphMemories`는 `embedding`을 누락해 리뷰 overlay가 `0/N embedded points` fallback 좌표를 사용했다.
 - 수정: `/api/memory/session-summary`의 compact memory/graph memory 응답에 `embedding`을 포함하고, `/main` 리뷰 graph item mapping에서 `MemoryClusterGraph`로 전달한다.
 - 효과: 같은 item set과 같은 cluster/edge cache를 보는 `/agent` 세션 필터와 리뷰 overlay `세션 이후`가 같은 embedding projection 입력을 사용하므로 점 위치가 일관된다.
+
+### 15.151 최종 디자인 선택 memory card 요약 축약 `[implemented 2026-06-30]`
+
+- 배경(Notion `Card UI`): 세션 리뷰 timeline의 최종 디자인 확정 카드가 `artboardId`, 생성일 등 세부 정보를 카드 요약에 길게 노출했다. 해당 세부 정보는 Original input 영역에서 확인할 수 있으므로 카드에는 확정 대상만 보여주면 된다.
+- 수정: `final_design_select` 이벤트 요약은 memory input의 첫 줄만 사용하고, `최종 디자인 확정: 시안 · 라벨`을 `최종디자인 시안 확정: 시안 * 라벨` 형태로 정리한다. output의 `artboardId / 시안 / 생성일` 상세는 카드 요약에서 사용하지 않는다.

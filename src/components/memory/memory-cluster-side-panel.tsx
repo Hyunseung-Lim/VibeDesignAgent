@@ -87,6 +87,35 @@ function userInputText(item: ClusterGraphItem) {
   return raw || item.episodic || item.semantic || item.id;
 }
 
+function isFinalDesignSelection(item: ClusterGraphItem) {
+  return (
+    item.action?.split(" / ").includes("final_design_select") ||
+    item.id.startsWith("during-session-") &&
+      item.id.includes("final-design-selection-") ||
+    item.memoryId.includes("final-design-selection-")
+  );
+}
+
+function finalDesignHeadline(item: ClusterGraphItem) {
+  const firstLine = userInputText(item)
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .find(Boolean);
+  if (!firstLine) return "최종디자인 시안 확정";
+  return firstLine
+    .replace(/^최종\s+디자인\s+확정\s*:/, "최종디자인 시안 확정:")
+    .replace(/\s+[·•]\s+/g, " * ");
+}
+
+function memoryHeadlineText(item: ClusterGraphItem) {
+  return isFinalDesignSelection(item) ? finalDesignHeadline(item) : userInputText(item);
+}
+
+function originalInputText(item: ClusterGraphItem) {
+  const raw = (item.input || "").trim().replace(/^user input:\s*/i, "").trim();
+  return raw || userInputText(item);
+}
+
 function missionIdFor(item: ClusterGraphItem, memory: MemoryItem | null) {
   return (
     item.row.source?.missionId ??
@@ -284,7 +313,7 @@ export function MemoryClusterSidePanel({
                                     : "line-clamp-2 text-foreground"
                                 }`}
                               >
-                                {userInputText(item)}
+                                {memoryHeadlineText(item)}
                               </p>
                             </div>
                             {selected ? (
@@ -313,7 +342,7 @@ export function MemoryClusterSidePanel({
                           {item.input ? (
                             <MemoryField
                               label="Original input"
-                              value={userInputText(item)}
+                              value={originalInputText(item)}
                             />
                           ) : null}
                           {item.keywords.length > 0 ? (

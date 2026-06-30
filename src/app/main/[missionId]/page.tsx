@@ -1632,6 +1632,18 @@ function compactEventTarget(item: SessionMemoryItem | ReviewTurnMemory) {
   return output || input || episodic || semantic || id;
 }
 
+function finalDesignEventSummary(item: SessionMemoryItem | ReviewTurnMemory) {
+  const input = "input" in item ? item.input?.trim() : "";
+  const firstLine = input?.split(/\r?\n/).map((line) => line.trim()).find(Boolean);
+  if (firstLine) {
+    const normalized = firstLine
+      .replace(/^최종\s+디자인\s+확정\s*:/, "최종디자인 시안 확정:")
+      .replace(/\s+[·•]\s+/g, " * ");
+    return normalized;
+  }
+  return "최종디자인 시안 확정";
+}
+
 function memoryEventLabel(item: SessionMemoryItem) {
   switch (memoryActionCategory(item)) {
     case "reference_delete":
@@ -1663,7 +1675,7 @@ function memoryEventDetail(item: SessionMemoryItem) {
     case "mockup_delete":
       return `삭제한 목업: ${target}`;
     case "final_design_select":
-      return `최종 선택한 디자인: ${target}`;
+      return finalDesignEventSummary(item);
     default:
       return target || "내용 없는 메모리";
   }
