@@ -107,12 +107,16 @@ export function MissionCard({
         </p>
         <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
           <StatusBadge status={status} />
-          {isCompleted && isReviewSubmitted ? (
+          {isCompleted ? (
             <Badge
               variant="outline"
-              className="font-medium text-muted-foreground"
+              className={
+                isReviewSubmitted
+                  ? "font-medium text-muted-foreground"
+                  : "border-amber-200 bg-amber-50 font-medium text-amber-700"
+              }
             >
-              리뷰 완료
+              {isReviewSubmitted ? "리뷰 완료" : "리뷰 필요"}
             </Badge>
           ) : null}
         </div>

@@ -68,7 +68,7 @@
 
 - 좌측 패널 (스크롤 가능): Mission → Reference → 아이디어 탭 (Idea/Mockup)
 - 우측 패널 (고정): AI 에이전트 채팅
-- 완료 세션 리뷰 우측 패널은 `세션 이전`/`채팅` 탭만 제공하고, 상단 타이머 오른쪽의 `메모리 리뷰하기` CTA가 cluster list → detail panel → memory graph → review panel 순서의 full-screen memory overlay를 바로 연다. 리뷰 입력창에서 `@`를 입력하면 별도 dropdown 없이 메모리뷰 자체가 선택 모드가 되며, cluster list/detail panel/graph에서 cluster나 memory를 클릭해 답변 본문에 inline mention을 삽입한다. 삽입된 mention은 굵게 표시되고 클릭하면 해당 cluster나 memory로 focus된다. 답변은 7개 단일 번호 질문별 plain text와 structured mentions로 `users/{uid}/memoryReviewFeedback/{missionId}`에 draft autosave된다. 모든 질문을 입력해야 제출할 수 있고, 제출 확인 팝업에서 확정하면 `submittedAt` 저장 후 로비로 이동한다. 로비 완료 미션 카드의 상단 상태 배지 영역과 admin 참여자 row의 프로필 메타 영역은 `submittedAt`이 있는 항목에만 작은 `리뷰 완료` 배지를 표시한다 `[현행 2026-06-30 → 15.131/15.134/15.155/15.156]`
+- 완료 세션 리뷰 우측 패널은 `세션 이전`/`채팅` 탭만 제공하고, 상단 타이머 오른쪽의 `메모리 리뷰하기` CTA가 cluster list → detail panel → memory graph → review panel 순서의 full-screen memory overlay를 바로 연다. 리뷰 입력창에서 `@`를 입력하면 별도 dropdown 없이 메모리뷰 자체가 선택 모드가 되며, cluster list/detail panel/graph에서 cluster나 memory를 클릭해 답변 본문에 inline mention을 삽입한다. 삽입된 mention은 굵게 표시되고 클릭하면 해당 cluster나 memory로 focus된다. 답변은 7개 단일 번호 질문별 plain text와 structured mentions로 `users/{uid}/memoryReviewFeedback/{missionId}`에 draft autosave된다. 모든 질문을 입력해야 제출할 수 있고, 제출 확인 팝업에서 확정하면 `submittedAt` 저장 후 로비로 이동한다. 로비 완료 미션 카드는 상단 상태 배지 영역에 `submittedAt` 여부에 따라 `리뷰 필요` 또는 `리뷰 완료`를 표시하고, admin 참여자 row의 프로필 메타 영역은 `submittedAt`이 있는 항목에만 작은 `리뷰 완료` 배지를 표시한다 `[현행 2026-06-30 → 15.131/15.134/15.155/15.156/15.165]`
 - 작업 화면에는 실제 화면 영역을 하이라이트하는 제품 투어가 있다. 온보딩 미션에서는 작업 화면 진입 시 자동으로 열리고, 일반 미션에서는 헤더의 `튜토리얼` 버튼을 눌러야 열린다. 튜토리얼은 미션 설명 공간, 채팅 공간, 레퍼런스 섹션, 시안을 여러 개 만들 수 있다는 점, 각 시안이 Design Brief/디자인 스타일/Mockup으로 구성된다는 점, 목업 편집 버튼 사용, Final Design 선택, 타이머와 세션 종료 버튼을 안내한 뒤 마지막에 튜토리얼 버튼 위치를 다시 안내한다 `[현행 2026-06-16 → 15.88]`
 - 제품 투어가 `mission-brief` 단계를 표시할 때는 선택된 옵션 토글을 강제로 접어 미션 설명 본문이 먼저 보이게 한다 `[현행 2026-06-16 → 15.88]`
 
@@ -3837,3 +3837,9 @@ type ChatPlan = {
 - 배경(Page Feedback `/main/mission-20260611-103001`): ChatInput 위 선택 요소, 텍스트 인용, 레퍼런스 인용, 스타일 이미지 UI가 각각 다른 배경 박스로 쌓여 composer와 어긋나 보였다. shadcn Attachment 문서의 item 구조를 참고해 한 줄 tray로 통일하기로 했다.
 - 수정: `ChatInput`에 `ComposerAttachment` helper를 추가하고, selected element, cited text, selected reference, style image를 동일한 rounded attachment item으로 렌더한다. 각 item은 media/icon, title, description, remove action을 갖고, 여러 항목은 horizontal scroll tray에 놓인다. 텍스트/레퍼런스 다중 선택의 전체 해제 action은 trailing button으로 유지한다.
 - 의도: composer가 가진 source context를 칩 묶음이 아니라 첨부 파일 목록처럼 읽히게 하고, 선택/해제 조작을 같은 패턴으로 맞춘다.
+
+### 15.165 로비 완료 미션 리뷰 필요 배지 추가 `[implemented 2026-06-30]`
+
+- 배경: 로비 완료 미션 카드에는 `리뷰 완료` 배지는 있었지만 아직 제출하지 않은 완료 미션의 `리뷰 필요` 상태가 상단 메타 영역에 보이지 않았다.
+- 수정: `MissionCard`는 완료 미션이면 항상 리뷰 상태 배지를 표시한다. `submittedAt`이 있으면 `리뷰 완료`, 없으면 amber tone의 `리뷰 필요` 배지를 보여준다. CTA는 기존처럼 제출 전 `리뷰하기`, 제출 후 `리뷰 보기`를 유지한다.
+- 의도: 완료 미션의 다음 행동 필요 여부를 CTA 영역뿐 아니라 카드 상단 상태 메타에서도 즉시 읽히게 한다.
