@@ -594,6 +594,32 @@ export default function AdminPage() {
     setEditingId(null);
   };
 
+  const hydrateParticipantReviewStatus = async (
+    missionId: string,
+    participantRows: Participant[],
+  ) => {
+    const adminUser = firebaseAuth.currentUser;
+    const token = adminUser ? await getIdToken(adminUser) : null;
+    if (!token) return participantRows;
+    await Promise.all(
+      participantRows.map(async (participant) => {
+        const response = await fetch(
+          `/api/memory/review-feedback?missionId=${encodeURIComponent(
+            missionId,
+          )}&targetUid=${encodeURIComponent(participant.id)}`,
+          { headers: { Authorization: `Bearer ${token}` } },
+        ).catch(() => null);
+        if (!response?.ok) return;
+        const data = (await response.json().catch(() => null)) as {
+          feedback?: { submittedAt?: number | null } | null;
+        } | null;
+        participant.memoryReviewSubmittedAt =
+          data?.feedback?.submittedAt ?? null;
+      }),
+    );
+    return participantRows;
+  };
+
   const openParticipants = async (missionId: string) => {
     setParticipantsMissionId(missionId);
     setParticipants([]);
@@ -614,16 +640,27 @@ export default function AdminPage() {
         participant.onboardingStatus =
           statuses[participant.id]?.onboardingStatus ?? "unknown";
       });
+      await hydrateParticipantReviewStatus(missionId, participantRows);
       setParticipants(participantRows);
     } finally {
       setIsLoadingParticipants(false);
     }
   };
 
-  const openOnboardingParticipants = () => {
+  const openOnboardingParticipants = async () => {
     setParticipantsMissionId(ONBOARDING_MISSION_ID);
-    setParticipants(adminUsers);
-    setIsLoadingParticipants(false);
+    setParticipants([]);
+    setIsLoadingParticipants(true);
+    try {
+      const participantRows = adminUsers.map((user) => ({ ...user }));
+      await hydrateParticipantReviewStatus(
+        ONBOARDING_MISSION_ID,
+        participantRows,
+      );
+      setParticipants(participantRows);
+    } finally {
+      setIsLoadingParticipants(false);
+    }
   };
 
   const requestDeleteUserData = (participant: Participant) => {
@@ -2682,13 +2719,25 @@ export default function AdminPage() {
                             {p.email}
                           </p>
                         )}
-                        {p.isAdmin && (
-                          <Badge
-                            variant="outline"
-                            className="ml-1 mt-1 rounded-full border-transparent bg-indigo-50 text-indigo-700"
-                          >
-                            관리자
-                          </Badge>
+                        {(p.isAdmin || p.memoryReviewSubmittedAt) && (
+                          <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                            {p.isAdmin && (
+                              <Badge
+                                variant="outline"
+                                className="rounded-full border-transparent bg-indigo-50 text-indigo-700"
+                              >
+                                관리자
+                              </Badge>
+                            )}
+                            {p.memoryReviewSubmittedAt ? (
+                              <Badge
+                                variant="outline"
+                                className="rounded-full text-muted-foreground"
+                              >
+                                리뷰 완료
+                              </Badge>
+                            ) : null}
+                          </div>
                         )}
                       </div>
                       <div className="ml-auto flex items-center gap-1">

@@ -9,45 +9,43 @@ import {
 
 type ReviewQuestion = {
   id: string;
-  group: "session" | "cluster";
   label: string;
 };
 
 const REVIEW_QUESTIONS: ReviewQuestion[] = [
   {
     id: "stored_correctly",
-    group: "session",
-    label: "이번 세션에서 저장되어야 할 정보가 메모리에 제대로 저장되었나요?",
-  },
-  {
-    id: "unnecessary_memory",
-    group: "session",
-    label: "저장할 필요가 없는데도 저장된 정보가 있나요? 있다면 무엇인가요?",
+    label:
+      "이번 세션에서 에이전트가 기억했으면 하는 걸 먼저 떠올려보세요. 그게 실제로 저장돼 있나요?",
   },
   {
     id: "missing_memory",
-    group: "session",
-    label: "저장되었어야 하는데 빠진 정보가 있나요? 있다면 무엇인가요?",
+    label: "저장됐어야 하는데 빠진 게 있나요? (있으면 무엇)",
+  },
+  {
+    id: "unnecessary_memory",
+    label:
+      "기억된 내용 중 저장되지 말았어야 하는 정보 또는 수정이 필요한 내용이 있나요? 어떻게 수정(제외)되어야 할까요?",
   },
   {
     id: "missing_signal",
-    group: "session",
-    label: "빠진 정보가 있다면, 에이전트가 그 정보를 어떻게 알 수 있어야 한다고 생각하나요?",
+    label:
+      "빠진 정보가 있다면, 에이전트가 해당 정보를 어떻게 습득하기를 바라나요? (ⓐ 내가 말해줬어야 / ⓑ 작업 보고 알아챘어야 / ⓒ 물어봤어야)",
   },
   {
     id: "cluster_grouping",
-    group: "cluster",
-    label: "메모리 클러스터가 적절하게 묶였나요?",
+    label:
+      "메모리가 묶인 단위가 적절한가요? (너무 뭉뚱그려졌다 / 너무 잘게 / 기준이 달랐으면) 그 이유는 무엇인가요?",
   },
   {
-    id: "cluster_summary",
-    group: "cluster",
-    label: "클러스터가 요약한 나에 대한 정보가 정확하고 적절한가요?",
+    id: "agent_understanding_progress",
+    label:
+      "지난번보다 에이전트가 나를 더 잘 이해한다고 느꼈나요? 그 이유는 무엇인가요?",
   },
   {
     id: "implicit_insight",
-    group: "cluster",
-    label: "클러스터를 통해 평소 의식하지 못했던 암묵지 중 새롭게 알게 된 점이 있나요?",
+    label:
+      "에이전트의 메모리를 통해 평소 몰랐던 내 취향·작업 습관 중 새로 알게 된 게 있나요?",
   },
 ];
 
@@ -73,6 +71,7 @@ type MemoryReviewPanelProps = {
   readOnly?: boolean;
   onAnswersChange?: (answers: MemoryReviewAnswers) => void;
   onSubmitFeedback?: (answers: MemoryReviewAnswers) => Promise<boolean> | boolean;
+  onSubmitted?: () => void;
 };
 
 export type MemoryReviewMention = {
@@ -180,12 +179,16 @@ export function MemoryReviewPanel({
   readOnly = false,
   onAnswersChange,
   onSubmitFeedback,
+  onSubmitted,
 }: MemoryReviewPanelProps) {
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [mentionRequest, setMentionRequest] = useState<MentionRequest | null>(
     null,
   );
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [pendingSubmitPayload, setPendingSubmitPayload] =
+    useState<MemoryReviewAnswers | null>(null);
+  const [completionRevision, setCompletionRevision] = useState(0);
   const [handledMentionEventId, setHandledMentionEventId] = useState(0);
   const editorRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const answersRef = useRef<Record<string, string>>({});
@@ -197,18 +200,31 @@ export function MemoryReviewPanel({
   const hydratedAnswersKeyRef = useRef("");
   const renderedAnswersRef = useRef<Record<string, string>>({});
 
-  const sessionQuestions = useMemo(
-    () => REVIEW_QUESTIONS.filter((question) => question.group === "session"),
-    [],
-  );
-  const clusterQuestions = useMemo(
-    () => REVIEW_QUESTIONS.filter((question) => question.group === "cluster"),
-    [],
-  );
-
   useEffect(() => {
     onMentionModeChange(Boolean(mentionRequest));
   }, [mentionRequest, onMentionModeChange]);
+
+  const allQuestionsAnswered = useMemo(
+    () =>
+      REVIEW_QUESTIONS.every(
+        (question) => answersRef.current[question.id]?.trim(),
+      ),
+    [answers, completionRevision],
+  );
+
+  const submitPendingFeedback = async () => {
+    if (!pendingSubmitPayload || !onSubmitFeedback) return;
+    setIsSubmitting(true);
+    try {
+      const submitted = await onSubmitFeedback(pendingSubmitPayload);
+      if (submitted) {
+        setPendingSubmitPayload(null);
+        onSubmitted?.();
+      }
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
 
   const buildAnswersPayload = useCallback((): MemoryReviewAnswers => {
     return Object.fromEntries(
@@ -384,6 +400,7 @@ export function MemoryReviewPanel({
       ...answersRef.current,
       [questionId]: value,
     };
+    setCompletionRevision((current) => current + 1);
     updateMentionRequest(questionId, value, cursor);
     emitAnswersChange();
   };
@@ -398,10 +415,10 @@ export function MemoryReviewPanel({
     onMentionFocus(target);
   };
 
-  const renderReadOnlyQuestion = (question: ReviewQuestion) => (
+  const renderReadOnlyQuestion = (question: ReviewQuestion, index: number) => (
     <div key={question.id} className="space-y-1.5">
       <span className="block text-xs font-medium leading-relaxed text-slate-700">
-        {question.label}
+        {index + 1}. {question.label}
       </span>
       <div
         ref={(element) => {
@@ -424,13 +441,14 @@ export function MemoryReviewPanel({
     </div>
   );
 
-  const renderQuestion = (question: ReviewQuestion) =>
+  const renderQuestion = (question: ReviewQuestion, index: number) =>
     readOnly ? (
-      renderReadOnlyQuestion(question)
+      renderReadOnlyQuestion(question, index)
     ) : (
     <div key={question.id} className="space-y-1.5">
       <span className="block text-xs font-medium leading-relaxed text-slate-700">
-        {question.label}
+        {index + 1}. {question.label}
+        <span className="ml-0.5 text-rose-500">*</span>
       </span>
       <div
         ref={(element) => {
@@ -522,7 +540,7 @@ export function MemoryReviewPanel({
     );
 
   return (
-    <aside className="m-3 ml-0 flex w-92 shrink-0 flex-col overflow-hidden rounded-lg border border-slate-200 bg-white shadow-xl xl:w-96">
+    <aside className="relative m-3 ml-0 flex w-92 shrink-0 flex-col overflow-hidden rounded-lg border border-slate-200 bg-white shadow-xl xl:w-96">
       <div className="border-b border-slate-200 px-4 py-4">
         <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">
           Review
@@ -533,32 +551,22 @@ export function MemoryReviewPanel({
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-4">
-        <section className="space-y-3">
-          <p className="text-xs font-semibold text-slate-900">
-            세션별로 기억해야 할 정보
-          </p>
-          <div className="space-y-4">{sessionQuestions.map(renderQuestion)}</div>
-        </section>
-
-        <section className="mt-6 space-y-3">
-          <p className="text-xs font-semibold text-slate-900">
-            메모리 클러스터
-          </p>
-          <div className="space-y-4">{clusterQuestions.map(renderQuestion)}</div>
-        </section>
+        <div className="space-y-4">{REVIEW_QUESTIONS.map(renderQuestion)}</div>
       </div>
       <div className="flex items-center justify-between gap-3 border-t border-slate-200 px-4 py-3">
-        <p className="text-[11px] text-slate-400">
+        <p className="min-w-0 text-[11px] text-slate-400">
           {readOnly
             ? submittedAt
               ? "제출 완료 (읽기 전용)"
               : "읽기 전용"
             : saveStatus === "saving"
               ? "저장 중..."
-              : saveStatus === "error"
+            : saveStatus === "error"
                 ? "저장 실패"
                 : submittedAt
                   ? "제출 완료"
+                  : !allQuestionsAnswered
+                    ? "모든 항목 입력 후 제출할 수 있습니다."
                   : saveStatus === "saved"
                     ? "저장됨"
                     : "Draft"}
@@ -570,20 +578,65 @@ export function MemoryReviewPanel({
             const payload = collectEditorAnswers();
             onAnswersChange?.(payload);
             if (!onSubmitFeedback) return;
-            setIsSubmitting(true);
-            try {
-              await onSubmitFeedback(payload);
-            } finally {
-              setIsSubmitting(false);
+            if (
+              !REVIEW_QUESTIONS.every((question) =>
+                payload[question.id]?.text.trim(),
+              )
+            ) {
+              return;
             }
+            setPendingSubmitPayload(payload);
           }}
-          disabled={!onSubmitFeedback || saveStatus === "saving" || isSubmitting}
+          disabled={
+            !onSubmitFeedback ||
+            !allQuestionsAnswered ||
+            saveStatus === "saving" ||
+            isSubmitting
+          }
           className="rounded-full bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-slate-700 disabled:cursor-not-allowed disabled:bg-slate-300"
         >
           {isSubmitting ? "제출 중..." : "제출"}
         </button>
         )}
       </div>
+      {pendingSubmitPayload && !readOnly ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/30 px-4">
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="memory-review-submit-title"
+            className="w-full max-w-sm rounded-lg border border-slate-200 bg-white p-5 shadow-xl"
+          >
+            <h3
+              id="memory-review-submit-title"
+              className="text-base font-semibold text-slate-950"
+            >
+              제출 완료하겠습니까?
+            </h3>
+            <p className="mt-2 text-sm leading-relaxed text-slate-500">
+              제출하면 리뷰가 완료 상태로 저장되고 로비로 이동합니다.
+            </p>
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setPendingSubmitPayload(null)}
+                disabled={isSubmitting}
+                className="rounded-full border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                취소
+              </button>
+              <button
+                type="button"
+                onClick={submitPendingFeedback}
+                disabled={isSubmitting || saveStatus === "saving"}
+                className="rounded-full bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-slate-700 disabled:cursor-not-allowed disabled:bg-slate-300"
+              >
+                {isSubmitting ? "제출 중..." : "제출"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </aside>
   );
 }

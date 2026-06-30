@@ -6692,6 +6692,7 @@ export default function MainScreenPage() {
                   ? undefined
                   : (answers) => saveMemoryReviewFeedback(true, answers)
               }
+              onSubmitted={() => router.push("/lobby")}
             />
           </div>
         </div>

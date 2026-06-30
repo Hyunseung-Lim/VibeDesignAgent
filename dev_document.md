@@ -68,7 +68,7 @@
 
 - 좌측 패널 (스크롤 가능): Mission → Reference → 아이디어 탭 (Idea/Mockup)
 - 우측 패널 (고정): AI 에이전트 채팅
-- 완료 세션 리뷰 우측 패널은 `세션 이전`/`채팅` 탭만 제공하고, 상단 타이머 오른쪽의 `메모리 리뷰하기` CTA가 cluster list → detail panel → memory graph → review panel 순서의 full-screen memory overlay를 바로 연다. 리뷰 입력창에서 `@`를 입력하면 별도 dropdown 없이 메모리뷰 자체가 선택 모드가 되며, cluster list/detail panel/graph에서 cluster나 memory를 클릭해 답변 본문에 inline mention을 삽입한다. 삽입된 mention은 굵게 표시되고 클릭하면 해당 cluster나 memory로 focus된다. 답변은 질문별 plain text와 structured mentions로 `users/{uid}/memoryReviewFeedback/{missionId}`에 draft autosave되고, 제출 시 `submittedAt`이 찍힌다 `[현행 2026-06-28 → 15.131/15.134]`
+- 완료 세션 리뷰 우측 패널은 `세션 이전`/`채팅` 탭만 제공하고, 상단 타이머 오른쪽의 `메모리 리뷰하기` CTA가 cluster list → detail panel → memory graph → review panel 순서의 full-screen memory overlay를 바로 연다. 리뷰 입력창에서 `@`를 입력하면 별도 dropdown 없이 메모리뷰 자체가 선택 모드가 되며, cluster list/detail panel/graph에서 cluster나 memory를 클릭해 답변 본문에 inline mention을 삽입한다. 삽입된 mention은 굵게 표시되고 클릭하면 해당 cluster나 memory로 focus된다. 답변은 7개 단일 번호 질문별 plain text와 structured mentions로 `users/{uid}/memoryReviewFeedback/{missionId}`에 draft autosave된다. 모든 질문을 입력해야 제출할 수 있고, 제출 확인 팝업에서 확정하면 `submittedAt` 저장 후 로비로 이동한다. 로비 완료 미션 카드의 상단 상태 배지 영역과 admin 참여자 row의 프로필 메타 영역은 `submittedAt`이 있는 항목에만 작은 `리뷰 완료` 배지를 표시한다 `[현행 2026-06-30 → 15.131/15.134/15.155/15.156]`
 - 작업 화면에는 실제 화면 영역을 하이라이트하는 제품 투어가 있다. 온보딩 미션에서는 작업 화면 진입 시 자동으로 열리고, 일반 미션에서는 헤더의 `튜토리얼` 버튼을 눌러야 열린다. 튜토리얼은 미션 설명 공간, 채팅 공간, 레퍼런스 섹션, 시안을 여러 개 만들 수 있다는 점, 각 시안이 Design Brief/디자인 스타일/Mockup으로 구성된다는 점, 목업 편집 버튼 사용, Final Design 선택, 타이머와 세션 종료 버튼을 안내한 뒤 마지막에 튜토리얼 버튼 위치를 다시 안내한다 `[현행 2026-06-16 → 15.88]`
 - 제품 투어가 `mission-brief` 단계를 표시할 때는 선택된 옵션 토글을 강제로 접어 미션 설명 본문이 먼저 보이게 한다 `[현행 2026-06-16 → 15.88]`
 
@@ -3606,7 +3606,7 @@ type ChatPlan = {
 ### 15.131 메모리 리뷰하기 우측 패널 추가 `[implemented 2026-06-27]`
 
 - 배경(Notion `메모리 리뷰 개편` Request 2): 완료 세션의 메모리 리뷰 화면 오른쪽에 별도 UI처럼 보이는 `메모리 리뷰하기` 영역을 추가하고, 세션별 저장 품질과 cluster 품질을 사용자가 직접 답변할 수 있어야 했다. 특정 cluster나 단위 memory를 답변 맥락에 붙일 수 있는 `@` 언급형 참조도 필요했다.
-- 변경: `MemoryReviewPanel`을 추가해 `/main/[missionId]`의 `SessionMemoryDiff` overlay에서 cluster list → detail panel → graph → review panel 순서로 배치했다. 리뷰 패널은 graph 오른쪽에 rounded card + shadow 형태로 dock된다. 질문은 `세션별로 기억해야 할 정보`와 `메모리 클러스터` 두 섹션으로 나누고 각 질문에 textarea를 제공한다.
+- 변경: `MemoryReviewPanel`을 추가해 `/main/[missionId]`의 `SessionMemoryDiff` overlay에서 cluster list → detail panel → graph → review panel 순서로 배치했다. 리뷰 패널은 graph 오른쪽에 rounded card + shadow 형태로 dock된다. 질문은 `세션별로 기억해야 할 정보`와 `메모리 클러스터` 두 섹션으로 나누고 각 질문에 textarea를 제공한다. `[stale 2026-06-30 → 15.155: 질문지는 두 섹션 없이 7개 단일 번호 목록으로 변경됨]`
 - mention 선택: 입력창 커서 앞에 pending `@` token이 있으면 review panel이 mention mode를 켠다. dropdown 후보를 만들지 않고 실제 메모리뷰의 cluster list와 detail panel memory card를 amber 선택 상태로 바꾸며, 사용자가 항목을 클릭하면 `@cluster(...)` 또는 `@memory(...)`가 해당 답변 안에 삽입된다. graph node 클릭도 선택 모드에서는 같은 memory mention으로 동작한다. 삽입된 mention token은 굵은 amber text로 표시되고, token 클릭 시 cluster는 해당 cluster를 선택하고 memory는 포함 cluster를 열어 해당 memory card를 선택/scroll focus한다. Esc는 선택 모드를 취소한다. `[updated 2026-06-28: 문제 표시/자동 연결 방식 대체]`
 - 저장: `/api/memory/review-feedback`는 Firebase ID token으로 본인 uid를 검증하고 `users/{uid}/memoryReviewFeedback/{missionId}`에 `{ schemaVersion: 1, answers, updatedAt, submittedAt }`를 저장한다. `answers[questionId]`는 `{ text, mentions[] }`이며 mention은 `{ type, id, label, start, end }`를 가진다. UI는 draft autosave를 수행하고, `제출` 버튼은 contenteditable DOM의 최신 payload를 수집한 뒤 POST 완료를 await하고 성공 시 같은 문서의 `submittedAt`을 갱신한다.
 - 변경 파일: 신규 `src/components/memory/memory-review-panel.tsx`, 신규 `src/app/api/memory/review-feedback/route.ts`, `src/app/main/[missionId]/page.tsx`, `dev_document.md`.
@@ -3772,3 +3772,17 @@ type ChatPlan = {
 - 원인: runtime은 `CREATE_DESIGN_SPEC`가 현재 아이디어가 없을 때 빈 시안을 만들고 스타일을 저장할 수 있었지만, composer command UI가 Design Brief가 없으면 `/디자인스타일생성`을 비활성화했다.
 - 수정: `/디자인스타일생성`은 현재 시안에 이미 Design Style이 있을 때만 비활성화한다. 빈 디폴트 시안 또는 Design Brief 없는 시안에도 먼저 스타일을 저장할 수 있고, 이후 첫 Design Brief는 기존 shell-fill 규칙으로 같은 시안을 채운다.
 - 문서: 4.6 Current Snapshot의 `CREATE_DESIGN_SPEC` 계약을 Design Brief 선행 불필요 흐름에 맞게 갱신했다.
+
+### 15.155 메모리 리뷰 질문지와 제출 흐름 업데이트 `[implemented 2026-06-30]`
+
+- 배경(Notion `38ed5dc81f6680598a27e91069ce3e12`): 메모리 리뷰 질문지를 두 파트로 나누지 않고 번호만 붙인 7문항으로 바꾸고, 모든 칸 입력 전 제출을 막으며, 제출 확인 팝업 후 로비로 이동해야 했다.
+- 수정: `MemoryReviewPanel`의 질문 배열을 새 7문항 단일 목록으로 교체하고 섹션 헤더를 제거했다. contenteditable 입력 변화가 제출 가능 상태에 반영되도록 completion revision을 추가했다.
+- 제출: 모든 질문의 text가 비어 있지 않을 때만 제출 버튼을 활성화한다. 제출 클릭 시 `제출 완료하겠습니까?` 확인 팝업을 띄우고, feedback POST가 성공하면 `/lobby`로 이동한다.
+- 문서: 4.1 Current Snapshot의 메모리 리뷰 질문/제출 계약을 갱신하고, 15.131의 두 섹션 질문지 설명을 stale 처리했다.
+
+### 15.156 메모리 리뷰 완료 상태 표시 `[implemented 2026-06-30]`
+
+- 배경: 리뷰 제출 후 유저와 관리자가 완료 여부를 어디서 확인할지 정해야 했다. 배지를 과하게 늘리지 않기 위해 완료된 항목에만 조용한 `리뷰 완료` 배지를 표시하기로 했다.
+- 수정: 로비 완료 미션 카드는 `/api/memory/review-feedback`의 `submittedAt`을 확인해 제출 완료된 미션에만 상단 상태 배지 영역에 `리뷰 완료`를 표시한다. CTA는 오른쪽 아래에 유지하며, 제출 전에는 `리뷰하기`, 제출 후에는 `리뷰 보기`로 표시한다.
+- 관리자: admin 참여자 팝업은 각 participant의 `memoryReviewFeedback/{missionId}.submittedAt`을 admin GET API로 조회하고, 제출 완료 row에만 작은 `리뷰 완료` 배지를 프로필 메타 영역에 표시한다. 오른쪽 액션 영역은 세션 보기, 리뷰, 삭제 같은 조작만 유지한다.
+- source of truth: 완료 여부는 `users/{uid}/memoryReviewFeedback/{missionId}.submittedAt` 존재 여부다.

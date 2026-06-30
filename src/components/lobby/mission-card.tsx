@@ -28,6 +28,7 @@ type MissionCardProps = {
   mission: LobbyMission;
   status: MissionStatus;
   isCompleted: boolean;
+  isReviewSubmitted: boolean;
   isCurrent: boolean;
   isLocked: boolean;
   lockReason?: string;
@@ -66,6 +67,7 @@ export function MissionCard({
   mission,
   status,
   isCompleted,
+  isReviewSubmitted,
   isCurrent,
   isLocked,
   lockReason,
@@ -103,7 +105,17 @@ export function MissionCard({
           )}
           {mission.title}
         </p>
-        <StatusBadge status={status} />
+        <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+          <StatusBadge status={status} />
+          {isCompleted && isReviewSubmitted ? (
+            <Badge
+              variant="outline"
+              className="font-medium text-muted-foreground"
+            >
+              리뷰 완료
+            </Badge>
+          ) : null}
+        </div>
       </div>
       {(() => {
         // Standalone missions show the per-mission content one-liner (brand/
@@ -143,7 +155,7 @@ export function MissionCard({
             // Completed missions are review-only; re-running is blocked to keep
             // the linear cumulative-memory data clean.
             <Button type="button" onClick={onReview} variant="secondary" size="sm">
-              리뷰 보기
+              {isReviewSubmitted ? "리뷰 보기" : "리뷰하기"}
             </Button>
           ) : isLocked ? (
             <Button

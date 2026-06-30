@@ -71,6 +71,9 @@ export default function LobbyPage() {
   const [missionProgressById, setMissionProgressById] = useState<
     Record<string, MissionProgress>
   >({});
+  const [reviewSubmittedByMissionId, setReviewSubmittedByMissionId] = useState<
+    Record<string, boolean>
+  >({});
   const [onboardingSettings, setOnboardingSettings] =
     useState<OnboardingSettings>(defaultOnboardingSettings);
   const [isOnboardingRequired, setIsOnboardingRequired] = useState(false);
@@ -163,6 +166,61 @@ export default function LobbyPage() {
       () => setMissionProgressById({}),
     );
   }, [userId]);
+
+  useEffect(() => {
+    if (!userId) {
+      setReviewSubmittedByMissionId({});
+      return;
+    }
+    const completedMissionIds = Object.entries(missionProgressById)
+      .filter(([, progress]) => progress.status === "completed")
+      .map(([missionId]) => missionId);
+    if (
+      !isCheckingOnboarding &&
+      !isOnboardingRequired &&
+      !completedMissionIds.includes(ONBOARDING_MISSION_ID)
+    ) {
+      completedMissionIds.unshift(ONBOARDING_MISSION_ID);
+    }
+    if (completedMissionIds.length === 0) {
+      setReviewSubmittedByMissionId({});
+      return;
+    }
+    let cancelled = false;
+    const currentUser = firebaseAuth.currentUser;
+    if (!currentUser) return;
+    getIdToken(currentUser)
+      .then((token) =>
+        Promise.all(
+          completedMissionIds.map(async (missionId) => {
+            const response = await fetch(
+              `/api/memory/review-feedback?missionId=${encodeURIComponent(missionId)}`,
+              { headers: { Authorization: `Bearer ${token}` } },
+            ).catch(() => null);
+            if (!response?.ok) return [missionId, false] as const;
+            const data = (await response.json().catch(() => null)) as {
+              feedback?: { submittedAt?: number | null } | null;
+            } | null;
+            return [missionId, Boolean(data?.feedback?.submittedAt)] as const;
+          }),
+        ),
+      )
+      .then((entries) => {
+        if (cancelled) return;
+        setReviewSubmittedByMissionId(Object.fromEntries(entries));
+      })
+      .catch(() => {
+        if (!cancelled) setReviewSubmittedByMissionId({});
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    isCheckingOnboarding,
+    isOnboardingRequired,
+    missionProgressById,
+    userId,
+  ]);
 
   useEffect(() => {
     const q = query(collection(db, "missions"), orderBy("createdAt", "asc"));
@@ -400,6 +458,9 @@ export default function LobbyPage() {
                       mission={mission}
                       status={status}
                       isCompleted={isMissionCompleted}
+                      isReviewSubmitted={Boolean(
+                        reviewSubmittedByMissionId[mission.id],
+                      )}
                       isCurrent={isCurrent}
                       isLocked={isLocked}
                       lockReason={lockReason}

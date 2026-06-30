@@ -16,6 +16,7 @@ export type Participant = {
   photoURL: string | null;
   updatedAt: number;
   onboardingStatus?: "completed" | "required" | "unknown";
+  memoryReviewSubmittedAt?: number | null;
   isAdmin?: boolean;
 };
 
