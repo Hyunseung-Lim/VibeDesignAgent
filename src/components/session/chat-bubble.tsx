@@ -1,6 +1,13 @@
 import ReactMarkdown from "react-markdown";
 import type { ComponentProps } from "react";
-import { Brain, ChevronDown, ChevronUp, TriangleAlert } from "lucide-react";
+import {
+  Brain,
+  Check,
+  ChevronDown,
+  ChevronUp,
+  Circle,
+  TriangleAlert,
+} from "lucide-react";
 import { ToolActionChip, type ToolActionChipData } from "./tool-action-chip";
 import { RetrievedMemoryBadge } from "@/components/memory/retrieved-memory-badge";
 import { Spinner } from "@/components/ui/spinner";
@@ -68,6 +75,41 @@ function TypingDots() {
   );
 }
 
+function ChatPhaseMarker({
+  phase,
+  active,
+}: {
+  phase: string;
+  active: boolean;
+}) {
+  return (
+    <div
+      role={active ? "status" : undefined}
+      aria-live={active ? "polite" : undefined}
+      className={`flex items-center gap-2 rounded-md border px-2.5 py-1.5 ${
+        active
+          ? "border-slate-200 bg-white text-slate-700"
+          : "border-transparent bg-transparent text-slate-400"
+      }`}
+    >
+      <span
+        className={`flex size-4 shrink-0 items-center justify-center rounded-full ${
+          active ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-400"
+        }`}
+      >
+        {active ? (
+          <Circle className="size-2 animate-pulse fill-current" />
+        ) : (
+          <Check className="size-2.5" />
+        )}
+      </span>
+      <span className="min-w-0 flex-1 truncate text-[11px] font-medium leading-none">
+        {phase}
+      </span>
+    </div>
+  );
+}
+
 export function ChatBubble({
   message,
   contentParts,
@@ -89,17 +131,18 @@ export function ChatBubble({
   onShowRawPrompt,
 }: ChatBubbleProps) {
   const isUser = message.role === "user";
+  const bubbleClassName = isUser
+    ? "overflow-hidden rounded-2xl bg-slate-900 px-4 py-3 text-white shadow-sm"
+    : isTurnSelected
+      ? "overflow-hidden rounded-2xl border border-violet-200 bg-violet-50/80 px-4 py-3 text-slate-700 shadow-sm"
+      : message.error
+        ? "overflow-hidden rounded-2xl border border-red-100 bg-red-50/30 px-4 py-3 text-slate-700"
+        : "px-1 py-1 text-slate-700";
 
   return (
     <div className={`flex min-w-0 ${isUser ? "justify-end" : "justify-start"}`}>
       <div
-        className={`min-w-0 max-w-[85%] overflow-hidden rounded-2xl px-4 py-3 text-sm leading-relaxed ${
-          isUser
-            ? "bg-slate-900 text-white"
-            : isTurnSelected
-              ? "border border-violet-200 bg-violet-50 text-slate-700"
-              : "border border-slate-100 bg-slate-50 text-slate-700"
-        }`}
+        className={`min-w-0 max-w-[85%] text-sm leading-relaxed ${bubbleClassName}`}
       >
         {isUser ? (
           <div className="space-y-1.5">
@@ -173,18 +216,21 @@ export function ChatBubble({
         ) : message.content || visibleChatPhases.length > 0 || message.error ? (
           <div className="space-y-2">
             {visibleChatPhases.length > 0 && (
-              <div className="border-b border-slate-200 pb-2 text-xs">
+              <div className="space-y-2 rounded-lg border border-slate-200 bg-white/70 p-2 text-xs">
                 <button
                   type="button"
                   onClick={onToggleChatPhases}
-                  className="flex items-center gap-1.5 font-medium text-slate-400 transition hover:text-slate-600"
+                  className="flex w-full items-center justify-between gap-3 text-left text-[11px] font-medium text-slate-500 transition hover:text-slate-700"
                 >
+                  <span className="flex items-center gap-2">
+                    <span className="size-1.5 rounded-full bg-slate-300" />
+                    처리 과정 {visibleChatPhases.length}개
+                  </span>
                   {isChatPhaseExpanded ? (
-                    <ChevronUp className="size-3" />
+                    <ChevronUp className="size-3.5" />
                   ) : (
-                    <ChevronDown className="size-3" />
+                    <ChevronDown className="size-3.5" />
                   )}
-                  처리 과정 {visibleChatPhases.length}개
                 </button>
                 {isChatPhaseExpanded && (
                   <div className="mt-2 space-y-1">
@@ -192,29 +238,11 @@ export function ChatBubble({
                       const isActive =
                         isStreaming && phaseIndex === phases.length - 1;
                       return (
-                        <div
+                        <ChatPhaseMarker
                           key={`${message.id}-${phase}`}
-                          className={`flex items-center gap-1.5 ${
-                            isActive
-                              ? "font-medium text-slate-500"
-                              : "text-slate-400"
-                          }`}
-                        >
-                          <span
-                            className={`flex h-3 w-3 shrink-0 items-center justify-center rounded-full ${
-                              isActive ? "bg-slate-300" : "bg-slate-200"
-                            }`}
-                          >
-                            {isActive ? (
-                              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-slate-600" />
-                            ) : (
-                              <span className="text-[8px] leading-none text-slate-500">
-                                ✓
-                              </span>
-                            )}
-                          </span>
-                          {phase}
-                        </div>
+                          phase={phase}
+                          active={isActive}
+                        />
                       );
                     })}
                   </div>

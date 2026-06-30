@@ -1,4 +1,10 @@
-import { ChevronDownIcon, ChevronUpIcon } from "lucide-react";
+import {
+  CheckIcon,
+  ChevronDownIcon,
+  ChevronUpIcon,
+  CircleIcon,
+  TriangleAlertIcon,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export type ToolActionChipData = {
@@ -22,42 +28,64 @@ export function ToolActionChip({
   onToggle,
 }: ToolActionChipProps) {
   const hasCode = !!chip.code;
+  const statusTone = chip.failed
+    ? "border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100"
+    : chip.done
+      ? "border-emerald-100 bg-emerald-50/60 text-emerald-700 hover:bg-emerald-50"
+      : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50";
+  const indicatorTone = chip.failed
+    ? "bg-rose-100 text-rose-600"
+    : chip.done
+      ? "bg-emerald-100 text-emerald-600"
+      : "bg-slate-900 text-white";
+  const StatusIcon = chip.failed
+    ? TriangleAlertIcon
+    : chip.done
+      ? CheckIcon
+      : CircleIcon;
 
   return (
-    <div className="overflow-hidden rounded-lg border border-border bg-muted/45 text-xs">
+    <div className="space-y-1 text-xs">
       <button
         type="button"
         onClick={() => hasCode && onToggle(chipKey)}
         className={cn(
-          "flex w-full items-center gap-2 px-3 py-2 text-left transition-colors",
-          hasCode ? "cursor-pointer hover:bg-muted" : "cursor-default",
+          "flex w-full items-center gap-2 rounded-md border px-2.5 py-1.5 text-left transition-colors",
+          statusTone,
+          hasCode ? "cursor-pointer" : "cursor-default",
         )}
         aria-expanded={hasCode ? expanded : undefined}
       >
-        {chip.failed ? (
-          <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-rose-400" />
-        ) : chip.done ? (
-          <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-400" />
-        ) : (
-          <span className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-muted-foreground" />
-        )}
         <span
           className={cn(
-            "flex-1 text-muted-foreground",
-            chip.failed && "font-semibold text-rose-600",
+            "flex size-4 shrink-0 items-center justify-center rounded-full",
+            indicatorTone,
+          )}
+        >
+          <StatusIcon
+            className={cn(
+              "size-2.5",
+              !chip.done && !chip.failed && "animate-pulse fill-current",
+            )}
+          />
+        </span>
+        <span
+          className={cn(
+            "min-w-0 flex-1 truncate text-[11px] font-medium leading-none",
+            chip.failed && "font-semibold",
           )}
         >
           {chip.label}
         </span>
         {hasCode &&
           (expanded ? (
-            <ChevronUpIcon size={12} className="text-muted-foreground" />
+            <ChevronUpIcon className="size-3.5 shrink-0 opacity-70" />
           ) : (
-            <ChevronDownIcon size={12} className="text-muted-foreground" />
+            <ChevronDownIcon className="size-3.5 shrink-0 opacity-70" />
           ))}
       </button>
       {expanded && hasCode && (
-        <pre className="max-h-64 overflow-y-auto border-t border-border bg-slate-950 p-3 font-mono text-[11px] leading-relaxed whitespace-pre-wrap break-all text-slate-100">
+        <pre className="max-h-64 overflow-y-auto rounded-md border border-slate-800 bg-slate-950 p-3 font-mono text-[11px] leading-relaxed whitespace-pre-wrap break-all text-slate-100">
           {chip.code}
         </pre>
       )}

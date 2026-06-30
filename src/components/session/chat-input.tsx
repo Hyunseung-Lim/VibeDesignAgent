@@ -1,8 +1,16 @@
 "use client";
 
-import type { ChangeEvent, KeyboardEvent, RefObject } from "react";
+import type { ChangeEvent, KeyboardEvent, ReactNode, RefObject } from "react";
 import { useMemo, useState } from "react";
-import { ArrowUp, ImagePlus, X } from "lucide-react";
+import {
+  ArrowUp,
+  FileText,
+  ImageIcon,
+  ImagePlus,
+  LinkIcon,
+  MousePointer2,
+  X,
+} from "lucide-react";
 import { Spinner } from "@/components/ui/spinner";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -91,6 +99,81 @@ type HighlightSegment = {
   text: string;
   kind: "plain" | "command" | "mention";
 };
+
+type ComposerAttachmentProps = {
+  tone?: "slate" | "indigo" | "violet";
+  icon?: ReactNode;
+  imageUrl?: string;
+  title: string;
+  description?: string;
+  onRemove: () => void;
+};
+
+function ComposerAttachment({
+  tone = "slate",
+  icon,
+  imageUrl,
+  title,
+  description,
+  onRemove,
+}: ComposerAttachmentProps) {
+  const toneClass =
+    tone === "indigo"
+      ? "border-indigo-100 bg-indigo-50/70 text-indigo-700"
+      : tone === "violet"
+        ? "border-violet-100 bg-violet-50/70 text-violet-700"
+        : "border-slate-200 bg-white text-slate-700";
+  const mediaClass =
+    tone === "indigo"
+      ? "bg-indigo-100 text-indigo-600"
+      : tone === "violet"
+        ? "bg-violet-100 text-violet-600"
+        : "bg-slate-100 text-slate-500";
+
+  return (
+    <div
+      className={cn(
+        "group/attachment flex min-w-48 max-w-64 items-center gap-2 rounded-lg border px-2 py-1.5 shadow-sm",
+        toneClass,
+      )}
+    >
+      {imageUrl ? (
+        <img
+          src={imageUrl}
+          alt=""
+          className="size-8 shrink-0 rounded-md object-cover"
+        />
+      ) : (
+        <span
+          className={cn(
+            "flex size-8 shrink-0 items-center justify-center rounded-md",
+            mediaClass,
+          )}
+        >
+          {icon}
+        </span>
+      )}
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-xs font-semibold leading-4">
+          {title}
+        </span>
+        {description ? (
+          <span className="block truncate text-[11px] leading-4 opacity-70">
+            {description}
+          </span>
+        ) : null}
+      </span>
+      <button
+        type="button"
+        onClick={onRemove}
+        className="flex size-6 shrink-0 items-center justify-center rounded-md opacity-55 transition hover:bg-black/5 hover:opacity-100"
+        aria-label={`${title} 제거`}
+      >
+        <X className="size-3.5" />
+      </button>
+    </div>
+  );
+}
 
 function highlightedInputSegments(
   value: string,
@@ -185,6 +268,11 @@ export function ChatInput({
           matchesComposerSearch(option.searchText, trigger.query),
         )
     : [];
+  const hasAttachments =
+    Boolean(selectedElement) ||
+    citedTexts.length > 0 ||
+    selectedReferences.length > 0 ||
+    Boolean(styleImage);
 
   const closeSuggestions = () => {
     setTrigger(null);
@@ -252,119 +340,66 @@ export function ChatInput({
         </div>
       )}
 
-      {!readOnly && selectedElement && (
-        <div className="mb-2 flex items-center justify-between rounded-xl bg-indigo-50 px-3 py-2 text-xs">
-          <span className="font-medium text-indigo-600">
-            선택된 요소:{" "}
-            <code className="font-mono">{selectedElement.selector}</code>
-          </span>
-          <button
-            type="button"
-            onClick={onClearSelectedElement}
-            className="text-indigo-400 hover:text-indigo-600"
-          >
-            <X size={12} />
-          </button>
-        </div>
-      )}
-
-      {!readOnly && citedTexts.length > 0 && (
-        <div className="mb-2 rounded-xl bg-slate-50 px-3 py-2 text-xs">
-          <div className="mb-1.5 flex items-center justify-between">
-            <span className="font-medium text-slate-600">
-              텍스트 인용 ({citedTexts.length})
-            </span>
-            <button
-              type="button"
-              onClick={onClearCitedTexts}
-              className="text-slate-400 hover:text-slate-600"
-            >
-              전체 해제
-            </button>
-          </div>
-          <div className="flex flex-col gap-1">
+      {!readOnly && hasAttachments && (
+        <div className="mb-2 overflow-x-auto pb-1">
+          <div className="flex w-max items-center gap-2">
+            {selectedElement && (
+              <ComposerAttachment
+                tone="indigo"
+                icon={<MousePointer2 className="size-4" />}
+                title="선택된 요소"
+                description={selectedElement.selector}
+                onRemove={onClearSelectedElement}
+              />
+            )}
             {citedTexts.map((text, index) => (
-              <span
+              <ComposerAttachment
                 key={`${text}-${index}`}
-                className="flex items-start gap-1 rounded-lg border border-slate-200 bg-white px-2 py-1 text-slate-600"
-              >
-                <span className="mt-0.5 shrink-0 text-slate-300">
-                  &quot;
-                </span>
-                <span className="line-clamp-1 flex-1">{text}</span>
-                <button
-                  type="button"
-                  onClick={() => onRemoveCitedText(index)}
-                  className="shrink-0 text-slate-300 hover:text-slate-500"
-                >
-                  <X size={10} />
-                </button>
-              </span>
+                icon={<FileText className="size-4" />}
+                title="텍스트 인용"
+                description={text}
+                onRemove={() => onRemoveCitedText(index)}
+              />
             ))}
-          </div>
-        </div>
-      )}
-
-      {!readOnly && selectedReferences.length > 0 && (
-        <div className="mb-2 rounded-xl bg-violet-50 px-3 py-2 text-xs">
-          <div className="mb-1.5 flex items-center justify-between">
-            <span className="font-medium text-violet-600">
-              레퍼런스 인용 ({selectedReferences.length})
-            </span>
-            <button
-              type="button"
-              onClick={onClearSelectedReferences}
-              className="text-violet-400 hover:text-violet-600"
-            >
-              전체 해제
-            </button>
-          </div>
-          <div className="flex flex-wrap gap-1.5">
             {selectedReferences.map((reference) => (
-              <span
+              <ComposerAttachment
                 key={reference.id}
-                className="flex items-center gap-1 rounded-full bg-violet-100 px-2 py-0.5 text-violet-700"
-              >
-                {reference.imageUrl && (
-                  <img
-                    src={reference.imageUrl}
-                    alt=""
-                    className="h-3.5 w-5 rounded object-cover"
-                  />
-                )}
-                <span className="max-w-32 truncate">{reference.title}</span>
-                <button
-                  type="button"
-                  onClick={() => onRemoveSelectedReference(reference.id)}
-                  className="ml-0.5 text-violet-400 hover:text-violet-600"
-                >
-                  <X size={12} />
-                </button>
-              </span>
+                tone="violet"
+                icon={<LinkIcon className="size-4" />}
+                imageUrl={reference.imageUrl}
+                title="레퍼런스 인용"
+                description={reference.title}
+                onRemove={() => onRemoveSelectedReference(reference.id)}
+              />
             ))}
+            {styleImage && (
+              <ComposerAttachment
+                imageUrl={styleImage.dataUrl}
+                icon={<ImageIcon className="size-4" />}
+                title="스타일 참고 이미지"
+                description={styleImage.name || "첨부 이미지"}
+                onRemove={onClearStyleImage}
+              />
+            )}
+            {citedTexts.length > 1 && (
+              <button
+                type="button"
+                onClick={onClearCitedTexts}
+                className="h-9 shrink-0 rounded-lg border border-slate-200 bg-white px-2.5 text-[11px] font-semibold text-slate-400 transition hover:bg-slate-50 hover:text-slate-600"
+              >
+                텍스트 전체 해제
+              </button>
+            )}
+            {selectedReferences.length > 1 && (
+              <button
+                type="button"
+                onClick={onClearSelectedReferences}
+                className="h-9 shrink-0 rounded-lg border border-violet-100 bg-violet-50/70 px-2.5 text-[11px] font-semibold text-violet-400 transition hover:bg-violet-50 hover:text-violet-600"
+              >
+                레퍼런스 전체 해제
+              </button>
+            )}
           </div>
-        </div>
-      )}
-
-      {!readOnly && styleImage && (
-        <div className="mb-2 flex items-center justify-between rounded-xl bg-slate-50 px-3 py-2 text-xs">
-          <span className="flex items-center gap-2 font-medium text-slate-700">
-            <img
-              src={styleImage.dataUrl}
-              alt=""
-              className="h-8 w-8 shrink-0 rounded object-cover"
-            />
-            <span className="max-w-40 truncate">
-              {styleImage.name || "스타일 참고 이미지"}
-            </span>
-          </span>
-          <button
-            type="button"
-            onClick={onClearStyleImage}
-            className="text-slate-400 hover:text-slate-600"
-          >
-            <X size={12} />
-          </button>
         </div>
       )}
 

@@ -142,16 +142,18 @@
 - 선택을 바꾸는 중간 클릭은 memory draft를 만들지 않는다. 세션 종료 직전에 현재 `finalArtboardId` 하나만 final-design memory로 기록하며, 종료 API도 과거 방식으로 누적된 선택 draft 중 현재 최종안 하나만 승격한다 `[현행 2026-06-23 → 15.112]`
 - final-design memory의 input은 라벨만이 아니라, 세션 종료 시 비교 대상 목업 전체와 세션 채팅을 서버 enrichment LLM 패스에 보내 만든다. 패스는 각 board HTML을 직접 조사해 문구/구조/UI 스타일을 정리하고(디자인 스타일 메타데이터는 무시), 후보 비교와 채팅에서 드러난 선호를 사실 위주로 기록한다. semantic 생성 프롬프트는 그대로 두고 input만 보강하는 방식이다. 구현은 `src/lib/server/finalDesignMemoryInput.ts`와 `src/app/api/memory/drafts/route.ts`를 직접 확인한다 `[현행 2026-06-25 → 15.128]`
 - 최종 디자인 미선택 상태로 세션 종료 시 확인 경고를 표시
+- 세션 종료 처리 중에는 메모리 저장, 클러스터 분석, 리뷰 준비 단계를 진행 모달로 표시한다. 진행 중 상태 문구는 shimmer text로 강조하고, 완료 상태 문구는 정적 텍스트로 유지한다 `[현행 2026-06-30 → 15.161]`
 
 ### 4.6 AI 채팅
 
-- **구조화 composer 문법**: `/`는 새 산출물 생성 명령(`/시안생성`, `/디자인스타일생성`, `/목업생성`, `/레퍼런스검색`), `@`는 현재 세션에 이미 존재하는 시안/Design Brief/Design Style/Mockup 언급이다. 대상이 없으면 현재 활성 시안을 사용하고, `@디자인스타일` 같은 검색은 dropdown에서 `시안 N · 디자인 스타일` 실제 대상을 확인한 뒤 ID 기반 metadata로 고정한다. 자동완성 선택값은 별도 상단 chip이 아니라 textarea 안에 `/시안생성`, `@시안 1 · 디자인 브리프` 같은 inline token으로 삽입되고, token 부분만 bold/color highlight로 표시된다. 레퍼런스 카드·텍스트 하이라이트·목업 요소는 기존 전용 선택/인용 UI를 유지하며 `@`에 중복 노출하지 않는다. 명령/언급은 raw token 파싱이 아니라 구조화 metadata로 `/api/chat`에 전달되고 명시적 `/` 명령이 planner 추론보다 우선한다. memory draft input에는 command/mention 메타 라인을 붙이지 않고 사용자가 본 실제 입력문만 저장한다. `src/lib/session/chat-composer.ts`, `src/components/session/chat-input.tsx`, `src/app/api/chat/route.ts`를 직접 확인 `[현행 2026-06-30 → 15.108/15.157]`
+- **구조화 composer 문법**: `/`는 새 산출물 생성 명령(`/시안생성`, `/디자인스타일생성`, `/목업생성`, `/레퍼런스검색`), `@`는 현재 세션에 이미 존재하는 시안/Design Brief/Design Style/Mockup 언급이다. 대상이 없으면 현재 활성 시안을 사용하고, `@디자인스타일` 같은 검색은 dropdown에서 `시안 N · 디자인 스타일` 실제 대상을 확인한 뒤 ID 기반 metadata로 고정한다. 자동완성 선택값은 별도 상단 chip이 아니라 textarea 안에 `/시안생성`, `@시안 1 · 디자인 브리프` 같은 inline token으로 삽입되고, token 부분만 bold/color highlight로 표시된다. 레퍼런스 카드·텍스트 하이라이트·목업 요소는 기존 전용 선택/인용 UI를 유지하며 `@`에 중복 노출하지 않는다. 선택 요소, 텍스트 인용, 레퍼런스 인용, 스타일 이미지는 composer 위 attachment tray에 동일한 Attachment-style item으로 표시한다. 명령/언급은 raw token 파싱이 아니라 구조화 metadata로 `/api/chat`에 전달되고 명시적 `/` 명령이 planner 추론보다 우선한다. memory draft input에는 command/mention 메타 라인을 붙이지 않고 사용자가 본 실제 입력문만 저장한다. `src/lib/session/chat-composer.ts`, `src/components/session/chat-input.tsx`, `src/app/api/chat/route.ts`를 직접 확인 `[현행 2026-06-30 → 15.108/15.157/15.164]`
 - **응답 생성 provider**: 기본 OpenAI `gpt-5.4` (Responses API). `CHAT_RESPONSE_PROVIDER=anthropic` 또는 `LLM_PROVIDER=anthropic`이면 최종 chat 응답 생성만 Claude Messages API로 전환
 - **Provider 범위**: planner, embedding, memory retrieval/encoding, clustering label은 기존 OpenAI 경로 유지. `/api/chat`의 최종 assistant response streaming만 provider switch 대상. Admin UI에서는 메인 채팅 헤더의 LLM selector로 turn별 provider override 가능
 - **웹 검색**: OpenAI provider일 때 `web_search_preview` 툴 활성화, 레퍼런스 URL 인용 시 `tool_choice: "required"`로 강제. Anthropic provider일 때는 prompt에 포함된 reference title/url context를 사용하고 web search tool은 호출하지 않음
 - **스트리밍**: SSE 방식으로 실시간 토큰 출력
 - **웹 검색 표시**: 검색 발생 시 `[WEB_SEARCHED]` 마커 → "웹 검색 완료" 배지 표시
 - **인용 링크**: 웹 검색 출처 `(domain.com)` 자동으로 클릭 가능한 마크다운 링크로 변환
+- **채팅 bubble UI**: user message는 어두운 filled bubble, assistant message는 기본적으로 ghost bubble(배경/테두리 없이 본문 중심)로 표시한다. 선택된 assistant turn과 error turn만 별도 surface를 갖고, 진행 상태와 tool action marker는 bubble 안의 Marker-style row로 낮은 위계에서 표시한다. `[WEB_SEARCHED]` 같은 marker row는 클릭하면 원문 marker 세부 내용을 펼친다 `[현행 2026-06-30 → 15.158/15.159/15.163]`
 - **특수 블록 처리**:
   - `[CREATE_NOTE: ...]` → 새 아이디어(시안) 생성. 저장 payload는 목표/대상 사용자, 핵심 경험, 화면 구조, 미션 필수 콘텐츠, 제약을 포함한 독립적인 Design Brief여야 한다. 모델이 한 줄 작업 지시문을 반환하면 클라이언트가 먼저 assistant 응답 본문에서 실질 브리프를 복구하고, 없을 때 미션 맥락과 현재 사용자 요청으로 시작 가능한 브리프를 복구한다. 단, 현재 시안이 빈 shell이면(디자인 스타일만 먼저 작성된 경우, 또는 세션 시작 시 시드된 빈 디폴트 시안 1: description·designStyle·artboard 모두 없음) 새 시안을 만들지 않고 해당 시안 내용을 채움 `[현행 2026-06-30 → 15.98/15.116/15.153]`
   - 세션은 빈 디폴트 시안 1로 시작한다(read-only/완료 세션 제외). 워크스페이스·탭·Brief/Style/Mockup 구조를 처음부터 노출하고, 첫 brief가 위 shell-fill 규칙으로 이 시안을 채운다 `[현행 2026-06-23 → 15.116]`
@@ -967,7 +969,7 @@ type ChatPlan = {
   - retrieved interaction memory는 prompt에 넣기 직전 `episodic[].episodic`과 `semantic[].semantic`으로 재그룹화한다. 검색은 combined embedding 기준으로 유지하되, 모델에게 전달되는 표현은 "이전 상호작용"과 "지속적 선호/패턴" 텍스트만 남긴다.
   - 같은 retrieved memory에 episodic/semantic이 모두 있으면 두 그룹에 각각 포함하고, prompt에는 memory id/source 연결 정보를 넣지 않는다.
   - planner 실패 시 기존 방식으로 fallback한다. `confidence < 0.55`면 대부분 context는 유지하되 `mockupHtml`은 selected/edit/current-screen 계열 요청일 때만 포함한다.
-  - client assistant bubble의 `참조한 맥락` 요약은 제거했다. 대신 `/api/chat`이 stream 초반에 `[CHAT_PHASE: ...]` 이벤트를 여러 개 보내고, client는 이를 본문에 저장하지 않는 Codex식 단계 로그로 표시한다.
+  - client assistant bubble의 `참조한 맥락` 요약은 제거했다. 대신 `/api/chat`이 stream 초반에 `[CHAT_PHASE: ...]` 이벤트를 여러 개 보내고, client는 이를 본문에 저장하지 않는 Codex식 단계 로그로 표시한다. 단계 로그는 `처리 과정 N개` disclosure 안에서 Marker-style status row로 렌더한다 `[현행 2026-06-30 → 15.158]`
 - [x] 레퍼런스 추천 선호 scope 정리
   - 원칙: 도메인/UX 패턴/시각 스타일은 미션에 귀속되므로 다른 미션의 전역 사용자 취향으로 직접 적용하지 않는다.
   - 구현: client가 현재 mission session의 `references`, `activityLog`, `messages.citedReferences`만 요약해 `/api/references`의 `referencePreferenceContext`로 전달한다.
@@ -1191,7 +1193,7 @@ type ChatPlan = {
   - 구현: `chat/route.ts`에서 수신 후 `chatReferencePreferencePrompt`로 시스템 메시지 생성하여 주입 (cited/kept/deleted signal 포함)
 - [x] chat phase log 보존 및 toggle 표시
   - 배경: `[CHAT_PHASE: ...]` 로그가 스트리밍 중에만 보이고 완료 후 사라져, 리뷰/복기 시 어떤 context를 읽었는지 확인하기 어려웠음
-  - 구현: assistant message에 `chatPhases` 배열을 저장하고, chat bubble 안에서 `처리 과정 N개` toggle로 접고 펼칠 수 있게 표시
+  - 구현: assistant message에 `chatPhases` 배열을 저장하고, chat bubble 안에서 `처리 과정 N개` toggle로 접고 펼칠 수 있게 표시 `[updated 2026-06-30 → 15.158: 단계 항목 렌더링을 Marker-style status row로 변경]`
 - [x] note 작성과 디자인 스타일 규칙 분리 강화
   - 배경: 시안 note 작성 중 `Visual Style Notes` 같은 색/타이포/무드 정보가 note description에 섞이는 케이스가 있었음
   - 구현: `CHAT_NOTE_ACTION_PROMPT` 안에 visual style section 금지 규칙과 `[CREATE_DESIGN_SPEC: {"content":"..."}]` 분리 규칙을 명시
@@ -1292,7 +1294,7 @@ type ChatPlan = {
 - [ ] 세션 시작 전, 진행 중, 종료/리뷰 모드의 layout state를 명시 `[deferred: large route redesign]`
 - [ ] Reference card, Idea editor, Mockup canvas, Chat bubble, Memory event card를 공통 컴포넌트로 분리 `[partially implemented: ToolActionChip, MemoryScoreBar extracted]`
 - [ ] 목업 캔버스의 zoom/pan/fit/fullscreen controls를 icon button + tooltip 기준으로 정리
-- [ ] Chat streaming, tool action chip, web searched badge, memory toggle의 visual language 통일 `[partially implemented: ToolActionChip tokenized]`
+- [ ] Chat streaming, tool action chip, web searched badge, memory toggle의 visual language 통일 `[partially implemented: ToolActionChip을 Marker-style clickable row로 정리 2026-06-30 → 15.163]`
 - [ ] 세션 종료/최종 디자인 선택 흐름의 confirm/warning state 개선
 - [~] 모바일에서는 panel tabs 또는 sheet 기반 전환으로 재설계 `[취소됨: 모바일 화면을 별도로 만들지 않기로 결정. 대신 desktop-only 고정 레이아웃(min-width lock) 적용 — globals.css body min-width: 1024px + layout.tsx viewport.width: 1024]`
 
@@ -1397,13 +1399,13 @@ type ChatPlan = {
 - [x] hover state는 색 변화만이 아니라 border/shadow/translate 중 하나를 일관되게 사용 `[primitive는 bg+border, 리스트/카드 버튼은 border+bg 조합 확인. 최종 시각 확인 권장]`
 - [x] press state는 `scale(0.98)` 또는 명확한 active state를 짧게 제공 `[Button primitive의 active:translate-y-px]`
 - [x] `transition-all` 사용 금지. 필요한 property만 지정 `[button/badge/tabs 3곳을 명시적 property 목록으로 교체 완료]`
-- [x] loading은 skeleton/spinner/progress를 상황별로 구분 `[skeleton(main 세션), pulse placeholder(lobby), spinner(chat/reference/mockup), sonner(작업 피드백) 구분 사용 확인]`
+- [x] loading은 skeleton/spinner/progress를 상황별로 구분 `[공용 Skeleton은 shimmer sweep, main 세션 pending artboard는 도메인 맞춤 shimmer, spinner(chat/reference/mockup), sonner(작업 피드백) 구분 사용 확인; lobby placeholder도 공용 Skeleton 사용으로 갱신 2026-06-30 → 15.160]`
 - [x] 숫자/시간/카운트는 tabular numbers 적용 `[9곳 적용 확인]`
 - [x] 긴 제목과 설명은 `text-wrap: balance` 또는 `pretty` 적용 여부 검토 `[로그인/온보딩 h1+설명, 미션 카드 제목, alert-dialog description에 적용]`
 - [ ] nested card/button radius는 concentric하게 맞춤 `[시각 확인 필요]`
 - [x] icon-only button에는 tooltip과 accessible label 제공 `[size="icon" 및 raw icon button 전수 감사, aria-label 8곳 보강]`
 - [x] enter/exit animation은 interruptible CSS transition 우선 `[radix data-state 기반 표준 패턴(100–200ms), 페이지 커스텀 entrance animation 없음]`
-- [x] 페이지 첫 로드에서 과한 animation을 실행하지 않음 `[페이지 mount entrance animation 없음 확인. lobby는 loading pulse만]`
+- [x] 페이지 첫 로드에서 과한 animation을 실행하지 않음 `[페이지 mount entrance animation 없음 확인. lobby는 낮은 대비 shimmer skeleton만 사용 2026-06-30 → 15.160]`
 
 ### 15.10 접근성 / 상태 검증
 
@@ -2272,7 +2274,7 @@ type ChatPlan = {
   - session route는 입력 상태와 handler 연결만 담당하게 하고, read-only/citation/reference/send/cancel UI는 독립 컴포넌트에서 관리한다.
 - 구현:
   - `src/components/session/chat-input.tsx` 추가.
-  - read-only notice, selected element pill, cited text tray, selected reference tray, textarea, send/cancel buttons를 `ChatInput`으로 이동.
+  - read-only notice, selected element/cited text/reference/style image attachment tray, textarea, send/cancel buttons를 `ChatInput`으로 이동. `[updated 2026-06-30 → 15.164: source chips는 Attachment-style item tray로 통일]`
   - `selectedElement`, `citedTexts`, `selectedReferences`, `textareaRef`, loading/mockup state를 props로 전달.
   - clear/remove/send/cancel/input keyboard handler는 page state를 유지한 채 callback props로 연결.
   - 기존 input UX와 mockup cancel label behavior는 유지.
@@ -3793,3 +3795,45 @@ type ChatPlan = {
 - 수정: `ChatInput`의 자동완성 선택은 trigger text를 제거하지 않고 textarea 안에 `/명령` 또는 `@대상 라벨` inline token을 삽입한다. 별도 composer chip UI는 제거했다. token 부분은 textarea overlay highlight layer로 bold/color 처리한다. 사용자가 inline token을 지우면 구조화 `composerCommand`/`composerMention` metadata도 함께 clear된다.
 - 메모리: chat turn의 memory draft input은 `explicit command`, `mentioned artifact`, `user input`을 합친 문자열 대신 사용자가 본 실제 `text`만 저장한다. 구조화 command/mention metadata는 기존처럼 `/api/chat` 요청과 user message 객체에 별도로 보존해 planner와 mention scoping에는 계속 사용한다.
 - 문서: 4.6 Current Snapshot을 inline token 계약으로 갱신하고, 15.108의 composer chip 전제를 stale 처리했다.
+
+### 15.158 assistant 처리 과정 Marker-style 정리 `[implemented 2026-06-30]`
+
+- 배경: shadcn Marker 문서를 참고해 chatting interface의 assistant 진행 상태/phase 표시를 더 낮은 위계의 status row로 정리할 수 있는지 검토했다.
+- 수정: `ChatBubble`의 `처리 과정 N개` disclosure 내부 phase 항목을 `ChatPhaseMarker`로 분리하고, active phase는 `role=status`, `aria-live=polite`, pulsing dot indicator를 가진 bordered row로 표시한다. 완료된 phase는 muted row + check indicator로 표시한다.
+- 의도: assistant 본문/툴 action chip과 진행 상태가 섞여 보이지 않게 하고, streaming 중인 마지막 단계만 status marker처럼 강조한다. 기존 disclosure 저장/접기 동작과 `chatPhases` persistence는 유지한다.
+
+### 15.159 assistant bubble surface 정리 `[implemented 2026-06-30]`
+
+- 배경: shadcn Bubble 문서의 message variant 관점을 chatting interface에 적용할 수 있는지 검토했다. 기존 assistant bubble은 모든 응답이 회색 카드처럼 보여 phase, action chip, 본문이 한 덩어리로 무겁게 보였다.
+- 수정: `ChatBubble`에서 user message는 기존 dark filled bubble을 유지하고, assistant message 기본 상태는 ghost surface로 전환했다. 선택된 assistant turn은 violet surface를 유지하고, error turn은 옅은 red surface를 부여해 상태 구분을 남긴다.
+- 의도: assistant 응답 본문은 대화 흐름처럼 가볍게 읽히고, 실제로 주목해야 하는 선택 상태/오류/진행 상태만 별도 surface로 보이게 한다.
+
+### 15.160 공용 Skeleton shimmer 적용 `[implemented 2026-06-30]`
+
+- 배경(Notion `38ed5dc81f66802589d8e3b0923f7a39`): loading placeholder가 단순 pulse에 머물러 있어, mockup canvas pending artboard의 shimmer와 앱 전반의 skeleton 표현이 맞지 않았다. Notion page는 integration 권한 문제로 직접 fetch하지 못해 제목과 로컬 코드 기준으로 적용했다.
+- 수정: `Skeleton` 공용 컴포넌트를 overflow-hidden surface + `vda-shimmer` sweep pseudo-element로 변경했다. 로비 미션 목록 loading placeholder는 수동 `animate-pulse` div 대신 공용 `Skeleton`을 사용한다.
+- 의도: 페이지 로딩은 과한 entrance animation 없이 조용한 shimmer로 통일하고, mockup canvas의 도메인 맞춤 pending artboard shimmer는 유지한다.
+
+### 15.161 세션 종료 진행 모달 문구 shimmer 적용 `[implemented 2026-06-30]`
+
+- 배경: 세션 종료 버튼을 누른 뒤 메모리 저장, 클러스터 분석, 리뷰 준비를 기다리는 진행 모달의 상태 문구에도 shimmer 감각을 맞추고 싶었다.
+- 수정: 전역 `vda-text-shimmer` 유틸을 색상 변수 기반으로 추가하고, 세션 종료 진행 모달의 진행 중 상태 문구에 slate shimmer를 적용했다. 최종 디자인 미선택 인라인 경고와 완료 상태 문구는 정적 텍스트로 유지한다.
+- 의도: skeleton loading과 같은 큰 placeholder가 아니라, 실제 await 경계마다 바뀌는 진행 문구에만 은근한 sweep 강조를 준다.
+
+### 15.162 메인 좌측 패널 sticky section nav 배경 제거 `[implemented 2026-06-30]`
+
+- 배경(Page Feedback `/main/mission-20260611-103001`): 좌측 패널의 sticky section nav가 스크롤 중 헤더와 애매하게 떨어진 회색 배경 띠처럼 보여 떠 있는 느낌이 났다.
+- 수정: sticky wrapper의 `border`, `bg-slate-50/95`, `backdrop-blur`를 제거하고 안쪽 segmented control만 유지했다.
+- 의도: header에 붙은 별도 subheader처럼 보이게 만들기보다, 배경 띠를 없애 floating control로 가볍게 보이도록 한다.
+
+### 15.163 ToolActionChip Marker-style row 정리 `[implemented 2026-06-30]`
+
+- 배경(Page Feedback `/main/mission-20260611-103001`): `웹 검색 완료` 같은 assistant tool action chip이 shadcn Marker/Bubble 스타일과 따로 노는 작은 카드처럼 보여, 같은 marker visual language로 정리할 필요가 있었다.
+- 수정: `ToolActionChip`을 rounded card chip에서 상태 indicator가 있는 Marker-style clickable row로 변경했다. 완료, 진행, 실패 상태는 indicator icon/tone으로 구분하고, row를 클릭하면 기존처럼 원문 action marker 세부 내용을 펼친다.
+- 의도: assistant phase marker, web searched marker, action marker가 모두 같은 낮은 위계의 status row처럼 보이게 한다.
+
+### 15.164 ChatInput source attachment tray 정리 `[implemented 2026-06-30]`
+
+- 배경(Page Feedback `/main/mission-20260611-103001`): ChatInput 위 선택 요소, 텍스트 인용, 레퍼런스 인용, 스타일 이미지 UI가 각각 다른 배경 박스로 쌓여 composer와 어긋나 보였다. shadcn Attachment 문서의 item 구조를 참고해 한 줄 tray로 통일하기로 했다.
+- 수정: `ChatInput`에 `ComposerAttachment` helper를 추가하고, selected element, cited text, selected reference, style image를 동일한 rounded attachment item으로 렌더한다. 각 item은 media/icon, title, description, remove action을 갖고, 여러 항목은 horizontal scroll tray에 놓인다. 텍스트/레퍼런스 다중 선택의 전체 해제 action은 trailing button으로 유지한다.
+- 의도: composer가 가진 source context를 칩 묶음이 아니라 첨부 파일 목록처럼 읽히게 하고, 선택/해제 조작을 같은 패턴으로 맞춘다.

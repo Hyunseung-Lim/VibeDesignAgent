@@ -7072,7 +7072,13 @@ export default function MainScreenPage() {
                 {sessionCompletionReady ? "✓" : <Spinner className="size-5" />}
               </div>
               <div>
-                <p className="text-sm font-semibold text-slate-900">
+                <p
+                  className={`text-sm font-semibold text-slate-900 ${
+                    sessionCompletionReady
+                      ? ""
+                      : "vda-text-shimmer vda-text-shimmer-slate"
+                  }`}
+                >
                   {sessionCompletionReady
                     ? isOnboardingMission
                       ? "온보딩이 완료되었어요"
@@ -7257,7 +7263,7 @@ export default function MainScreenPage() {
             data-tour="content-panel"
             className="flex-1 space-y-5 overflow-y-auto bg-slate-50 px-6 pb-32 pt-6"
           >
-            <div className="sticky top-0 z-10 -mx-6 border-b border-slate-200 bg-slate-50/95 px-6 py-3 backdrop-blur">
+            <div className="sticky top-0 z-10 -mx-6 px-6 py-3">
               <div className="flex w-fit items-center gap-1 rounded-2xl border border-slate-200 bg-white p-1 shadow-sm">
                 {[
                   { id: "mission", label: "Mission", ref: missionSectionRef },

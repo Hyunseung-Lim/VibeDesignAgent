@@ -15,6 +15,7 @@ import {
   MissionCard,
   type LobbyMission,
 } from "@/components/lobby/mission-card";
+import { Skeleton } from "@/components/ui/skeleton";
 import type { MissionStatusVariant } from "@/components/lobby/status-badge";
 import {
   deriveMissionProgressStatus,
@@ -415,12 +416,12 @@ export default function LobbyPage() {
               {Array.from({ length: 3 }).map((_, index) => (
                 <div
                   key={index}
-                  className="h-52 animate-pulse rounded-xl border border-border bg-card shadow-panel"
+                  className="h-52 rounded-xl border border-border bg-card shadow-panel"
                 >
                   <div className="space-y-3 p-5">
-                    <div className="h-4 w-2/3 rounded bg-muted" />
-                    <div className="h-3 w-full rounded bg-muted" />
-                    <div className="h-3 w-4/5 rounded bg-muted" />
+                    <Skeleton className="h-4 w-2/3" />
+                    <Skeleton className="h-3 w-full" />
+                    <Skeleton className="h-3 w-4/5" />
                   </div>
                 </div>
               ))}

@@ -125,6 +125,45 @@ body {
   min-width: 1024px;
 }
 
+@keyframes vda-shimmer {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+@keyframes vda-text-shimmer {
+  0% {
+    background-position: 120% 0;
+  }
+  100% {
+    background-position: -120% 0;
+  }
+}
+
+.vda-text-shimmer {
+  background-image: linear-gradient(
+    110deg,
+    var(--vda-text-shimmer-color, #d97706) 0%,
+    var(--vda-text-shimmer-color, #d97706) 34%,
+    rgb(255 255 255 / 0.95) 48%,
+    var(--vda-text-shimmer-color, #d97706) 62%,
+    var(--vda-text-shimmer-color, #d97706) 100%
+  );
+  background-size: 240% 100%;
+  background-clip: text;
+  -webkit-background-clip: text;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+  animation: vda-text-shimmer 1.6s ease-in-out infinite;
+}
+
+.vda-text-shimmer-slate {
+  --vda-text-shimmer-color: #0f172a;
+}
+
 * {
   border-color: var(--border);
 }
