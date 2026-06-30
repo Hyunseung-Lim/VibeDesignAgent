@@ -3876,3 +3876,10 @@ type ChatPlan = {
 - 수정: `MemoryClusterPage`의 `MemoryClusterList` 호출에서 `onRegenerate`를 더 이상 전달하지 않는다. `MemoryClusterList`는 `onRegenerate`가 없으면 버튼을 렌더하지 않으므로 추가 컴포넌트 변경은 없다.
 - 결과: 클러스터가 이미 있을 때 list 상단의 재생성 트리거가 사라진다. clustering 재생성은 클러스터가 비어 있을 때의 `MemoryClusterEmptyState` 생성 버튼(`handleRegenerate`)으로만 남는다.
 - 영향 범위: `MemoryClusterPage` 공용이라 `/agent`와 admin memory 진단 페이지 양쪽에서 버튼이 사라진다.
+
+### 15.171 디자인 브리프 요청이 디자인 스타일로 분류되던 문제 수정 `[implemented 2026-06-30]`
+
+- 배경(QA Note Bug): 사용자가 디자인 브리프 작성을 요청했는데 에이전트가 디자인 스타일(CREATE_DESIGN_SPEC)을 만들었다.
+- 원인: planner intent 분류 프롬프트(`chatPlannerPrompt`)에 디자인 브리프(시안)와 디자인 스타일을 구분하는 규칙이 없었다. create_design_spec 규칙의 키워드 그물이 넓고, 디자인 브리프 작성 같은 요청이 디자인이라는 단어와 문서 작성 성격 때문에 create_design_spec으로 끌려갔다.
+- 수정: planner 규칙에 디자인 브리프 = 제품/UX 시안(create_note 또는 update_note)이고 디자인 스타일 = 시각 스타일 레이어(create_design_spec)라는 분기를 명시했다. 디자인이라는 단어만으로 디자인 스타일을 의미하지 않는다는 점도 적었다.
+- 메인 system prompt(CHAT_NOTE_ACTION_PROMPT 등)는 이미 둘을 구분하고 있어 그대로 두고, 분류 단계만 보강했다.

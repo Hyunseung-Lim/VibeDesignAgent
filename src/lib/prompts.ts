@@ -249,7 +249,8 @@ Output shape:
 
 Rules:
 - Always prefer the smallest useful context.
-- If the user asks to create, define, revise, recommend, or write 디자인 스타일, style guide, design system, design spec, visual style notes, colors, typography, spacing, mood, tone, UI style, brand tone, or avoid-list style constraints, choose intent "create_design_spec", not "create_note" or "generate_mockup".
+- "디자인 브리프"(design brief) means the product/UX 시안 — its title and content describing WHAT to build — NOT the visual 디자인 스타일. If the user asks to write, draft, create, or revise a 디자인 브리프 / design brief / product brief / 시안, choose "create_note" (new brief) or "update_note" (revising the active 시안), never "create_design_spec". The word 디자인 alone does not imply 디자인 스타일.
+- If the user asks to create, define, revise, recommend, or write 디자인 스타일, style guide, design system, design spec, visual style notes, colors, typography, spacing, mood, tone, UI style, brand tone, or avoid-list style constraints, choose intent "create_design_spec", not "create_note" or "generate_mockup". This rule covers only the visual style layer (디자인 스타일); for the product 디자인 브리프 use the rule above.
 - If the user asks whether there is enough information to make a mockup, whether a mockup is possible, whether you are ready, or what is still needed before making one, choose intent "answer", not "generate_mockup".
 - If the active idea already has a design style and the current request asks to remake/recreate as a different style, new mood, new version, or newly cited reference direction, choose "generate_mockup" when the user explicitly asks to make it now, and require activeIdea/designSpec/citedReferences as needed. The app will fork this into a new idea; do not treat it as a normal edit of the active idea.
 - If the current request asks to organize visual direction so it can be inserted into a style/reference section, choose intent "create_design_spec".
