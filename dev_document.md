@@ -499,7 +499,8 @@ queryEmbeddingModel;
 retrievedMemoryIds;
 similarities;
 scoreDeltas;
-nearMissDeltas;
+idleDecayDeltas;
+idleDecayCount;
 missionId;
 createdAt;
 ```
@@ -517,15 +518,15 @@ retrievedCount += 1;
 lastRetrievedAt = now;
 ```
 
-- retrieve 후보였지만 선택되지 않은 near miss:
+- 그 턴에 retrieve되지 않은 memory:
 
 ```typescript
-if rank is 6..20 and similarity >= 0.55:
-  weight = max(0.1, weight - 0.005)
+weight = max(0.1, weight - idleDecayWeightLoss(memoryCount))
 ```
 
 - weight가 너무 빠르게 커지지 않도록 sublinear growth 사용
-- near miss 감점은 프롬프트에 들어갈 만큼 강하지는 않지만 현재 query와 계속 경쟁하는 memory를 천천히 낮추기 위한 약한 신호로만 사용
+- idle decay 기본값은 턴당 `0.005`, memory 수가 많으면 multiplier를 적용하되 상한 `0.006`을 넘기지 않음
+- 벽시계 시간이 아니라 retrieval 턴 기준으로만 감소시켜 3일 formative 실험의 시간 기반 archive 금지 원칙과 분리
 
 #### 6단계: 망각 후보 산출
 
@@ -885,15 +886,15 @@ archiveReason = "low-weight" | "duplicate" | "manual";
 ### 13.3 메모리 시스템
 
 - [x] 메모리 전체 크기를 weight decay 계산에 반영
-  - 목표: memory 수가 많을수록 near-miss decay 폭을 아주 조금 증가시켜 전체 memory 크기가 무한히 커지지 않게 함
-  - 현재 기준: near miss는 rank 6~20, similarity `>= 0.55`, `weight - 0.005`, floor `0.1`
-  - 구현: candidate memory count별 near-miss decay multiplier 적용
+  - 목표: memory 수가 많을수록 idle decay 폭을 아주 조금 증가시켜 전체 memory 크기가 무한히 커지지 않게 함
+  - 현재 기준: retrieve되지 않은 memory는 retrieval 턴마다 `weight - 0.005`, floor `0.1`
+  - 구현: candidate memory count별 idle decay multiplier 적용
     - `< 60`: `1.0x`
     - `60~119`: `1.15x`
     - `120~199`: `1.3x`
     - `>= 200`: `1.5x`
-  - 최대 decay 상한: `0.0075`
-  - retrieval log에 `memoryCount`, `nearMissDecayMultiplier`, `nearMissWeightLoss`, nearMiss별 `decayMultiplier` 저장
+  - 최대 decay 상한: `0.006`
+  - retrieval log에 `memoryCount`, `idleDecayDeltas`, `idleDecayCount`, idle target별 `decayMultiplier` 저장
 
 ### 13.4 프롬프트 최적화
 
@@ -2586,7 +2587,8 @@ type ChatPlan = {
 
 - #1 weight 사용 기반 decay (`memory/retrieve/route.ts`):
   - 실측(`scripts/analyze_memory_weights.py`): 5명/132개 중 weight 0.5 미만 0개, 60%가 0.5 동결, delta 이벤트 증가 +835 vs 감소 −61. 기존 near-miss decay(rank 6~20 & sim≥0.55)가 현실에선 거의 안 걸려 단조 증가만 함.
-  - 수정: near-miss decay 제거 → **idle decay** 도입. retrieve마다 그 턴에 retrieve 안 된 모든 메모리에 −0.003(메모리 많을수록 최대 −0.006), 하한 0.1. 벽시계 무관(사용 기반)이라 3일 formative 실험의 "시간 기반 archive 금지" 원칙과 충돌 없음. 로그 필드 `idleDecayDeltas`/`idleDecayCount`로 교체(외부 consumer 없음). 튜닝 상수 `IDLE_DECAY_WEIGHT_LOSS`.
+  - 수정: near-miss decay 제거 → **idle decay** 도입. retrieve마다 그 턴에 retrieve 안 된 모든 메모리에 −0.005(메모리 많을수록 최대 −0.006), 하한 0.1. 벽시계 무관(사용 기반)이라 3일 formative 실험의 "시간 기반 archive 금지" 원칙과 충돌 없음. 로그 필드 `idleDecayDeltas`/`idleDecayCount`로 교체(외부 consumer 없음). 튜닝 상수 `IDLE_DECAY_WEIGHT_LOSS`.
+  - 2026-07-01 Notion Weight 코멘트 반영: 요청이 한 번도 없는 memory가 세션당 평균 10~20 retrieval 턴에서 약 5~10% 낮아지도록 기본 idle decay를 0.003에서 0.005로 조정.
   - read-only 분석 스크립트 `scripts/analyze_memory_weights.py` 추가(weight 분포/증감 이벤트 집계).
 
 - 리뷰 화면 감소 표시 (`memory/session-summary/route.ts` + `main/[missionId]/page.tsx`):

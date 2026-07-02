@@ -32,7 +32,7 @@ const DEFAULT_LIMIT = 5;
 // formative study). Replaces the old narrow near-miss decay which, in practice,
 // almost never fired — see scripts/analyze_memory_weights.py (weight only ever
 // rose: +835 vs -61 delta events across users, nothing below the 0.5 default).
-const IDLE_DECAY_WEIGHT_LOSS = 0.003;
+const IDLE_DECAY_WEIGHT_LOSS = 0.005;
 const IDLE_DECAY_MAX_WEIGHT_LOSS = 0.006;
 const MIN_MEMORY_WEIGHT = 0.1;
 
