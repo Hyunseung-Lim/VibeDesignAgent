@@ -54,7 +54,7 @@
 
 - 어드민 이메일 화이트리스트로 접근 제한
 - 미션 CRUD (생성/수정/삭제)
-- 미션 콘텐츠는 Firestore `missions/{id}.options[0]`에 저장(제목/설명/마크다운 content). 옵션에는 어드민이 올린 콘텐츠 이미지 `assetImages[{url, path, note}]`도 담긴다. 이 이미지는 `/admin/new`뿐 아니라 `/admin` 기존 미션 편집에서도 Firebase Storage `mission-assets/`에 PNG/JPG/WebP만 업로드/삭제할 수 있고, main 세션의 Mission 섹션에서 썸네일로 바로 확인할 수 있다. Mission 섹션에서 이미지 본문을 클릭하면 채팅 입력에 이미지 인용 attachment로 추가되고, 원본 확대는 카드 하단의 `확대보기` 버튼으로 연다. 저장된 URL/path는 목업 생성 시 asset-led 경로로 그대로 주입된다(위 "콘텐츠 자산 주도 생성" 참고) `[현행 2026-07-03 → 15.96/15.179]`
+- 미션 콘텐츠는 Firestore `missions/{id}.options[0]`에 저장(제목/설명/마크다운 content). 옵션에는 어드민이 올린 콘텐츠 이미지 `assetImages[{url, path, note}]`도 담긴다. 이 이미지는 `/admin/new`뿐 아니라 `/admin` 기존 미션 편집에서도 Firebase Storage `mission-assets/`에 PNG/JPG/WebP만 업로드/삭제할 수 있고, main 세션의 Mission 섹션에서 썸네일로 바로 확인할 수 있다. Mission 섹션에서 이미지 본문을 클릭하면 채팅 입력에 이미지 인용 attachment로 추가되고, 원본 확대는 카드 하단의 `확대보기` 버튼으로 연다. `/api/mission-assets`는 Storage 이미지를 buffer로 받아 응답하고 짧은 in-memory cache/promise dedupe를 사용하며, Mission grid 이미지는 로드 실패 시 cache-bust retry 후 placeholder를 표시한다. 저장된 URL/path는 목업 생성 시 asset-led 경로로 그대로 주입된다(위 "콘텐츠 자산 주도 생성" 참고) `[현행 2026-07-03 → 15.96/15.179/15.180]`
 - 미션 ID: `mission-YYYYMMDD-HHmmss` 형식 (사람이 읽기 쉬운 구조)
 - 참여자 목록 조회 및 세션 열람 (읽기 전용 뷰)
 - 참여자 카드의 X는 해당 미션 세션과 하위 `memoryDrafts`/`reviewTurns`만 삭제하며, 유저 정보/장기 메모리/다른 미션 기록은 유지
@@ -3945,3 +3945,11 @@ type ChatPlan = {
 - 수정: 원본 preview dialog는 카드 하단의 작은 `확대보기` 버튼으로만 연다. 버튼은 `Maximize2` 아이콘과 텍스트를 함께 사용한다.
 - 연결: `/main/[missionId]`는 미션 이미지를 `Reference` 호환 객체(`tag: 미션 이미지`, `url/imageUrl: asset URL`)로 변환해 `selectedReferences`에 넣는다. 따라서 composer attachment tray, `/api/chat`의 citedReferences, memory source link 경로를 기존 레퍼런스 인용과 공유한다.
 - UI: `ChatInput` attachment tray는 `tag`가 `미션 이미지`인 항목을 `이미지 인용`으로 표시한다.
+
+### 15.180 Mission 콘텐츠 이미지 로드 안정화 `[implemented 2026-07-03]`
+
+- 배경(Page Feedback `/main/mission-20260611-202001`): Mission 섹션 콘텐츠 이미지 grid에서 새로고침할 때마다 깨지는 이미지가 달라지는 문제가 있었다.
+- 추정 원인: `/api/mission-assets`가 각 이미지 요청마다 Firebase Storage response stream을 그대로 브라우저에 전달해, 여러 이미지 동시 로드 시 일부 요청이 불안정하게 실패할 수 있었다.
+- 수정: `/api/mission-assets`가 Storage 응답을 완전히 `Buffer`로 받은 뒤 `Response`로 반환하도록 바꾸고, 10분 in-memory cache와 pending promise dedupe를 추가해 같은 asset의 동시 요청이 Storage에 중복으로 몰리지 않게 했다.
+- 수정: `MissionBriefSection` grid 이미지는 로드 실패 시 cache-bust query로 최대 2회 재시도하고, 계속 실패하면 broken image 아이콘 대신 `이미지를 불러오지 못했습니다` placeholder를 표시한다.
+- 검증: `npx tsc --noEmit`, 변경 파일 ESLint 통과.

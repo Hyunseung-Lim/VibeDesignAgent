@@ -1,7 +1,14 @@
 "use client";
 
 import { useState } from "react";
-import { Check, ChevronDown, Maximize2, Monitor, Smartphone } from "lucide-react";
+import {
+  Check,
+  ChevronDown,
+  ImageOff,
+  Maximize2,
+  Monitor,
+  Smartphone,
+} from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -27,6 +34,12 @@ function truncateAssetNote(note: string) {
   return collapsed.length > ASSET_NOTE_PREVIEW_MAX
     ? `${collapsed.slice(0, ASSET_NOTE_PREVIEW_MAX).trimEnd()}...`
     : collapsed;
+}
+
+function retryImageUrl(url: string, retryCount: number) {
+  if (!retryCount) return url;
+  const separator = url.includes("?") ? "&" : "?";
+  return `${url}${separator}vdaImageRetry=${retryCount}`;
 }
 
 export type MissionBriefOption = {
@@ -106,6 +119,12 @@ export function MissionBriefSection({
     image: MissionBriefAssetImage;
     index: number;
   } | null>(null);
+  const [imageRetryById, setImageRetryById] = useState<Record<string, number>>(
+    {},
+  );
+  const [failedImageIds, setFailedImageIds] = useState<Set<string>>(
+    () => new Set(),
+  );
   const canToggleAssetImage = Boolean(onToggleAssetImage);
 
   return (
@@ -210,6 +229,8 @@ export function MissionBriefSection({
                             image.url ??
                             String(index);
                           const selected = selectedAssetImageIds?.has(imageId);
+                          const retryCount = imageRetryById[imageId] ?? 0;
+                          const failed = failedImageIds.has(imageId);
                           return (
                             <article
                               key={image.path || image.url || index}
@@ -228,12 +249,43 @@ export function MissionBriefSection({
                                   canToggleAssetImage ? "cursor-pointer" : "cursor-default"
                                 }`}
                               >
-                                {/* eslint-disable-next-line @next/next/no-img-element */}
-                                <img
-                                  src={image.url}
-                                  alt={image.note?.trim() || `미션 콘텐츠 이미지 ${index + 1}`}
-                                  className="aspect-square w-full object-cover transition-transform duration-200 group-hover:scale-105"
-                                />
+                                {failed ? (
+                                  <span className="flex aspect-square w-full flex-col items-center justify-center gap-2 bg-slate-100 px-3 text-center text-xs text-slate-400">
+                                    <ImageOff className="size-5" aria-hidden="true" />
+                                    이미지를 불러오지 못했습니다
+                                  </span>
+                                ) : (
+                                  <>
+                                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                                    <img
+                                      src={retryImageUrl(image.url, retryCount)}
+                                      alt={image.note?.trim() || `미션 콘텐츠 이미지 ${index + 1}`}
+                                      className="aspect-square w-full object-cover transition-transform duration-200 group-hover:scale-105"
+                                      onLoad={() => {
+                                        setFailedImageIds((prev) => {
+                                          if (!prev.has(imageId)) return prev;
+                                          const next = new Set(prev);
+                                          next.delete(imageId);
+                                          return next;
+                                        });
+                                      }}
+                                      onError={() => {
+                                        if (retryCount >= 2) {
+                                          setFailedImageIds((prev) => {
+                                            const next = new Set(prev);
+                                            next.add(imageId);
+                                            return next;
+                                          });
+                                          return;
+                                        }
+                                        setImageRetryById((prev) => ({
+                                          ...prev,
+                                          [imageId]: (prev[imageId] ?? 0) + 1,
+                                        }));
+                                      }}
+                                    />
+                                  </>
+                                )}
                                 {selected && (
                                   <span className="absolute right-2 top-2 inline-flex items-center gap-1 rounded-full bg-slate-900 px-2 py-1 text-[11px] font-semibold text-white shadow-sm">
                                     <Check className="size-3" aria-hidden="true" />
