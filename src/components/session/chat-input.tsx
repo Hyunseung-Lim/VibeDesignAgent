@@ -1,7 +1,31 @@
 "use client";
 
-import type { ChangeEvent, KeyboardEvent, ReactNode, RefObject } from "react";
-import { useMemo, useState } from "react";
+import type { MutableRefObject, ReactNode } from "react";
+import {
+  forwardRef,
+  useEffect,
+  useImperativeHandle,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import {
+  $createParagraphNode,
+  $createTextNode,
+  $getRoot,
+  $getSelection,
+  $isRangeSelection,
+  COMMAND_PRIORITY_HIGH,
+  KEY_DOWN_COMMAND,
+  PASTE_COMMAND,
+  type LexicalEditor,
+} from "lexical";
+import { LexicalComposer } from "@lexical/react/LexicalComposer";
+import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
+import { RichTextPlugin } from "@lexical/react/LexicalRichTextPlugin";
+import { ContentEditable } from "@lexical/react/LexicalContentEditable";
+import { OnChangePlugin } from "@lexical/react/LexicalOnChangePlugin";
+import { LexicalErrorBoundary } from "@lexical/react/LexicalErrorBoundary";
 import {
   ArrowUp,
   FileText,
@@ -30,13 +54,16 @@ export type ChatInputReference = {
   imageUrl?: string;
 };
 
+export type ChatInputHandle = {
+  focus: () => void;
+};
+
 type ChatInputProps = {
   readOnly: boolean;
   selectedElement: ChatInputSelectedElement | null;
   citedTexts: string[];
   selectedReferences: ChatInputReference[];
   styleImage: { dataUrl: string; name?: string } | null;
-  textareaRef: RefObject<HTMLTextAreaElement | null>;
   inputText: string;
   composerCommand: ChatComposerCommand | null;
   composerMention: ChatComposerMention | null;
@@ -54,9 +81,7 @@ type ChatInputProps = {
   onRemoveSelectedReference: (id: string) => void;
   onAttachStyleImage: (file: File) => void;
   onClearStyleImage: () => void;
-  onInputChange: (event: ChangeEvent<HTMLTextAreaElement>) => void;
   onInputTextChange: (value: string) => void;
-  onKeyDown: (event: KeyboardEvent<HTMLTextAreaElement>) => void;
   onCancelMockupGeneration: () => void;
   onCancelMessage: () => void;
   onSendMessage: () => void;
@@ -94,11 +119,6 @@ function commandToken(command: ChatComposerCommand) {
 function mentionToken(mention: ChatComposerMention) {
   return `@${mention.label}`;
 }
-
-type HighlightSegment = {
-  text: string;
-  kind: "plain" | "command" | "mention";
-};
 
 type ComposerAttachmentProps = {
   tone?: "slate" | "indigo" | "violet";
@@ -175,11 +195,23 @@ function ComposerAttachment({
   );
 }
 
-function highlightedInputSegments(
+type TokenSegment = {
+  text: string;
+  kind: "plain" | "command" | "mention";
+};
+
+const COMMAND_TOKEN_STYLE = "color:#4338ca;font-weight:700;";
+const MENTION_TOKEN_STYLE = "color:#0369a1;font-weight:700;";
+
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function tokenSegments(
   value: string,
   commandOptions: ChatComposerCommand[],
   mentionOptions: ChatComposerMention[],
-): HighlightSegment[] {
+): TokenSegment[] {
   if (!value) return [];
   const tokens = [
     ...commandOptions.map((command) => ({
@@ -193,35 +225,333 @@ function highlightedInputSegments(
   ]
     .filter((token) => token.text)
     .sort((a, b) => b.text.length - a.text.length);
-  const segments: HighlightSegment[] = [];
-  let cursor = 0;
+  if (tokens.length === 0) return [{ text: value, kind: "plain" }];
 
-  while (cursor < value.length) {
-    const match = tokens.find((token) => value.startsWith(token.text, cursor));
-    if (!match) {
-      const nextIndex = tokens
-        .map((token) => value.indexOf(token.text, cursor + 1))
-        .filter((index) => index !== -1)
-        .sort((a, b) => a - b)[0];
-      const end = nextIndex ?? value.length;
-      segments.push({ text: value.slice(cursor, end), kind: "plain" });
-      cursor = end;
-      continue;
+  const pattern = new RegExp(tokens.map((token) => escapeRegExp(token.text)).join("|"), "g");
+  const segments: TokenSegment[] = [];
+  let lastIndex = 0;
+  for (const match of value.matchAll(pattern)) {
+    const matchText = match[0];
+    const matchIndex = match.index ?? 0;
+    if (matchIndex > lastIndex) {
+      segments.push({ text: value.slice(lastIndex, matchIndex), kind: "plain" });
     }
-    segments.push({ text: match.text, kind: match.kind });
-    cursor += match.text.length;
+    const token = tokens.find((item) => item.text === matchText);
+    segments.push({ text: matchText, kind: token?.kind ?? "plain" });
+    lastIndex = matchIndex + matchText.length;
   }
-
+  if (lastIndex < value.length) {
+    segments.push({ text: value.slice(lastIndex), kind: "plain" });
+  }
   return segments;
 }
 
-export function ChatInput({
+function segmentStyle(kind: TokenSegment["kind"]) {
+  if (kind === "command") return COMMAND_TOKEN_STYLE;
+  if (kind === "mention") return MENTION_TOKEN_STYLE;
+  return "";
+}
+
+function editorSegmentsMatch(segments: TokenSegment[]) {
+  const textNodes = $getRoot().getAllTextNodes();
+  if (textNodes.length !== segments.length) return false;
+  return textNodes.every(
+    (node, index) =>
+      node.getTextContent() === segments[index]?.text &&
+      node.getStyle() === segmentStyle(segments[index]?.kind ?? "plain"),
+  );
+}
+
+function currentSelectionOffset() {
+  const selection = $getSelection();
+  if (!$isRangeSelection(selection)) return null;
+  const anchor = selection.anchor;
+  const anchorNode = anchor.getNode();
+  const textNodes = $getRoot().getAllTextNodes();
+  let offset = 0;
+  for (const node of textNodes) {
+    if (node.getKey() === anchorNode.getKey()) {
+      return offset + anchor.offset;
+    }
+    offset += node.getTextContentSize();
+  }
+  return offset;
+}
+
+function selectTextOffset(offset: number) {
+  const root = $getRoot();
+  const textNodes = root.getAllTextNodes();
+  if (textNodes.length === 0) {
+    root.selectEnd();
+    return;
+  }
+  let remaining = Math.max(0, offset);
+  for (const node of textNodes) {
+    const size = node.getTextContentSize();
+    if (remaining <= size) {
+      node.select(remaining, remaining);
+      return;
+    }
+    remaining -= size;
+  }
+  const lastNode = textNodes[textNodes.length - 1];
+  lastNode.select(lastNode.getTextContentSize(), lastNode.getTextContentSize());
+}
+
+function editorSelectionOffset(editor: LexicalEditor, fallback: number) {
+  let offset = fallback;
+  editor.getEditorState().read(() => {
+    offset = currentSelectionOffset() ?? fallback;
+  });
+  return offset;
+}
+
+function replaceEditorText(
+  value: string,
+  commandOptions: ChatComposerCommand[],
+  mentionOptions: ChatComposerMention[],
+  selectionOffset: number | null,
+) {
+  const root = $getRoot();
+  const segments = tokenSegments(value, commandOptions, mentionOptions);
+  if (editorSegmentsMatch(segments)) return;
+  root.clear();
+  const paragraph = $createParagraphNode();
+  if (segments.length === 0) {
+    paragraph.append($createTextNode(""));
+  } else {
+    for (const segment of segments) {
+      const node = $createTextNode(segment.text);
+      const style = segmentStyle(segment.kind);
+      if (style) node.setStyle(style);
+      paragraph.append(node);
+    }
+  }
+  root.append(paragraph);
+  if (selectionOffset != null) selectTextOffset(selectionOffset);
+}
+
+function updateTriggerFromEditor(
+  text: string,
+  setTrigger: (trigger: ComposerTrigger | null) => void,
+  setActiveOptionIndex: (index: number | ((index: number) => number)) => void,
+) {
+  const offset = currentSelectionOffset();
+  const nextTrigger = offset == null ? null : findComposerTrigger(text, offset);
+  setTrigger(nextTrigger);
+  setActiveOptionIndex(0);
+}
+
+type LexicalChatEditorProps = {
+  value: string;
+  placeholder: string;
+  disabled: boolean;
+  commandOptions: ChatComposerCommand[];
+  mentionOptions: ChatComposerMention[];
+  trigger: ComposerTrigger | null;
+  filteredOptionsLength: number;
+  pendingSelectionOffsetRef: MutableRefObject<number | null>;
+  editorRef: MutableRefObject<LexicalEditor | null>;
+  onTextChange: (value: string) => void;
+  onTriggerChange: (trigger: ComposerTrigger | null) => void;
+  onActiveOptionIndexChange: (index: number | ((index: number) => number)) => void;
+  onSelectActiveOption: () => void;
+  onCloseSuggestions: () => void;
+  onAttachStyleImage: (file: File) => void;
+  onSendMessage: () => void;
+};
+
+function LexicalChatEditor({
+  value,
+  placeholder,
+  disabled,
+  commandOptions,
+  mentionOptions,
+  trigger,
+  filteredOptionsLength,
+  pendingSelectionOffsetRef,
+  editorRef,
+  onTextChange,
+  onTriggerChange,
+  onActiveOptionIndexChange,
+  onSelectActiveOption,
+  onCloseSuggestions,
+  onAttachStyleImage,
+  onSendMessage,
+}: LexicalChatEditorProps) {
+  const [editor] = useLexicalComposerContext();
+  const composingRef = useRef(false);
+  const lastTextRef = useRef(value);
+
+  useEffect(() => {
+    editorRef.current = editor;
+    return () => {
+      if (editorRef.current === editor) editorRef.current = null;
+    };
+  }, [editor, editorRef]);
+
+  useEffect(() => {
+    editor.setEditable(!disabled);
+  }, [disabled, editor]);
+
+  useEffect(() => {
+    if (composingRef.current) return;
+    editor.update(() => {
+      const selectionOffset =
+        pendingSelectionOffsetRef.current ?? currentSelectionOffset();
+      pendingSelectionOffsetRef.current = null;
+      replaceEditorText(value, commandOptions, mentionOptions, selectionOffset);
+    });
+  }, [commandOptions, editor, mentionOptions, pendingSelectionOffsetRef, value]);
+
+  useEffect(
+    () =>
+      editor.registerCommand<KeyboardEvent>(
+        KEY_DOWN_COMMAND,
+        (event) => {
+          if (
+            trigger &&
+            filteredOptionsLength > 0 &&
+            !event.isComposing
+          ) {
+            if (event.key === "ArrowDown") {
+              event.preventDefault();
+              onActiveOptionIndexChange(
+                (index) => (index + 1) % filteredOptionsLength,
+              );
+              return true;
+            }
+            if (event.key === "ArrowUp") {
+              event.preventDefault();
+              onActiveOptionIndexChange(
+                (index) =>
+                  (index - 1 + filteredOptionsLength) % filteredOptionsLength,
+              );
+              return true;
+            }
+            if (event.key === "Enter" || event.key === "Tab") {
+              event.preventDefault();
+              onSelectActiveOption();
+              return true;
+            }
+          }
+          if (trigger && event.key === "Escape") {
+            event.preventDefault();
+            onCloseSuggestions();
+            return true;
+          }
+          if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
+            event.preventDefault();
+            onSendMessage();
+            return true;
+          }
+          return false;
+        },
+        COMMAND_PRIORITY_HIGH,
+      ),
+    [
+      editor,
+      filteredOptionsLength,
+      onActiveOptionIndexChange,
+      onCloseSuggestions,
+      onSelectActiveOption,
+      onSendMessage,
+      trigger,
+    ],
+  );
+
+  useEffect(
+    () =>
+      editor.registerCommand<ClipboardEvent>(
+        PASTE_COMMAND,
+        (event) => {
+          const items = event.clipboardData?.items;
+          if (!items) return false;
+          for (let i = 0; i < items.length; i += 1) {
+            const item = items[i];
+            if (item.kind === "file" && item.type.startsWith("image/")) {
+              const file = item.getAsFile();
+              if (file) {
+                event.preventDefault();
+                onAttachStyleImage(file);
+                return true;
+              }
+            }
+          }
+          return false;
+        },
+        COMMAND_PRIORITY_HIGH,
+      ),
+    [editor, onAttachStyleImage],
+  );
+
+  return (
+    <>
+      <RichTextPlugin
+        contentEditable={
+          <ContentEditable
+            aria-label="채팅 입력"
+            className={cn(
+              "max-h-40 min-h-6 w-full overflow-y-auto whitespace-pre-wrap break-words px-1 text-sm leading-6 text-slate-700 caret-slate-700 outline-none selection:bg-sky-200/50 empty:before:pointer-events-none empty:before:text-slate-400 empty:before:content-[attr(data-placeholder)]",
+              disabled && "pointer-events-none opacity-60",
+            )}
+            data-placeholder={placeholder}
+            spellCheck={false}
+            autoCorrect="off"
+            onCompositionStart={() => {
+              composingRef.current = true;
+            }}
+            onCompositionEnd={() => {
+              composingRef.current = false;
+              editor.update(() => {
+                const text = $getRoot().getTextContent();
+                updateTriggerFromEditor(
+                  text,
+                  onTriggerChange,
+                  onActiveOptionIndexChange,
+                );
+                replaceEditorText(
+                  text,
+                  commandOptions,
+                  mentionOptions,
+                  currentSelectionOffset(),
+                );
+              });
+            }}
+          />
+        }
+        placeholder={null}
+        ErrorBoundary={LexicalErrorBoundary}
+      />
+      <OnChangePlugin
+        onChange={(editorState) => {
+          editorState.read(() => {
+            const text = $getRoot().getTextContent();
+            if (text !== lastTextRef.current) {
+              lastTextRef.current = text;
+              onTextChange(text);
+            }
+            if (!composingRef.current) {
+              updateTriggerFromEditor(
+                text,
+                onTriggerChange,
+                onActiveOptionIndexChange,
+              );
+            }
+          });
+        }}
+      />
+    </>
+  );
+}
+
+export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function ChatInput(
+  {
   readOnly,
   selectedElement,
   citedTexts,
   selectedReferences,
   styleImage,
-  textareaRef,
   inputText,
   composerCommand,
   composerMention,
@@ -239,9 +569,7 @@ export function ChatInput({
   onRemoveSelectedReference,
   onAttachStyleImage,
   onClearStyleImage,
-  onInputChange,
   onInputTextChange,
-  onKeyDown,
   onCancelMockupGeneration,
   onCancelMessage,
   onSendMessage,
@@ -249,12 +577,21 @@ export function ChatInput({
   onClearComposerCommand,
   onSelectComposerMention,
   onClearComposerMention,
-}: ChatInputProps) {
+},
+  ref,
+) {
   const [trigger, setTrigger] = useState<ComposerTrigger | null>(null);
   const [activeOptionIndex, setActiveOptionIndex] = useState(0);
-  const highlightSegments = useMemo(
-    () => highlightedInputSegments(inputText, commandOptions, mentionOptions),
-    [commandOptions, inputText, mentionOptions],
+  const editorRef = useRef<LexicalEditor | null>(null);
+  const pendingSelectionOffsetRef = useRef<number | null>(null);
+  const lexicalConfig = useMemo(
+    () => ({
+      namespace: "VdaChatInput",
+      onError(error: Error) {
+        throw error;
+      },
+    }),
+    [],
   );
   const filteredOptions = trigger
     ? trigger.mode === "command"
@@ -279,6 +616,16 @@ export function ChatInput({
     setActiveOptionIndex(0);
   };
 
+  useImperativeHandle(
+    ref,
+    () => ({
+      focus: () => {
+        editorRef.current?.focus();
+      },
+    }),
+    [],
+  );
+
   const selectOption = (index: number) => {
     if (!trigger) return;
     const option = filteredOptions[index];
@@ -300,14 +647,14 @@ export function ChatInput({
     } else {
       onSelectComposerMention(option as ChatComposerMention);
     }
+    const caret = Math.min(
+      before.length + (needsSpaceBefore ? 1 : 0) + token.length + 1,
+      next.length,
+    );
+    pendingSelectionOffsetRef.current = caret;
     closeSuggestions();
     window.setTimeout(() => {
-      textareaRef.current?.focus();
-      const caret = Math.min(
-        before.length + (needsSpaceBefore ? 1 : 0) + token.length + 1,
-        next.length,
-      );
-      textareaRef.current?.setSelectionRange(caret, caret);
+      editorRef.current?.focus();
     }, 0);
   };
 
@@ -316,24 +663,27 @@ export function ChatInput({
       onInputTextChange(
         `${inputText.slice(0, trigger.start)}${inputText.slice(trigger.end)}`,
       );
+      pendingSelectionOffsetRef.current = trigger.start;
       closeSuggestions();
+      window.setTimeout(() => editorRef.current?.focus(), 0);
       return;
     }
-    const textarea = textareaRef.current;
-    const caret = textarea?.selectionStart ?? inputText.length;
+    const caret = editorRef.current
+      ? editorSelectionOffset(editorRef.current, inputText.length)
+      : inputText.length;
     const separator = caret > 0 && !/\s/.test(inputText[caret - 1] ?? "") ? " " : "";
     const next = `${inputText.slice(0, caret)}${separator}/${inputText.slice(caret)}`;
     const start = caret + separator.length;
     onInputTextChange(next);
+    pendingSelectionOffsetRef.current = start + 1;
     setTrigger({ mode: "command", start, end: start + 1, query: "" });
     setActiveOptionIndex(0);
     window.setTimeout(() => {
-      textareaRef.current?.focus();
-      textareaRef.current?.setSelectionRange(start + 1, start + 1);
+      editorRef.current?.focus();
     }, 0);
   };
   return (
-    <div className="border-t border-slate-200 bg-white/95 p-4">
+    <div className="shrink-0 border-t border-slate-200 bg-white/95 p-4">
       {readOnly && (
         <div className="flex h-12 items-center justify-center rounded-2xl bg-amber-50 text-xs text-amber-600">
           읽기 전용 모드 — 채팅을 사용할 수 없습니다
@@ -485,111 +835,38 @@ export function ChatInput({
             </>
           )}
           <div className="relative">
-            {inputText ? (
-              <div
-                aria-hidden
-                className="pointer-events-none absolute inset-0 z-0 max-h-40 overflow-hidden whitespace-pre-wrap break-words px-1 text-sm leading-6 text-slate-700"
-              >
-                {highlightSegments.map((segment, index) => (
-                  <span
-                    key={`${segment.kind}-${index}-${segment.text}`}
-                    className={
-                      segment.kind === "command"
-                        ? "font-semibold text-indigo-700"
-                        : segment.kind === "mention"
-                          ? "font-semibold text-sky-700"
-                          : undefined
-                    }
-                  >
-                    {segment.text}
-                  </span>
-                ))}
-                {"\u200b"}
-              </div>
-            ) : null}
-            <textarea
-              ref={textareaRef}
-              rows={1}
-              value={inputText}
-              onChange={(event) => {
-                onInputChange(event);
-                if (
-                  composerCommand &&
-                  !event.currentTarget.value.includes(commandToken(composerCommand))
-                ) {
-                  onClearComposerCommand();
+            <LexicalComposer initialConfig={lexicalConfig}>
+              <LexicalChatEditor
+                value={inputText}
+                placeholder={
+                  missionContextReady
+                    ? "/로 만들기 · @로 기존 항목 언급"
+                    : "미션 정보를 불러오는 중입니다..."
                 }
-                if (
-                  composerMention &&
-                  !event.currentTarget.value.includes(mentionToken(composerMention))
-                ) {
-                  onClearComposerMention();
-                }
-                const caret = event.currentTarget.selectionStart;
-                const nextTrigger = findComposerTrigger(
-                  event.currentTarget.value,
-                  caret,
-                );
-                setTrigger(nextTrigger);
-                setActiveOptionIndex(0);
-              }}
-              onKeyDown={(event) => {
-                if (
-                  trigger &&
-                  filteredOptions.length > 0 &&
-                  !event.nativeEvent.isComposing
-                ) {
-                  if (event.key === "ArrowDown") {
-                    event.preventDefault();
-                    setActiveOptionIndex((index) =>
-                      (index + 1) % filteredOptions.length,
-                    );
-                    return;
+                disabled={!missionContextReady}
+                commandOptions={commandOptions}
+                mentionOptions={mentionOptions}
+                trigger={trigger}
+                filteredOptionsLength={filteredOptions.length}
+                pendingSelectionOffsetRef={pendingSelectionOffsetRef}
+                editorRef={editorRef}
+                onTextChange={(value) => {
+                  onInputTextChange(value);
+                  if (composerCommand && !value.includes(commandToken(composerCommand))) {
+                    onClearComposerCommand();
                   }
-                  if (event.key === "ArrowUp") {
-                    event.preventDefault();
-                    setActiveOptionIndex((index) =>
-                      (index - 1 + filteredOptions.length) %
-                      filteredOptions.length,
-                    );
-                    return;
+                  if (composerMention && !value.includes(mentionToken(composerMention))) {
+                    onClearComposerMention();
                   }
-                  if (event.key === "Enter" || event.key === "Tab") {
-                    event.preventDefault();
-                    selectOption(activeOptionIndex);
-                    return;
-                  }
-                }
-                if (trigger && event.key === "Escape") {
-                  event.preventDefault();
-                  closeSuggestions();
-                  return;
-                }
-                onKeyDown(event);
-              }}
-              onPaste={(event) => {
-                const items = event.clipboardData?.items;
-                if (!items) return;
-                for (let i = 0; i < items.length; i += 1) {
-                  const item = items[i];
-                  if (item.kind === "file" && item.type.startsWith("image/")) {
-                    const file = item.getAsFile();
-                    if (file) {
-                      event.preventDefault();
-                      onAttachStyleImage(file);
-                    }
-                    break;
-                  }
-                }
-              }}
-              disabled={!missionContextReady}
-              placeholder={
-                missionContextReady
-                  ? "/로 만들기 · @로 기존 항목 언급"
-                  : "미션 정보를 불러오는 중입니다..."
-              }
-              className="relative z-10 max-h-40 w-full resize-none bg-transparent px-1 text-sm leading-6 text-transparent caret-slate-700 outline-none selection:bg-sky-200/50 focus-visible:outline-none placeholder:text-slate-400"
-            />
+                }}
+                onTriggerChange={setTrigger}
+                onActiveOptionIndexChange={setActiveOptionIndex}
+                onSelectActiveOption={() => selectOption(activeOptionIndex)}
+                onCloseSuggestions={closeSuggestions}
+                onAttachStyleImage={onAttachStyleImage}
+                onSendMessage={onSendMessage}
+              />
+            </LexicalComposer>
           </div>
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-0.5">
@@ -673,4 +950,4 @@ export function ChatInput({
       )}
     </div>
   );
-}
+});

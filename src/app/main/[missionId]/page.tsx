@@ -51,7 +51,7 @@ import {
 } from "@/components/ui/select";
 import { ChatBubble } from "@/components/session/chat-bubble";
 import { ChatCapabilityCatalog } from "@/components/session/chat-capability-catalog";
-import { ChatInput } from "@/components/session/chat-input";
+import { ChatInput, type ChatInputHandle } from "@/components/session/chat-input";
 import { Spinner } from "@/components/ui/spinner";
 import { Button } from "@/components/ui/button";
 import { ChatPanel } from "@/components/session/chat-panel";
@@ -2633,7 +2633,7 @@ export default function MainScreenPage() {
     [isReadOnly, missionId],
   );
 
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const chatInputRef = useRef<ChatInputHandle>(null);
   const chatScrollRef = useRef<HTMLDivElement>(null);
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
 
@@ -4025,13 +4025,6 @@ export default function MainScreenPage() {
     dragStartRef.current = null;
   };
 
-  const handleTextareaChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    setInputText(e.target.value);
-    const target = e.target;
-    target.style.height = "auto";
-    target.style.height = `${Math.min(target.scrollHeight, 96)}px`;
-  };
-
   const cancelMessage = useCallback(() => {
     abortControllerRef.current?.abort();
   }, []);
@@ -4182,7 +4175,6 @@ export default function MainScreenPage() {
     setInputText("");
     setComposerCommand(null);
     setComposerMention(null);
-    if (textareaRef.current) textareaRef.current.style.height = "auto";
     if (selectedElement) {
       clearIframeSelections(selectedElement.artboardId);
       setSelectedElement(null);
@@ -5689,13 +5681,6 @@ export default function MainScreenPage() {
     encodeMemoryDraft,
     clearIframeSelections,
   ]);
-
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
-      e.preventDefault();
-      sendMessage();
-    }
-  };
 
   const fetchReferences = useCallback(
     async (
@@ -7510,7 +7495,7 @@ export default function MainScreenPage() {
           </div>
         </main>
       ) : (
-        <main className="flex flex-1 overflow-hidden">
+        <main className="flex min-h-0 flex-1 overflow-hidden">
           {/* Left panel: content */}
           <section
             ref={missionPanelRef}
@@ -7904,7 +7889,7 @@ export default function MainScreenPage() {
           >
             {/* Before-session memory panel */}
             {showReviewAnnotations && rightPanelTab === "before" && (
-              <div className="flex-1 overflow-y-auto p-5">
+              <div className="min-h-0 flex-1 overflow-y-auto p-5">
                 {/* Original raw input — shown once at top */}
                 {(() => {
                   const rawInput =
@@ -7985,7 +7970,7 @@ export default function MainScreenPage() {
             {/* Messages */}
             <div
               ref={chatScrollRef}
-              className={`flex-1 space-y-4 overflow-y-auto p-6 ${
+              className={`min-h-0 flex-1 space-y-4 overflow-y-auto p-6 ${
                 showReviewAnnotations && rightPanelTab === "before"
                   ? "hidden"
                   : ""
@@ -8007,7 +7992,7 @@ export default function MainScreenPage() {
                             ? current
                             : `${command.label} `,
                         );
-                        textareaRef.current?.focus();
+                        chatInputRef.current?.focus();
                       }}
                     />
                   </div>
@@ -8180,12 +8165,12 @@ export default function MainScreenPage() {
             </div>
 
             <ChatInput
+              ref={chatInputRef}
               readOnly={isReadOnly}
               selectedElement={selectedElement}
               citedTexts={citedTexts}
               selectedReferences={selectedReferences}
               styleImage={attachedStyleImage}
-              textareaRef={textareaRef}
               inputText={inputText}
               composerCommand={composerCommand}
               composerMention={composerMention}
@@ -8209,9 +8194,7 @@ export default function MainScreenPage() {
               }
               onAttachStyleImage={handleAttachStyleImage}
               onClearStyleImage={() => setAttachedStyleImage(null)}
-              onInputChange={handleTextareaChange}
               onInputTextChange={setInputText}
-              onKeyDown={handleKeyDown}
               onCancelMockupGeneration={cancelMockupGeneration}
               onCancelMessage={cancelMessage}
               onSendMessage={sendMessage}

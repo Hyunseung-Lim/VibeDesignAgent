@@ -30,7 +30,7 @@ export function ChatPanel({
     <aside
       data-tour="chat-panel"
       style={width ? { width } : undefined}
-      className={`relative flex h-full flex-col overflow-hidden border-l border-slate-200 bg-white ${
+      className={`relative flex h-full min-h-0 flex-col overflow-hidden border-l border-slate-200 bg-white ${
         width ? "shrink-0" : "w-full max-w-md"
       }`}
     >

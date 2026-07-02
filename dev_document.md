@@ -143,7 +143,7 @@
 
 ### 4.6 AI 채팅
 
-- **구조화 composer 문법**: `/`는 새 산출물 생성 명령(`/시안생성`, `/디자인스타일생성`, `/목업생성`, `/레퍼런스검색`), `@`는 현재 세션에 이미 존재하는 시안/Design Brief/Design Style/Mockup 언급이다. 대상이 없으면 현재 활성 시안을 사용하고, `@디자인스타일` 같은 검색은 dropdown에서 `시안 N · 디자인 스타일` 실제 대상을 확인한 뒤 ID 기반 metadata로 고정한다. 자동완성 선택값은 별도 상단 chip이 아니라 textarea 안에 `/시안생성`, `@시안 1 · 디자인 브리프` 같은 inline token으로 삽입되고, token 부분만 bold/color highlight로 표시된다. 레퍼런스 카드·텍스트 하이라이트·목업 요소는 기존 전용 선택/인용 UI를 유지하며 `@`에 중복 노출하지 않는다. 선택 요소, 텍스트 인용, 레퍼런스 인용, 스타일 이미지는 composer 위 attachment tray에 동일한 Attachment-style item으로 표시한다. 명령/언급은 raw token 파싱이 아니라 구조화 metadata로 `/api/chat`에 전달되고 명시적 `/` 명령이 planner 추론보다 우선한다. memory draft input에는 command/mention 메타 라인을 붙이지 않고 사용자가 본 실제 입력문만 저장한다. `src/lib/session/chat-composer.ts`, `src/components/session/chat-input.tsx`, `src/app/api/chat/route.ts`를 직접 확인 `[현행 2026-06-30 → 15.108/15.157/15.164]`
+- **구조화 composer 문법**: `/`는 새 산출물 생성 명령(`/시안생성`, `/디자인스타일생성`, `/목업생성`, `/레퍼런스검색`), `@`는 현재 세션에 이미 존재하는 시안/Design Brief/Design Style/Mockup 언급이다. 대상이 없으면 현재 활성 시안을 사용하고, `@디자인스타일` 같은 검색은 dropdown에서 `시안 N · 디자인 스타일` 실제 대상을 확인한 뒤 ID 기반 metadata로 고정한다. 자동완성 선택값은 별도 상단 chip이 아니라 Lexical composer 안에 `/시안생성`, `@시안 1 · 디자인 브리프` 같은 inline token으로 삽입되고, token 구간은 Lexical TextNode style로 bold/color highlight된다. 레퍼런스 카드·텍스트 하이라이트·목업 요소는 기존 전용 선택/인용 UI를 유지하며 `@`에 중복 노출하지 않는다. 선택 요소, 텍스트 인용, 레퍼런스 인용, 스타일 이미지는 composer 위 attachment tray에 동일한 Attachment-style item으로 표시한다. 명령/언급은 raw token 파싱이 아니라 구조화 metadata로 `/api/chat`에 전달되고 명시적 `/` 명령이 planner 추론보다 우선한다. memory draft input에는 command/mention 메타 라인을 붙이지 않고 사용자가 본 실제 입력문만 저장한다. `src/lib/session/chat-composer.ts`, `src/components/session/chat-input.tsx`, `src/app/api/chat/route.ts`를 직접 확인 `[현행 2026-07-02 → 15.108/15.157/15.164/15.177]`
 - **응답 생성 provider**: 기본 OpenAI `gpt-5.4` (Responses API). `CHAT_RESPONSE_PROVIDER=anthropic` 또는 `LLM_PROVIDER=anthropic`이면 최종 chat 응답 생성만 Claude Messages API로 전환
 - **Provider 범위**: planner, embedding, memory retrieval/encoding, clustering label은 기존 OpenAI 경로 유지. `/api/chat`의 최종 assistant response streaming만 provider switch 대상. Admin UI에서는 메인 채팅 헤더의 LLM selector로 turn별 provider override 가능
 - **웹 검색**: OpenAI provider일 때 `web_search_preview` 툴 활성화, 레퍼런스 URL 인용 시 `tool_choice: "required"`로 강제. Anthropic provider일 때는 prompt에 포함된 reference title/url context를 사용하고 web search tool은 호출하지 않음
@@ -3909,3 +3909,23 @@ type ChatPlan = {
 - 추가 수정 2: edit 응답이 기존 `screenId`와 같은 id로 200/HTML을 반환해도 client active artboard id 또는 active idea가 어긋나 있으면 `targetId` 매칭만으로는 UI에 반영되지 않을 수 있었다. edit 결과 적용은 `targetId`, 응답 `screenId`, 원래 `editScreenId`를 모두 기준으로 기존 artboard를 찾고, 그래도 없으면 새 artboard를 만들어 활성화한다. 적용 대상 artboard의 `ideaId`로 active idea를 전환하고 canvas fit도 다시 호출한다.
 - 추가 수정 3: edit 응답이 200이어도 `screen.getHtml()`가 raw/cached screen의 기존 HTML을 즉시 반환해 이전 artboard HTML과 완전히 같을 수 있었다. client가 이전 HTML hash를 `/api/stitch`에 보내고, 서버는 edit 결과 HTML hash가 같으면 fresh `getScreen`을 반복 재조회해 changed HTML을 기다린다.
 - 의도: 목업 화면이 이미 생성된 상황을 실패로 오인하지 않게 하고, 늦은 style 후처리가 primary mockup delivery를 막지 않게 한다.
+
+### 15.175 긴 채팅에서 우측 패널 overflow 보정 `[implemented 2026-07-02]`
+
+- 배경(Notion `minor`): 채팅이 길어지면 우측 채팅 패널 일부가 viewport 밖으로 넘어가 보이지 않는 사례가 있었다.
+- 원인: root는 `h-screen`이고 우측 패널은 flex column이지만, 상위 `main`, `ChatPanel`, 메시지 리스트에 `min-h-0`이 없어 flex item이 내용 높이만큼 커질 수 있었다. 이 경우 `overflow-y-auto`가 메시지 리스트에 걸려 있어도 리스트가 shrink하지 못해 입력창/하단부가 창 밖으로 밀린다.
+- 수정: `/main/[missionId]`의 작업 `main`, before-session memory panel, messages scroll container에 `min-h-0`을 추가하고, `ChatPanel` shell도 `min-h-0`을 갖도록 했다. `ChatInput` root는 `shrink-0`으로 고정해 긴 대화에서는 메시지 리스트만 스크롤되게 했다.
+- 의도: 긴 채팅에서도 우측 패널 전체 높이는 viewport 안에 유지하고, 메시지 영역만 안정적으로 스크롤한다.
+
+### 15.176 채팅 입력 caret 위치 보정 `[implemented 2026-07-02]`
+
+- 배경(QA screenshot): 긴 한국어 문장을 입력할 때 caret가 보이는 글자 위치와 어긋나 보이고, 브라우저 맞춤법 점선이 입력창 위에 섞여 보였다.
+- 원인: composer가 실제 textarea 텍스트를 투명하게 만들고 별도 absolute highlight layer로 전체 텍스트를 다시 그렸다. 두 레이어의 wrapping/렌더링이 조금만 달라도 native caret 기준과 보이는 텍스트 기준이 어긋난다.
+- 수정: textarea의 실제 텍스트를 다시 보이게 하고, command/mention overlay highlight layer를 제거했다. `spellCheck={false}`와 `autoCorrect="off"`도 추가해 입력 중 빨간 점선이 끼지 않게 했다.
+- 의도: 채팅 입력의 caret, 선택 영역, 줄바꿈 기준은 native textarea 하나를 source of truth로 유지한다.
+
+### 15.177 채팅 composer를 Lexical 기반 rich input으로 전환 `[implemented 2026-07-02]`
+
+- 배경: native textarea는 일부 텍스트만 다른 스타일로 렌더링할 수 없어 overlay highlight를 쓰면 caret/wrapping 오차가 생겼고, overlay를 제거하면 `/`/`@` token highlight가 사라졌다. 사용자는 inline token highlight를 유지하길 원했다.
+- 수정: `lexical`, `@lexical/react`를 추가하고 `ChatInput` 입력 영역을 Lexical composer로 교체했다. 입력 plain text는 기존 `inputText` state와 동기화하고, `/` command와 `@` mention token 구간은 Lexical TextNode style로 bold/color 처리한다. 자동완성, Enter 전송, Esc 닫기, 이미지 paste 첨부, 외부 focus 호출은 기존 동작을 유지한다.
+- 의도: 보이는 텍스트와 caret가 같은 editor tree를 기준으로 동작하게 해 textarea overlay의 이중 렌더 문제를 피하면서 inline token highlight를 복원한다.
