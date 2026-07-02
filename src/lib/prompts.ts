@@ -158,8 +158,43 @@ export function chatMockupHtmlPrompt(mockupHtml: string) {
   return `Current mockup HTML exists. The next mockup-related request should be treated as an edit unless the user explicitly asks for a new/different mockup, a new design, a new layout, a new structure, a new concept, another version, or a fresh canvas.\n\nCurrent mockup HTML:\n\`\`\`html\n${mockupHtml}\n\`\`\``;
 }
 
-export function chatSelectedElementPrompt(selector: string, outerHTML: string) {
-  return `The user has selected this element for editing:\nSelector: ${selector}\nHTML: ${outerHTML}`;
+export function chatSelectedElementPrompt(
+  selector: string,
+  outerHTML: string,
+  options?: {
+    textContent?: string;
+    xpath?: string;
+    boundingRect?: {
+      x?: number;
+      y?: number;
+      width?: number;
+      height?: number;
+      top?: number;
+      right?: number;
+      bottom?: number;
+      left?: number;
+    };
+    viewport?: { width?: number; height?: number };
+  },
+) {
+  const rect = options?.boundingRect;
+  const viewport = options?.viewport;
+  return [
+    "The user has selected this exact element/region for editing.",
+    "Treat the selected element as the primary edit target. Do not apply the requested change globally unless the user explicitly asks.",
+    `Selector: ${selector}`,
+    options?.xpath ? `XPath: ${options.xpath}` : "",
+    rect
+      ? `Bounding rect in the mockup viewport: x=${rect.x}, y=${rect.y}, width=${rect.width}, height=${rect.height}`
+      : "",
+    viewport
+      ? `Mockup viewport: width=${viewport.width}, height=${viewport.height}`
+      : "",
+    options?.textContent ? `Visible text: ${options.textContent}` : "",
+    `HTML: ${outerHTML}`,
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
 export function chatCitedRefsWithUrlPrompt(

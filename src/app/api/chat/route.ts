@@ -1104,6 +1104,25 @@ export async function POST(request: Request) {
       content: chatSelectedElementPrompt(
         selectedElement.selector,
         truncateText(selectedElement.outerHTML, 3000),
+        {
+          textContent:
+            typeof selectedElement.textContent === "string"
+              ? truncateText(selectedElement.textContent, 1000)
+              : undefined,
+          xpath:
+            typeof selectedElement.xpath === "string"
+              ? selectedElement.xpath
+              : undefined,
+          boundingRect:
+            selectedElement.boundingRect &&
+            typeof selectedElement.boundingRect === "object"
+              ? selectedElement.boundingRect
+              : undefined,
+          viewport:
+            selectedElement.viewport && typeof selectedElement.viewport === "object"
+              ? selectedElement.viewport
+              : undefined,
+        },
       ),
     });
   }

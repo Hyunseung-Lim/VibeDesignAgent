@@ -158,6 +158,10 @@ type Message = {
     selector: string;
     artboardId: string;
     outerHTML?: string;
+    textContent?: string;
+    xpath?: string;
+    boundingRect?: SelectedElementBounds;
+    viewport?: SelectedElementViewport;
   } | null;
   citedReferences?: { id: string; title: string; imageUrl?: string }[] | null;
   citedTexts?: string[] | null;
@@ -672,7 +676,56 @@ type SelectedElement = {
   artboardId: string;
   selector: string;
   outerHTML: string;
+  textContent?: string;
+  xpath?: string;
+  boundingRect?: SelectedElementBounds;
+  viewport?: SelectedElementViewport;
 };
+
+type SelectedElementBounds = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  top?: number;
+  right?: number;
+  bottom?: number;
+  left?: number;
+};
+
+type SelectedElementViewport = {
+  width: number;
+  height: number;
+};
+
+function selectedElementTargetPrompt(element: SelectedElement) {
+  const rect = element.boundingRect;
+  const viewport = element.viewport;
+  return [
+    "Selected element target:",
+    "Apply the requested edit to this selected element/region first. Do not change similar elements elsewhere unless explicitly requested.",
+    `Selector: ${element.selector}`,
+    element.xpath ? `XPath: ${element.xpath}` : "",
+    rect
+      ? `Bounding rect in mockup viewport: x=${rect.x}, y=${rect.y}, width=${rect.width}, height=${rect.height}`
+      : "",
+    viewport
+      ? `Mockup viewport: width=${viewport.width}, height=${viewport.height}`
+      : "",
+    element.textContent ? `Visible text: ${element.textContent.slice(0, 1000)}` : "",
+    `Selected HTML:\n${element.outerHTML.slice(0, 3000)}`,
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+function quickHash(value: string) {
+  let hash = 0;
+  for (let index = 0; index < value.length; index += 1) {
+    hash = (hash * 31 + value.charCodeAt(index)) | 0;
+  }
+  return hash.toString(16);
+}
 
 type CreateNoteData = {
   title?: string;
@@ -1913,7 +1966,7 @@ async function stitchResponseError(response: Response) {
 async function fetchStitchScreenHtml(
   projectId: string,
   screenId: string,
-  attempts = 3,
+  attempts = 10,
 ) {
   let lastError = "Stitch 화면 HTML이 아직 준비되지 않았습니다.";
   for (let attempt = 0; attempt < attempts; attempt += 1) {
@@ -1933,10 +1986,38 @@ async function fetchStitchScreenHtml(
     }
     if (typeof data?.error === "string") lastError = data.error;
     if (attempt < attempts - 1) {
-      await new Promise((resolve) => window.setTimeout(resolve, 1500));
+      await new Promise((resolve) => window.setTimeout(resolve, 5000));
     }
   }
   throw new Error(lastError);
+}
+
+function isAbortLikeError(err: unknown) {
+  if (typeof err === "string") {
+    return (
+      err === "timeout" ||
+      err === "stitch-timeout" ||
+      err.toLowerCase().includes("signal is aborted")
+    );
+  }
+  if (err instanceof DOMException && err.name === "AbortError") return true;
+  if (err instanceof Error) {
+    return (
+      err.name === "AbortError" ||
+      err.message === "timeout" ||
+      err.message.toLowerCase().includes("signal is aborted")
+    );
+  }
+  return false;
+}
+
+function stitchGenerationErrorMessage(err: unknown, wasCanceled: boolean) {
+  if (wasCanceled) return "목업 작업을 취소했습니다.";
+  if (isAbortLikeError(err)) {
+    return "Stitch 응답 처리 시간이 초과되었습니다. 화면이 생성됐을 수 있으니 잠시 후 다시 확인해주세요.";
+  }
+  if (typeof err === "string" && err.trim()) return err;
+  return err instanceof Error ? err.message : "Stitch 생성 실패";
 }
 
 export default function MainScreenPage() {
@@ -3519,6 +3600,19 @@ export default function MainScreenPage() {
           artboardId: e.data.artboardId,
           selector: e.data.selector,
           outerHTML: e.data.outerHTML,
+          textContent:
+            typeof e.data.textContent === "string"
+              ? e.data.textContent
+              : undefined,
+          xpath: typeof e.data.xpath === "string" ? e.data.xpath : undefined,
+          boundingRect:
+            e.data.boundingRect && typeof e.data.boundingRect === "object"
+              ? (e.data.boundingRect as SelectedElementBounds)
+              : undefined,
+          viewport:
+            e.data.viewport && typeof e.data.viewport === "object"
+              ? (e.data.viewport as SelectedElementViewport)
+              : undefined,
         });
         setActiveArtboardId(e.data.artboardId);
       }
@@ -4030,6 +4124,10 @@ export default function MainScreenPage() {
             selector: selectedElement.selector,
             artboardId: selectedElement.artboardId,
             outerHTML: selectedElement.outerHTML,
+            textContent: selectedElement.textContent,
+            xpath: selectedElement.xpath,
+            boundingRect: selectedElement.boundingRect,
+            viewport: selectedElement.viewport,
           }
         : null,
       citedReferences:
@@ -4901,12 +4999,18 @@ export default function MainScreenPage() {
             : CURRENT_MOCKUP_REFINEMENT_PROMPT);
         const mockupIdeaId = effectiveActiveIdeaId;
         const isNew = Boolean(generateMatch || shouldAutoGenerateForkedStyleMockup);
-        const stitchPrompt = buildMockupPrompt(
+        let stitchPrompt = buildMockupPrompt(
           prompt,
           activeIdea,
           // Only inject mission brief for new mockups — edits don't need the full product context
           isNew ? missionBrief : undefined,
         );
+        if (!isNew && selectedElement) {
+          stitchPrompt = [
+            stitchPrompt,
+            selectedElementTargetPrompt(selectedElement),
+          ].join("\n\n");
+        }
         appendActivityLog({
           section: "mockup",
           action: "stitch_prompt",
@@ -5003,10 +5107,6 @@ export default function MainScreenPage() {
                 : prev,
             );
           }, 1000);
-          const stitchTimeout = setTimeout(
-            () => stitchController.abort(),
-            175_000,
-          );
           const editTargetBoard = !isNew
             ? (activeArtboardId
                 ? artboards.find((a) => a.id === activeArtboardId)
@@ -5025,6 +5125,10 @@ export default function MainScreenPage() {
                 device,
                 projectId: stitchProjectId || undefined,
                 screenId: editScreenId,
+                previousHtmlHash:
+                  !isNew && editTargetBoard?.html
+                    ? quickHash(editTargetBoard.html)
+                    : undefined,
                 designStyle: activeDesignStyle(activeIdea)
                   ? { content: activeDesignStyle(activeIdea)?.content }
                   : null,
@@ -5055,7 +5159,9 @@ export default function MainScreenPage() {
             });
           } finally {
             window.clearInterval(progressTimer);
-            clearTimeout(stitchTimeout);
+            if (stitchAbortControllerRef.current === stitchController) {
+              stitchAbortControllerRef.current = null;
+            }
           }
           if (!res.ok) {
             const errText = await stitchResponseError(res);
@@ -5065,22 +5171,9 @@ export default function MainScreenPage() {
           const data = await res.json();
           if (data.error) throw new Error(data.error);
           if (
-            data.htmlPending &&
-            !data.html?.trim() &&
-            data.projectId &&
-            data.screenId
+            (typeof data.html !== "string" || !data.html.trim()) &&
+            !data.htmlPending
           ) {
-            setMockupProgress({
-              percent: 94,
-              label: "화면 HTML 준비 대기 중",
-            });
-            data.html = await fetchStitchScreenHtml(
-              data.projectId,
-              data.screenId,
-            );
-            data.htmlPending = false;
-          }
-          if (typeof data.html !== "string" || !data.html.trim()) {
             throw new Error("Stitch가 표시할 수 있는 화면 HTML을 반환하지 않았습니다.");
           }
           setMockupProgress({ percent: 96, label: "아트보드 배치 중" });
@@ -5151,7 +5244,7 @@ export default function MainScreenPage() {
                 : 0;
               const primaryBoard: Artboard = {
                 id: primaryId,
-                html: data.html,
+                html: typeof data.html === "string" ? data.html : "",
                 label: `Design ${ideaBoards.length + 1}`,
                 createdAt: Date.now(),
                 x: offsetX,
@@ -5159,6 +5252,7 @@ export default function MainScreenPage() {
                 device,
                 stitchScreenId: data.screenId,
                 ideaId,
+                htmlStatus: data.htmlPending ? "pending" : undefined,
               };
               offsetX += DEVICE_SIZE[device].width + ARTBOARD_GAP;
 
@@ -5237,22 +5331,131 @@ export default function MainScreenPage() {
               editCreatedNewScreen && !existingEditBoard
                 ? crypto.randomUUID()
                 : null;
+            const sameScreenEditBoard =
+              !editCreatedNewScreen
+                ? artboards.find(
+                    (a) =>
+                      a.id === targetId ||
+                      a.stitchScreenId === data.screenId ||
+                      (editScreenId && a.stitchScreenId === editScreenId),
+                  ) ?? null
+                : null;
+            const sameScreenFallbackBoardId =
+              !editCreatedNewScreen && !sameScreenEditBoard
+                ? crypto.randomUUID()
+                : null;
+            const resultIdeaId =
+              existingEditBoard?.ideaId ??
+              sameScreenEditBoard?.ideaId ??
+              effectiveActiveIdeaId ??
+              editTargetBoard?.ideaId ??
+              "";
+            console.info("[mockup] edit response target resolution", {
+              responseScreenId: data.screenId ?? null,
+              editScreenId: editScreenId ?? null,
+              targetId: targetId ?? null,
+              editCreatedNewScreen,
+              existingEditBoardId: existingEditBoard?.id ?? null,
+              sameScreenEditBoardId: sameScreenEditBoard?.id ?? null,
+              sameScreenFallbackBoardId,
+              resultIdeaId,
+              htmlLength:
+                typeof data.html === "string" ? data.html.length : 0,
+              htmlPending: Boolean(data.htmlPending),
+            });
 
             setArtboards((prev) => {
               if (!editCreatedNewScreen) {
-                return prev.map((a) =>
-                  a.id === targetId
-                    ? {
-                        ...a,
-                        html: data.html || a.html,
-                        stitchScreenId: data.screenId,
-                        htmlUpdatedAt: data.html ? Date.now() : a.htmlUpdatedAt,
-                      }
-                    : a,
+                const matchIndex = prev.findIndex(
+                  (a) =>
+                    a.id === targetId ||
+                    a.stitchScreenId === data.screenId ||
+                    (editScreenId && a.stitchScreenId === editScreenId),
                 );
+                if (matchIndex >= 0) {
+                  const matched = prev[matchIndex];
+                  const nextHtml =
+                    typeof data.html === "string" && data.html
+                      ? data.html
+                      : matched?.html ?? "";
+                  const previousHtml = matched?.html ?? "";
+                  console.info("[mockup] applying edit HTML to existing artboard", {
+                    artboardId: matched?.id ?? null,
+                    previousScreenId: matched?.stitchScreenId ?? null,
+                    nextScreenId: data.screenId ?? null,
+                    ideaId: matched?.ideaId ?? null,
+                    previousHtmlLength: previousHtml.length,
+                    nextHtmlLength: nextHtml.length,
+                    htmlChanged: previousHtml !== nextHtml,
+                    previousHtmlHash: quickHash(previousHtml),
+                    nextHtmlHash: quickHash(nextHtml),
+                    htmlPending: Boolean(data.htmlPending),
+                  });
+                  if (previousHtml === nextHtml && nextHtml) {
+                    console.warn("[mockup] edit response HTML is identical to current artboard HTML", {
+                      artboardId: matched?.id ?? null,
+                      screenId: data.screenId ?? null,
+                      htmlHash: quickHash(nextHtml),
+                    });
+                  }
+                  return prev.map((a, index) =>
+                    index === matchIndex
+                      ? {
+                          ...a,
+                          html: nextHtml || a.html,
+                          stitchScreenId: data.screenId,
+                          htmlStatus: data.htmlPending ? "pending" : undefined,
+                          htmlUpdatedAt: data.html ? Date.now() : a.htmlUpdatedAt,
+                        }
+                      : a,
+                  );
+                }
+
+                const ideaId =
+                  effectiveActiveIdeaId ?? editTargetBoard?.ideaId ?? "";
+                const ideaBoards = prev.filter((a) => a.ideaId === ideaId);
+                const targetBoard =
+                  editTargetBoard ?? ideaBoards.at(-1) ?? null;
+                const x = targetBoard
+                  ? targetBoard.x +
+                    DEVICE_SIZE[targetBoard.device ?? "desktop"].width +
+                    ARTBOARD_GAP
+                  : 0;
+                console.info("[mockup] edit result had no matching artboard; creating fallback", {
+                  artboardId: sameScreenFallbackBoardId,
+                  screenId: data.screenId ?? null,
+                  ideaId,
+                  htmlLength:
+                    typeof data.html === "string" ? data.html.length : 0,
+                  htmlPending: Boolean(data.htmlPending),
+                });
+                return [
+                  ...prev,
+                  {
+                    id: sameScreenFallbackBoardId ?? crypto.randomUUID(),
+                    html: data.html || editTargetBoard?.html || "",
+                    label: `Design ${ideaBoards.length + 1}`,
+                    createdAt: Date.now(),
+                    x,
+                    y: targetBoard?.y ?? 0,
+                    device: targetBoard?.device ?? device,
+                    stitchScreenId: data.screenId,
+                    ideaId,
+                    htmlStatus: data.htmlPending ? "pending" : undefined,
+                    htmlUpdatedAt: data.html ? Date.now() : undefined,
+                  },
+                ];
               }
 
               if (existingEditBoard) {
+                console.info("[mockup] applying edit HTML to existing new-screen artboard", {
+                  artboardId: existingEditBoard.id,
+                  screenId: data.screenId ?? null,
+                  ideaId: existingEditBoard.ideaId,
+                  htmlLength:
+                    typeof data.html === "string" ? data.html.length : 0,
+                  htmlPending: Boolean(data.htmlPending),
+                });
                 return prev.map((a) =>
                   a.id === existingEditBoard.id
                     ? {
@@ -5285,21 +5488,68 @@ export default function MainScreenPage() {
                 device: targetBoard?.device ?? device,
                 stitchScreenId: data.screenId,
                 ideaId,
+                htmlStatus: data.htmlPending ? "pending" : undefined,
                 htmlUpdatedAt: data.html ? Date.now() : undefined,
               };
+              console.info("[mockup] creating artboard for new edit screen", {
+                artboardId: board.id,
+                screenId: data.screenId ?? null,
+                ideaId,
+                htmlLength:
+                  typeof data.html === "string" ? data.html.length : 0,
+                htmlPending: Boolean(data.htmlPending),
+              });
               return [...prev, board];
             });
 
             const htmlTargetId =
-              existingEditBoard?.id ?? createdEditBoardId ?? targetId;
-            if (editCreatedNewScreen && htmlTargetId) {
+              existingEditBoard?.id ??
+              createdEditBoardId ??
+              sameScreenEditBoard?.id ??
+              sameScreenFallbackBoardId ??
+              targetId;
+            if (htmlTargetId) {
+              console.info("[mockup] activating edit result artboard", {
+                htmlTargetId,
+                resultIdeaId,
+              });
               setActiveArtboardId(htmlTargetId);
             }
+            if (resultIdeaId) {
+              setActiveIdeaId(resultIdeaId);
+              setTimeout(() => {
+                fitToCanvasForIdea(resultIdeaId);
+                const board = artboardsRef.current.find(
+                  (item) => item.id === htmlTargetId,
+                );
+                console.info("[mockup] post-apply active board snapshot", {
+                  htmlTargetId,
+                  resultIdeaId,
+                  activeIdeaId: activeIdeaIdRef.current,
+                  boardExists: Boolean(board),
+                  boardIdeaId: board?.ideaId ?? null,
+                  boardScreenId: board?.stitchScreenId ?? null,
+                  boardHtmlLength: board?.html?.length ?? 0,
+                  boardHtmlHash: quickHash(board?.html ?? ""),
+                  boardHtmlStatus: board?.htmlStatus ?? null,
+                });
+              }, 0);
+            }
             if (data.htmlPending && htmlTargetId) {
+              console.info("[mockup] polling pending edit HTML", {
+                projectId: data.projectId ?? null,
+                screenId: data.screenId ?? null,
+                htmlTargetId,
+              });
               fetchStitchScreenHtml(data.projectId, data.screenId)
                 .then((html) =>
-                  setArtboards((prev) =>
-                    prev.map((a) =>
+                  setArtboards((prev) => {
+                    console.info("[mockup] pending edit HTML resolved", {
+                      htmlTargetId,
+                      screenId: data.screenId ?? null,
+                      htmlLength: html.length,
+                    });
+                    return prev.map((a) =>
                       a.id === htmlTargetId
                         ? {
                             ...a,
@@ -5308,17 +5558,22 @@ export default function MainScreenPage() {
                             htmlUpdatedAt: Date.now(),
                           }
                         : a,
-                    ),
-                  ),
+                    );
+                  }),
                 )
-                .catch(() =>
-                  setArtboards((prev) =>
-                    prev.map((a) =>
+                .catch((err) =>
+                  setArtboards((prev) => {
+                    console.warn("[mockup] pending edit HTML failed", {
+                      htmlTargetId,
+                      screenId: data.screenId ?? null,
+                      error: err instanceof Error ? err.message : String(err),
+                    });
+                    return prev.map((a) =>
                       a.id === htmlTargetId
                         ? { ...a, htmlStatus: "failed" }
                         : a,
-                    ),
-                  ),
+                    );
+                  }),
                 );
             }
           }
@@ -5339,8 +5594,7 @@ export default function MainScreenPage() {
           }
         } catch (err) {
           const wasCanceled = stitchCancelRequestedRef.current;
-          const errMsg =
-            err instanceof Error ? err.message : "Stitch 생성 실패";
+          const errMsg = stitchGenerationErrorMessage(err, wasCanceled);
           const failureLabel =
             mockupOperation === "edit" ? "목업 수정 실패" : "목업 생성 실패";
           setMessages((prev) =>
@@ -5349,7 +5603,7 @@ export default function MainScreenPage() {
                 ? wasCanceled
                   ? {
                       ...m,
-                      content: `${m.content}\n\n목업 작업을 취소했습니다.`,
+                      content: `${m.content}\n\n${errMsg}`,
                     }
                   : { ...m, error: `${failureLabel}: ${errMsg}` }
                 : m,
@@ -8012,7 +8266,7 @@ export default function MainScreenPage() {
                       : "border-white/20 text-white/70 hover:bg-white/10"
                   }`}
                 >
-                  {editMode ? "편집 가능 On" : "편집 가능 Off"}
+                  {editMode ? "영역 선택 On" : "영역 선택 Off"}
                 </button>
               )}
               <button

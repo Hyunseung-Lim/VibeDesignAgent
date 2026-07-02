@@ -233,17 +233,62 @@ export function injectSelectionScript(html: string, artboardId: string): string 
   const script = `
 <style>
   [data-vda-selected] { outline: 2px solid #6366f1 !important; outline-offset: 2px; }
+  [data-vda-hovered]:not([data-vda-selected]) {
+    outline: 2px dashed #818cf8 !important;
+    outline-offset: 2px;
+    background-color: rgba(99, 102, 241, 0.08) !important;
+    cursor: crosshair !important;
+  }
 </style>
 <script>
+  var vdaHoveredElement = null;
   function clearVdaSelection() {
     document.querySelectorAll('[data-vda-selected]').forEach(function(el) {
       el.removeAttribute('data-vda-selected');
     });
   }
+  function clearVdaHover() {
+    if (vdaHoveredElement) {
+      vdaHoveredElement.removeAttribute('data-vda-hovered');
+      vdaHoveredElement = null;
+    }
+    document.querySelectorAll('[data-vda-hovered]').forEach(function(el) {
+      el.removeAttribute('data-vda-hovered');
+    });
+  }
+  function vdaElementXPath(el) {
+    if (!el || el.nodeType !== 1) return '';
+    if (el.id) return '//*[@id="' + el.id.replace(/"/g, '\\"') + '"]';
+    var parts = [];
+    while (el && el.nodeType === 1 && el !== document.body && el !== document.documentElement) {
+      var index = 1;
+      var sibling = el.previousElementSibling;
+      while (sibling) {
+        if (sibling.tagName === el.tagName) index += 1;
+        sibling = sibling.previousElementSibling;
+      }
+      parts.unshift(el.tagName.toLowerCase() + '[' + index + ']');
+      el = el.parentElement;
+    }
+    return '/html/body/' + parts.join('/');
+  }
+  function vdaRoundedRect(rect) {
+    return {
+      x: Math.round(rect.x),
+      y: Math.round(rect.y),
+      width: Math.round(rect.width),
+      height: Math.round(rect.height),
+      top: Math.round(rect.top),
+      right: Math.round(rect.right),
+      bottom: Math.round(rect.bottom),
+      left: Math.round(rect.left)
+    };
+  }
   window.addEventListener('message', function(e) {
     if (!e.data || e.data.type !== 'vda-clear-selection') return;
     if (e.data.artboardId && e.data.artboardId !== '${artboardId}') return;
     clearVdaSelection();
+    clearVdaHover();
   });
   document.addEventListener('wheel', function(e) {
     e.preventDefault();
@@ -277,10 +322,23 @@ export function injectSelectionScript(html: string, artboardId: string): string 
       clientY: e.clientY
     }, '*');
   }, { capture: true, passive: false });
+  document.addEventListener('mouseover', function(e) {
+    var el = e.target;
+    if (!el || !el.setAttribute) return;
+    if (vdaHoveredElement === el) return;
+    clearVdaHover();
+    vdaHoveredElement = el;
+    el.setAttribute('data-vda-hovered', 'true');
+  }, true);
+  document.addEventListener('mouseout', function(e) {
+    var el = e.target;
+    if (el && el === vdaHoveredElement) clearVdaHover();
+  }, true);
   document.addEventListener('click', function(e) {
     e.preventDefault();
     e.stopPropagation();
     clearVdaSelection();
+    clearVdaHover();
     var el = e.target;
     el.setAttribute('data-vda-selected', 'true');
 
@@ -290,12 +348,20 @@ export function injectSelectionScript(html: string, artboardId: string): string 
       var cls = el.className.trim().split(/\\s+/)[0];
       if (cls) selector += '.' + cls;
     }
+    var rect = el.getBoundingClientRect();
 
     window.parent.postMessage({
       type: 'vda-element-selected',
       artboardId: '${artboardId}',
       selector: selector,
       outerHTML: el.outerHTML,
+      textContent: (el.innerText || el.textContent || '').trim().slice(0, 1000),
+      xpath: vdaElementXPath(el),
+      boundingRect: vdaRoundedRect(rect),
+      viewport: {
+        width: Math.round(window.innerWidth),
+        height: Math.round(window.innerHeight)
+      },
     }, '*');
   }, true);
 </script>`;

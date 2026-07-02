@@ -3890,3 +3890,22 @@ type ChatPlan = {
 - 제거: `SERPER_API_KEY`, `CURATION_DOMAINS`, `searchImages`, `searchCurationSites`, 이미지 후보/재랭킹 파이프라인과 `serper-image` searchProvider. 모든 카드의 provider는 이제 `openai-web`. UI 타입(`reference-card.tsx`, `main/[missionId]/page.tsx`)과 `referenceSourceAnalysis`의 serper 분기도 정리했다.
 - 트레이드오프: 전용 이미지 검색이 빠져 style 썸네일은 og:image 품질에 의존한다. 다만 기존 style 검색이 이미 깨져 있었으므로 net 개선이다.
 - 후속: `scripts/reference_source_probe.mjs`와 `.env`의 `SERPER_API_KEY`는 빌드와 무관해 손대지 않았다 — 정리는 사용자 몫.
+
+### 15.173 목업 annotation 버튼을 영역 선택으로 정리 `[implemented 2026-07-02]`
+
+- 배경(Notion `minor`): 목업 toolbar의 `편집` 문구가 화면을 직접 수정하는 기능처럼 보였다. 실제 동작은 mockup iframe 안의 요소를 선택해 채팅 수정 요청의 target context로 넘기는 annotation/selection 모드다.
+- 수정: `MockupCanvasToolbar`의 버튼 문구를 `편집`/`편집 중`에서 `영역 선택`/`선택 종료`로 바꾸고, 아이콘을 `Pencil`에서 `SquareDashedMousePointer`로 교체했다. product tour 문구도 `영역 선택 버튼`으로 맞췄다. 확장 캔버스의 토글도 `영역 선택 On/Off`로 변경했다. active 상태는 버튼 클릭 시 선택 모드를 끄는 action이므로 상태형 `선택 중` 대신 명령형 `선택 종료`를 쓴다. iframe selection script에는 hover preview(`data-vda-hovered`)를 추가해 클릭 전에 선택될 영역을 dashed outline으로 보여준다.
+- 전달 방식: Stitch SDK의 `edit_screens`는 element/region 파라미터 없이 `selectedScreenIds`와 text prompt만 받는다. 그래서 선택된 요소의 `selector`, `outerHTML`, `textContent`, `xpath`, viewport 기준 `boundingRect`를 iframe에서 수집하고, chat selected-element context와 최종 Stitch edit prompt 양쪽에 target block으로 주입한다.
+- 의도: 사용자가 이 기능을 직접 편집 도구가 아니라 선택/캡쳐 계열의 annotation 기능으로 이해하게 한다.
+
+### 15.174 Stitch 생성 후 abort 실패 메시지 방어 `[implemented 2026-07-02]`
+
+- 배경(QA 로그): `/api/stitch`가 `selected html length`와 `new screens this generation`까지 출력해 화면 HTML을 확보했는데, 클라이언트에는 `목업 생성 실패: signal is aborted without reason`이 노출됐다.
+- 추가 QA: `/api/stitch 200 in 2.9min` 뒤에 `목업 생성 실패: Stitch 생성 실패`가 노출됐다. `abort("stitch-timeout")`처럼 문자열 reason으로 abort하면 fetch rejection이 `Error`가 아니라 문자열일 수 있는데, 클라이언트 fallback이 이를 unknown으로 처리했다. 또한 서버 응답 시간이 175초 client timeout과 너무 가까웠다.
+- 추가 QA 2: `/api/stitch 200 in 3.5min` 뒤에 `목업 생성 실패: Stitch 응답 처리 시간이 초과되었습니다...`가 노출됐다. 210초로 늘린 client timeout도 성공 응답과 같은 시점에 경합해, 서버는 200을 반환했지만 client가 먼저 abort할 수 있었다.
+- 원인 추정: 클라이언트 timeout abort가 reason 없이 발생하거나 문자열 reason으로 reject됐고, 이미지 기반 생성에서 HTML 확보 후 디자인 스타일 추출/design system 적용 후처리가 길어져 응답 반환 전에 abort될 수 있었다.
+- 수정: 클라이언트 Stitch fetch의 자동 timeout abort를 제거하고, 수동 취소용 `AbortController`만 유지한다. 문자열 abort reason까지 abort-like error로 정규화했다. `/api/stitch`는 image-led 생성의 derived design style 추출과 design system 적용을 각각 12초로 timebox해, 후처리가 늦어도 HTML 응답을 우선 반환한다.
+- 추가 수정: `/api/stitch`가 `htmlPending: true`를 반환하면 새 목업도 즉시 pending artboard를 만들고 background polling으로 HTML을 채운다. 기존에는 새 목업 경로에서 HTML을 먼저 기다리다 polling 한도를 넘으면 생성 실패처럼 보일 수 있었다. 클라이언트 HTML polling은 3회/1.5초 간격에서 10회/5초 간격으로 늘렸다.
+- 추가 수정 2: edit 응답이 기존 `screenId`와 같은 id로 200/HTML을 반환해도 client active artboard id 또는 active idea가 어긋나 있으면 `targetId` 매칭만으로는 UI에 반영되지 않을 수 있었다. edit 결과 적용은 `targetId`, 응답 `screenId`, 원래 `editScreenId`를 모두 기준으로 기존 artboard를 찾고, 그래도 없으면 새 artboard를 만들어 활성화한다. 적용 대상 artboard의 `ideaId`로 active idea를 전환하고 canvas fit도 다시 호출한다.
+- 추가 수정 3: edit 응답이 200이어도 `screen.getHtml()`가 raw/cached screen의 기존 HTML을 즉시 반환해 이전 artboard HTML과 완전히 같을 수 있었다. client가 이전 HTML hash를 `/api/stitch`에 보내고, 서버는 edit 결과 HTML hash가 같으면 fresh `getScreen`을 반복 재조회해 changed HTML을 기다린다.
+- 의도: 목업 화면이 이미 생성된 상황을 실패로 오인하지 않게 하고, 늦은 style 후처리가 primary mockup delivery를 막지 않게 한다.

@@ -43,6 +43,14 @@ function styleHash(content: string) {
   return createHash("sha1").update(content).digest("hex");
 }
 
+function contentHash(content: string) {
+  let hash = 0;
+  for (let index = 0; index < content.length; index += 1) {
+    hash = (hash * 31 + content.charCodeAt(index)) | 0;
+  }
+  return hash.toString(16);
+}
+
 // Convert the free-form 디자인 스타일 markdown into structured Stitch design
 // tokens. Falls back to safe defaults on any parsing/validation issue so a bad
 // extraction never blocks generation.
@@ -181,6 +189,27 @@ function isIncompleteResponseError(error: unknown) {
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function withTimeout<T>(
+  promise: Promise<T>,
+  ms: number,
+  label: string,
+): Promise<T | null> {
+  let timeoutId: ReturnType<typeof setTimeout> | null = null;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<null>((resolve) => {
+        timeoutId = setTimeout(() => {
+          console.warn(`[stitch] ${label} timed out after ${ms}ms`);
+          resolve(null);
+        }, ms);
+      }),
+    ]);
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
+  }
 }
 
 function visibleText(html: string) {
@@ -400,6 +429,34 @@ async function materializeHtml(htmlUrlOrContent: string) {
     throw new Error(`Failed to fetch HTML from Stitch URL: ${fetchRes.status}`);
   }
   return fetchRes.text();
+}
+
+async function waitForChangedScreenHtml(
+  project: StitchProject,
+  screen: StitchScreenHandle,
+  previousHtmlHash: string | null,
+) {
+  let lastHtml = "";
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    if (attempt > 0) await sleep(2500);
+    const currentScreen = await project.getScreen(screen.id).catch(() => screen);
+    const htmlUrlOrContent = await currentScreen.getHtml().catch(() => "");
+    if (!htmlUrlOrContent) {
+      console.warn("[stitch] edit changed-html check returned empty:", attempt + 1);
+      continue;
+    }
+    const html = await materializeHtml(htmlUrlOrContent);
+    lastHtml = html;
+    const hash = contentHash(html);
+    if (!previousHtmlHash || hash !== previousHtmlHash) {
+      if (previousHtmlHash) {
+        console.log("[stitch] edit HTML changed after refresh:", attempt + 1);
+      }
+      return html;
+    }
+    console.warn("[stitch] edit HTML unchanged, retrying fresh screen read...", attempt + 1);
+  }
+  return lastHtml;
 }
 
 async function choosePrimaryScreen(
@@ -655,6 +712,7 @@ export async function POST(request: Request) {
     designStyle,
     designSystemId,
     appliedDesignStyleHash,
+    previousHtmlHash,
     styleImage,
     styleSourceUrl,
     assetImages,
@@ -666,6 +724,7 @@ export async function POST(request: Request) {
     designStyle?: { content?: string } | null;
     designSystemId?: string | null;
     appliedDesignStyleHash?: string | null;
+    previousHtmlHash?: string | null;
     styleImage?: { dataUrl?: string } | null;
     styleSourceUrl?: string | null;
     assetImages?: { url?: string; note?: string }[] | null;
@@ -824,7 +883,13 @@ export async function POST(request: Request) {
         ? {
             selected: {
               screen,
-              html: await materializeHtml(await waitForScreenHtml(project, screen)),
+              html: screenId
+                ? await waitForChangedScreenHtml(
+                    project,
+                    screen,
+                    previousHtmlHash || null,
+                  )
+                : await materializeHtml(await waitForScreenHtml(project, screen)),
               htmlPending: false,
               score: 0,
             },
@@ -858,14 +923,21 @@ export async function POST(request: Request) {
     // subsequent screens stay consistent, and return it for the client to store.
     let derivedDesignStyle: { content: string } | undefined;
     if (isImageLed && html) {
-      const derivedContent = await deriveDesignStyleFromHtml(html);
+      const derivedContent = await withTimeout(
+        deriveDesignStyleFromHtml(html),
+        12_000,
+        "derive design style from generated HTML",
+      );
       if (derivedContent) {
         derivedDesignStyle = { content: derivedContent };
-        resolvedDesignSystemId = await applyDesignSystem(
-          project,
-          derivedContent,
-          resolvedDesignSystemId,
+        const appliedDesignSystemId = await withTimeout(
+          applyDesignSystem(project, derivedContent, resolvedDesignSystemId),
+          12_000,
+          "apply derived design system",
         );
+        if (appliedDesignSystemId !== null) {
+          resolvedDesignSystemId = appliedDesignSystemId;
+        }
         resolvedStyleHash = styleHash(derivedContent);
       }
     }

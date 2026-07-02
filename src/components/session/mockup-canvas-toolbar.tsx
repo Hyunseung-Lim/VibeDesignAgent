@@ -4,8 +4,8 @@ import {
   Maximize2,
   Minus,
   MousePointer2,
-  Pencil,
   Plus,
+  SquareDashedMousePointer,
   X,
 } from "lucide-react";
 import type * as React from "react";
@@ -110,8 +110,8 @@ export function MockupCanvasToolbar({
           )}
           aria-pressed={editMode}
         >
-          <Pencil className="size-3.5" aria-hidden="true" />
-          {editMode ? "편집 중" : "편집"}
+          <SquareDashedMousePointer className="size-3.5" aria-hidden="true" />
+          {editMode ? "선택 종료" : "영역 선택"}
         </Button>
 
         <div className="flex items-center gap-1 rounded-lg border border-border bg-white p-1">
