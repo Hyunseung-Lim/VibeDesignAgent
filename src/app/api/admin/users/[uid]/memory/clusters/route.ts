@@ -8,10 +8,10 @@ import { loadClusterInputItems } from "@/lib/server/memoryItems";
 import {
   MAX_ITEMS,
   MEMORY_VERSION,
+  CLUSTERING_INPUT_VARIANT,
   generateAndStoreClusters,
   loadLatestStoredClusterDoc,
   memoryClusterItemSignature,
-  normalizeClusteringInputVariant,
 } from "@/lib/server/memoryClustering";
 
 export const runtime = "nodejs";
@@ -32,9 +32,7 @@ export async function GET(
 ) {
   const target = await adminTarget(request, params);
   if (!target) return Response.json({ error: "forbidden" }, { status: 403 });
-  const variant = normalizeClusteringInputVariant(
-    new URL(request.url).searchParams.get("variant"),
-  );
+  const variant = CLUSTERING_INPUT_VARIANT;
 
   try {
     const token = await getFirebaseAccessToken();
@@ -70,8 +68,7 @@ export async function POST(
 ) {
   const target = await adminTarget(request, params);
   if (!target) return Response.json({ error: "forbidden" }, { status: 403 });
-  const body = (await request.json().catch(() => ({}))) as { variant?: unknown };
-  const variant = normalizeClusteringInputVariant(body.variant);
+  const variant = CLUSTERING_INPUT_VARIANT;
 
   try {
     const token = await getFirebaseAccessToken();

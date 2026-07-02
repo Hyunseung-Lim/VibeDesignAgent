@@ -309,13 +309,9 @@ type SessionGraphEdge = {
   weight: number;
 };
 
-// Clustering input variants the review can toggle between, mirroring /agent.
+// Fixed clustering input used by the review graph and /agent.
 const REVIEW_CLUSTER_VARIANTS = [
-  { value: "compact-context", label: "keyword · episodic · semantic" },
-  {
-    value: "full-context",
-    label: "keyword · episodic · semantic · input · output · link",
-  },
+  { value: "keyword-episodic-semantic-link" },
 ] as const;
 type ReviewClusterVariant = (typeof REVIEW_CLUSTER_VARIANTS)[number]["value"];
 
@@ -341,8 +337,7 @@ type MemoryGraphFilter = "changed" | "all" | "referenced" | "promoted" | "archiv
 
 const EMPTY_CLUSTERS_BY_VARIANT: Record<ReviewClusterVariant, ReviewClusterBundle> =
   {
-    "compact-context": { graphClusters: [], graphEdges: [] },
-    "full-context": { graphClusters: [], graphEdges: [] },
+    "keyword-episodic-semantic-link": { graphClusters: [], graphEdges: [] },
   };
 
 const EMPTY_SESSION_MEMORY_SUMMARY: SessionMemorySummary = {
@@ -2215,8 +2210,6 @@ export default function MainScreenPage() {
   );
   const [memoryGraphFilter, setMemoryGraphFilter] =
     useState<MemoryGraphFilter>("all");
-  const [reviewClusterVariant, setReviewClusterVariant] =
-    useState<ReviewClusterVariant>("compact-context");
   const [isMemoryDiffOpen, setIsMemoryDiffOpen] = useState(false);
   const [selectedGraphMemoryId, setSelectedGraphMemoryId] = useState<
     string | null
@@ -6004,21 +5997,10 @@ export default function MainScreenPage() {
       setTimerEndedAt(completedAt);
       setSessionCompletionStep(1);
       try {
-        // Generate both clustering variants so the review and the full-memory
-        // view can show compact-context and full-context without a manual
-        // regenerate. Each variant writes a separate cache doc.
-        await Promise.all(
-          REVIEW_CLUSTER_VARIANTS.map((variant) =>
-            fetch("/api/memory/clusters", {
-              method: "POST",
-              headers: {
-                Authorization: `Bearer ${token}`,
-                "Content-Type": "application/json",
-              },
-              body: JSON.stringify({ variant: variant.value }),
-            }),
-          ),
-        );
+        await fetch("/api/memory/clusters", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}` },
+        });
       } catch {
         // clustering failure is non-fatal
       }
@@ -6618,33 +6600,15 @@ export default function MainScreenPage() {
     </div>
   );
   const activeReviewClusters =
-    sessionMemorySummary.clustersByVariant[reviewClusterVariant];
-  // Use the selected variant's cache; fall back to the variant-agnostic default
-  // when that variant has no cache so the graph never goes blank on switch.
+    sessionMemorySummary.clustersByVariant["keyword-episodic-semantic-link"];
+  // Use the fixed-input cache; fall back to the variant-agnostic default when
+  // that cache has not been generated yet so the graph never goes blank.
   const reviewGraphClusters = activeReviewClusters.graphClusters.length
     ? activeReviewClusters.graphClusters
     : sessionMemorySummary.graphClusters;
   const reviewGraphEdges = activeReviewClusters.graphClusters.length
     ? activeReviewClusters.graphEdges
     : sessionMemorySummary.graphEdges;
-  const memoryClusterVariantToggle = (
-    <div className="flex items-center gap-1 rounded-full bg-white/90 p-1 shadow-sm ring-1 ring-slate-100">
-      {REVIEW_CLUSTER_VARIANTS.map((tab) => (
-        <button
-          key={tab.value}
-          type="button"
-          onClick={() => setReviewClusterVariant(tab.value)}
-          className={`rounded-full px-2.5 py-1 text-[11px] font-semibold transition ${
-            reviewClusterVariant === tab.value
-              ? "bg-slate-900 text-white"
-              : "text-slate-400 hover:bg-slate-100 hover:text-slate-700"
-          }`}
-        >
-          {tab.label}
-        </button>
-      ))}
-    </div>
-  );
   const renderSessionImpactGraph = (variant: "panel" | "overlay" = "overlay") => {
     const isOverlay = variant === "overlay";
     const referencedByMemoryId = new Map(
@@ -8214,7 +8178,6 @@ export default function MainScreenPage() {
 
       {isMemoryDiffOpen && (
         <SessionMemoryDiff
-          headerActions={memoryClusterVariantToggle}
           toolbar={memoryPhaseToggle}
           onClose={() => setIsMemoryDiffOpen(false)}
         >

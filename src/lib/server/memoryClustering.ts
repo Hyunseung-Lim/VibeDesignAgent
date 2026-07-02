@@ -19,23 +19,20 @@ export const CLUSTER_COLLECTION = "memoryClusters";
 export const CLUSTERING_METHOD_VERSION = "similarity-graph-v3-persona-summary";
 export const MEMORY_VERSION = "0.1.2";
 
-// Clustering input variants are kept so we can compare how the embedding input
-// changes clustering. "semantic-only" was dropped; only the two below remain:
-// - compact-context: keyword + episodic + semantic (the default / current behavior)
-// - full-context:    everything (compact fields + original interaction + link)
+// Fixed clustering embedding input: keyword + episodic + semantic + link.
 export const CLUSTERING_INPUT_VARIANTS = [
-  "compact-context",
-  "full-context",
+  "keyword-episodic-semantic-link",
 ] as const;
 export type ClusteringInputVariant = (typeof CLUSTERING_INPUT_VARIANTS)[number];
-export const CLUSTERING_INPUT_VARIANT: ClusteringInputVariant = "compact-context";
+export const CLUSTERING_INPUT_VARIANT: ClusteringInputVariant =
+  "keyword-episodic-semantic-link";
 
 export function normalizeClusteringInputVariant(
   value: unknown,
 ): ClusteringInputVariant {
   return CLUSTERING_INPUT_VARIANTS.includes(value as ClusteringInputVariant)
     ? (value as ClusteringInputVariant)
-    : "compact-context";
+    : CLUSTERING_INPUT_VARIANT;
 }
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
@@ -102,8 +99,6 @@ type ClusterLabel = { id: string; label: string; summary: string };
 export function clusteringMethodVersion(
   variant: ClusteringInputVariant = CLUSTERING_INPUT_VARIANT,
 ) {
-  // compact-context keeps the historical key (`...:compact-context`) so existing
-  // caches and the planner cluster summary lookup stay valid.
   return `${CLUSTERING_METHOD_VERSION}:${variant}`;
 }
 
@@ -193,9 +188,10 @@ export async function loadLatestStoredClusterDoc(
       if (!data) return null;
       // Only consider the requested input variant so consumers (e.g. the chat
       // planner) get a consistent clustering, not a mix across variants.
-      const docVariant = normalizeClusteringInputVariant(
-        data.clusteringInputVariant,
-      );
+      const docVariant =
+        typeof data.clusteringInputVariant === "string"
+          ? data.clusteringInputVariant
+          : "";
       if (docVariant !== variant) return null;
       const graphClusters = parseStoredClusters(data.graphClusters);
       if (graphClusters.length === 0) return null;
@@ -266,37 +262,12 @@ export function parseStoredGraphEdges(value: unknown): ClusterGraphEdge[] {
     );
 }
 
-function embeddingText(
-  item: ClusterInputItem,
-  variant: ClusteringInputVariant = CLUSTERING_INPUT_VARIANT,
-) {
-  // compact-context: structured keyword + episodic + semantic only.
-  // full-context: also includes the original interaction content and link.
-  const compactFields = [
-    item.keyword?.length ? `Keywords: ${item.keyword.join(", ")}` : "",
-    item.episodic ? `Episodic: ${item.episodic}` : "",
-    item.semantic ? `Semantic: ${item.semantic}` : "",
-  ];
-
-  if (variant === "compact-context") {
-    return compactFields.filter(Boolean).join("\n") || item.id;
-  }
-
-  const originalInteractionContent =
-    item.originalInteractionContent ||
-    [
-      item.input ? `User input:\n${item.input}` : "",
-      item.output ? `Agent output:\n${item.output}` : "",
-    ]
-      .filter(Boolean)
-      .join("\n\n");
-
+function embeddingText(item: ClusterInputItem) {
   return (
     [
-      ...compactFields,
-      originalInteractionContent
-        ? `Original interaction content:\n${originalInteractionContent}`
-        : "",
+      item.keyword?.length ? `Keywords: ${item.keyword.join(", ")}` : "",
+      item.episodic ? `Episodic: ${item.episodic}` : "",
+      item.semantic ? `Semantic: ${item.semantic}` : "",
       item.link ? `Link: ${item.link}` : "",
     ]
       .filter(Boolean)
@@ -438,13 +409,10 @@ export async function labelClusters(
   });
 }
 
-export async function embedItems(
-  items: ClusterInputItem[],
-  variant: ClusteringInputVariant = CLUSTERING_INPUT_VARIANT,
-) {
+export async function embedItems(items: ClusterInputItem[]) {
   const response = await openai.embeddings.create({
     model: EMBEDDING_MODEL,
-    input: items.map((item) => embeddingText(item, variant)),
+    input: items.map((item) => embeddingText(item)),
   });
   return response.data.map((item) => l2Normalize(item.embedding));
 }
@@ -610,7 +578,7 @@ export async function generateAndStoreClusters(
   subjectName?: string,
   variant: ClusteringInputVariant = CLUSTERING_INPUT_VARIANT,
 ) {
-  const vectors = await embedItems(items, variant);
+  const vectors = await embedItems(items);
   const graphCommunity = buildGraphCommunityClusters(items, vectors);
   const itemsById = new Map(items.map((item) => [item.id, item]));
   const graphClusters = await labelClusters(

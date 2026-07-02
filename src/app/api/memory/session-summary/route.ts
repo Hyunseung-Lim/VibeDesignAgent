@@ -14,14 +14,12 @@ const CLUSTER_COLLECTION = "memoryClusters";
 const MAX_MEMORY_DOCS = 300;
 const MAX_RETRIEVAL_LOGS = 300;
 
-// Clustering input variants the review can toggle between, mirroring /agent.
-// Legacy/unknown variants (e.g. semantic-only, missing) normalize to the default.
-const CLUSTER_VARIANTS = ["compact-context", "full-context"] as const;
+const CLUSTER_VARIANTS = ["keyword-episodic-semantic-link"] as const;
 type ClusterVariant = (typeof CLUSTER_VARIANTS)[number];
-function normalizeClusterVariant(value: unknown): ClusterVariant {
+function normalizeClusterVariant(value: unknown): ClusterVariant | null {
   return CLUSTER_VARIANTS.includes(value as ClusterVariant)
     ? (value as ClusterVariant)
-    : "compact-context";
+    : null;
 }
 
 function stringOrNull(value: unknown) {
@@ -439,15 +437,11 @@ export async function POST(request: Request) {
       };
     }),
   );
-  // Pick the most recently generated cache doc (by generatedAt). The full-memory
-  // view (/api/memory/clusters) uses the same "latest per variant" rule, so both
-  // screens resolve to the same document for a given variant.
+  // Pick the most recently generated cache doc (by generatedAt).
   const latestClusterDoc = (docs: typeof clusterDocs) =>
     docs
       .filter((doc) => doc.graphClusters.length > 0)
       .sort((a, b) => b.generatedAt - a.generatedAt)[0] ?? null;
-  // Latest doc per variant so the review can offer the same compact/full tabs as
-  // /agent without refetching the whole summary.
   const clustersByVariant = Object.fromEntries(
     CLUSTER_VARIANTS.map((variant) => {
       const latest = latestClusterDoc(

@@ -179,15 +179,15 @@
 #### 메모리 클러스터링
 
 - 경로: 일반 사용자 본인 memory는 `GET/POST /api/memory/clusters`, admin의 타인 memory 진단은 `GET/POST /api/admin/users/[uid]/memory/clusters`
-- 입력 variant: clustering embedding 입력은 두 가지 중 선택한다 — `compact-context`(keyword + episodic + semantic, 기본값)와 `full-context`(compact + 원문 interaction + link). 과거의 `semantic-only`는 제외했다 `[현행 2026-06-24 → 15.120]`
-- 1단계: 구조화된 keyword + episodic + semantic 텍스트를 `text-embedding-3-large`로 embedding
+- 입력: clustering embedding 입력은 keyword + episodic + semantic + link로 고정한다. 원문 interaction input/output은 clustering embedding에 포함하지 않고, 입력 variant 비교는 제공하지 않는다 `[현행 2026-07-03 → 15.178]`
+- 1단계: 구조화된 keyword + episodic + semantic + link 텍스트를 `text-embedding-3-large`로 embedding
 - 2단계: cosine similarity graph 생성. 강한 유사도 edge와 node별 KNN edge를 함께 사용
 - 3단계: similarity graph에서 label propagation으로 community를 찾고, community가 너무 많으면 centroid similarity 기준으로 최대 16개까지 merge
 - 4단계: LLM은 cluster membership을 바꾸지 않고 최종 cluster label/summary만 생성한다. summary는 작업 목록을 일반적으로 요약하지 않고 Firestore profile의 실제 displayName을 사용해 그 사람의 반복되는 성격, 습관, 작업 방식, 의사결정 패턴과 디자인 취향을 근거와 함께 서술한다. 단일·약한 근거에는 consistently/always 같은 반복 표현을 쓰지 않는다 `[현행 2026-06-21 → 15.99]`
-- `/agent`(self·admin 공용) UI 헤더에 입력 variant 비교 탭(compact-context / full-context)이 있어 입력 종류별 clustering 결과를 전환해 본다. 탭 전환은 해당 variant의 캐시를 GET하고, 재생성은 선택된 variant로 POST한다 `[현행 2026-06-24 → 15.120]`
+- `/agent`(self·admin 공용) UI 헤더에는 고정 입력 구성(keyword · episodic · semantic · link)만 표시하고, 입력 variant 토글은 렌더하지 않는다 `[현행 2026-07-03 → 15.178]`
 - `/agent` cluster UI는 좌측에서 cluster list → detail panel → graph 순서로 배치한다. cluster list는 main 세션 리뷰와 동일한 `MemoryClusterList` review presentation을 사용한다 — 색상 count rail이 달린 rounded card, cluster label만 표시, 좌측 접기 rail 제공. cluster summary와 선택됨 badge는 숨긴다 `[현행 2026-06-30 → 15.169]`
-- `/agent`의 세션 필터와 세션 리뷰 overlay는 모두 유저별 `missionOrder` 기준의 누적 메모리 집합을 사용한다. 예를 들어 세션 2를 선택하면 세션 2까지의 누적 메모리를 보여주고, 세션 2에서 새로 생성된 메모리만 다이아몬드로 표시한다. 세션 리뷰 overlay도 `/agent`와 같은 두 입력 variant 탭을 제공하고, 기본 그래프 필터는 전체 메모리다. 같은 variant + 같은 세션 기준이면 `/agent` 세션 필터와 리뷰의 `세션 이후` cluster membership을 비교할 수 있어야 한다 `[현행 2026-06-30 → 15.149]`
-- 캐시 키는 memory version + item signature + clustering method version으로 관리하고, method version에 선택된 입력 variant가 포함된다. compact-context는 과거 키(`...:compact-context`)를 그대로 유지해 기존 캐시와 planner cluster summary 조회가 깨지지 않고, full-context만 별도 네임스페이스를 가진다 `[현행 2026-06-24 → 15.120]`
+- `/agent`의 세션 필터와 세션 리뷰 overlay는 모두 유저별 `missionOrder` 기준의 누적 메모리 집합을 사용한다. 예를 들어 세션 2를 선택하면 세션 2까지의 누적 메모리를 보여주고, 세션 2에서 새로 생성된 메모리만 다이아몬드로 표시한다. 세션 리뷰 overlay도 같은 고정 입력 cache를 사용하고, 기본 그래프 필터는 전체 메모리다 `[현행 2026-07-03 → 15.178]`
+- 캐시 키는 memory version + item signature + clustering method version으로 관리하고, method version에는 고정 입력 이름 `keyword-episodic-semantic-link`가 포함된다. 과거 compact-context/full-context cache와 섞지 않는다 `[현행 2026-07-03 → 15.178]`
 - Self/admin API는 `loadUserMemoryItems`와 `loadClusterInputItems`를 공유하며, admin 전용 cluster route도 `generateAndStoreClusters`를 호출한다. 별도 admin clustering 알고리즘은 두지 않는다 `[현행 2026-06-22 → 15.107]`
 
 ---
@@ -3929,3 +3929,11 @@ type ChatPlan = {
 - 배경: native textarea는 일부 텍스트만 다른 스타일로 렌더링할 수 없어 overlay highlight를 쓰면 caret/wrapping 오차가 생겼고, overlay를 제거하면 `/`/`@` token highlight가 사라졌다. 사용자는 inline token highlight를 유지하길 원했다.
 - 수정: `lexical`, `@lexical/react`를 추가하고 `ChatInput` 입력 영역을 Lexical composer로 교체했다. 입력 plain text는 기존 `inputText` state와 동기화하고, `/` command와 `@` mention token 구간은 Lexical TextNode style로 bold/color 처리한다. 자동완성, Enter 전송, Esc 닫기, 이미지 paste 첨부, 외부 focus 호출은 기존 동작을 유지한다.
 - 의도: 보이는 텍스트와 caret가 같은 editor tree를 기준으로 동작하게 해 textarea overlay의 이중 렌더 문제를 피하면서 inline token highlight를 복원한다.
+
+### 15.178 클러스터링 입력을 keyword episodic semantic link로 고정 `[implemented 2026-07-03]`
+
+- 배경(Notion): clustering 입력을 keyword, episodic, semantic, link로 확정하고 현재 토글 버튼을 제거해달라는 요청.
+- 수정: clustering embedding text를 keyword + episodic + semantic + link로 고정하고 원문 input/output 포함 분기를 제거했다. 고정 입력 이름은 `keyword-episodic-semantic-link`로 저장해 과거 compact-context/full-context cache와 섞이지 않게 했다.
+- UI: `/agent`와 세션 리뷰 overlay의 입력 variant 토글을 제거했다. `/agent` 헤더에는 현재 고정 입력 구성만 작은 텍스트로 표시한다.
+- API: self/admin cluster route는 query/body variant를 읽지 않고 항상 고정 입력 cache를 조회·생성한다. 세션 종료 시 cluster 생성도 한 번만 호출한다.
+- 문서: 1~9장 Current Snapshot의 메모리 클러스터링 항목을 새 고정 입력 기준으로 갱신했다.

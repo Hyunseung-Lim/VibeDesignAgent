@@ -55,22 +55,6 @@ function sessionFilterDate(timestamp: number) {
   });
 }
 
-// Clustering input variants kept for comparing how the embedding input changes
-// clustering. "semantic-only" was dropped; only these two remain.
-const CLUSTER_VARIANTS = [
-  {
-    value: "compact-context",
-    label: "keyword · episodic · semantic",
-    description: "구조화 필드만",
-  },
-  {
-    value: "full-context",
-    label: "keyword · episodic · semantic · input · output · link",
-    description: "원문 로그·링크까지 포함",
-  },
-] as const;
-type ClusterVariant = (typeof CLUSTER_VARIANTS)[number]["value"];
-
 const MemoryClusterGraph = dynamic(
   () => import("@/components/memory/memory-cluster-graph"),
   {
@@ -104,8 +88,6 @@ export function MemoryClusterPage({
   const [memories, setMemories] = useState<MemoryItem[]>([]);
   const [clusters, setClusters] = useState<MemoryCluster[]>([]);
   const [clusterEdges, setClusterEdges] = useState<ClusterGraphEdge[]>([]);
-  const [clusterVariant, setClusterVariant] =
-    useState<ClusterVariant>("compact-context");
   const [loading, setLoading] = useState(true);
   const [isRegenerating, setIsRegenerating] = useState(false);
   const [selectedClusterId, setSelectedClusterId] = useState<string | null>(
@@ -146,27 +128,15 @@ export function MemoryClusterPage({
     );
   };
 
-  const loadClusters = (
-    user: import("firebase/auth").User,
-    variant: ClusterVariant,
-  ) =>
-    getIdToken(user).then((token) =>
-      fetch(`${clustersEndpoint}?variant=${variant}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-        .then((r) => (r.ok ? r.json() : null))
-        .then(applyClusterData),
-    );
-
-  const loadData = (user: import("firebase/auth").User, variant: ClusterVariant) =>
+  const loadData = (user: import("firebase/auth").User) =>
     getIdToken(user).then((token) => {
       const headers = { Authorization: `Bearer ${token}` };
       return Promise.all([
         fetch(memoryEndpoint, { headers }).then((r) =>
           r.ok ? r.json() : null,
         ),
-        fetch(`${clustersEndpoint}?variant=${variant}`, { headers }).then(
-          (r) => (r.ok ? r.json() : null),
+        fetch(clustersEndpoint, { headers }).then((r) =>
+          r.ok ? r.json() : null,
         ),
       ]).then(([memData, clusterData]) => {
         const mems: MemoryItem[] = Array.isArray(memData?.memories)
@@ -182,19 +152,6 @@ export function MemoryClusterPage({
       });
     });
 
-  const handleSelectClusterVariant = async (variant: ClusterVariant) => {
-    if (variant === clusterVariant || !currentUser) return;
-    setClusterVariant(variant);
-    setLoading(true);
-    try {
-      await loadClusters(currentUser, variant);
-    } catch (err) {
-      console.error("[agent] cluster variant load failed", err);
-    } finally {
-      setLoading(false);
-    }
-  };
-
   const handleRegenerate = async () => {
     if (!currentUser || isRegenerating) return;
     setIsRegenerating(true);
@@ -206,7 +163,6 @@ export function MemoryClusterPage({
           Authorization: `Bearer ${token}`,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ variant: clusterVariant }),
       });
       const data = await res.json().catch(() => null);
       if (!res.ok) throw new Error(data?.error ?? "생성 실패");
@@ -244,7 +200,7 @@ export function MemoryClusterPage({
       }
       setCurrentUser(user);
       setLoading(true);
-      loadData(user, clusterVariant)
+      loadData(user)
         .catch((err) => {
           console.error("[agent] load failed", err);
         })
@@ -407,31 +363,8 @@ export function MemoryClusterPage({
               전체 메모리 데이터
             </p>
             <p className="truncate text-[10px] text-muted-foreground/70">
-              클러스터링 입력 비교
+              keyword · episodic · semantic · link
             </p>
-          </div>
-
-          <div className="ml-auto flex shrink-0 items-center gap-1 rounded-full border border-border bg-muted/40 p-1">
-            {CLUSTER_VARIANTS.map((variant) => {
-              const selected = clusterVariant === variant.value;
-              return (
-                <button
-                  key={variant.value}
-                  type="button"
-                  onClick={() => handleSelectClusterVariant(variant.value)}
-                  title={variant.description}
-                  disabled={loading || isRegenerating}
-                  className={cn(
-                    "rounded-full px-3 py-1.5 text-xs font-medium transition disabled:cursor-not-allowed disabled:opacity-50",
-                    selected
-                      ? "bg-slate-900 text-white"
-                      : "text-muted-foreground hover:bg-white",
-                  )}
-                >
-                  {variant.label}
-                </button>
-              );
-            })}
           </div>
         </div>
       </div>
