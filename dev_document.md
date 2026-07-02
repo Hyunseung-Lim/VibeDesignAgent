@@ -54,7 +54,7 @@
 
 - 어드민 이메일 화이트리스트로 접근 제한
 - 미션 CRUD (생성/수정/삭제)
-- 미션 콘텐츠는 Firestore `missions/{id}.options[0]`에 저장(제목/설명/마크다운 content). 옵션에는 어드민이 올린 콘텐츠 이미지 `assetImages[{url, path, note}]`도 담긴다. 이 이미지는 `/admin/new`뿐 아니라 `/admin` 기존 미션 편집에서도 Firebase Storage `mission-assets/`에 PNG/JPG/WebP만 업로드/삭제할 수 있고, main 세션의 Mission 섹션에서 썸네일로 바로 확인할 수 있다. 저장된 URL/path는 목업 생성 시 asset-led 경로로 그대로 주입된다(위 "콘텐츠 자산 주도 생성" 참고) `[현행 2026-06-19 → 15.96]`
+- 미션 콘텐츠는 Firestore `missions/{id}.options[0]`에 저장(제목/설명/마크다운 content). 옵션에는 어드민이 올린 콘텐츠 이미지 `assetImages[{url, path, note}]`도 담긴다. 이 이미지는 `/admin/new`뿐 아니라 `/admin` 기존 미션 편집에서도 Firebase Storage `mission-assets/`에 PNG/JPG/WebP만 업로드/삭제할 수 있고, main 세션의 Mission 섹션에서 썸네일로 바로 확인할 수 있다. Mission 섹션에서 이미지 본문을 클릭하면 채팅 입력에 이미지 인용 attachment로 추가되고, 원본 확대는 카드 하단의 `확대보기` 버튼으로 연다. 저장된 URL/path는 목업 생성 시 asset-led 경로로 그대로 주입된다(위 "콘텐츠 자산 주도 생성" 참고) `[현행 2026-07-03 → 15.96/15.179]`
 - 미션 ID: `mission-YYYYMMDD-HHmmss` 형식 (사람이 읽기 쉬운 구조)
 - 참여자 목록 조회 및 세션 열람 (읽기 전용 뷰)
 - 참여자 카드의 X는 해당 미션 세션과 하위 `memoryDrafts`/`reviewTurns`만 삭제하며, 유저 정보/장기 메모리/다른 미션 기록은 유지
@@ -143,7 +143,7 @@
 
 ### 4.6 AI 채팅
 
-- **구조화 composer 문법**: `/`는 새 산출물 생성 명령(`/시안생성`, `/디자인스타일생성`, `/목업생성`, `/레퍼런스검색`), `@`는 현재 세션에 이미 존재하는 시안/Design Brief/Design Style/Mockup 언급이다. 대상이 없으면 현재 활성 시안을 사용하고, `@디자인스타일` 같은 검색은 dropdown에서 `시안 N · 디자인 스타일` 실제 대상을 확인한 뒤 ID 기반 metadata로 고정한다. 자동완성 선택값은 별도 상단 chip이 아니라 Lexical composer 안에 `/시안생성`, `@시안 1 · 디자인 브리프` 같은 inline token으로 삽입되고, token 구간은 Lexical TextNode style로 bold/color highlight된다. 레퍼런스 카드·텍스트 하이라이트·목업 요소는 기존 전용 선택/인용 UI를 유지하며 `@`에 중복 노출하지 않는다. 선택 요소, 텍스트 인용, 레퍼런스 인용, 스타일 이미지는 composer 위 attachment tray에 동일한 Attachment-style item으로 표시한다. 명령/언급은 raw token 파싱이 아니라 구조화 metadata로 `/api/chat`에 전달되고 명시적 `/` 명령이 planner 추론보다 우선한다. memory draft input에는 command/mention 메타 라인을 붙이지 않고 사용자가 본 실제 입력문만 저장한다. `src/lib/session/chat-composer.ts`, `src/components/session/chat-input.tsx`, `src/app/api/chat/route.ts`를 직접 확인 `[현행 2026-07-02 → 15.108/15.157/15.164/15.177]`
+- **구조화 composer 문법**: `/`는 새 산출물 생성 명령(`/시안생성`, `/디자인스타일생성`, `/목업생성`, `/레퍼런스검색`), `@`는 현재 세션에 이미 존재하는 시안/Design Brief/Design Style/Mockup 언급이다. 대상이 없으면 현재 활성 시안을 사용하고, `@디자인스타일` 같은 검색은 dropdown에서 `시안 N · 디자인 스타일` 실제 대상을 확인한 뒤 ID 기반 metadata로 고정한다. 자동완성 선택값은 별도 상단 chip이 아니라 Lexical composer 안에 `/시안생성`, `@시안 1 · 디자인 브리프` 같은 inline token으로 삽입되고, token 구간은 Lexical TextNode style로 bold/color highlight된다. 레퍼런스 카드·미션 이미지·텍스트 하이라이트·목업 요소는 기존 전용 선택/인용 UI를 유지하며 `@`에 중복 노출하지 않는다. 선택 요소, 텍스트 인용, 레퍼런스 인용, 미션 이미지 인용, 스타일 이미지는 composer 위 attachment tray에 동일한 Attachment-style item으로 표시한다. 명령/언급은 raw token 파싱이 아니라 구조화 metadata로 `/api/chat`에 전달되고 명시적 `/` 명령이 planner 추론보다 우선한다. memory draft input에는 command/mention 메타 라인을 붙이지 않고 사용자가 본 실제 입력문만 저장한다. `src/lib/session/chat-composer.ts`, `src/components/session/chat-input.tsx`, `src/app/api/chat/route.ts`를 직접 확인 `[현행 2026-07-03 → 15.108/15.157/15.164/15.177/15.179]`
 - **응답 생성 provider**: 기본 OpenAI `gpt-5.4` (Responses API). `CHAT_RESPONSE_PROVIDER=anthropic` 또는 `LLM_PROVIDER=anthropic`이면 최종 chat 응답 생성만 Claude Messages API로 전환
 - **Provider 범위**: planner, embedding, memory retrieval/encoding, clustering label은 기존 OpenAI 경로 유지. `/api/chat`의 최종 assistant response streaming만 provider switch 대상. Admin UI에서는 메인 채팅 헤더의 LLM selector로 turn별 provider override 가능
 - **웹 검색**: OpenAI provider일 때 `web_search_preview` 툴 활성화, 레퍼런스 URL 인용 시 `tool_choice: "required"`로 강제. Anthropic provider일 때는 prompt에 포함된 reference title/url context를 사용하고 web search tool은 호출하지 않음
@@ -3937,3 +3937,11 @@ type ChatPlan = {
 - UI: `/agent`와 세션 리뷰 overlay의 입력 variant 토글을 제거했다. `/agent` 헤더에는 현재 고정 입력 구성만 작은 텍스트로 표시한다.
 - API: self/admin cluster route는 query/body variant를 읽지 않고 항상 고정 입력 cache를 조회·생성한다. 세션 종료 시 cluster 생성도 한 번만 호출한다.
 - 문서: 1~9장 Current Snapshot의 메모리 클러스터링 항목을 새 고정 입력 기준으로 갱신했다.
+
+### 15.179 Mission 이미지 클릭을 인용으로 전환 `[implemented 2026-07-03]`
+
+- 배경(Page Feedback `/main/mission-20260611-202001`): Mission 섹션의 콘텐츠 이미지를 클릭하면 확대보기만 열렸는데, 레퍼런스 카드처럼 이미지 클릭은 인용으로 쓰고 확대보기는 별도 버튼으로 분리해달라는 요청.
+- 수정: `MissionBriefSection`의 asset image card를 `article` 구조로 바꾸고, 이미지 본문 클릭은 `onToggleAssetImage`를 호출해 채팅 입력의 선택 reference 경로에 넣는다. 선택된 이미지는 카드에 `인용됨` badge를 표시한다.
+- 수정: 원본 preview dialog는 카드 하단의 작은 `확대보기` 버튼으로만 연다. 버튼은 `Maximize2` 아이콘과 텍스트를 함께 사용한다.
+- 연결: `/main/[missionId]`는 미션 이미지를 `Reference` 호환 객체(`tag: 미션 이미지`, `url/imageUrl: asset URL`)로 변환해 `selectedReferences`에 넣는다. 따라서 composer attachment tray, `/api/chat`의 citedReferences, memory source link 경로를 기존 레퍼런스 인용과 공유한다.
+- UI: `ChatInput` attachment tray는 `tag`가 `미션 이미지`인 항목을 `이미지 인용`으로 표시한다.

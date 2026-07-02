@@ -52,6 +52,7 @@ export type ChatInputReference = {
   id: string;
   title: string;
   imageUrl?: string;
+  tag?: string;
 };
 
 export type ChatInputHandle = {
@@ -717,7 +718,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
                 tone="violet"
                 icon={<LinkIcon className="size-4" />}
                 imageUrl={reference.imageUrl}
-                title="레퍼런스 인용"
+                title={reference.tag === "미션 이미지" ? "이미지 인용" : "레퍼런스 인용"}
                 description={reference.title}
                 onRemove={() => onRemoveSelectedReference(reference.id)}
               />

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { ChevronDown, Monitor, Smartphone } from "lucide-react";
+import { Check, ChevronDown, Maximize2, Monitor, Smartphone } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -43,6 +43,9 @@ type MissionBriefSectionProps = {
   device: MissionBriefDevice;
   optionExpanded: boolean;
   onToggleOption: () => void;
+  selectedAssetImageIds?: Set<string>;
+  getAssetImageId?: (image: MissionBriefAssetImage, index: number) => string;
+  onToggleAssetImage?: (image: MissionBriefAssetImage, index: number) => void;
 };
 
 const markdownComponents = {
@@ -95,11 +98,15 @@ export function MissionBriefSection({
   device,
   optionExpanded,
   onToggleOption,
+  selectedAssetImageIds,
+  getAssetImageId,
+  onToggleAssetImage,
 }: MissionBriefSectionProps) {
   const [previewImage, setPreviewImage] = useState<{
     image: MissionBriefAssetImage;
     index: number;
   } | null>(null);
+  const canToggleAssetImage = Boolean(onToggleAssetImage);
 
   return (
     <div
@@ -196,26 +203,64 @@ export function MissionBriefSection({
                         콘텐츠 이미지
                       </p>
                       <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
-                        {option.assetImages?.map((image, index) => (
-                          <button
-                            key={image.path || image.url || index}
-                            type="button"
-                            onClick={() => setPreviewImage({ image, index })}
-                            className="group cursor-pointer overflow-hidden rounded-2xl border border-slate-100 bg-slate-50 text-left transition hover:border-slate-300 hover:shadow-md"
-                          >
-                            {/* eslint-disable-next-line @next/next/no-img-element */}
-                            <img
-                              src={image.url}
-                              alt={image.note?.trim() || `미션 콘텐츠 이미지 ${index + 1}`}
-                              className="aspect-square w-full object-cover transition-transform duration-200 group-hover:scale-105"
-                            />
-                            {image.note?.trim() && (
-                              <p className="border-t border-slate-100 px-3 py-2 text-xs text-slate-500">
-                                {truncateAssetNote(image.note)}
-                              </p>
-                            )}
-                          </button>
-                        ))}
+                        {option.assetImages?.map((image, index) => {
+                          const imageId =
+                            getAssetImageId?.(image, index) ??
+                            image.path ??
+                            image.url ??
+                            String(index);
+                          const selected = selectedAssetImageIds?.has(imageId);
+                          return (
+                            <article
+                              key={image.path || image.url || index}
+                              className={`group overflow-hidden rounded-2xl border bg-slate-50 text-left transition ${
+                                selected
+                                  ? "border-slate-900 shadow-sm ring-2 ring-slate-900/10"
+                                  : "border-slate-100 hover:border-slate-300 hover:shadow-md"
+                              }`}
+                              data-selected={selected ? "true" : "false"}
+                            >
+                              <button
+                                type="button"
+                                onClick={() => onToggleAssetImage?.(image, index)}
+                                disabled={!canToggleAssetImage}
+                                className={`relative block w-full text-left ${
+                                  canToggleAssetImage ? "cursor-pointer" : "cursor-default"
+                                }`}
+                              >
+                                {/* eslint-disable-next-line @next/next/no-img-element */}
+                                <img
+                                  src={image.url}
+                                  alt={image.note?.trim() || `미션 콘텐츠 이미지 ${index + 1}`}
+                                  className="aspect-square w-full object-cover transition-transform duration-200 group-hover:scale-105"
+                                />
+                                {selected && (
+                                  <span className="absolute right-2 top-2 inline-flex items-center gap-1 rounded-full bg-slate-900 px-2 py-1 text-[11px] font-semibold text-white shadow-sm">
+                                    <Check className="size-3" aria-hidden="true" />
+                                    인용됨
+                                  </span>
+                                )}
+                              </button>
+                              <div className="border-t border-slate-100 px-3 py-2">
+                                {image.note?.trim() && (
+                                  <p className="mb-2 text-xs text-slate-500">
+                                    {truncateAssetNote(image.note)}
+                                  </p>
+                                )}
+                                <button
+                                  type="button"
+                                  onClick={() => setPreviewImage({ image, index })}
+                                  className="inline-flex h-7 items-center gap-1.5 rounded-md border border-slate-200 bg-white px-2 text-[11px] font-semibold text-slate-500 transition hover:bg-slate-50 hover:text-slate-700"
+                                  aria-label={`콘텐츠 이미지 ${index + 1} 확대보기`}
+                                  title="확대보기"
+                                >
+                                  <Maximize2 className="size-3" aria-hidden="true" />
+                                  확대보기
+                                </button>
+                              </div>
+                            </article>
+                          );
+                        })}
                       </div>
                     </div>
                   )}

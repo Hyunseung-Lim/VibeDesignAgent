@@ -552,6 +552,38 @@ type Reference = {
   referencePurposeLabel?: string;
 };
 
+function missionAssetImageReferenceId(
+  optionId: string | null | undefined,
+  image: AssetImage,
+  index: number,
+) {
+  return [
+    "mission-asset",
+    optionId || "mission",
+    image.path || image.url || String(index),
+  ].join(":");
+}
+
+function missionAssetImageReference(
+  optionId: string | null | undefined,
+  image: AssetImage,
+  index: number,
+  missionTitle: string,
+): Reference {
+  const note = image.note?.trim();
+  const title = `미션 이미지 ${index + 1}`;
+  return {
+    id: missionAssetImageReferenceId(optionId, image, index),
+    title,
+    description: note || `${missionTitle || "현재 미션"}에 포함된 이미지`,
+    rationale: "사용자가 미션 브리프 이미지에서 인용함",
+    tag: "미션 이미지",
+    url: image.url,
+    imageUrl: image.url,
+    referencePurposeLabel: "미션 이미지",
+  };
+}
+
 function memorySourceLinkFromReference(
   reference: Reference,
 ): MemorySourceLink {
@@ -7523,6 +7555,31 @@ export default function MainScreenPage() {
                 optionExpanded={isOptionExpanded}
                 onToggleOption={() =>
                   setIsOptionExpanded((expanded) => !expanded)
+                }
+                selectedAssetImageIds={
+                  new Set(selectedReferences.map((reference) => reference.id))
+                }
+                getAssetImageId={(image, index) =>
+                  missionAssetImageReferenceId(activeOption?.id, image, index)
+                }
+                onToggleAssetImage={
+                  isReadOnly
+                    ? undefined
+                    : (image, index) => {
+                        const reference = missionAssetImageReference(
+                          activeOption?.id,
+                          image,
+                          index,
+                          parentMissionTitle || missionTitle,
+                        );
+                        setSelectedReferences((prev) =>
+                          prev.some((selected) => selected.id === reference.id)
+                            ? prev.filter(
+                                (selected) => selected.id !== reference.id,
+                              )
+                            : [...prev, reference],
+                        );
+                      }
                 }
               />
             </div>
