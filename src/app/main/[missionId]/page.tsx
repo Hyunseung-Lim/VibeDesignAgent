@@ -6901,6 +6901,13 @@ export default function MainScreenPage() {
                   selectedMemoryId={selectedGraphMemoryId}
                   onSelectCluster={setSelectedSessionGraphClusterId}
                   onSelectMemory={selectReviewMentionMemory}
+                  getMissionLabel={(originMissionId) => {
+                    if (originMissionId === ONBOARDING_MISSION_ID) return "온보딩";
+                    if (originMissionId === missionId && missionTitle) {
+                      return missionTitle;
+                    }
+                    return `미션 ${originMissionId.slice(0, 10)}`;
+                  }}
                   showInlineDetail={false}
                   fill
                 />
@@ -6953,6 +6960,13 @@ export default function MainScreenPage() {
                   setSelectedGraphMemoryId(memoryId);
                   const referenced = referencedByMemoryId.get(memoryId);
                   if (referenced) setSelectedReferencedMemoryId(referenced.memoryId);
+                }}
+                getMissionLabel={(originMissionId) => {
+                  if (originMissionId === ONBOARDING_MISSION_ID) return "온보딩";
+                  if (originMissionId === missionId && missionTitle) {
+                    return missionTitle;
+                  }
+                  return `미션 ${originMissionId.slice(0, 10)}`;
                 }}
                 fill
               />

@@ -10,6 +10,7 @@ import {
 } from "react";
 import { ZoomOutIcon, ZoomInIcon, MaximizeIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { memoryClusterColor } from "@/components/memory/memory-cluster-colors";
 import type { ClusterGraphEdge } from "@/components/memory/memory-cluster-types";
 import { visibleMemoryActionLabels } from "@/components/memory/memory-action-labels";
@@ -56,6 +57,7 @@ type Props = {
   selectedMemoryId?: string | null;
   showInlineDetail?: boolean;
   fill?: boolean;
+  getMissionLabel?: (missionId: string) => string;
 };
 
 type ProjectedPoint = {
@@ -80,10 +82,6 @@ const MIN_ZOOM = 0.55;
 const MAX_ZOOM = 5;
 const GRAPH_LAYOUT_ITERATIONS = 260;
 
-function truncate(value: string, maxLength: number) {
-  return value.length > maxLength ? `${value.slice(0, maxLength - 1)}...` : value;
-}
-
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
 }
@@ -97,6 +95,57 @@ function itemDate(timestamp: number) {
         minute: "2-digit",
       })
     : "";
+}
+
+function sourceLabel(sourceType: string | null | undefined) {
+  if (sourceType === "before_session") return "세션 전";
+  if (sourceType === "during_session") return "세션 중";
+  return "출처 없음";
+}
+
+function sourceBadgeClass(sourceType: string | null | undefined) {
+  if (sourceType === "before_session") {
+    return "border-sky-200 bg-sky-50 text-sky-700";
+  }
+  if (sourceType === "during_session") {
+    return "border-slate-300 bg-slate-100 text-slate-700";
+  }
+  return "border-slate-200 bg-slate-50 text-slate-500";
+}
+
+function defaultMissionLabel(missionId: string | null | undefined) {
+  if (!missionId) return "세션 정보 없음";
+  if (missionId === "onboarding") return "온보딩";
+  return `미션 ${missionId.slice(0, 10)}`;
+}
+
+function userInputText(item: ClusterableMemoryItem) {
+  const raw = (item.input || "").trim().replace(/^user input:\s*/i, "").trim();
+  return raw || item.episodic || item.episode || item.semantic || item.id;
+}
+
+function isFinalDesignSelection(item: ClusterableMemoryItem) {
+  return (
+    item.action?.split(" / ").includes("final_design_select") ||
+    item.id.startsWith("during-session-") &&
+      item.id.includes("final-design-selection-") ||
+    item.memoryId.includes("final-design-selection-")
+  );
+}
+
+function finalDesignHeadline(item: ClusterableMemoryItem) {
+  const firstLine = userInputText(item)
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .find(Boolean);
+  if (!firstLine) return "최종디자인 시안 확정";
+  return firstLine
+    .replace(/^최종\s+디자인\s+확정\s*:/, "최종디자인 시안 확정:")
+    .replace(/\s+[·•]\s+/g, " * ");
+}
+
+function memoryHeadlineText(item: ClusterableMemoryItem) {
+  return isFinalDesignSelection(item) ? finalDesignHeadline(item) : userInputText(item);
 }
 
 function embeddingOf(item: ClusterableMemoryItem) {
@@ -485,11 +534,13 @@ export default function MemoryClusterGraph({
   selectedMemoryId,
   showInlineDetail = true,
   fill = false,
+  getMissionLabel = defaultMissionLabel,
 }: Props) {
   const wrapperRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [size, setSize] = useState({ width: 720, height: 420 });
   const [hoveredPointId, setHoveredPointId] = useState<string | null>(null);
+  const [hoverPosition, setHoverPosition] = useState({ x: 0, y: 0 });
   const [selectedPoint, setSelectedPoint] = useState<ProjectedPoint | null>(null);
   const [view, setView] = useState({ zoom: 1, offsetX: 0, offsetY: 0 });
   const [dragState, setDragState] = useState<{
@@ -707,17 +758,6 @@ export default function MemoryClusterGraph({
         ctx.stroke();
       }
 
-      if (selected || hovered) {
-        const label = truncate(point.label, 42);
-        ctx.font = "600 11px Pretendard, system-ui, sans-serif";
-        const textWidth = ctx.measureText(label).width;
-        const labelX = Math.min(screenPoint.x + 10, size.width - textWidth - 14);
-        const labelY = Math.max(24, screenPoint.y - 12);
-        ctx.fillStyle = "rgba(255,255,255,0.94)";
-        ctx.fillRect(labelX - 6, labelY - 14, textWidth + 12, 20);
-        ctx.fillStyle = "#334155";
-        ctx.fillText(label, labelX, labelY);
-      }
       ctx.restore();
     });
   }, [
@@ -754,6 +794,17 @@ export default function MemoryClusterGraph({
   const embeddedCount = pointData.points.filter((point) => point.hasEmbedding).length;
   const selectedPointActionLabels = visibleMemoryActionLabels(
     selectedPoint?.item.action,
+  );
+  const hoveredPoint = hoveredPointId ? pointById.get(hoveredPointId) : null;
+  const hoverCardLeft = clamp(
+    hoverPosition.x + 14,
+    12,
+    Math.max(12, size.width - 300),
+  );
+  const hoverCardTop = clamp(
+    hoverPosition.y + 14,
+    12,
+    Math.max(12, size.height - 240),
   );
   // Only show the shape legend when diamond (new) nodes are actually present, so
   // it never appears on views that don't distinguish new vs existing memories.
@@ -860,6 +911,10 @@ export default function MemoryClusterGraph({
             }
             const point = pointAt(event);
             setHoveredPointId(point?.id ?? null);
+            setHoverPosition({
+              x: event.clientX - event.currentTarget.getBoundingClientRect().left,
+              y: event.clientY - event.currentTarget.getBoundingClientRect().top,
+            });
           }}
           onPointerLeave={() => {
             setHoveredPointId(null);
@@ -892,6 +947,54 @@ export default function MemoryClusterGraph({
           onPointerCancel={() => setDragState(null)}
         />
       </div>
+
+      {hoveredPoint && !dragState ? (
+        <div
+          className="pointer-events-none absolute z-20 w-[min(20rem,calc(100%-1.5rem))] rounded-lg border border-border bg-background p-3 text-left text-xs shadow-xl backdrop-blur"
+          style={{ left: hoverCardLeft, top: hoverCardTop }}
+        >
+          <div className="mb-2 flex items-center justify-between gap-3 text-[11px] text-muted-foreground">
+            <span className="min-w-0 truncate font-medium text-slate-500">
+              {hoveredPoint.item.row?.source?.missionId
+                ? getMissionLabel(hoveredPoint.item.row.source.missionId)
+                : "세션 정보 없음"}
+            </span>
+            {hoveredPoint.item.timestamp ? (
+              <span className="shrink-0 tabular-nums">
+                {itemDate(hoveredPoint.item.timestamp)}
+              </span>
+            ) : null}
+          </div>
+          <div className="mb-2 flex flex-wrap items-center gap-1.5">
+            <Badge
+              variant="secondary"
+              className={`rounded-full ${sourceBadgeClass(hoveredPoint.item.sourceType)}`}
+            >
+              {sourceLabel(hoveredPoint.item.sourceType)}
+            </Badge>
+            {visibleMemoryActionLabels(hoveredPoint.item.action).map((label) => (
+              <Badge
+                key={label}
+                variant="warning"
+                className="rounded-full border-amber-200 bg-amber-50"
+              >
+                {label}
+              </Badge>
+            ))}
+          </div>
+          <div className="flex gap-2">
+            <span
+              className="mt-0.5 w-1 shrink-0 rounded-full bg-transparent"
+              aria-hidden="true"
+            />
+            <div className="min-w-0 flex-1">
+              <p className="line-clamp-2 text-foreground">
+                {memoryHeadlineText(hoveredPoint.item)}
+              </p>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {showInlineDetail && selectedCluster && (
         <div className="absolute bottom-4 left-4 z-10 max-w-80 rounded-lg border border-slate-100 bg-white/95 p-3 text-xs shadow-xl backdrop-blur">

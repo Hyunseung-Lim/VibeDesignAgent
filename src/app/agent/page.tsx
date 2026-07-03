@@ -462,6 +462,9 @@ export function MemoryClusterPage({
                   selectedMemoryId={selectedMemoryId}
                   onSelectCluster={setSelectedClusterId}
                   onSelectMemory={setSelectedMemoryId}
+                  getMissionLabel={(missionId) =>
+                    sessionFilterLabel(missionId, missionTitleById[missionId])
+                  }
                   showInlineDetail={false}
                   fill
                 />

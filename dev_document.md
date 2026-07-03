@@ -75,7 +75,7 @@
 ### `/agent` — Agent Manage
 
 - 에이전트 메모리/상태 관리 뷰
-- memory cluster graph, 좁은 cluster list, 그래프 좌측 detail panel, included memory items 표시 `[현행 2026-06-27 → 15.130]`
+- memory cluster graph, 좁은 cluster list, 그래프 좌측 detail panel, included memory items 표시. 공용 graph node hover label은 canvas 텍스트 라벨 대신 `MemoryClusterSidePanel` item 카드 형태의 tooltip으로 보여주며, mission label도 side panel과 같은 formatter를 사용한다 `[현행 2026-07-04 → 15.130/15.182]`
 
 ---
 
@@ -3960,3 +3960,10 @@ type ChatPlan = {
 - 수정: admin viewAs 상태에서는 헤더의 기존 뒤로가기 버튼 문구를 `어드민으로 돌아가기`로 바꾸고 클릭 시 `/admin`으로 이동하게 했다.
 - 수정: read-only banner 오른쪽의 별도 `어드민으로 돌아가기` 링크는 제거했다. 로그 CSV 버튼은 그대로 유지한다.
 - 영향: 일반 사용자 진행/리뷰 모드의 헤더 버튼은 기존처럼 `로비로 돌아가기`와 `/lobby` 이동을 유지한다.
+
+### 15.182 Memory graph node hover label을 side panel 카드 UI로 변경 `[implemented 2026-07-04]`
+
+- 배경(Notion Request 6 / Page Feedback `/agent`): memory graph에서 node를 hover할 때 canvas 안에 semantic 텍스트 라벨만 단독으로 보이는 대신, 리뷰 우측 패널에서 쓰는 메모리 카드 형태로 보여달라는 요청.
+- 수정: 공용 `MemoryClusterGraph`의 canvas text hover label을 제거하고, hover 위치에 `MemoryClusterSidePanel`의 item 카드와 같은 구성의 DOM tooltip을 띄우도록 바꿨다. Hover tooltip의 mission label은 side panel과 같은 `getMissionLabel` formatter를 받는다.
+- 유지: 클릭/선택 후 우하단에 뜨는 inline selected memory detail은 기존 구조를 유지한다.
+- 영향: `showInlineDetail`을 켠 `/agent` graph와 세션 리뷰의 작은 graph preview에서 hover label만 카드형으로 바뀐다. full-screen review overlay는 기존처럼 side panel detail을 사용한다.
