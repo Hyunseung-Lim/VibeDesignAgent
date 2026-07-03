@@ -68,7 +68,7 @@
 
 - 좌측 패널 (스크롤 가능): Mission → Reference → 아이디어 탭 (Idea/Mockup)
 - 우측 패널 (고정): AI 에이전트 채팅
-- 완료 세션 리뷰 우측 패널은 `세션 이전`/`채팅` 탭만 제공하고, 상단 타이머 오른쪽의 `메모리 리뷰하기` CTA가 cluster list → detail panel → memory graph → review panel 순서의 full-screen memory overlay를 바로 연다. 리뷰 입력창에서 `@`를 입력하면 별도 dropdown 없이 메모리뷰 자체가 선택 모드가 되며, cluster list/detail panel/graph에서 cluster나 memory를 클릭해 답변 본문에 inline mention을 삽입한다. 삽입된 mention은 굵게 표시되고 클릭하면 해당 cluster나 memory로 focus된다. 답변은 7개 단일 번호 질문별 plain text와 structured mentions로 `users/{uid}/memoryReviewFeedback/{missionId}`에 draft autosave된다. 모든 질문을 입력해야 제출할 수 있고, 제출 확인 팝업에서 확정하면 `submittedAt` 저장 후 로비로 이동한다. 로비 완료 미션 카드, admin 유저 카드의 완료 미션 row, admin 참여자 row는 `submittedAt` 여부에 따라 `리뷰 필요` 또는 `리뷰 완료`를 표시한다 `[현행 2026-06-30 → 15.131/15.134/15.155/15.156/15.165/15.166/15.167]`
+- 완료 세션 리뷰 우측 패널은 `세션 이전`/`채팅` 탭만 제공하고, 상단 타이머 오른쪽의 `메모리 리뷰하기` CTA가 cluster list → detail panel → memory graph → review panel 순서의 full-screen memory overlay를 바로 연다. 리뷰 입력창에서 `@`를 입력하면 별도 dropdown 없이 메모리뷰 자체가 선택 모드가 되며, cluster list/detail panel/graph에서 cluster나 memory를 클릭해 답변 본문에 inline mention을 삽입한다. 삽입된 mention은 굵게 표시되고 클릭하면 해당 cluster나 memory로 focus된다. 답변은 v2 7개 단일 번호 질문별 plain text와 structured mentions로 `users/{uid}/memoryReviewFeedback/{missionId}`에 draft autosave된다. 모든 질문을 입력해야 제출할 수 있고, 제출 확인 팝업에서 확정하면 `submittedAt` 저장 후 로비로 이동한다. 로비 완료 미션 카드, admin 유저 카드의 완료 미션 row, admin 참여자 row는 `submittedAt` 여부에 따라 `리뷰 필요` 또는 `리뷰 완료`를 표시한다 `[현행 2026-07-04 → 15.131/15.134/15.155/15.156/15.165/15.166/15.167/15.183]`
 - 작업 화면에는 실제 화면 영역을 하이라이트하는 제품 투어가 있다. 온보딩 미션에서는 작업 화면 진입 시 자동으로 열리고, 일반 미션에서는 헤더의 `튜토리얼` 버튼을 눌러야 열린다. 튜토리얼은 미션 설명 공간, 채팅 공간, 레퍼런스 섹션, 시안을 여러 개 만들 수 있다는 점, 각 시안이 Design Brief/디자인 스타일/Mockup으로 구성된다는 점, 목업 편집 버튼 사용, Final Design 선택, 타이머와 세션 종료 버튼을 안내한 뒤 마지막에 튜토리얼 버튼 위치를 다시 안내한다 `[현행 2026-06-16 → 15.88]`
 - 제품 투어가 `mission-brief` 단계를 표시할 때는 선택된 옵션 토글을 강제로 접어 미션 설명 본문이 먼저 보이게 한다 `[현행 2026-06-16 → 15.88]`
 
@@ -3967,3 +3967,10 @@ type ChatPlan = {
 - 수정: 공용 `MemoryClusterGraph`의 canvas text hover label을 제거하고, hover 위치에 `MemoryClusterSidePanel`의 item 카드와 같은 구성의 DOM tooltip을 띄우도록 바꿨다. Hover tooltip의 mission label은 side panel과 같은 `getMissionLabel` formatter를 받는다.
 - 유지: 클릭/선택 후 우하단에 뜨는 inline selected memory detail은 기존 구조를 유지한다.
 - 영향: `showInlineDetail`을 켠 `/agent` graph와 세션 리뷰의 작은 graph preview에서 hover label만 카드형으로 바뀐다. full-screen review overlay는 기존처럼 side panel detail을 사용한다.
+
+### 15.183 메모리 리뷰 질문지 v2 반영 `[implemented 2026-07-04]`
+
+- 배경(Notion `v2`): 메모리 리뷰 패널의 7개 질문 문구와 순서를 v2 문안으로 맞춰야 했다.
+- 수정: `MemoryReviewPanel`의 `REVIEW_QUESTIONS`에서 저장되지 말았어야 하는 정보 질문을 2번으로, 빠진 정보 질문을 3번으로 배치했다.
+- 수정: 3번을 `에이전트가 기억했어야 하는데 빠진 정보가 있나요? (있으면 무엇)`으로, 5번을 `메모리 클러스터가 묶인 단위가 적절한가요?...`로 갱신했다.
+- 유지: 기존 answer id는 의미별로 유지해 이미 저장된 draft/feedback 구조와의 호환성을 보존한다.

@@ -19,13 +19,13 @@ const REVIEW_QUESTIONS: ReviewQuestion[] = [
       "이번 세션에서 에이전트가 기억했으면 하는 걸 먼저 떠올려보세요. 그게 실제로 저장돼 있나요?",
   },
   {
-    id: "missing_memory",
-    label: "저장됐어야 하는데 빠진 게 있나요? (있으면 무엇)",
-  },
-  {
     id: "unnecessary_memory",
     label:
       "기억된 내용 중 저장되지 말았어야 하는 정보 또는 수정이 필요한 내용이 있나요? 어떻게 수정(제외)되어야 할까요?",
+  },
+  {
+    id: "missing_memory",
+    label: "에이전트가 기억했어야 하는데 빠진 정보가 있나요? (있으면 무엇)",
   },
   {
     id: "missing_signal",
@@ -35,7 +35,7 @@ const REVIEW_QUESTIONS: ReviewQuestion[] = [
   {
     id: "cluster_grouping",
     label:
-      "메모리가 묶인 단위가 적절한가요? (너무 뭉뚱그려졌다 / 너무 잘게 / 기준이 달랐으면) 그 이유는 무엇인가요?",
+      "메모리 클러스터가 묶인 단위가 적절한가요? (너무 뭉뚱그려졌다 / 너무 잘게 / 기준이 달랐으면) 그 이유는 무엇인가요?",
   },
   {
     id: "agent_understanding_progress",
