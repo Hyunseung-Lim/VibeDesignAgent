@@ -6858,6 +6858,8 @@ export default function MainScreenPage() {
               })
             }
             presentation="review"
+            nodeCount={graphItems.length}
+            edgeCount={visibleGraphEdges.length}
           />
           <div className="flex min-w-0 flex-1 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
             <MemoryClusterSidePanel

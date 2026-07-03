@@ -75,7 +75,7 @@
 ### `/agent` — Agent Manage
 
 - 에이전트 메모리/상태 관리 뷰
-- memory cluster graph, 좁은 cluster list, 그래프 좌측 detail panel, included memory items 표시. 공용 graph node hover label은 canvas 텍스트 라벨 대신 `MemoryClusterSidePanel` item 카드 형태의 tooltip으로 보여주며, mission label도 side panel과 같은 formatter를 사용한다 `[현행 2026-07-04 → 15.130/15.182]`
+- memory cluster graph, 좁은 cluster list, 그래프 좌측 detail panel, included memory items 표시. 공용 graph node hover label은 canvas 텍스트 라벨 대신 `MemoryClusterSidePanel` item 카드 형태의 tooltip으로 보여주며, mission label도 side panel과 같은 formatter를 사용한다. Graph 상단 count badge는 두지 않고 좌측 cluster list 제목 아래에 node/edge 수를 표시한다. `/agent`의 edge 수와 graph edge는 현재 세션 필터의 visible node 기준으로 필터링된다 `[현행 2026-07-04 → 15.130/15.182/15.184]`
 
 ---
 
@@ -3974,3 +3974,11 @@ type ChatPlan = {
 - 수정: `MemoryReviewPanel`의 `REVIEW_QUESTIONS`에서 저장되지 말았어야 하는 정보 질문을 2번으로, 빠진 정보 질문을 3번으로 배치했다.
 - 수정: 3번을 `에이전트가 기억했어야 하는데 빠진 정보가 있나요? (있으면 무엇)`으로, 5번을 `메모리 클러스터가 묶인 단위가 적절한가요?...`로 갱신했다.
 - 유지: 기존 answer id는 의미별로 유지해 이미 저장된 draft/feedback 구조와의 호환성을 보존한다.
+
+### 15.184 Memory graph/count UI minor 정리 `[implemented 2026-07-04]`
+
+- 배경(Notion `UI minor`): expanded cluster list의 selected 배경이 잘려 보이고 collapsed 상태와 색감이 다르며, 글자가 리뷰 화면 대비 살짝 크게 보였다. Graph 상단의 clusters/embedded/edges/layout badge는 좌측 panel로 옮기고, 세션 필터 변경 시 edge 수가 바뀌는지도 확인이 필요했다.
+- 수정: review presentation cluster list 카드와 collapsed rail 숫자 버튼의 selected 외곽 ring을 제거해 좌우 border가 잘려 보이지 않게 했다. Cluster color는 collapsed selected 숫자 버튼과 expanded selected color rail에서 원색을 쓰고, expanded selected 카드 본문은 원색 전체 배경 대신 옅은 tint/border만 적용한다. Non-selected 상태에서는 collapsed 숫자 버튼과 expanded color rail 모두 `opacity-80`로 낮춘다. Left color rail의 폭과 label/count 글자 크기도 약간 줄였다.
+- 수정: `MemoryClusterGraph`의 상단 count/layout badge를 제거하고, `MemoryClusterList` 제목 아래에 node/edge 수를 표시하는 optional props를 추가했다.
+- 수정: `/agent`는 현재 visible memory node 기준으로 `clusterEdges`를 필터링해 graph와 edge count에 전달한다. 세션 필터를 바꾸면 edge 수가 visible node pair 기준으로 함께 바뀐다.
+- 수정: memory cluster 화면의 clickable cluster card, collapsed rail, detail memory item, session filter, graph control, overlay/review action button에는 명시적으로 `cursor-pointer`를 적용하고 disabled action은 `cursor-not-allowed`로 표시한다.

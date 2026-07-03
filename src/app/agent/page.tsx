@@ -317,6 +317,12 @@ export function MemoryClusterPage({
       })
       .filter((cluster) => cluster.itemIds.length > 0);
   }, [clusters, filteredClusterItems, selectedSessionKey]);
+  const filteredClusterEdges = useMemo(() => {
+    const idSet = new Set(filteredClusterItems.map((item) => item.id));
+    return clusterEdges.filter(
+      (edge) => idSet.has(edge.sourceId) && idSet.has(edge.targetId),
+    );
+  }, [clusterEdges, filteredClusterItems]);
 
   // Keep the selected cluster valid whenever the session filter narrows the list.
   useEffect(() => {
@@ -352,7 +358,7 @@ export function MemoryClusterPage({
             variant="ghost"
             size="icon"
             onClick={() => router.push(backHref)}
-            className="rounded-full text-muted-foreground"
+            className="cursor-pointer rounded-full text-muted-foreground"
             aria-label="로비로 돌아가기"
           >
             <ArrowLeftIcon size={18} />
@@ -392,7 +398,7 @@ export function MemoryClusterPage({
                 type="button"
                 onClick={() => handleSelectSession(null)}
                 className={cn(
-                  "shrink-0 rounded-full border px-3 py-1 text-xs transition",
+                  "shrink-0 cursor-pointer rounded-full border px-3 py-1 text-xs transition",
                   selectedSessionKey === null
                     ? "border-slate-900 bg-slate-900 text-white"
                     : "border-border bg-white text-muted-foreground hover:bg-muted",
@@ -413,7 +419,7 @@ export function MemoryClusterPage({
                     onClick={() => handleSelectSession(option.key)}
                     title={option.missionId ?? "세션 정보가 없는 기억"}
                     className={cn(
-                      "shrink-0 rounded-full border px-3 py-1 text-xs transition",
+                      "shrink-0 cursor-pointer rounded-full border px-3 py-1 text-xs transition",
                       selectedSessionKey === option.key
                         ? "border-slate-900 bg-slate-900 text-white"
                         : "border-border bg-white text-muted-foreground hover:bg-muted",
@@ -440,6 +446,8 @@ export function MemoryClusterPage({
                 setSelectedMemoryId(null);
               }}
               presentation="review"
+              nodeCount={filteredClusterItems.length}
+              edgeCount={filteredClusterEdges.length}
             />
 
             <div className="flex min-w-0 flex-1 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
@@ -457,7 +465,7 @@ export function MemoryClusterPage({
                 <MemoryClusterGraph
                   clusters={filteredClusters}
                   items={filteredClusterItems}
-                  edges={clusterEdges}
+                  edges={filteredClusterEdges}
                   selectedClusterId={selectedClusterId}
                   selectedMemoryId={selectedMemoryId}
                   onSelectCluster={setSelectedClusterId}

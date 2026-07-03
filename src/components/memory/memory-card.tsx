@@ -40,7 +40,7 @@ export function MemoryCard({
       type="button"
       onClick={onClick}
       className={cn(
-        "w-full rounded-xl border text-left transition-[border-color,background-color]",
+        "w-full cursor-pointer rounded-xl border text-left transition-[border-color,background-color]",
         referenced
           ? "border-blue-100 bg-blue-50 hover:border-blue-200 hover:bg-blue-100/60"
           : "border-slate-100 bg-white hover:border-slate-200 hover:bg-slate-50",

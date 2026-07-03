@@ -2,7 +2,6 @@ import {
   useEffect,
   useLayoutEffect,
   useCallback,
-  useMemo,
   useRef,
   useState,
 } from "react";
@@ -188,7 +187,7 @@ export function MemoryReviewPanel({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [pendingSubmitPayload, setPendingSubmitPayload] =
     useState<MemoryReviewAnswers | null>(null);
-  const [completionRevision, setCompletionRevision] = useState(0);
+  const [, setCompletionRevision] = useState(0);
   const [handledMentionEventId, setHandledMentionEventId] = useState(0);
   const editorRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const answersRef = useRef<Record<string, string>>({});
@@ -204,12 +203,8 @@ export function MemoryReviewPanel({
     onMentionModeChange(Boolean(mentionRequest));
   }, [mentionRequest, onMentionModeChange]);
 
-  const allQuestionsAnswered = useMemo(
-    () =>
-      REVIEW_QUESTIONS.every(
-        (question) => answersRef.current[question.id]?.trim(),
-      ),
-    [answers, completionRevision],
+  const allQuestionsAnswered = REVIEW_QUESTIONS.every(
+    (question) => answersRef.current[question.id]?.trim(),
   );
 
   const submitPendingFeedback = async () => {
@@ -593,7 +588,7 @@ export function MemoryReviewPanel({
             saveStatus === "saving" ||
             isSubmitting
           }
-          className="rounded-full bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-slate-700 disabled:cursor-not-allowed disabled:bg-slate-300"
+          className="cursor-pointer rounded-full bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-slate-700 disabled:cursor-not-allowed disabled:bg-slate-300"
         >
           {isSubmitting ? "제출 중..." : "제출"}
         </button>
@@ -621,7 +616,7 @@ export function MemoryReviewPanel({
                 type="button"
                 onClick={() => setPendingSubmitPayload(null)}
                 disabled={isSubmitting}
-                className="rounded-full border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+                className="cursor-pointer rounded-full border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 취소
               </button>
@@ -629,7 +624,7 @@ export function MemoryReviewPanel({
                 type="button"
                 onClick={submitPendingFeedback}
                 disabled={isSubmitting || saveStatus === "saving"}
-                className="rounded-full bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-slate-700 disabled:cursor-not-allowed disabled:bg-slate-300"
+                className="cursor-pointer rounded-full bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-slate-700 disabled:cursor-not-allowed disabled:bg-slate-300"
               >
                 {isSubmitting ? "제출 중..." : "제출"}
               </button>

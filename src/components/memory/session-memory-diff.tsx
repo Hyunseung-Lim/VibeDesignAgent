@@ -36,7 +36,7 @@ export function SessionMemoryDiff({
           <button
             type="button"
             onClick={onClose}
-            className="rounded-full p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
+            className="cursor-pointer rounded-full p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
             aria-label="메모리 변화 전체 보기 닫기"
           >
             <XIcon size={18} />

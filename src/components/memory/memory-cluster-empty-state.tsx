@@ -26,7 +26,7 @@ export function MemoryClusterEmptyState({
           type="button"
           onClick={onGenerate}
           disabled={isRegenerating}
-          className="mt-2 rounded-full"
+          className="mt-2 cursor-pointer rounded-full disabled:cursor-not-allowed"
         >
           {isRegenerating ? "생성 중..." : "클러스터 생성하기"}
         </Button>

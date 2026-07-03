@@ -791,7 +791,6 @@ export default function MemoryClusterGraph({
 
   const selectedCluster =
     clusters.find((cluster) => cluster.id === selectedClusterId) ?? null;
-  const embeddedCount = pointData.points.filter((point) => point.hasEmbedding).length;
   const selectedPointActionLabels = visibleMemoryActionLabels(
     selectedPoint?.item.action,
   );
@@ -830,27 +829,12 @@ export default function MemoryClusterGraph({
           </span>
         </div>
       )}
-      <div className="absolute left-4 top-4 z-10 flex flex-wrap items-center gap-2">
-        <span className="rounded-full bg-white/90 px-2.5 py-1 text-[11px] font-semibold text-slate-500 shadow-sm ring-1 ring-slate-100">
-          {clusters.length} clusters
-        </span>
-        <span className="rounded-full bg-white/90 px-2.5 py-1 text-[11px] font-semibold text-slate-500 shadow-sm ring-1 ring-slate-100">
-          {embeddedCount}/{items.length} embedded points
-        </span>
-        <span className="rounded-full bg-white/90 px-2.5 py-1 text-[11px] font-semibold text-slate-500 shadow-sm ring-1 ring-slate-100">
-          {edges.length} similarity edges
-        </span>
-        <span className="rounded-full bg-white/90 px-2.5 py-1 text-[11px] font-semibold text-slate-500 shadow-sm ring-1 ring-slate-100">
-          {pointData.layoutLabel}
-        </span>
-      </div>
-
       <div className="absolute right-4 top-4 z-10 flex items-center gap-1 rounded-full bg-white/90 p-1 shadow-sm ring-1 ring-slate-100">
         <Button
           type="button"
           variant="ghost"
           size="icon"
-          className="size-7 rounded-full text-slate-500"
+          className="size-7 cursor-pointer rounded-full text-slate-500"
           onClick={() => zoomAt(size.width / 2, size.height / 2, view.zoom * 1.25)}
           aria-label="Zoom in graph"
           title="Zoom in"
@@ -861,7 +845,7 @@ export default function MemoryClusterGraph({
           type="button"
           variant="ghost"
           size="icon"
-          className="size-7 rounded-full text-slate-500"
+          className="size-7 cursor-pointer rounded-full text-slate-500"
           onClick={() => zoomAt(size.width / 2, size.height / 2, view.zoom / 1.25)}
           aria-label="Zoom out graph"
           title="Zoom out"
@@ -872,7 +856,7 @@ export default function MemoryClusterGraph({
           type="button"
           variant="ghost"
           size="icon"
-          className="size-7 rounded-full text-slate-500"
+          className="size-7 cursor-pointer rounded-full text-slate-500"
           onClick={resetView}
           aria-label="Fit graph view"
           title="Fit"
@@ -893,7 +877,13 @@ export default function MemoryClusterGraph({
       <div ref={wrapperRef} className="h-full w-full">
         <canvas
           ref={canvasRef}
-          className={`h-full w-full ${dragState ? "cursor-grabbing" : "cursor-crosshair"}`}
+          className={`h-full w-full ${
+            dragState
+              ? "cursor-grabbing"
+              : hoveredPointId
+                ? "cursor-pointer"
+                : "cursor-grab"
+          }`}
           onWheel={(event) => {
             event.preventDefault();
             const rect = event.currentTarget.getBoundingClientRect();
@@ -1030,7 +1020,7 @@ export default function MemoryClusterGraph({
             <button
               type="button"
               onClick={() => setSelectedPoint(null)}
-              className="rounded-full p-1 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
+              className="cursor-pointer rounded-full p-1 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
               aria-label="Close graph detail"
             >
               x

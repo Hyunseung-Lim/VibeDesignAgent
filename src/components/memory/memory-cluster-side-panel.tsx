@@ -177,7 +177,7 @@ export function MemoryClusterSidePanel({
           <button
             type="button"
             onClick={() => onMentionCluster?.(cluster)}
-            className="mt-3 inline-flex items-center gap-1.5 rounded-full border border-amber-200 bg-amber-50 px-3 py-1.5 text-[11px] font-semibold text-amber-700 transition hover:border-amber-300 hover:bg-amber-100"
+            className="mt-3 inline-flex cursor-pointer items-center gap-1.5 rounded-full border border-amber-200 bg-amber-50 px-3 py-1.5 text-[11px] font-semibold text-amber-700 transition hover:border-amber-300 hover:bg-amber-100"
           >
             <AtSignIcon size={12} />
             이 클러스터 멘션
@@ -238,7 +238,7 @@ export function MemoryClusterSidePanel({
                             e.stopPropagation();
                             onDeleteMemory(item.id);
                           }}
-                          className="absolute right-2 top-2 z-10 hidden rounded-full p-1 text-slate-400 transition hover:bg-red-50 hover:text-red-500 group-hover:flex"
+                          className="absolute right-2 top-2 z-10 hidden cursor-pointer rounded-full p-1 text-slate-400 transition hover:bg-red-50 hover:text-red-500 group-hover:flex"
                           aria-label="메모리 삭제"
                         >
                           <Trash2Icon size={12} />
@@ -256,8 +256,8 @@ export function MemoryClusterSidePanel({
                               ? "border-amber-300 bg-amber-50 shadow-sm ring-2 ring-amber-100"
                               : "border-slate-400 bg-slate-100 shadow-sm ring-2 ring-slate-200"
                             : mentionMode
-                              ? "border-amber-100 bg-amber-50/50 hover:border-amber-300 hover:bg-amber-50"
-                              : "border-border bg-background hover:border-slate-300 hover:bg-muted/30"
+                              ? "cursor-pointer border-amber-100 bg-amber-50/50 hover:border-amber-300 hover:bg-amber-50"
+                              : "cursor-pointer border-border bg-background hover:border-slate-300 hover:bg-muted/30"
                         }`}
                       >
                       <div className="mb-2 flex items-center justify-between gap-3 text-[11px] text-muted-foreground">
@@ -309,7 +309,7 @@ export function MemoryClusterSidePanel({
                               <p
                                 className={`min-w-0 whitespace-pre-line leading-relaxed ${
                                   selected
-                                    ? "wrap-anywhere font-semibold text-slate-950"
+                                    ? "wrap-anywhere select-text font-semibold text-slate-950"
                                     : "line-clamp-2 text-foreground"
                                 }`}
                               >
@@ -325,7 +325,7 @@ export function MemoryClusterSidePanel({
                         </div>
                       </div>
                       {selected ? (
-                        <div className="mt-3 space-y-3">
+                        <div className="mt-3 space-y-3 select-text">
                           {item.semantic ? (
                             <MemoryField label="Semantic" value={item.semantic} />
                           ) : null}
