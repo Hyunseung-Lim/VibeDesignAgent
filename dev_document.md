@@ -59,7 +59,7 @@
 - 참여자 목록 조회 및 세션 열람 (읽기 전용 뷰)
 - 참여자 카드의 X는 해당 미션 세션과 하위 `memoryDrafts`/`reviewTurns`만 삭제하며, 유저 정보/장기 메모리/다른 미션 기록은 유지
 - 사용자 카드의 `세션 백업 후 삭제`는 세션/참여 기록/Storage 파일/장기 메모리(`memories_0_1_2`)/클러스터 캐시(`memoryClusters`)/retrieval logs를 백업 후 삭제한다 `[현행 2026-06-18 → 15.94]`
-- 사용자 카드는 1열 전체 폭으로 배치한다. 카드의 미션 영역은 온보딩을 첫 행에 두고 `missionOrder` 순서를 기준으로 참여/세션 미션을 보완한 단일 진행 목록이다. Lobby와 같은 session snapshot 판정으로 `대기`/`준비중`/`진행중`/`시간 초과`/`완료`를 표시하고, 온보딩 미션도 Lobby처럼 실제 세션 진행을 반영하되 완료 판정만 onboarding profile flag로 한다. Lobby의 순차 잠금 규칙(온보딩→`missionOrder` 순서, 첫 미완료가 `현재`, 그 이후는 `잠김`)도 같은 판정으로 계산해 `현재`/`잠김` 배지와 흐릿 처리로 표시한다(관리/조회용이라 잠금은 표시만 하고 링크는 막지 않음). 각 행의 미션 제목 링크는 `/main/{id}?viewAs={uid}`로 해당 세션을 읽기 전용 view-as로 연다(별도 리뷰 링크는 제거 — admin viewAs는 이미 읽기 전용+리뷰 탭 노출이라 `review=1`은 초기 탭만 바꿔 중복이었다) `[현행 2026-06-24 → 15.122/15.123/15.124/15.125/15.127]`
+- 사용자 카드는 1열 전체 폭으로 배치한다. 카드의 미션 영역은 온보딩을 첫 행에 두고 `missionOrder` 순서를 기준으로 참여/세션 미션을 보완한 단일 진행 목록이다. Lobby와 같은 session snapshot 판정으로 `대기`/`준비중`/`진행중`/`시간 초과`/`완료`를 표시하고, 온보딩 미션도 Lobby처럼 실제 세션 진행을 반영하되 완료 판정만 onboarding profile flag로 한다. Lobby의 순차 잠금 규칙(온보딩→`missionOrder` 순서, 첫 미완료가 `현재`, 그 이후는 `잠김`)도 같은 판정으로 계산해 `현재`/`잠김` 배지와 흐릿 처리로 표시한다(관리/조회용이라 잠금은 표시만 하고 링크는 막지 않음). 각 행의 미션 제목 링크는 `/main/{id}?viewAs={uid}`로 해당 세션을 읽기 전용 view-as로 연다. admin viewAs 세션의 헤더 뒤로가기 버튼은 `/admin`으로 돌아가며, read-only banner 안의 별도 `어드민으로 돌아가기` 링크는 두지 않는다(별도 리뷰 링크는 제거 — admin viewAs는 이미 읽기 전용+리뷰 탭 노출이라 `review=1`은 초기 탭만 바꿔 중복이었다) `[현행 2026-07-04 → 15.122/15.123/15.124/15.125/15.127/15.181]`
 - 참여자 모달의 개별 `미션 기록 삭제`는 해당 미션 세션, participant record, `memoryDrafts`/`reviewTurns`, 그 미션의 `source.missionId`를 가진 장기 메모리와 mission-scoped retrieval logs를 삭제하고, `memoryClusters` cache를 비운다 `[현행 2026-06-18 → 15.94]`
 - 유저 카드의 `메모리 보기`는 모달을 열지 않고 `/admin/users/[uid]/memory` 전용 페이지로 이동한다. 이 페이지는 `/agent`와 같은 `MemoryClusterPage`를 렌더링해 헤더, 세션 누적 필터, 좁은 cluster list, 좌측 cluster detail panel, similarity graph, empty/loading state를 동일하게 유지한다 `[현행 2026-06-27 → 15.130]`
 - Admin 대상 메모리 목록과 clustering API는 self `/agent` 경로와 같은 normalization 및 clustering helper를 사용한다. 같은 uid와 item signature에는 양쪽 화면이 같은 memory item, cache document, cluster membership/label을 읽는다 `[현행 2026-06-22 → 15.107]`
@@ -3953,3 +3953,10 @@ type ChatPlan = {
 - 수정: `/api/mission-assets`가 Storage 응답을 완전히 `Buffer`로 받은 뒤 `Response`로 반환하도록 바꾸고, 10분 in-memory cache와 pending promise dedupe를 추가해 같은 asset의 동시 요청이 Storage에 중복으로 몰리지 않게 했다.
 - 수정: `MissionBriefSection` grid 이미지는 로드 실패 시 cache-bust query로 최대 2회 재시도하고, 계속 실패하면 broken image 아이콘 대신 `이미지를 불러오지 못했습니다` placeholder를 표시한다.
 - 검증: `npx tsc --noEmit`, 변경 파일 ESLint 통과.
+
+### 15.181 Admin viewAs 세션 헤더 뒤로가기 정리 `[implemented 2026-07-04]`
+
+- 배경(Page Feedback `/main/mission-20260611-201001?viewAs=...`): admin이 다른 사용자의 세션을 read-only로 볼 때 헤더의 `로비로 돌아가기` 버튼은 로비로 보내고, read-only banner에는 별도 `어드민으로 돌아가기` 링크가 있어 돌아가기 affordance가 중복됐다.
+- 수정: admin viewAs 상태에서는 헤더의 기존 뒤로가기 버튼 문구를 `어드민으로 돌아가기`로 바꾸고 클릭 시 `/admin`으로 이동하게 했다.
+- 수정: read-only banner 오른쪽의 별도 `어드민으로 돌아가기` 링크는 제거했다. 로그 CSV 버튼은 그대로 유지한다.
+- 영향: 일반 사용자 진행/리뷰 모드의 헤더 버튼은 기존처럼 `로비로 돌아가기`와 `/lobby` 이동을 유지한다.

@@ -1,7 +1,6 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import Link from "next/link";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import React, {
   useCallback,
@@ -7125,14 +7124,6 @@ export default function MainScreenPage() {
               <DownloadIcon size={14} />
               로그 CSV
             </button>
-            {isViewingAsAdmin ? (
-              <Link
-                href={`/admin`}
-                className="font-semibold underline underline-offset-2"
-              >
-                어드민으로 돌아가기
-              </Link>
-            ) : null}
           </div>
         </div>
       )}
@@ -7144,14 +7135,16 @@ export default function MainScreenPage() {
             onClick={() => {
               if (!isReadOnly && selectedOptionId && !sessionCompleted) {
                 setShowLobbyWarning(true);
+              } else if (isViewingAsAdmin) {
+                router.push("/admin");
               } else {
                 router.push("/lobby");
               }
             }}
-            className="flex items-center gap-1.5 rounded-full border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-800"
+            className="flex cursor-pointer items-center gap-1.5 rounded-full border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-800"
           >
             <ArrowLeftIcon size={14} />
-            로비로 돌아가기
+            {isViewingAsAdmin ? "어드민으로 돌아가기" : "로비로 돌아가기"}
           </button>
           <h1 className="text-xl font-semibold">
             {/* 마이그레이션 후 제목에 옵션명이 이미 포함되므로 옵션명을 따로 덧붙이지 않는다 */}
