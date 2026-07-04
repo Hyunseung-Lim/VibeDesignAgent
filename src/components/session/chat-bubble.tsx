@@ -131,6 +131,10 @@ export function ChatBubble({
   onShowRawPrompt,
 }: ChatBubbleProps) {
   const isUser = message.role === "user";
+  const visibleComposerCommand =
+    message.composerCommand?.id === "fetch_references"
+      ? null
+      : message.composerCommand;
   const bubbleClassName = isUser
     ? "overflow-hidden rounded-2xl bg-slate-900 px-4 py-3 text-white shadow-sm"
     : isTurnSelected
@@ -146,11 +150,11 @@ export function ChatBubble({
       >
         {isUser ? (
           <div className="space-y-1.5">
-            {(message.composerCommand || message.composerMention) && (
+            {(visibleComposerCommand || message.composerMention) && (
               <div className="flex flex-wrap justify-end gap-1">
-                {message.composerCommand && (
+                {visibleComposerCommand && (
                   <span className="rounded-full bg-white/20 px-2 py-0.5 text-xs font-medium text-white/90">
-                    {message.composerCommand.label}
+                    {visibleComposerCommand.label}
                   </span>
                 )}
                 {message.composerMention && (

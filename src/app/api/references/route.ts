@@ -21,6 +21,14 @@ type SearchProvider = "openai-web";
 const STRUCTURE_REFERENCE_PATTERN =
   /구조\s*참고|구조|레이아웃\s*참고|섹션\s*구성|화면\s*구성|정보\s*구조|와이어프레임|layout\s+reference|layout|structure|section\s+structure|content\s+structure|information\s+architecture|wireframe/i;
 
+function safeImageDataUrl(value: unknown) {
+  const dataUrl = String(value ?? "");
+  return /^data:image\/(?:png|jpeg|webp|gif);base64,/i.test(dataUrl) &&
+    dataUrl.length <= 5_000_000
+    ? dataUrl
+    : "";
+}
+
 function canonicalUrl(value: string | undefined) {
   if (!value) return "";
   try {
@@ -186,6 +194,52 @@ function compactReferencePreferenceContext(value: unknown) {
     return null;
   }
   return context;
+}
+
+async function describeStyleImageForSearch(
+  dataUrl: string,
+  context: {
+    missionTitle: string;
+    missionBrief: string;
+    customQuery: string | null;
+    userRequest: string | null;
+  },
+) {
+  if (!dataUrl) return "";
+  try {
+    const completion = await openai.chat.completions.create({
+      model: QUERY_MODEL,
+      messages: [
+        {
+          role: "system",
+          content:
+            "Analyze the attached UI/design reference image for web search. Return one compact English phrase under 80 words that can be appended to a design reference search query. Focus only on visible style cues: UI artifact type, layout, composition, color palette, typography, image treatment, density, spacing, surface style, and mood. Do not identify people or infer private traits. Do not mention that it is an attached image.",
+        },
+        {
+          role: "user",
+          content: [
+            {
+              type: "text",
+              text: [
+                `Mission title: ${context.missionTitle}`,
+                `Mission brief: ${context.missionBrief.slice(0, 1200)}`,
+                `User request: ${context.userRequest ?? context.customQuery ?? ""}`,
+                "Describe the visible design style as reusable search cues for finding similar UI/UX references.",
+              ].join("\n"),
+            },
+            {
+              type: "image_url",
+              image_url: { url: dataUrl, detail: "low" },
+            },
+          ],
+        },
+      ],
+    });
+    return sanitizeInput(completion.choices[0]?.message?.content, 600);
+  } catch (error) {
+    console.warn("[references] style image analysis failed", error);
+    return "";
+  }
 }
 
 // Run async tasks with bounded concurrency to avoid overwhelming external services
@@ -531,6 +585,7 @@ export async function POST(request: Request) {
     existingReferences?: unknown;
     referencePreferenceContext?: unknown;
     requestedCount?: unknown;
+    styleImage?: unknown;
   };
   try {
     body = await request.json();
@@ -556,6 +611,11 @@ export async function POST(request: Request) {
   const referencePreferenceContext = compactReferencePreferenceContext(
     body.referencePreferenceContext,
   );
+  const styleImageRecord =
+    body.styleImage && typeof body.styleImage === "object"
+      ? (body.styleImage as Record<string, unknown>)
+      : null;
+  const styleImageDataUrl = safeImageDataUrl(styleImageRecord?.dataUrl);
 
   if (!missionTitle && !missionBrief && !customQuery) {
     return Response.json(
@@ -573,23 +633,41 @@ export async function POST(request: Request) {
       });
     }
 
-    const searchContext = [missionTitle, missionBrief, customQuery]
+    const imageStyleSearchCues = await describeStyleImageForSearch(
+      styleImageDataUrl,
+      {
+        missionTitle,
+        missionBrief,
+        customQuery,
+        userRequest,
+      },
+    );
+    const imageStyleContext = imageStyleSearchCues
+      ? `Attached style image search cues: ${imageStyleSearchCues}`
+      : "";
+    const searchContext = [
+      missionTitle,
+      missionBrief,
+      customQuery,
+      imageStyleContext,
+    ]
       .filter(Boolean)
       .join(" ");
     const omittedNames = fictionalPersonaNames(
       missionTitle,
       missionBrief,
       customQuery,
+      imageStyleSearchCues,
     );
     const referenceMode = await inferReferenceMode(
       missionTitle,
       missionBrief,
-      customQuery,
+      [customQuery, imageStyleContext].filter(Boolean).join(" ") || null,
     );
     const keywords = await buildSearchQueries(
       missionTitle,
       missionBrief,
-      customQuery,
+      [customQuery, imageStyleContext].filter(Boolean).join(" ") || null,
       referenceMode,
       omittedNames,
       referencePreferenceContext,
@@ -631,7 +709,11 @@ export async function POST(request: Request) {
       }),
     );
 
-    return Response.json({ mode: referenceMode, references });
+    return Response.json({
+      mode: referenceMode,
+      references,
+      imageStyleSearchCues: imageStyleSearchCues || undefined,
+    });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     return Response.json({ error: message }, { status: 500 });

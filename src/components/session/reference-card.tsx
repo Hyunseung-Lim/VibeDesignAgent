@@ -24,11 +24,6 @@ type ReferenceCardProps = {
   onDelete: (reference: SessionReference) => void;
 };
 
-function providerLabel(provider?: SessionReference["searchProvider"]) {
-  if (provider === "openai-web") return "OpenAI web";
-  return null;
-}
-
 function purposeLabel(purpose?: SessionReference["referencePurpose"]) {
   if (purpose === "visual_style") return "비주얼";
   if (purpose === "page_structure") return "레이아웃";
@@ -43,7 +38,6 @@ export function ReferenceCard({
   onToggle,
   onDelete,
 }: ReferenceCardProps) {
-  const provider = providerLabel(reference.searchProvider);
   const purpose =
     reference.referencePurposeLabel ?? purposeLabel(reference.referencePurpose);
 
@@ -94,16 +88,16 @@ export function ReferenceCard({
         </div>
 
         <div className="mt-auto space-y-2">
-          <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-            <Badge variant="secondary">{reference.tag}</Badge>
-            {purpose && <Badge variant="outline">{purpose}</Badge>}
-          </div>
+          {purpose && (
+            <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+              <Badge variant="outline">{purpose}</Badge>
+            </div>
+          )}
 
           <div className="flex items-center justify-between gap-2">
-            <div className="min-w-0 text-[11px] text-slate-400">
-              {provider ?? ""}
-            </div>
-
+            <Badge variant="secondary" className="min-w-0 truncate">
+              {reference.tag}
+            </Badge>
             <div className="flex shrink-0 items-center gap-1">
               {reference.url && (
                 <a

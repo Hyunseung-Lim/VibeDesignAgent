@@ -639,6 +639,7 @@ type ReferencePreferenceContext = {
 type ReferenceFetchResult = {
   references: Reference[];
   message?: string;
+  imageStyleSearchCues?: string;
 };
 
 type DesignStyle = {
@@ -1713,6 +1714,12 @@ function buildReferenceReasonSummary(references: Reference[]) {
     return `- **${title}**${link}: ${description}`;
   });
   return ["", "### 레퍼런스 선택 이유", ...lines].join("\n");
+}
+
+function buildImageStyleSearchCueSummary(cues?: string) {
+  const text = cues?.trim();
+  if (!text) return "";
+  return ["", "### 이미지 스타일 검색 기준", text].join("\n");
 }
 
 function referenceRationale(reference: Reference) {
@@ -4836,18 +4843,23 @@ export default function MainScreenPage() {
         /\[FETCH_REFERENCES(?::\s*(.*?))?\]/i,
       );
       const appendReferenceResult = (result: ReferenceFetchResult) => {
+        const imageCueSummary = buildImageStyleSearchCueSummary(
+          result.imageStyleSearchCues,
+        );
         const summary = buildReferenceReasonSummary(result.references);
         const statusMessage = result.message?.trim();
-        if (!summary && !statusMessage) return;
+        if (!imageCueSummary && !summary && !statusMessage) return;
         setMessages((prev) =>
           prev.map((chatMessage) =>
             chatMessage.id === assistantId &&
+            !chatMessage.content.includes("### 이미지 스타일 검색 기준") &&
             !chatMessage.content.includes("### 레퍼런스 선택 이유") &&
             !chatMessage.content.includes("### 레퍼런스 검색 결과")
               ? {
                   ...chatMessage,
                   content: [
                     chatMessage.content.trimEnd(),
+                    imageCueSummary,
                     summary,
                     statusMessage
                       ? `\n### 레퍼런스 검색 결과\n${statusMessage}`
@@ -4897,6 +4909,7 @@ export default function MainScreenPage() {
           customQuery,
           parseRequestedReferenceCount(text),
           text,
+          attachedStyleImage,
         )
           .then((result) => appendReferenceResult(result))
           .finally(() =>
@@ -4920,6 +4933,7 @@ export default function MainScreenPage() {
           fallbackReferenceQuery || text,
           parseRequestedReferenceCount(text),
           text,
+          attachedStyleImage,
         )
           .then((result) => appendReferenceResult(result))
           .finally(() =>
@@ -5713,6 +5727,7 @@ export default function MainScreenPage() {
       customQuery?: string | null,
       requestedCount?: number | null,
       userRequestText?: string | null,
+      styleImage?: { dataUrl: string; name?: string } | null,
     ): Promise<ReferenceFetchResult> => {
       if (isFetchingRefs || isReadOnly) return { references: [] };
       setIsFetchingRefs(true);
@@ -5733,6 +5748,7 @@ export default function MainScreenPage() {
             customQuery,
             userRequest: userRequestText ?? undefined,
             requestedCount: requestedCount ?? undefined,
+            styleImage: styleImage ?? undefined,
             existingReferences: [...references, ...loggedReferenceLinks],
             referencePreferenceContext: missionId
               ? buildReferencePreferenceContext(
@@ -5773,16 +5789,30 @@ export default function MainScreenPage() {
           if (newRefs.length === 0) {
             return {
               references: [],
+              imageStyleSearchCues:
+                typeof data.imageStyleSearchCues === "string"
+                  ? data.imageStyleSearchCues
+                  : undefined,
               message:
                 "새로 추가할 레퍼런스를 찾지 못했습니다. 이미 추가했거나 삭제한 사이트는 제외됩니다.",
             };
           } else {
             setReferences((prev) => [...prev, ...newRefs]);
-            return { references: newRefs };
+            return {
+              references: newRefs,
+              imageStyleSearchCues:
+                typeof data.imageStyleSearchCues === "string"
+                  ? data.imageStyleSearchCues
+                  : undefined,
+            };
           }
         } else {
           return {
             references: [],
+            imageStyleSearchCues:
+              typeof data.imageStyleSearchCues === "string"
+                ? data.imageStyleSearchCues
+                : undefined,
             message:
               "조건에 맞는 레퍼런스를 찾지 못했습니다. 검색어를 조금 더 구체적으로 바꿔보세요.",
           };

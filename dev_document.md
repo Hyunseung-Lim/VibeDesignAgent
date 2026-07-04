@@ -94,6 +94,7 @@
 ### 4.2 레퍼런스 (Reference)
 
 - 채팅에서 "레퍼런스 찾아줘" → `[FETCH_REFERENCES: {query}]` 블록 → OpenAI `web_search_preview`로 웹 검색 `[현행 2026-06-30 → 15.172]`
+- 레퍼런스 검색 턴에 사용자가 스타일 이미지를 첨부하면 클라이언트가 `/api/references`에 이미지 data URL을 함께 보내고, 서버가 vision 분석으로 검색용 스타일 단서를 만든 뒤 검색 context와 query builder 입력에 합친다. 생성된 단서는 해당 assistant chat bubble의 `이미지 스타일 검색 기준` 섹션에도 표시한다. 분석 실패 또는 이미지 형식/크기 제한 초과 시 기존 텍스트 기반 검색으로 폴백한다 `[현행 2026-07-04 → 15.185]`
 - 검색당 3개씩 누적 표시 (삭제 가능, confirm 팝업)
 - 검색 중에는 해당 assistant chat bubble 안에 작은 로딩 pill을 표시한다
 - 중복 제외/빈 결과/검색 실패 메시지는 Reference 섹션이 아니라 해당 assistant chat bubble의 "레퍼런스 검색 결과"로 표시한다
@@ -3982,3 +3983,10 @@ type ChatPlan = {
 - 수정: `MemoryClusterGraph`의 상단 count/layout badge를 제거하고, `MemoryClusterList` 제목 아래에 node/edge 수를 표시하는 optional props를 추가했다.
 - 수정: `/agent`는 현재 visible memory node 기준으로 `clusterEdges`를 필터링해 graph와 edge count에 전달한다. 세션 필터를 바꾸면 edge 수가 visible node pair 기준으로 함께 바뀐다.
 - 수정: memory cluster 화면의 clickable cluster card, collapsed rail, detail memory item, session filter, graph control, overlay/review action button에는 명시적으로 `cursor-pointer`를 적용하고 disabled action은 `cursor-not-allowed`로 표시한다.
+
+### 15.185 첨부 스타일 이미지를 레퍼런스 검색 쿼리에 반영 `[implemented 2026-07-04]`
+
+- 배경: 사용자가 이미지를 첨부하고 "이런 디자인 스타일이랑 비슷한 레퍼런스 찾아줘"라고 요청해도 기존 `/api/references`는 이미지 자체를 받지 않고 텍스트 요청과 미션 문맥만으로 검색했다.
+- 수정: `fetchReferences`가 현재 턴의 `attachedStyleImage`를 `/api/references` payload에 포함한다.
+- 수정: `/api/references`가 이미지 data URL을 형식과 크기로 제한 검증한 뒤 `gpt-5.4` vision 분석으로 검색용 스타일 단서를 생성하고, 이를 `Attached style image search cues:`로 `searchContext`, mode inference, query builder 입력에 합친다. 같은 단서는 API 응답에도 포함해 assistant chat bubble의 `이미지 스타일 검색 기준` 섹션에 노출한다.
+- 폴백: 이미지 분석 실패, 지원하지 않는 이미지 형식, 5MB 초과 data URL은 검색 전체를 실패시키지 않고 기존 텍스트 기반 레퍼런스 검색을 계속 수행한다.
