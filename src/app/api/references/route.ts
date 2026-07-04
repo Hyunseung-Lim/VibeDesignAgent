@@ -8,7 +8,7 @@ import {
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const QUERY_MODEL = "gpt-5.4";
-const SEARCH_MODEL = "gpt-4o";
+const SEARCH_MODEL = "gpt-5.4";
 const FINAL_REFERENCE_COUNT = 3;
 // Upper bound when the user asks for a specific number of references. Keeps
 // "100개" style requests from degrading search quality / flooding the panel.

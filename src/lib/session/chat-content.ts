@@ -130,7 +130,7 @@ const BLOCK_RULES = [
 
 export function processMessageContent(content: string): ContentPart[] {
   const parts: ContentPart[] = [];
-  let remaining = content;
+  let remaining = normalizeActionBlockAliases(content);
 
   while (remaining.length > 0) {
     let earliest: {
@@ -280,6 +280,17 @@ export function splitPendingMockupCompletionText(content: string) {
 }
 
 export function normalizeActionBlockAliases(content: string) {
+  const referenceActionLabel =
+    String.raw`(?:FETCH[\s_-]*REFERENCES?|REFERENCES?[\s_-]*(?:FETCH|SEARCH)|REFERENCE[\s_-]*SEARCH|레퍼런스\s*검색)`;
+  const bracketedReferenceAction = new RegExp(
+    String.raw`\[\s*${referenceActionLabel}\s*(?::\s*([\s\S]*?))?\]`,
+    "gi",
+  );
+  const bareLineReferenceAction = new RegExp(
+    String.raw`(^|\n)\s*${referenceActionLabel}\s*:\s*([^\n\[]+)`,
+    "gi",
+  );
+
   return content
     .replace(/\[(?:목업\s*)?생성\s*요청\s*\]/g, "[GENERATE_MOCKUP: ]")
     .replace(
@@ -293,11 +304,19 @@ export function normalizeActionBlockAliases(content: string) {
       "[EDIT_MOCKUP: $1]",
     )
     .replace(/\[목업\s*수정\s*:\s*([\s\S]*?)\]/g, "[EDIT_MOCKUP: $1]")
-    .replace(/\[레퍼런스\s*검색\s*:\s*([\s\S]*?)\]/g, "[FETCH_REFERENCES: $1]");
+    .replace(bracketedReferenceAction, (_match, query: string | undefined) => {
+      const trimmed = query?.trim();
+      return trimmed ? `[FETCH_REFERENCES: ${trimmed}]` : "[FETCH_REFERENCES]";
+    })
+    .replace(
+      bareLineReferenceAction,
+      (_match, prefix: string, query: string) =>
+        `${prefix}[FETCH_REFERENCES: ${query.trim()}]`,
+    );
 }
 
 export function cleanMessageContentForModel(content: string) {
-  return content
+  return normalizeActionBlockAliases(content)
     .replace(/\[CREATE_NOTE:\s*\{[\s\S]*?\}\]/g, "[Design Brief 생성]")
     .replace(/\[UPDATE_NOTE:\s*\{[\s\S]*?\}\]/g, "[Design Brief 수정]")
     .replace(
@@ -310,7 +329,7 @@ export function cleanMessageContentForModel(content: string) {
       "이전 액션: presentation requested.",
     )
     .replace(
-      /\[FETCH_REFERENCES(?::[^\]]+)?\]/g,
+      /\[FETCH_REFERENCES(?::[^\]]+)?\]/gi,
       "이전 액션: reference search requested.",
     )
     .replace(

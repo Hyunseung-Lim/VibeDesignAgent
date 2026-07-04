@@ -4833,7 +4833,7 @@ export default function MainScreenPage() {
       }
 
       const fetchRefMatch = fullText.match(
-        /\[FETCH_REFERENCES(?::\s*(.*?))?\]/,
+        /\[FETCH_REFERENCES(?::\s*(.*?))?\]/i,
       );
       const appendReferenceResult = (result: ReferenceFetchResult) => {
         const summary = buildReferenceReasonSummary(result.references);
