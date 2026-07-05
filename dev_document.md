@@ -68,7 +68,7 @@
 
 - 좌측 패널 (스크롤 가능): Mission → Reference → 아이디어 탭 (Idea/Mockup)
 - 우측 패널 (고정): AI 에이전트 채팅
-- 완료 세션 리뷰 우측 패널은 `세션 이전`/`채팅` 탭만 제공하고, 상단 타이머 오른쪽의 `메모리 리뷰하기` CTA가 cluster list → detail panel → memory graph → review panel 순서의 full-screen memory overlay를 바로 연다. 리뷰 입력창에서 `@`를 입력하면 별도 dropdown 없이 메모리뷰 자체가 선택 모드가 되며, cluster list/detail panel/graph에서 cluster나 memory를 클릭해 답변 본문에 inline mention을 삽입한다. 삽입된 mention은 굵게 표시되고 클릭하면 해당 cluster나 memory로 focus된다. 답변은 v2 7개 단일 번호 질문별 plain text와 structured mentions로 `users/{uid}/memoryReviewFeedback/{missionId}`에 draft autosave된다. 모든 질문을 입력해야 제출할 수 있고, 제출 확인 팝업에서 확정하면 `submittedAt` 저장 후 로비로 이동한다. 로비 완료 미션 카드, admin 유저 카드의 완료 미션 row, admin 참여자 row는 `submittedAt` 여부에 따라 `리뷰 필요` 또는 `리뷰 완료`를 표시한다 `[현행 2026-07-04 → 15.131/15.134/15.155/15.156/15.165/15.166/15.167/15.183]`
+- 완료 세션 리뷰 우측 패널은 `세션 이전`/`채팅` 탭만 제공하고, 상단 타이머 오른쪽의 `메모리 리뷰하기` CTA가 cluster list → detail panel → memory graph → review panel 순서의 full-screen memory overlay를 바로 연다. `세션 이전` 탭의 `원래 입력한 내용`은 현재 미션의 `profile_memories/{missionId}` 원문만 표시하며, 누적 before-session graph memory의 과거 raw input을 현재 미션 입력처럼 대체 표시하지 않는다. 리뷰 입력창에서 `@`를 입력하면 별도 dropdown 없이 메모리뷰 자체가 선택 모드가 되며, cluster list/detail panel/graph에서 cluster나 memory를 클릭해 답변 본문에 inline mention을 삽입한다. 삽입된 mention은 굵게 표시되고 클릭하면 해당 cluster나 memory로 focus된다. 답변은 v2 7개 단일 번호 질문별 plain text와 structured mentions로 `users/{uid}/memoryReviewFeedback/{missionId}`에 draft autosave된다. 모든 질문을 입력해야 제출할 수 있고, 제출 확인 팝업에서 확정하면 `submittedAt` 저장 후 로비로 이동한다. 로비 완료 미션 카드, admin 유저 카드의 완료 미션 row, admin 참여자 row는 `submittedAt` 여부에 따라 `리뷰 필요` 또는 `리뷰 완료`를 표시한다 `[현행 2026-07-05 → 15.131/15.134/15.155/15.156/15.165/15.166/15.167/15.183/15.186]`
 - 작업 화면에는 실제 화면 영역을 하이라이트하는 제품 투어가 있다. 온보딩 미션에서는 작업 화면 진입 시 자동으로 열리고, 일반 미션에서는 헤더의 `튜토리얼` 버튼을 눌러야 열린다. 튜토리얼은 미션 설명 공간, 채팅 공간, 레퍼런스 섹션, 시안을 여러 개 만들 수 있다는 점, 각 시안이 Design Brief/디자인 스타일/Mockup으로 구성된다는 점, 목업 편집 버튼 사용, Final Design 선택, 타이머와 세션 종료 버튼을 안내한 뒤 마지막에 튜토리얼 버튼 위치를 다시 안내한다 `[현행 2026-06-16 → 15.88]`
 - 제품 투어가 `mission-brief` 단계를 표시할 때는 선택된 옵션 토글을 강제로 접어 미션 설명 본문이 먼저 보이게 한다 `[현행 2026-06-16 → 15.88]`
 
@@ -169,8 +169,8 @@
 - **첨부 이미지 시각 선호**: image normalizer는 의도적으로 선호를 추론하지 않으므로, 첨부 이미지가 주도한 목업 생성이 성공해 derivedDesignStyle가 나오면 그 스타일을 `style-image-preference-{turnId}` interactionId(category `style_image_preference`)로 별도 draft에 기록한다. 이번 미션/시안 맥락의 session-scoped evidence로 담고 전역 취향으로 단정하지 않는다 `[현행 2026-06-21 → 15.101]`
 - **확정 시점**: 사용자가 `세션 종료` 버튼을 누르면 `/api/memory/complete-session`에서 draft를 통합해 장기 메모리로 저장
 - **버전 관리**: admin memory modal에서 v0.1.0 / v0.1.1 / v0.1.2를 분리 조회 `[stale 2026-06-12 → 15.51: legacy fallback 제거로 현재 v0.1.2 단일 버전만 사용(MemoryVersionTab = "0.1.2"). v0.1.0/v0.1.1 분리 조회 없음]`
-- **현재 활용**: 각 채팅 turn 직전에 `/api/memory/retrieve`로 현재 query와 가까운 memory top 5를 검색해 채팅 context에 주입
-- **Prompt 주입 방식**: profile input은 `profile_memories`에 source of truth로 보관한 뒤 derived memory로 쪼개 interaction memory와 같은 retrieved memory system message에 주입. prompt compact JSON은 `episodic`/`semantic` 배열만 포함한다. 같은 memory document에 episodic/semantic이 모두 있어도 prompt에서는 각각 `episodic[].episodic`, `semantic[].semantic`으로 분리해 넣고 memory id/weight/similarity/source metadata는 제외
+- **현재 활용**: 각 채팅 turn 직전에 `/api/memory/retrieve`를 호출한다. 현재 미션 before-session memory는 retrieval 여부와 무관하게 `currentBeforeSessionSetup`으로 별도 반환해 prompt에 항상 포함한다. 동시에 current/prior before-session과 during-session memory는 모두 같은 query similarity ranking 후보로 남아, top-k에 실제로 retrieved되면 weight/retrievedCount가 업데이트된다. 응답과 log는 `sourceMissionId`와 `beforeSessionScope`(`current_mission`/`prior_mission`)를 보존한다 `[현행 2026-07-05 → 15.187/15.188/15.189/15.190]`
+- **Prompt 주입 방식**: profile input은 `profile_memories`에 source of truth로 보관한 뒤 derived memory로 쪼개 retrieved memory와 같은 chat context 경로로 들어간다. prompt compact JSON은 before-session memory를 current/prior로 분리하지 않고 `episodic`/`semantic` 배열에 함께 넣되, 각 항목의 `beforeSessionScope`와 `sourceMissionId`는 보존한다. 현재 미션 before-session setup은 retrieval 여부와 무관하게 항상 포함되고, top-k에도 retrieved된 경우 prompt에는 중복 삽입하지 않는다. Prior before-session도 retrieved되면 episodic/semantic 모두 기존처럼 사용할 수 있으며, memory id/weight/similarity는 제외한다 `[현행 2026-07-05 → 15.187/15.190/15.191]`
 - **Legacy**: `GET /api/memory/bootstrap`은 세션 시작 시 memory를 preload하던 구 방식이며, 현재 main client에서는 호출하지 않음
 - **Retrieval 쿼리 구성**: `[user text] + Mission: [parentMissionTitle] + Active idea: [description]` — 선택된 옵션 이름(페르소나 등)은 제외해 임베딩 노이즈 방지
 - **Admin 관측**: researcher가 `/admin/users/[uid]/memory`에서 `/agent`와 동일한 user별 memory cluster graph/list/detail을 확인 가능. detail panel은 그래프 왼쪽에 있고 cluster list는 요약 없이 색상·제목·개수만 표시한다 `[현행 2026-06-27 → 15.130]` `[stale 2026-06-30 → 15.169: cluster list가 main 세션리뷰와 동일한 review presentation(rounded card + 색상 count rail + 접기 rail)로 통일됨]`
@@ -3990,3 +3990,46 @@ type ChatPlan = {
 - 수정: `fetchReferences`가 현재 턴의 `attachedStyleImage`를 `/api/references` payload에 포함한다.
 - 수정: `/api/references`가 이미지 data URL을 형식과 크기로 제한 검증한 뒤 `gpt-5.4` vision 분석으로 검색용 스타일 단서를 생성하고, 이를 `Attached style image search cues:`로 `searchContext`, mode inference, query builder 입력에 합친다. 같은 단서는 API 응답에도 포함해 assistant chat bubble의 `이미지 스타일 검색 기준` 섹션에 노출한다.
 - 폴백: 이미지 분석 실패, 지원하지 않는 이미지 형식, 5MB 초과 data URL은 검색 전체를 실패시키지 않고 기존 텍스트 기반 레퍼런스 검색을 계속 수행한다.
+
+### 15.186 세션 리뷰 원문 입력 표시 스코프 수정 `[implemented 2026-07-05]`
+
+- 배경(Notion `세션 이전 내용 이전`): 현재 미션 시작 전 사전 정보를 비워 두었는데, 세션 종료 후 리뷰의 `세션 이전` 탭에서 지난 세션 시작 전에 적은 원문이 보이는 사례가 있었다.
+- 원인: 리뷰 패널의 `원래 입력한 내용` 박스가 현재 미션 `profile_memories/{missionId}` 원문이 비어 있으면 누적 before-session graph memory 중 첫 번째 `memory.input`으로 fallback했다. 누적 graph memory는 의도적으로 이전 미션 메모리까지 포함하므로, 과거 raw input이 현재 미션의 직접 입력처럼 표시될 수 있었다.
+- 수정: review profile GET 응답의 `rawMarkdown`을 별도 state로 보관하고, `원래 입력한 내용`은 이 현재 미션 원문 또는 legacy `items[]`만 사용한다. 누적 graph memory의 `input`은 더 이상 원문 입력 fallback으로 쓰지 않는다.
+- 유지: `세션 이전` 탭의 memory card 목록과 graph/diff는 기존 누적 before-session 모델을 유지한다. 바뀐 것은 현재 미션 직접 입력 원문 박스의 source scope뿐이다.
+
+### 15.187 Before-session retrieval origin scope 보존 `[implemented 2026-07-05]`
+
+- 배경: 이전 미션 시작 전에 입력한 before-session memory와 현재 미션 시작 전에 입력한 before-session memory가 retrieval 후보와 chat query 작성 context에서 모두 같은 `before_session` 항목처럼 전달되어, 모델이 "이번 세션 직전 입력"과 "지난 미션의 historical standing background"를 구분할 수 없었다.
+- 수정: `/api/memory/retrieve`가 요청 body의 현재 `missionId`와 memory `source.missionId`를 비교해 before-session 항목마다 `beforeSessionScope`를 계산한다. 값은 `current_mission`, `prior_mission`, `unknown_mission`, `unknown_current_mission` 중 하나이며, 응답 item에는 `sourceMissionId`도 함께 포함한다.
+- 수정: retrieval log에 `profileCurrentMissionItemCount`, `profilePriorMissionItemCount`, `profileItemScopes[]`를 저장한다. Admin retrieval log API/type도 이 값을 보존해 사후 분석에서 current/prior before-session retrieval을 구분할 수 있다.
+- 수정: `/api/chat`의 compact memory JSON이 before-session 항목의 `beforeSessionScope`와 `sourceMissionId`를 버리지 않게 했고, `chatProfileMemoryPrompt`가 `current_mission`은 현재 미션 직전 입력, `prior_mission`은 이전 미션의 historical standing background로 해석하라고 명시한다. 따라서 레퍼런스 검색 query 작성처럼 chat model이 memory를 활용하는 단계에서도 둘을 구분할 수 있다.
+
+### 15.188 Prior before-session memory 사용 제한 `[implemented 2026-07-05]` `[stale 2026-07-05 → 15.191: prior before-session semantic-only 제한과 강한 prompt 제약 제거]`
+
+- 배경: 15.187로 current/prior origin은 보존됐지만, 이전 미션 before-session memory가 현재 미션에는 해당되지 않는 대상 사용자·도메인·일회성 조건일 수 있다. 이를 현재 미션 직전 입력과 동등하게 쓰면 query 작성이나 목업 생성 조건에 과거 미션 제약이 섞일 수 있다.
+- Retrieval 정책: `/api/memory/retrieve` ranking에 small origin bias를 추가했다. `current_mission` before-session은 `+0.035`, `prior_mission` before-session은 `-0.025`를 ranking score에 적용한다. 반환되는 `similarity` 자체는 원래 cosine similarity로 유지하고, log에는 `retrievalRankingPolicy`를 저장한다.
+- Prompt 정책: `/api/chat`은 before-session profile memory를 `currentMission`과 `historicalPriorMissions`로 분리해 compact JSON을 만든다. `currentMission`은 episodic+semantic을 유지하고, `historicalPriorMissions`는 semantic-only로 제한한다.
+- Prompt 지시: `chatProfileMemoryPrompt`는 prior/historical memory를 durable preference, constraint, working pattern일 때만 사용하고 현재 미션 요구사항, target user, product domain, deliverable, source constraint, reference-search query term으로 취급하지 말라고 명시한다. 현재 user request나 mission context와 충돌하면 prior memory를 무시한다.
+
+### 15.189 Current before-session setup을 retrieval/weight와 분리 `[implemented 2026-07-05]` `[stale 2026-07-05 → 15.190: current setup은 prompt에 항상 포함하되 retrieval 후보에서도 제외하지 않음]`
+
+- 배경: current mission before-session memory는 사용자가 이번 미션 전에 의도적으로 제공한 setup context라 prompt에는 항상 들어가야 한다. 하지만 retrieval top-k에 넣어 매번 weight/retrievedCount를 올리면 "관련 있어서 검색됨"과 "현재 setup이라 항상 포함됨"이 섞여 weight 측정이 왜곡된다.
+- 수정: `/api/memory/retrieve`가 현재 미션 before-session memory 중 최신 `beforeSessionWriteBatchId`를 `currentBeforeSessionSetup`으로 별도 반환한다. 이 항목들은 retrieval ranking, `updateRetrievedWeights`, idle decay 대상에서 제외한다.
+- 수정: top-k `retrieved`에는 current setup을 제외한 during-session/prior before-session 후보만 들어간다. 15.188의 current boost는 더 이상 사용하지 않고, prior before-session small penalty만 유지한다. Retrieval log에는 `includedCurrentSetupMemoryIds`, `includedCurrentSetupMemoryCount`, `includedCurrentSetupMemoryScopes`, `retrievalRankingPolicy.currentBeforeSession = always_included_setup_excluded_from_weight`를 저장한다.
+- 수정: `/main/[missionId]`는 `currentBeforeSessionSetup`을 reference-search memory filter와 무관하게 항상 `memoryContext.semantic`에 합친다. 따라서 레퍼런스 검색 턴에서도 이번 미션 사전 입력은 빠지지 않고, prior/retrieved memory만 reference 관련성 필터를 탄다.
+- 결과: current before-session은 항상 `currentMission` prompt block에 들어가고, prior before-session은 retrieval로 선별된 뒤 `historicalPriorMissions` semantic-only block에 들어간다.
+
+### 15.190 Before-session retrieval ranking 동등화 `[implemented 2026-07-05]`
+
+- 배경: 15.189의 current setup 분리 정책은 prompt 포함과 weight 측정 분리를 엄격히 나눴지만, current before-session memory도 query와 실제로 관련되어 top-k에 retrieved되면 다른 memory처럼 weight/retrievedCount가 오르는 것이 더 자연스럽다. Prior before-session에도 별도 penalty를 두지 않고 다른 memory와 같은 similarity ranking을 적용하기로 했다.
+- 수정: `/api/memory/retrieve`에서 prior before-session penalty를 제거하고, current/prior before-session/during-session 모두 같은 cosine similarity ranking 후보로 둔다. Top-k에 들어온 항목은 기존처럼 `updateRetrievedWeights`와 idle decay 경로를 탄다.
+- 유지: 현재 미션 before-session latest batch는 여전히 `currentBeforeSessionSetup`으로 별도 반환해 prompt에 항상 포함한다. 다만 retrieval 후보에서도 제외하지 않으므로, top-k에 실제 retrieved되면 weight/retrievedCount가 오른다.
+- 중복 방지: `/main/[missionId]`는 `currentBeforeSessionSetup`을 prompt context에 먼저 넣고, top-k `retrieved`에 같은 id가 있으면 prompt 삽입에서 중복 제거한다. 따라서 prompt 포함 경쟁에는 current setup이 의존하지 않지만, retrieval/weight 측정에는 정상 참여한다.
+
+### 15.191 Prior before-session prompt 제한 완화 `[implemented 2026-07-05]`
+
+- 배경: 15.188에서 추가한 `historicalPriorMissions` 분리, semantic-only 제한, "현재 미션 조건처럼 쓰지 말라"는 강한 지시는 원래 있던 동작이 아니고 현재 연구 UX에는 과한 제약일 수 있다. Prior before-session도 retrieved될 정도로 관련 있으면 episodic까지 참고할 수 있어야 한다.
+- 수정: `/api/chat`의 profile memory compact JSON을 다시 단일 before-session context(`episodic`/`semantic`)로 통일했다. 각 item의 `beforeSessionScope`와 `sourceMissionId`는 보존하므로 모델은 current/prior 출처를 구분할 수 있다.
+- 수정: `chatProfileMemoryPrompt`에서 prior를 semantic-only로 제한하거나 현재 미션 조건으로 쓰지 말라는 강한 문구를 제거했다. 대신 current/prior source metadata를 참고하되 현재 user request와 mission context를 존중하라는 일반 지시로 완화했다.
+- 유지: current mission before-session setup은 retrieval 여부와 무관하게 항상 prompt에 포함되고, top-k retrieved memory와 id가 겹치면 prompt 삽입에서 중복 제거한다.

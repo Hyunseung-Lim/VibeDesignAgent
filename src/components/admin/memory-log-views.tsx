@@ -10,6 +10,13 @@ export type MemoryRetrievalItem = {
   id: string;
   memoryId: string;
   semanticItemId: string | null;
+  sourceMissionId?: string | null;
+  beforeSessionScope?:
+    | "current_mission"
+    | "prior_mission"
+    | "unknown_mission"
+    | "unknown_current_mission"
+    | null;
   semantic: string;
   episodic?: string;
   episode?: string;
@@ -34,6 +41,11 @@ export type MemoryRetrievalLog = {
   missionId?: string | null;
   queryEmbeddingModel?: string;
   createdAt: number;
+  includedCurrentSetupMemoryCount?: number;
+  includedCurrentSetupMemoryIds?: string[];
+  includedCurrentSetupMemories?: MemoryRetrievalItem[];
+  profileCurrentMissionItemCount?: number;
+  profilePriorMissionItemCount?: number;
   retrieved: MemoryRetrievalItem[];
   scoreDeltas: MemoryRetrievalScoreDelta[];
 };

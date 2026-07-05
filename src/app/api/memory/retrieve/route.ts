@@ -169,6 +169,107 @@ function isBeforeSessionDoc(doc: MemoryDoc) {
   return String(doc.sourceType ?? doc.memorySource ?? doc.type ?? "") === "before_session";
 }
 
+function sourceMissionId(value: unknown) {
+  if (!value || typeof value !== "object") return null;
+  const source = value as Record<string, unknown>;
+  const missionId = source.missionId;
+  return typeof missionId === "string" && missionId.trim()
+    ? missionId.trim()
+    : null;
+}
+
+function beforeSessionScope(candidate: Candidate, currentMissionId: string) {
+  if (!isBeforeSessionDoc(candidate.doc)) return null;
+  const candidateMissionId = sourceMissionId(candidate.source);
+  if (!candidateMissionId) return "unknown_mission";
+  if (!currentMissionId) return "unknown_current_mission";
+  return candidateMissionId === currentMissionId
+    ? "current_mission"
+    : "prior_mission";
+}
+
+function beforeSessionWriteBatchId(value: unknown) {
+  if (!value || typeof value !== "object") return null;
+  const source = value as Record<string, unknown>;
+  const batchId = source.beforeSessionWriteBatchId;
+  return typeof batchId === "string" && batchId.trim() ? batchId.trim() : null;
+}
+
+function candidateTimestamp(candidate: Candidate) {
+  return timestampValue(candidate.timestamp) ?? 0;
+}
+
+function selectCurrentBeforeSessionSetup(
+  candidates: Candidate[],
+  currentMissionId: string,
+) {
+  const current = candidates.filter(
+    (candidate) => beforeSessionScope(candidate, currentMissionId) === "current_mission",
+  );
+  if (current.length === 0) return [];
+
+  const withBatch = current.filter((candidate) =>
+    beforeSessionWriteBatchId(candidate.source),
+  );
+  if (withBatch.length === 0) {
+    return current.sort((a, b) => candidateTimestamp(b) - candidateTimestamp(a));
+  }
+
+  const latestBatchId = withBatch
+    .map((candidate) => ({
+      batchId: beforeSessionWriteBatchId(candidate.source),
+      timestamp: candidateTimestamp(candidate),
+    }))
+    .sort((a, b) => b.timestamp - a.timestamp)[0]?.batchId;
+  if (!latestBatchId) return current;
+
+  return current
+    .filter(
+      (candidate) => beforeSessionWriteBatchId(candidate.source) === latestBatchId,
+    )
+    .sort((a, b) => candidateTimestamp(b) - candidateTimestamp(a));
+}
+
+function responseMemory(
+  candidate: Candidate,
+  missionId: string,
+  clusterByItemId: Map<string, { clusterId: string; label: string; summary: string }>,
+) {
+  return {
+    id: candidate.id,
+    memoryId: candidate.memoryId,
+    semanticItemId: candidate.semanticItemId,
+    clusterId: clusterByItemId.get(candidate.id)?.clusterId ?? null,
+    clusterLabel: clusterByItemId.get(candidate.id)?.label ?? null,
+    clusterSummary: clusterByItemId.get(candidate.id)?.summary ?? null,
+    type: isBeforeSessionDoc(candidate.doc)
+      ? "before_session_memory"
+      : "during_session_memory",
+    sourceType: candidate.doc.sourceType ?? candidate.doc.memorySource ?? null,
+    action: candidate.action,
+    keyword: candidate.keyword,
+    episodic: candidate.episodic,
+    episode: candidate.episodic,
+    semantic: candidate.semantic,
+    input: candidate.input,
+    output: candidate.output,
+    originalInteractionContent: candidate.originalInteractionContent,
+    link: candidate.link,
+    embeddingSource: candidate.embeddingSource,
+    source: candidate.source,
+    sourceMissionId: sourceMissionId(candidate.source),
+    beforeSessionScope: beforeSessionScope(candidate, missionId),
+    timestamp: candidate.timestamp,
+    schemaVersion: candidate.schemaVersion,
+    similarity: Number.isFinite(candidate.similarity)
+      ? Number(candidate.similarity.toFixed(4))
+      : null,
+    weight: candidate.weight,
+    weightDelta: candidate.weightDelta ?? 0,
+    retrievedCount: candidate.retrievedCount,
+  };
+}
+
 function v2Candidate(uid: string, doc: MemoryDoc): Candidate | null {
   const episodic = String(doc.episodic ?? doc.episode ?? doc.content ?? "").trim();
   const semantic =
@@ -365,6 +466,7 @@ export async function POST(request: Request) {
   }
 
   let retrieved: Candidate[] = [];
+  let currentBeforeSessionSetup: Candidate[] = [];
   let clusterByItemId = new Map<
     string,
     { clusterId: string; label: string; summary: string }
@@ -375,16 +477,29 @@ export async function POST(request: Request) {
     const [queryEmbedding] = await embedTexts([query]);
 
     const candidates = await loadCandidates(user.localId, token);
+    currentBeforeSessionSetup = selectCurrentBeforeSessionSetup(
+      candidates,
+      missionId,
+    ).map((candidate) => ({
+      ...candidate,
+      similarity:
+        candidate.embedding.length === 0
+          ? -Infinity
+          : cosineSimilarity(queryEmbedding, candidate.embedding),
+    }));
     const memoryCount = candidates.length;
 
     const ranked = candidates
-      .map((candidate) => ({
-        ...candidate,
-        similarity:
+      .map((candidate) => {
+        const similarity =
           candidate.embedding.length === 0
             ? -Infinity
-            : cosineSimilarity(queryEmbedding, candidate.embedding),
-      }))
+            : cosineSimilarity(queryEmbedding, candidate.embedding);
+        return {
+          ...candidate,
+          similarity,
+        };
+      })
       .filter((candidate) => Number.isFinite(candidate.similarity))
       .sort((a, b) => b.similarity - a.similarity);
 
@@ -409,6 +524,21 @@ export async function POST(request: Request) {
       now,
       memoryCount,
     );
+    const retrievedBeforeSession = retrieved.filter((candidate) =>
+      isBeforeSessionDoc(candidate.doc),
+    );
+    const profileItemScopes = retrievedBeforeSession.map((candidate) => ({
+      id: candidate.id,
+      sourceMissionId: sourceMissionId(candidate.source),
+      beforeSessionScope: beforeSessionScope(candidate, missionId),
+    }));
+    const includedCurrentSetupMemoryScopes = currentBeforeSessionSetup.map(
+      (candidate) => ({
+        id: candidate.id,
+        sourceMissionId: sourceMissionId(candidate.source),
+        beforeSessionScope: beforeSessionScope(candidate, missionId),
+      }),
+    );
 
     await patchFirestoreDocument(
       `users/${user.localId}/${RETRIEVAL_LOG_COLLECTION}/${retrievalLogId(now, query)}`,
@@ -417,6 +547,16 @@ export async function POST(request: Request) {
         queryEmbeddingModel: EMBEDDING_MODEL,
         missionId: missionId || null,
         memoryVersion: "0.1.2",
+        retrievalRankingPolicy: {
+          beforeSession: "same_similarity_ranking_as_other_memories",
+          currentBeforeSession:
+            "always_included_setup_and_also_retrievable_for_weight",
+        },
+        includedCurrentSetupMemoryIds: currentBeforeSessionSetup.map(
+          (candidate) => candidate.id,
+        ),
+        includedCurrentSetupMemoryCount: currentBeforeSessionSetup.length,
+        includedCurrentSetupMemoryScopes,
         retrievedMemoryIds: retrieved.map((candidate) => candidate.id),
         similarities: retrieved.map((candidate) =>
           Number(candidate.similarity.toFixed(4)),
@@ -424,12 +564,17 @@ export async function POST(request: Request) {
         profileItemCount: retrieved.filter(
           (candidate) => isBeforeSessionDoc(candidate.doc),
         ).length,
+        profileCurrentMissionItemCount: profileItemScopes.filter(
+          (item) => item.beforeSessionScope === "current_mission",
+        ).length,
+        profilePriorMissionItemCount: profileItemScopes.filter(
+          (item) => item.beforeSessionScope === "prior_mission",
+        ).length,
         profileCandidateCount: candidates.filter(
           (candidate) => isBeforeSessionDoc(candidate.doc),
         ).length,
-        profileItemIds: retrieved
-          .filter((candidate) => isBeforeSessionDoc(candidate.doc))
-          .map((candidate) => candidate.id),
+        profileItemIds: retrievedBeforeSession.map((candidate) => candidate.id),
+        profileItemScopes,
         profileSimilarities: retrieved
           .filter((candidate) => isBeforeSessionDoc(candidate.doc))
           .map((candidate) => Number(candidate.similarity.toFixed(4))),
@@ -450,35 +595,11 @@ export async function POST(request: Request) {
 
   return Response.json({
     query,
-    retrieved: retrieved.map((candidate) => ({
-        id: candidate.id,
-        memoryId: candidate.memoryId,
-        semanticItemId: candidate.semanticItemId,
-        clusterId: clusterByItemId.get(candidate.id)?.clusterId ?? null,
-        clusterLabel: clusterByItemId.get(candidate.id)?.label ?? null,
-        clusterSummary: clusterByItemId.get(candidate.id)?.summary ?? null,
-        type:
-          isBeforeSessionDoc(candidate.doc)
-            ? "before_session_memory"
-            : "during_session_memory",
-        sourceType: candidate.doc.sourceType ?? candidate.doc.memorySource ?? null,
-        action: candidate.action,
-        keyword: candidate.keyword,
-        episodic: candidate.episodic,
-        episode: candidate.episodic,
-        semantic: candidate.semantic,
-        input: candidate.input,
-        output: candidate.output,
-        originalInteractionContent: candidate.originalInteractionContent,
-        link: candidate.link,
-        embeddingSource: candidate.embeddingSource,
-        source: candidate.source,
-        timestamp: candidate.timestamp,
-        schemaVersion: candidate.schemaVersion,
-        similarity: Number(candidate.similarity.toFixed(4)),
-        weight: candidate.weight,
-        weightDelta: candidate.weightDelta ?? 0,
-        retrievedCount: candidate.retrievedCount,
-      })),
+    currentBeforeSessionSetup: currentBeforeSessionSetup.map((candidate) =>
+      responseMemory(candidate, missionId, clusterByItemId),
+    ),
+    retrieved: retrieved.map((candidate) =>
+      responseMemory(candidate, missionId, clusterByItemId),
+    ),
   });
 }

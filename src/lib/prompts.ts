@@ -131,7 +131,7 @@ export function chatMissionPrompt(missionTitle: string, missionBrief: string) {
 }
 
 export function chatProfileMemoryPrompt(compactMemoryJson: string) {
-  return `Before-session memory the user explicitly provided as standing background before this session. The JSON groups episodic and semantic separately. Episodic items state what the user provided about themselves, their project, constraints, taste, or workflow ahead of the mission. Semantic items contain durable preferences, constraints, or working patterns. Treat it as standing background — apply it silently without referencing it directly.\n${compactMemoryJson}`;
+  return `Before-session memory the user explicitly provided before a mission. The JSON groups episodic and semantic separately. Items may include beforeSessionScope and sourceMissionId so you can tell whether they came from the current mission setup or an earlier mission setup. Current-mission items are setup context for this mission. Prior-mission items are retrieved because they may still be relevant; use them when helpful while respecting the current user request and current mission context. Apply useful memory silently without referencing it directly.\n${compactMemoryJson}`;
 }
 
 export function chatInteractionMemoryPrompt(compactMemoryJson: string) {

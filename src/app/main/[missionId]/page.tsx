@@ -179,6 +179,13 @@ type ChatResponseProvider = "openai" | "anthropic";
 type ReviewTurnMemory = {
   memoryId: string;
   type?: string;
+  sourceMissionId?: string | null;
+  beforeSessionScope?:
+    | "current_mission"
+    | "prior_mission"
+    | "unknown_mission"
+    | "unknown_current_mission"
+    | null;
   action?: string;
   keyword?: string[];
   episodic?: string;
@@ -388,9 +395,17 @@ type MemoryRecord = {
   clusterId?: string | null;
   clusterLabel?: string | null;
   clusterSummary?: string | null;
+  sourceMissionId?: string | null;
+  beforeSessionScope?:
+    | "current_mission"
+    | "prior_mission"
+    | "unknown_mission"
+    | "unknown_current_mission"
+    | null;
 };
 
 type MemoryRetrievalResponse = {
+  currentBeforeSessionSetup?: MemoryRecord[];
   retrieved?: MemoryRecord[];
 };
 
@@ -2279,6 +2294,7 @@ export default function MainScreenPage() {
   const [reviewProfileItems, setReviewProfileItems] = useState<
     { id: string; input: string }[]
   >([]);
+  const [reviewProfileRawMarkdown, setReviewProfileRawMarkdown] = useState("");
 
   const isViewingAsAdmin = !!(viewAs && isAdmin);
   const isReadOnly = isReviewMode || isViewingAsAdmin;
@@ -2633,7 +2649,7 @@ export default function MainScreenPage() {
     [isReadOnly, missionId],
   );
   const retrieveMemoryForQuery = useCallback(
-    async (query: string) => {
+    async (query: string): Promise<MemoryRetrievalResponse | null> => {
       if (isReadOnly || !missionId || !query.trim()) return null;
       const currentUser = firebaseAuth.currentUser;
       if (!currentUser) return null;
@@ -2654,8 +2670,18 @@ export default function MainScreenPage() {
         if (!res.ok) return null;
         const data = (await res.json()) as MemoryRetrievalResponse;
         const retrieved = Array.isArray(data.retrieved) ? data.retrieved : [];
-        if (retrieved.length === 0) return null;
-        return retrieved;
+        const currentBeforeSessionSetup = Array.isArray(
+          data.currentBeforeSessionSetup,
+        )
+          ? data.currentBeforeSessionSetup
+          : [];
+        if (
+          retrieved.length === 0 &&
+          currentBeforeSessionSetup.length === 0
+        ) {
+          return null;
+        }
+        return { retrieved, currentBeforeSessionSetup };
       } catch (error) {
         console.warn("Unable to retrieve memory", error);
         return null;
@@ -3421,6 +3447,7 @@ export default function MainScreenPage() {
   useEffect(() => {
     if (!showReviewAnnotations || !targetSessionUserId || !missionId) {
       setReviewProfileItems([]);
+      setReviewProfileRawMarkdown("");
       return;
     }
     const currentUser = firebaseAuth.currentUser;
@@ -3439,9 +3466,15 @@ export default function MainScreenPage() {
       .then((data) => {
         if (cancelled) return;
         setReviewProfileItems(Array.isArray(data?.items) ? data.items : []);
+        setReviewProfileRawMarkdown(
+          typeof data?.rawMarkdown === "string" ? data.rawMarkdown : "",
+        );
       })
       .catch(() => {
-        if (!cancelled) setReviewProfileItems([]);
+        if (!cancelled) {
+          setReviewProfileItems([]);
+          setReviewProfileRawMarkdown("");
+        }
       });
     return () => { cancelled = true; };
   }, [showReviewAnnotations, targetSessionUserId, missionId]);
@@ -4312,18 +4345,28 @@ export default function MainScreenPage() {
       ]
         .filter(Boolean)
         .join("\n\n");
-      const retrievedMemory = await retrieveMemoryForQuery(retrievalQuery);
+      const memoryRetrieval = await retrieveMemoryForQuery(retrievalQuery);
+      const retrievedMemory = memoryRetrieval?.retrieved ?? null;
+      const currentBeforeSessionSetup =
+        memoryRetrieval?.currentBeforeSessionSetup ?? [];
       const isReferenceSearchTurn =
         commandForTurn?.id === "fetch_references" ||
         isReferenceSearchRequest(text);
       const promptMemory = isReferenceSearchTurn
         ? filterMemoryForReferenceSearch(retrievedMemory)
         : retrievedMemory;
+      const currentSetupIds = new Set(
+        currentBeforeSessionSetup.map((memory) => memory.id),
+      );
+      const semanticMemoryContext = [
+        ...currentBeforeSessionSetup,
+        ...(promptMemory ?? []).filter((memory) => !currentSetupIds.has(memory.id)),
+      ];
       const turnMemoryContext =
-        promptMemory && promptMemory.length > 0
+        semanticMemoryContext.length > 0
           ? {
               episodic: [],
-              semantic: promptMemory,
+              semantic: semanticMemoryContext,
             }
           : { episodic: [], semantic: [] };
       const currentUser = firebaseAuth.currentUser;
@@ -7953,10 +7996,11 @@ export default function MainScreenPage() {
                 {/* Original raw input — shown once at top */}
                 {(() => {
                   const rawInput =
-                    beforeSessionMemoryImpact.items.find(
-                      ({ memory }) => memory.input,
-                    )?.memory.input ??
-                    reviewProfileItems.find((item) => item.input)?.input;
+                    reviewProfileRawMarkdown.trim() ||
+                    reviewProfileItems
+                      .map((item) => item.input.trim())
+                      .filter(Boolean)
+                      .join("\n");
                   return rawInput ? (
                     <div className="mb-5 rounded-xl border border-slate-100 bg-slate-50 px-4 py-3">
                       <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-slate-400">

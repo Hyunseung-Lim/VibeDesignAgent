@@ -1,0 +1,330 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Claude Web Search Reference Test</title>
+    <style>
+      :root {
+        color-scheme: light;
+        font-family:
+          Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+          "Segoe UI", sans-serif;
+        color: #172033;
+        background: #f6f7f9;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        padding: 28px;
+      }
+      main {
+        max-width: 1120px;
+        margin: 0 auto;
+      }
+      h1 {
+        margin: 0 0 6px;
+        font-size: 22px;
+        letter-spacing: 0;
+      }
+      p {
+        margin: 0;
+        color: #667085;
+      }
+      .layout {
+        display: grid;
+        grid-template-columns: minmax(320px, 420px) 1fr;
+        gap: 16px;
+        margin-top: 20px;
+        align-items: start;
+      }
+      section {
+        border: 1px solid #d9dee8;
+        border-radius: 8px;
+        background: #fff;
+        padding: 16px;
+      }
+      label {
+        display: block;
+        margin-bottom: 12px;
+        font-size: 12px;
+        font-weight: 700;
+        color: #344054;
+      }
+      input,
+      textarea,
+      select {
+        width: 100%;
+        margin-top: 6px;
+        border: 1px solid #cfd6e4;
+        border-radius: 6px;
+        padding: 9px 10px;
+        font: inherit;
+        font-size: 13px;
+        color: #182230;
+        background: #fff;
+      }
+      textarea {
+        min-height: 88px;
+        resize: vertical;
+      }
+      .row {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 10px;
+      }
+      button {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 38px;
+        border: 0;
+        border-radius: 6px;
+        padding: 0 14px;
+        font: inherit;
+        font-size: 13px;
+        font-weight: 700;
+        color: white;
+        background: #172033;
+        cursor: pointer;
+      }
+      button:disabled {
+        opacity: 0.55;
+        cursor: not-allowed;
+      }
+      .meta {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin: 0 0 12px;
+      }
+      .pill {
+        border-radius: 999px;
+        background: #eef2f7;
+        padding: 4px 9px;
+        font-size: 12px;
+        color: #475467;
+      }
+      .cards {
+        display: grid;
+        gap: 10px;
+      }
+      .card {
+        border: 1px solid #e4e7ec;
+        border-radius: 8px;
+        padding: 12px;
+      }
+      .card h2 {
+        margin: 0 0 6px;
+        font-size: 15px;
+      }
+      .card a {
+        color: #175cd3;
+        text-decoration: none;
+        overflow-wrap: anywhere;
+      }
+      .card p {
+        margin-top: 8px;
+        font-size: 13px;
+        line-height: 1.5;
+      }
+      pre {
+        margin: 14px 0 0;
+        max-height: 420px;
+        overflow: auto;
+        border: 1px solid #e4e7ec;
+        border-radius: 8px;
+        background: #101828;
+        padding: 12px;
+        color: #d0d5dd;
+        font-size: 12px;
+        line-height: 1.45;
+      }
+      .error {
+        border-color: #fecdca;
+        background: #fff1f3;
+        color: #b42318;
+      }
+      @media (max-width: 860px) {
+        body {
+          padding: 16px;
+        }
+        .layout {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Claude Web Search Reference Test</h1>
+      <p>
+        메인 UI와 분리된 내부 테스트 페이지입니다. 서버의
+        <code>ANTHROPIC_API_KEY</code>를 사용합니다.
+      </p>
+
+      <div class="layout">
+        <section>
+          <form id="form">
+            <label>
+              Query
+              <textarea id="query">
+Daymood emotional wellness app landing page visual style references</textarea
+              >
+            </label>
+
+            <label>
+              Mission title
+              <input id="missionTitle" value="Daymood" />
+            </label>
+
+            <label>
+              Mission brief
+              <textarea id="missionBrief">
+감정 기록과 정서 케어를 돕는 웰니스 앱/웹 서비스. 부드럽고 신뢰감 있는 랜딩페이지 레퍼런스를 찾는다.</textarea
+              >
+            </label>
+
+            <div class="row">
+              <label>
+                Mode
+                <select id="mode">
+                  <option value="style">style</option>
+                  <option value="product">product</option>
+                </select>
+              </label>
+              <label>
+                Max results
+                <input id="maxResults" type="number" min="1" max="8" value="5" />
+              </label>
+            </div>
+
+            <button id="submit" type="submit">Run Claude web search</button>
+          </form>
+        </section>
+
+        <section>
+          <div class="meta" id="meta">
+            <span class="pill">idle</span>
+          </div>
+          <div class="cards" id="cards"></div>
+          <pre id="raw" hidden></pre>
+        </section>
+      </div>
+    </main>
+
+    <script>
+      const form = document.querySelector("#form");
+      const submit = document.querySelector("#submit");
+      const meta = document.querySelector("#meta");
+      const cards = document.querySelector("#cards");
+      const raw = document.querySelector("#raw");
+      const endpoint = "/api/dev/claude-reference-search";
+
+      function value(id) {
+        return document.querySelector(id).value.trim();
+      }
+
+      function renderMeta(items) {
+        meta.innerHTML = items
+          .map((item) => `<span class="pill">${item}</span>`)
+          .join("");
+      }
+
+      function escapeHtml(text) {
+        return String(text ?? "")
+          .replaceAll("&", "&amp;")
+          .replaceAll("<", "&lt;")
+          .replaceAll(">", "&gt;")
+          .replaceAll('"', "&quot;");
+      }
+
+      function renderCards(references) {
+        cards.innerHTML = references.length
+          ? references
+              .map(
+                (reference) => `
+                  <article class="card">
+                    <h2>${escapeHtml(reference.title || "Untitled reference")}</h2>
+                    ${
+                      reference.url
+                        ? `<a href="${escapeHtml(reference.url)}" target="_blank" rel="noreferrer">${escapeHtml(reference.url)}</a>`
+                        : ""
+                    }
+                    <p>${escapeHtml(reference.description || "")}</p>
+                    <p>${escapeHtml(reference.rationale || "")}</p>
+                  </article>
+                `,
+              )
+              .join("")
+          : '<p class="card">파싱된 reference JSON이 없습니다. Raw response를 확인하세요.</p>';
+      }
+
+      async function readJsonResponse(res) {
+        const text = await res.text();
+        if (!text) {
+          throw new Error(
+            `Empty response body (${res.status}) from POST ${res.url}`,
+          );
+        }
+        try {
+          return JSON.parse(text);
+        } catch {
+          throw new Error(
+            `Non-JSON response (${res.status}): ${text.slice(0, 500)}`,
+          );
+        }
+      }
+
+      form.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        submit.disabled = true;
+        cards.innerHTML = "";
+        raw.hidden = true;
+        raw.textContent = "";
+        renderMeta(["running"]);
+
+        const started = performance.now();
+        try {
+          const res = await fetch(endpoint, {
+            method: "POST",
+            cache: "no-store",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              query: value("#query"),
+              missionTitle: value("#missionTitle"),
+              missionBrief: value("#missionBrief"),
+              mode: value("#mode"),
+              maxResults: Number(value("#maxResults") || 5),
+            }),
+          });
+          const data = await readJsonResponse(res);
+          const elapsed = Math.round(performance.now() - started);
+          if (!res.ok) {
+            throw new Error(
+              data.error || `Request failed: POST ${res.url} ${res.status}`,
+            );
+          }
+          renderMeta([
+            `model ${data.model}`,
+            `mode ${data.mode}`,
+            `${data.references.length} parsed`,
+            `${elapsed}ms`,
+          ]);
+          renderCards(data.references || []);
+          raw.hidden = false;
+          raw.textContent = JSON.stringify(data, null, 2);
+        } catch (error) {
+          renderMeta(["error"]);
+          cards.innerHTML = `<div class="card error">${escapeHtml(
+            `${error.message || error}\nExpected request: POST ${location.origin}${endpoint}\nPage URL: ${location.href}`,
+          )}</div>`;
+        } finally {
+          submit.disabled = false;
+        }
+      });
+    </script>
+  </body>
+</html>

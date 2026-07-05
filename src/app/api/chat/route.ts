@@ -99,13 +99,35 @@ function compactMemoryContext(memoryContext: unknown) {
     | undefined;
   if (!context) return null;
   const items = memoryContextItems(context);
+  const compactMemoryOrigin = (record: Record<string, unknown>) => {
+    const beforeSessionScope =
+      typeof record.beforeSessionScope === "string" &&
+      record.beforeSessionScope.trim()
+        ? record.beforeSessionScope.trim()
+        : null;
+    if (!beforeSessionScope) return {};
+    const sourceMissionId =
+      typeof record.sourceMissionId === "string" && record.sourceMissionId.trim()
+        ? record.sourceMissionId.trim()
+        : null;
+    return {
+      ...(beforeSessionScope ? { beforeSessionScope } : {}),
+      ...(sourceMissionId ? { sourceMissionId } : {}),
+    };
+  };
   const compactEpisodic = (item: unknown) => {
     const record = item as Record<string, unknown>;
-    return { episodic: truncateText(record.episodic ?? record.episode, 500) };
+    return {
+      episodic: truncateText(record.episodic ?? record.episode, 500),
+      ...compactMemoryOrigin(record),
+    };
   };
   const compactSemantic = (item: unknown) => {
     const record = item as Record<string, unknown>;
-    return { semantic: truncateText(record.semantic, 500) };
+    return {
+      semantic: truncateText(record.semantic, 500),
+      ...compactMemoryOrigin(record),
+    };
   };
   const episodic = items
     .filter((item) => {
@@ -1264,6 +1286,14 @@ export async function POST(request: Request) {
               embeddingSource:
                 typeof record.embeddingSource === "string"
                   ? record.embeddingSource
+                  : null,
+              sourceMissionId:
+                typeof record.sourceMissionId === "string"
+                  ? record.sourceMissionId
+                  : null,
+              beforeSessionScope:
+                typeof record.beforeSessionScope === "string"
+                  ? record.beforeSessionScope
                   : null,
               schemaVersion:
                 typeof record.schemaVersion === "string"

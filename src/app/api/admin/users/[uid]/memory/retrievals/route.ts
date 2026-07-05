@@ -38,6 +38,19 @@ function numberArray(value: unknown) {
     : [];
 }
 
+function profileItemScopes(value: unknown) {
+  if (!Array.isArray(value)) return new Map<string, Record<string, unknown>>();
+  const scopes = new Map<string, Record<string, unknown>>();
+  value.forEach((item) => {
+    if (!item || typeof item !== "object") return;
+    const record = item as Record<string, unknown>;
+    const id = typeof record.id === "string" ? record.id : "";
+    if (!id) return;
+    scopes.set(id, record);
+  });
+  return scopes;
+}
+
 function semanticItemsForDoc(doc: MemoryDoc): NormalizedSemanticItem[] {
   return [
     {
@@ -122,31 +135,64 @@ export async function GET(
       .sort((a, b) => Number(b.createdAt ?? 0) - Number(a.createdAt ?? 0))
       .map((log) => {
         const retrievedMemoryIds = stringArray(log.retrievedMemoryIds);
+        const includedCurrentSetupMemoryIds = stringArray(
+          log.includedCurrentSetupMemoryIds,
+        );
         const similarities = numberArray(log.similarities);
+        const scopeById = new Map([
+          ...profileItemScopes(log.profileItemScopes),
+          ...profileItemScopes(log.includedCurrentSetupMemoryScopes),
+        ]);
+        const memoryItemFor = (memoryKey: string, index?: number) => {
+          const item = memoryIndex.get(memoryKey);
+          const scope = scopeById.get(memoryKey);
+          return {
+            id: memoryKey,
+            memoryId: item?.memoryId ?? memoryKey,
+            semanticItemId: null,
+            semantic: item?.semantic ?? "",
+            similarity:
+              typeof index === "number" ? similarities[index] ?? null : null,
+            weight: item?.weight ?? null,
+            retrievedCount: item?.retrievedCount ?? 0,
+            archivedAt: item?.archivedAt ?? null,
+            source: item?.source ?? null,
+            sourceMissionId:
+              typeof scope?.sourceMissionId === "string"
+                ? scope.sourceMissionId
+                : null,
+            beforeSessionScope:
+              typeof scope?.beforeSessionScope === "string"
+                ? scope.beforeSessionScope
+                : null,
+            timestamp: item?.timestamp ?? null,
+          };
+        };
         return {
           id: log.id,
           query: String(log.query ?? ""),
           missionId: log.missionId ? String(log.missionId) : null,
           queryEmbeddingModel: String(log.queryEmbeddingModel ?? ""),
           createdAt: Number(log.createdAt ?? 0),
+          includedCurrentSetupMemoryCount: Number(
+            log.includedCurrentSetupMemoryCount ?? 0,
+          ),
+          includedCurrentSetupMemoryIds,
+          includedCurrentSetupMemories: includedCurrentSetupMemoryIds.map((id) =>
+            memoryItemFor(id),
+          ),
+          profileCurrentMissionItemCount: Number(
+            log.profileCurrentMissionItemCount ?? 0,
+          ),
+          profilePriorMissionItemCount: Number(
+            log.profilePriorMissionItemCount ?? 0,
+          ),
           scoreDeltas: Array.isArray(log.scoreDeltas)
             ? log.scoreDeltas
             : [],
-          retrieved: retrievedMemoryIds.map((memoryKey, index) => {
-            const item = memoryIndex.get(memoryKey);
-            return {
-              id: memoryKey,
-              memoryId: item?.memoryId ?? memoryKey,
-              semanticItemId: null,
-              semantic: item?.semantic ?? "",
-              similarity: similarities[index] ?? null,
-              weight: item?.weight ?? null,
-              retrievedCount: item?.retrievedCount ?? 0,
-              archivedAt: item?.archivedAt ?? null,
-              source: item?.source ?? null,
-              timestamp: item?.timestamp ?? null,
-            };
-          }),
+          retrieved: retrievedMemoryIds.map((memoryKey, index) =>
+            memoryItemFor(memoryKey, index),
+          ),
         };
       }),
   });
