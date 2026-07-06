@@ -14,7 +14,8 @@ const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const MEMORY_SCHEMA_VERSION = "0.1.2";
 const MEMORY_COLLECTION = "memories_0_1_2";
 const EMBEDDING_MODEL = "text-embedding-3-large";
-const EMBEDDING_SOURCE = "during_session_record_text";
+// v2: embedding text no longer includes original interaction content (input/output).
+const EMBEDDING_SOURCE = "during_session_record_text_v2";
 
 function jsonArray(value: unknown) {
   if (Array.isArray(value)) return value.map(String).filter(Boolean);
@@ -109,13 +110,12 @@ export async function POST(request: Request) {
             .filter((section) => !section.endsWith("\n"))
             .join("\n\n");
         // Keep timestamp as metadata only; vector similarity should stay content-based.
+        // Raw interaction content (input/output) is stored on the doc but intentionally
+        // excluded from the embedding so vectors stay keyword/episodic/semantic-based.
         const embeddingText = [
           keywords.length ? `Keywords: ${keywords.join(", ")}` : "",
           episodic ? `Episodic: ${episodic}` : "",
           semantic ? `Semantic: ${semantic}` : "",
-          originalInteractionContent
-            ? `Original interaction content:\n${originalInteractionContent}`
-            : "",
         ].filter(Boolean).join("\n");
         const [embedding] = await embedMemoryTexts(embeddingText ? [embeddingText] : []);
         // Promote whenever the draft carries any usable content, not only when an

@@ -18,7 +18,9 @@ const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const MEMORY_COLLECTION = "memories_0_1_2";
 const RETRIEVAL_LOG_COLLECTION = "memoryRetrievalLogs";
 const EMBEDDING_MODEL = "text-embedding-3-large";
-const INTERACTION_EMBEDDING_SOURCE = "during_session_record_text";
+// v2: embedding text dropped original interaction content. Old-tagged embeddings
+// are no longer accepted, so retrieve regenerates them with the new contract.
+const INTERACTION_EMBEDDING_SOURCE = "during_session_record_text_v2";
 const PROFILE_EMBEDDING_SOURCE = "before_session_unit_text";
 const ACCEPTED_EMBEDDING_SOURCES = new Set([
   INTERACTION_EMBEDDING_SOURCE,
@@ -120,23 +122,15 @@ function stableHash(value: string) {
   return createHash("sha256").update(value).digest("hex").slice(0, 16);
 }
 
-function buildEmbeddingText(candidate: Pick<Candidate, "keyword" | "episodic" | "semantic" | "input" | "output" | "originalInteractionContent" | "link">) {
+function buildEmbeddingText(candidate: Pick<Candidate, "keyword" | "episodic" | "semantic" | "link">) {
   // Timestamp is retrieval metadata only; do not include it in vector text.
-  const originalInteractionContent =
-    candidate.originalInteractionContent ||
-    [
-      candidate.input ? `User input:\n${candidate.input}` : "",
-      candidate.output ? `Agent output:\n${candidate.output}` : "",
-    ]
-      .filter(Boolean)
-      .join("\n\n");
+  // Raw interaction content (input/output) is intentionally excluded so the vector
+  // stays keyword/episodic/semantic-based; must match the creation-path contract in
+  // complete-session so freshly created and regenerated embeddings agree.
   return [
     candidate.keyword.length ? `Keywords: ${candidate.keyword.join(", ")}` : "",
     candidate.episodic ? `Episodic: ${candidate.episodic}` : "",
     candidate.semantic ? `Semantic: ${candidate.semantic}` : "",
-    originalInteractionContent
-      ? `Original interaction content:\n${originalInteractionContent}`
-      : "",
     candidate.link ? `Link: ${candidate.link}` : "",
   ]
     .filter(Boolean)

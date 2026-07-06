@@ -174,7 +174,7 @@
 - **Legacy**: `GET /api/memory/bootstrap`은 세션 시작 시 memory를 preload하던 구 방식이며, 현재 main client에서는 호출하지 않음
 - **Retrieval 쿼리 구성**: `[user text] + Mission: [parentMissionTitle] + Active idea: [description]` — 선택된 옵션 이름(페르소나 등)은 제외해 임베딩 노이즈 방지
 - **Admin 관측**: researcher가 `/admin/users/[uid]/memory`에서 `/agent`와 동일한 user별 memory cluster graph/list/detail을 확인 가능. detail panel은 그래프 왼쪽에 있고 cluster list는 요약 없이 색상·제목·개수만 표시한다 `[현행 2026-06-27 → 15.130]` `[stale 2026-06-30 → 15.169: cluster list가 main 세션리뷰와 동일한 review presentation(rounded card + 색상 count rail + 접기 rail)로 통일됨]`
-- **Retrieval MVP**: v0.1.2 memory document에 embedding과 `weight` metadata를 저장하고, retrieve된 memory의 weight를 천천히 올림
+- **Retrieval MVP**: v0.1.2 memory document에 embedding과 `weight` metadata를 저장하고, retrieve된 memory의 weight를 천천히 올림. memory embedding 입력은 clustering과 동일하게 keyword + episodic + semantic + link로 고정하고 원문 interaction input/output은 제외한다. 생성(`/api/memory/complete-session`)과 retrieve 재생성(`/api/memory/retrieve`)의 텍스트 계약이 동일해야 하며, 계약이 바뀌면 `embeddingSource` 태그를 올려(`during_session_record_text_v2`) 기존 embedding을 stale 처리해 재생성한다 `[현행 2026-07-06 → 15.194]`
 - **Forgetting MVP**: low-weight/duplicate 후보를 `archivedAt` 기반으로 soft archive
 
 #### 메모리 클러스터링
@@ -4050,3 +4050,11 @@ type ChatPlan = {
 - 수정: admin viewAs 리뷰 화면에서 retrieval log가 매칭된 assistant bubble에는 `Retrieval 보기` 버튼을 표시한다. 모달은 retrieval query, retrieved/current setup counts, retrieved memory 목록, current setup 목록, raw retrieval log JSON을 보여준다.
 - 유지: 일반 사용자 리뷰와 일반 진행 화면에는 retrieval debug 버튼을 노출하지 않는다. Raw prompt 버튼과 같은 admin viewAs debug 조건을 따른다.
 - 문서: 4.7 Current Snapshot과 12.1.3 리뷰 화면 계약에 admin retrieval 보기 계약을 반영했다.
+
+### 15.194 Memory embedding에서 원문 interaction content 제외 `[implemented 2026-07-06]`
+
+- 배경: memory embedding(생성·retrieve)은 keyword + episodic + semantic 외에 Original interaction content(input/output)까지 넣고 있었다. 반면 clustering embedding은 이미 keyword + episodic + semantic + link만 쓰도록 고정돼 있어(15.178) 두 embedding의 입력 계약이 어긋났다. 또 link 라인은 retrieve 재생성 경로에만 있고 생성 경로엔 없어 계약이 둘로 갈렸다(실제로는 during-session `link`가 항상 null이라 효과는 없었음).
+- 수정: 생성(`/api/memory/complete-session`)과 retrieve 재생성(`/api/memory/retrieve`)의 embedding 텍스트를 keyword + episodic + semantic + link로 통일하고 Original interaction content를 제거했다. 원문 interaction input/output/originalInteractionContent는 memory document 필드로는 계속 저장하되 embedding 벡터에서만 뺀다.
+- 수정: 텍스트 계약이 바뀌었으므로 interaction embeddingSource 태그를 `during_session_record_text` → `during_session_record_text_v2`로 올리고 `ACCEPTED_EMBEDDING_SOURCES`에서 구 태그를 제외했다. retrieve 시 `ensureV2Embeddings`가 구 태그 embedding을 stale로 보고 새 계약으로 재생성한다.
+- 유지: profile(before-session) embedding 계약(Source + keyword + episodic + semantic)과 `before_session_unit_text` 태그는 그대로 두어 프로필 재생성은 강제하지 않는다.
+- 문서: 4.7 Retrieval MVP 항목에 memory embedding 입력 계약과 embeddingSource 버전업 규칙을 반영했다.
