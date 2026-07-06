@@ -34,7 +34,7 @@ const DEFAULT_LIMIT = 5;
 // formative study). Replaces the old narrow near-miss decay which, in practice,
 // almost never fired — see scripts/analyze_memory_weights.py (weight only ever
 // rose: +835 vs -61 delta events across users, nothing below the 0.5 default).
-const IDLE_DECAY_WEIGHT_LOSS = 0.005;
+const IDLE_DECAY_WEIGHT_LOSS = 0.01;
 const IDLE_DECAY_MAX_WEIGHT_LOSS = 0.006;
 const MIN_MEMORY_WEIGHT = 0.1;
 
@@ -87,9 +87,7 @@ function numberArray(value: unknown) {
 }
 
 function numberValue(value: unknown, fallback = 0) {
-  return typeof value === "number" && Number.isFinite(value)
-    ? value
-    : fallback;
+  return typeof value === "number" && Number.isFinite(value) ? value : fallback;
 }
 
 function timestampValue(value: unknown) {
@@ -122,7 +120,9 @@ function stableHash(value: string) {
   return createHash("sha256").update(value).digest("hex").slice(0, 16);
 }
 
-function buildEmbeddingText(candidate: Pick<Candidate, "keyword" | "episodic" | "semantic" | "link">) {
+function buildEmbeddingText(
+  candidate: Pick<Candidate, "keyword" | "episodic" | "semantic" | "link">,
+) {
   // Timestamp is retrieval metadata only; do not include it in vector text.
   // Raw interaction content (input/output) is intentionally excluded so the vector
   // stays keyword/episodic/semantic-based; must match the creation-path contract in
@@ -141,26 +141,37 @@ function retrievalLogId(now: number, query: string) {
   return `${now}-${stableHash(query)}`;
 }
 
-async function loadCollectionDocs(uid: string, collection: string, token: string) {
-  const ids = await listFirestoreDocumentIds(`users/${uid}/${collection}`, token);
+async function loadCollectionDocs(
+  uid: string,
+  collection: string,
+  token: string,
+) {
+  const ids = await listFirestoreDocumentIds(
+    `users/${uid}/${collection}`,
+    token,
+  );
   const docs = await Promise.all(
     ids.slice(-MAX_MEMORY_DOCS).map(async (id) => {
-      const data =
-        ((await getFirestoreDocument(
-          `users/${uid}/${collection}/${id}`,
-          token,
-        )) ?? {}) as Record<string, unknown>;
+      const data = ((await getFirestoreDocument(
+        `users/${uid}/${collection}/${id}`,
+        token,
+      )) ?? {}) as Record<string, unknown>;
       return { id, ...data } as MemoryDoc;
     }),
   );
   return docs.filter((doc) => {
-    const sourceType = String(doc.sourceType ?? doc.memorySource ?? doc.type ?? "");
+    const sourceType = String(
+      doc.sourceType ?? doc.memorySource ?? doc.type ?? "",
+    );
     return sourceType === "during_session" || sourceType === "before_session";
   });
 }
 
 function isBeforeSessionDoc(doc: MemoryDoc) {
-  return String(doc.sourceType ?? doc.memorySource ?? doc.type ?? "") === "before_session";
+  return (
+    String(doc.sourceType ?? doc.memorySource ?? doc.type ?? "") ===
+    "before_session"
+  );
 }
 
 function sourceMissionId(value: unknown) {
@@ -198,7 +209,8 @@ function selectCurrentBeforeSessionSetup(
   currentMissionId: string,
 ) {
   const current = candidates.filter(
-    (candidate) => beforeSessionScope(candidate, currentMissionId) === "current_mission",
+    (candidate) =>
+      beforeSessionScope(candidate, currentMissionId) === "current_mission",
   );
   if (current.length === 0) return [];
 
@@ -206,7 +218,9 @@ function selectCurrentBeforeSessionSetup(
     beforeSessionWriteBatchId(candidate.source),
   );
   if (withBatch.length === 0) {
-    return current.sort((a, b) => candidateTimestamp(b) - candidateTimestamp(a));
+    return current.sort(
+      (a, b) => candidateTimestamp(b) - candidateTimestamp(a),
+    );
   }
 
   const latestBatchId = withBatch
@@ -219,7 +233,8 @@ function selectCurrentBeforeSessionSetup(
 
   return current
     .filter(
-      (candidate) => beforeSessionWriteBatchId(candidate.source) === latestBatchId,
+      (candidate) =>
+        beforeSessionWriteBatchId(candidate.source) === latestBatchId,
     )
     .sort((a, b) => candidateTimestamp(b) - candidateTimestamp(a));
 }
@@ -227,7 +242,10 @@ function selectCurrentBeforeSessionSetup(
 function responseMemory(
   candidate: Candidate,
   missionId: string,
-  clusterByItemId: Map<string, { clusterId: string; label: string; summary: string }>,
+  clusterByItemId: Map<
+    string,
+    { clusterId: string; label: string; summary: string }
+  >,
 ) {
   return {
     id: candidate.id,
@@ -265,7 +283,9 @@ function responseMemory(
 }
 
 function v2Candidate(uid: string, doc: MemoryDoc): Candidate | null {
-  const episodic = String(doc.episodic ?? doc.episode ?? doc.content ?? "").trim();
+  const episodic = String(
+    doc.episodic ?? doc.episode ?? doc.content ?? "",
+  ).trim();
   const semantic =
     typeof doc.semantic === "string" && doc.semantic.trim()
       ? doc.semantic.trim()
@@ -289,7 +309,9 @@ function v2Candidate(uid: string, doc: MemoryDoc): Candidate | null {
     originalInteractionContent: String(doc.originalInteractionContent ?? ""),
     link: doc.link ? String(doc.link) : null,
     embedding,
-    embeddingSource: String(doc.embeddingSource ?? (semantic ? "semantic" : "episodic")),
+    embeddingSource: String(
+      doc.embeddingSource ?? (semantic ? "semantic" : "episodic"),
+    ),
     weight: numberValue(doc.weight, 0.5),
     retrievedCount: numberValue(doc.retrievedCount),
     lastRetrievedAt: timestampValue(doc.lastRetrievedAt),
@@ -304,8 +326,8 @@ async function ensureV2Embeddings(candidates: Candidate[], token: string) {
   // Regenerate: missing embedding OR built with an outdated text contract.
   const stale = candidates.filter(
     (candidate) =>
-      (candidate.embedding.length === 0 ||
-        !ACCEPTED_EMBEDDING_SOURCES.has(candidate.embeddingSource)),
+      candidate.embedding.length === 0 ||
+      !ACCEPTED_EMBEDDING_SOURCES.has(candidate.embeddingSource),
   );
   if (stale.length === 0) return;
   const now = Date.now();
@@ -314,10 +336,9 @@ async function ensureV2Embeddings(candidates: Candidate[], token: string) {
   );
   await Promise.all(
     stale.map((candidate, index) => {
-      const embeddingSource =
-        isBeforeSessionDoc(candidate.doc)
-          ? PROFILE_EMBEDDING_SOURCE
-          : INTERACTION_EMBEDDING_SOURCE;
+      const embeddingSource = isBeforeSessionDoc(candidate.doc)
+        ? PROFILE_EMBEDDING_SOURCE
+        : INTERACTION_EMBEDDING_SOURCE;
       candidate.embedding = embeddings[index] ?? [];
       candidate.embeddingSource = embeddingSource;
       candidate.doc.embedding = candidate.embedding;
@@ -374,7 +395,11 @@ function nextIdleWeight(candidate: Candidate, memoryCount: number) {
   );
 }
 
-async function updateRetrievedWeights(retrieved: Candidate[], token: string, now: number) {
+async function updateRetrievedWeights(
+  retrieved: Candidate[],
+  token: string,
+  now: number,
+) {
   const deltas = await Promise.all(
     retrieved.map(async (candidate) => {
       const previousWeight = candidate.weight;
@@ -452,8 +477,12 @@ export async function POST(request: Request) {
   };
   const query = String(body.query ?? "").trim();
   const missionId = String(body.missionId ?? "").trim();
-  const interactionId = String(body.interactionId ?? "").trim().slice(0, 200);
-  const userMessageId = String(body.userMessageId ?? "").trim().slice(0, 200);
+  const interactionId = String(body.interactionId ?? "")
+    .trim()
+    .slice(0, 200);
+  const userMessageId = String(body.userMessageId ?? "")
+    .trim()
+    .slice(0, 200);
   const limit = Math.max(
     1,
     Math.min(10, Number(body.limit ?? DEFAULT_LIMIT) || DEFAULT_LIMIT),
@@ -511,7 +540,10 @@ export async function POST(request: Request) {
         clusterByItemId = clusterSummaryByItemId(clusters);
       }
     } catch (clusterError) {
-      console.warn("[memory/retrieve] cluster summary lookup failed", clusterError);
+      console.warn(
+        "[memory/retrieve] cluster summary lookup failed",
+        clusterError,
+      );
     }
     const scoreDeltas = await updateRetrievedWeights(retrieved, token, now);
     // Decay every memory that was NOT retrieved this turn (usage-based forgetting).
@@ -561,8 +593,8 @@ export async function POST(request: Request) {
         similarities: retrieved.map((candidate) =>
           Number(candidate.similarity.toFixed(4)),
         ),
-        profileItemCount: retrieved.filter(
-          (candidate) => isBeforeSessionDoc(candidate.doc),
+        profileItemCount: retrieved.filter((candidate) =>
+          isBeforeSessionDoc(candidate.doc),
         ).length,
         profileCurrentMissionItemCount: profileItemScopes.filter(
           (item) => item.beforeSessionScope === "current_mission",
@@ -570,8 +602,8 @@ export async function POST(request: Request) {
         profilePriorMissionItemCount: profileItemScopes.filter(
           (item) => item.beforeSessionScope === "prior_mission",
         ).length,
-        profileCandidateCount: candidates.filter(
-          (candidate) => isBeforeSessionDoc(candidate.doc),
+        profileCandidateCount: candidates.filter((candidate) =>
+          isBeforeSessionDoc(candidate.doc),
         ).length,
         profileItemIds: retrievedBeforeSession.map((candidate) => candidate.id),
         profileItemScopes,
@@ -589,7 +621,10 @@ export async function POST(request: Request) {
       token,
     );
   } catch (error) {
-    console.warn("[memory/retrieve] unavailable, continuing without memory", error);
+    console.warn(
+      "[memory/retrieve] unavailable, continuing without memory",
+      error,
+    );
     return Response.json({ query, retrieved: [], unavailable: true });
   }
 
