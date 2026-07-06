@@ -169,7 +169,7 @@
 - **첨부 이미지 시각 선호**: image normalizer는 의도적으로 선호를 추론하지 않으므로, 첨부 이미지가 주도한 목업 생성이 성공해 derivedDesignStyle가 나오면 그 스타일을 `style-image-preference-{turnId}` interactionId(category `style_image_preference`)로 별도 draft에 기록한다. 이번 미션/시안 맥락의 session-scoped evidence로 담고 전역 취향으로 단정하지 않는다 `[현행 2026-06-21 → 15.101]`
 - **확정 시점**: 사용자가 `세션 종료` 버튼을 누르면 `/api/memory/complete-session`에서 draft를 통합해 장기 메모리로 저장
 - **버전 관리**: admin memory modal에서 v0.1.0 / v0.1.1 / v0.1.2를 분리 조회 `[stale 2026-06-12 → 15.51: legacy fallback 제거로 현재 v0.1.2 단일 버전만 사용(MemoryVersionTab = "0.1.2"). v0.1.0/v0.1.1 분리 조회 없음]`
-- **현재 활용**: 각 채팅 turn 직전에 `/api/memory/retrieve`를 호출한다. 현재 미션 before-session memory는 retrieval 여부와 무관하게 `currentBeforeSessionSetup`으로 별도 반환해 prompt에 항상 포함한다. 동시에 current/prior before-session과 during-session memory는 모두 같은 query similarity ranking 후보로 남아, top-k에 실제로 retrieved되면 weight/retrievedCount가 업데이트된다. 응답과 log는 `sourceMissionId`와 `beforeSessionScope`(`current_mission`/`prior_mission`)를 보존한다 `[현행 2026-07-05 → 15.187/15.188/15.189/15.190]`
+- **현재 활용**: 각 채팅 turn 직전에 `/api/memory/retrieve`를 호출한다. 현재 미션 before-session memory는 retrieval 여부와 무관하게 `currentBeforeSessionSetup`으로 별도 반환해 prompt에 항상 포함한다. 동시에 current/prior before-session과 during-session memory는 모두 같은 query similarity ranking 후보로 남아, top-k에 실제로 retrieved되면 weight/retrievedCount가 업데이트된다. 응답과 log는 `sourceMissionId`와 `beforeSessionScope`(`current_mission`/`prior_mission`)를 보존한다. 어드민이 `viewAs`로 리뷰 화면을 볼 때 assistant bubble의 `Retrieval 보기` 버튼에서 해당 turn 근처의 retrieval query, retrieved memory, current setup, raw retrieval log JSON을 확인할 수 있다 `[현행 2026-07-06 → 15.187/15.188/15.189/15.190/15.193]`
 - **Prompt 주입 방식**: profile input은 `profile_memories`에 source of truth로 보관한 뒤 derived memory로 쪼개 retrieved memory와 같은 chat context 경로로 들어간다. prompt compact JSON은 before-session memory를 current/prior로 분리하지 않고 `episodic`/`semantic` 배열에 함께 넣되, 각 항목의 `beforeSessionScope`와 `sourceMissionId`는 보존한다. 현재 미션 before-session setup은 retrieval 여부와 무관하게 항상 포함되고, top-k에도 retrieved된 경우 prompt에는 중복 삽입하지 않는다. Prior before-session도 retrieved되면 episodic/semantic 모두 기존처럼 사용할 수 있으며, memory id/weight/similarity는 제외한다 `[현행 2026-07-05 → 15.187/15.190/15.191]`
 - **Legacy**: `GET /api/memory/bootstrap`은 세션 시작 시 memory를 preload하던 구 방식이며, 현재 main client에서는 호출하지 않음
 - **Retrieval 쿼리 구성**: `[user text] + Mission: [parentMissionTitle] + Active idea: [description]` — 선택된 옵션 이름(페르소나 등)은 제외해 임베딩 노이즈 방지
@@ -696,7 +696,7 @@ archiveReason = "low-weight" | "duplicate" | "manual";
 - `/main/{missionId}?review=1`은 일반 사용자 세션도 읽기 전용으로 열고, 기존 채팅 로그 위에 저장된 `reviewTurns` 데이터를 연결한다.
 - assistant bubble은 `reviewTurnId`/message id로 `reviewTurns/{turnId}`를 찾아 retrieved memory, `weight`, `weightDelta`, `similarity`, source mission을 표시한다.
 - assistant bubble의 `프롬프트 컨텍스트` 토글에서 retrieval query, 미션 설명 전체, 활성 아이디어, 인용 텍스트/레퍼런스를 확인할 수 있다.
-- admin이 리뷰 화면을 열면 assistant bubble의 `Raw prompt 보기` 버튼으로 sanitized `rawPrompt`, sanitize 내역, response meta를 모달에서 확인할 수 있다.
+- admin이 리뷰 화면을 열면 assistant bubble의 `Raw prompt 보기` 버튼으로 sanitized `rawPrompt`, sanitize 내역, response meta를 모달에서 확인할 수 있다. 또한 `Retrieval 보기` 버튼으로 `/api/memory/session-summary`가 반환한 turn별 retrieval log(query, retrieved memory, current before-session setup, raw JSON)를 확인할 수 있다 `[현행 2026-07-06 → 15.193]`
 - 리뷰 화면은 `/api/memory/archive-status`로 retrieved memory의 최신 archive 상태를 조회하고, archived memory에는 `archiveReason`, `archivedAt`, duplicate similarity/similarTo 근거를 표시한다.
 
 #### 12.1.4 3단계: 세션 전후 메모리 변화 시각화
@@ -4041,3 +4041,12 @@ type ChatPlan = {
 - 수정: `/main/[missionId]`의 완료 응답 정규화 단계에서 `원하시면`, `필요하면`, `if you want` 등 조건부 제안 문맥에 붙은 `CREATE_DESIGN_SPEC` 블록을 저장/파싱 전에 제거한다. 함께 나온 가짜 상태 문구 `디자인 스타일 추가됨`도 제거해 최종 chat bubble이 일반 제안 문장으로 남게 했다.
 - 수정: `cleanMessageContentForModel()`은 JSON payload뿐 아니라 평문/부분 `CREATE_DESIGN_SPEC` 블록도 균형 스캐너로 `[디자인 스타일 추가]`로 축약한다. ToolActionChip 렌더링은 액션 블록 직전의 중복 상태 라벨을 숨겨 chat bubble에 같은 상태가 텍스트와 chip으로 이중 표시되지 않게 했다.
 - 문서: 1~9장 Current Snapshot의 액션 완료 보장과 `CREATE_DESIGN_SPEC` 계약에 조건부 제안 예외와 컨텍스트 축약 계약을 반영했다.
+
+### 15.193 Admin review turn별 retrieval log 보기 `[implemented 2026-07-06]`
+
+- 배경(Page Feedback `/main/onboarding?viewAs=...`): admin이 사용자의 리뷰 화면을 볼 때 `Raw prompt 보기`처럼 각 interaction에서 retrieval이 무엇을 가져왔는지 확인할 수 있어야 했다.
+- 수정: `/api/memory/session-summary`가 mission-scoped `memoryRetrievalLogs`를 `retrievalLogs`로 함께 반환한다. 각 log에는 query, retrieved memory ids/similarities, retrieved memory 요약, current before-session setup memory, profile/current/prior count와 scopes, raw retrieval ranking policy를 포함한다.
+- 수정: `/api/memory/retrieve`는 retrieval log에 `interactionId`(assistant message id)와 `userMessageId`를 저장한다. `/main/[missionId]`는 `interactionId`로 retrieval log를 해당 turn에 우선 매칭하고, 과거 log처럼 id가 없는 경우 assistant message createdAt과 다음 assistant message createdAt 사이의 timestamp fallback을 사용한다.
+- 수정: admin viewAs 리뷰 화면에서 retrieval log가 매칭된 assistant bubble에는 `Retrieval 보기` 버튼을 표시한다. 모달은 retrieval query, retrieved/current setup counts, retrieved memory 목록, current setup 목록, raw retrieval log JSON을 보여준다.
+- 유지: 일반 사용자 리뷰와 일반 진행 화면에는 retrieval debug 버튼을 노출하지 않는다. Raw prompt 버튼과 같은 admin viewAs debug 조건을 따른다.
+- 문서: 4.7 Current Snapshot과 12.1.3 리뷰 화면 계약에 admin retrieval 보기 계약을 반영했다.

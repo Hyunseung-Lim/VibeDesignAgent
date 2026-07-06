@@ -294,6 +294,47 @@ type ReferencedSessionMemoryItem = SessionMemoryItem & {
   weightDelta?: number | null;
 };
 
+type SessionRetrievalMemory = {
+  id: string;
+  similarity?: number | null;
+  episodic?: string | null;
+  semantic?: string | null;
+  input?: string | null;
+  output?: string | null;
+  source?: { missionId?: string; draftId?: string } | null;
+  timestamp?: number | null;
+  weight?: number | null;
+};
+
+type SessionRetrievalLog = {
+  id: string;
+  missionId?: string | null;
+  interactionId?: string | null;
+  userMessageId?: string | null;
+  createdAt?: number | null;
+  query?: string | null;
+  memoryCount?: number | null;
+  retrievedCount?: number | null;
+  retrievedMemoryIds?: string[];
+  similarities?: number[];
+  retrievedMemories?: SessionRetrievalMemory[];
+  includedCurrentSetupMemoryIds?: string[];
+  includedCurrentSetupMemoryCount?: number | null;
+  includedCurrentSetupMemories?: SessionRetrievalMemory[];
+  profileItemCount?: number | null;
+  profileCurrentMissionItemCount?: number | null;
+  profilePriorMissionItemCount?: number | null;
+  profileCandidateCount?: number | null;
+  profileItemIds?: string[];
+  profileSimilarities?: number[];
+  profileItemScopes?: Array<{
+    id: string;
+    sourceMissionId?: string | null;
+    beforeSessionScope?: string | null;
+  }>;
+  retrievalRankingPolicy?: unknown;
+};
+
 type IdleDecaySummary = {
   memoryCount: number;
   totalDelta: number;
@@ -337,6 +378,7 @@ type SessionMemorySummary = {
   clustersByVariant: Record<ReviewClusterVariant, ReviewClusterBundle>;
   // The target user's per-user mission order, used to compute the cumulative set.
   missionOrder: string[];
+  retrievalLogs: SessionRetrievalLog[];
 };
 
 type MemoryGraphFilter = "changed" | "all" | "referenced" | "promoted" | "archived";
@@ -356,6 +398,7 @@ const EMPTY_SESSION_MEMORY_SUMMARY: SessionMemorySummary = {
   graphEdges: [],
   clustersByVariant: EMPTY_CLUSTERS_BY_VARIANT,
   missionOrder: [],
+  retrievalLogs: [],
 };
 
 type ActivityLogEvent = {
@@ -465,6 +508,9 @@ async function fetchSessionMemorySummary(
     graphEdges: Array.isArray(data?.graphEdges) ? data.graphEdges : [],
     clustersByVariant: parseClustersByVariant(data?.clustersByVariant),
     missionOrder: Array.isArray(data?.missionOrder) ? data.missionOrder : [],
+    retrievalLogs: Array.isArray(data?.retrievalLogs)
+      ? data.retrievalLogs
+      : [],
   };
 }
 
@@ -1980,6 +2026,217 @@ function memoryEventKey(item: SessionMemoryItem) {
   return item.source?.draftId ?? item.id;
 }
 
+function retrievalLogForMessage(
+  message: Message,
+  allMessages: Message[],
+  retrievalLogs: SessionRetrievalLog[],
+) {
+  if (message.role !== "assistant" || !message.createdAt) return null;
+  const reviewTurnId = message.reviewTurnId ?? message.id;
+  const exactLog = retrievalLogs.find(
+    (log) => log.interactionId === reviewTurnId || log.interactionId === message.id,
+  );
+  if (exactLog) return exactLog;
+  const messageCreatedAt = message.createdAt;
+  const nextAssistant = allMessages
+    .filter(
+      (item) =>
+        item.role === "assistant" &&
+        item.createdAt &&
+        item.createdAt > messageCreatedAt,
+    )
+    .sort((a, b) => Number(a.createdAt ?? 0) - Number(b.createdAt ?? 0))[0];
+  const start = messageCreatedAt - 1_000;
+  const end = nextAssistant?.createdAt ?? messageCreatedAt + 120_000;
+  return (
+    retrievalLogs
+      .filter((log) => {
+        const createdAt = log.createdAt ?? 0;
+        return createdAt >= start && createdAt < end;
+      })
+      .sort(
+        (a, b) =>
+          Math.abs(Number(a.createdAt ?? 0) - messageCreatedAt) -
+          Math.abs(Number(b.createdAt ?? 0) - messageCreatedAt),
+      )[0] ?? null
+  );
+}
+
+function stringifyDebugJson(value: unknown) {
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
+  }
+}
+
+function RetrievalLogViewer({
+  turnId,
+  retrievalLog,
+  onClose,
+}: {
+  turnId: string;
+  retrievalLog: SessionRetrievalLog;
+  onClose: () => void;
+}) {
+  const retrievedMemories = retrievalLog.retrievedMemories ?? [];
+  const setupMemories = retrievalLog.includedCurrentSetupMemories ?? [];
+  return (
+    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/35 px-4 py-6">
+      <div className="flex max-h-[86vh] w-full max-w-4xl flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl">
+        <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4">
+          <div>
+            <p className="text-sm font-semibold text-slate-900">
+              Retrieval log
+            </p>
+            <p className="mt-1 text-xs text-slate-500">
+              Turn {turnId} ·{" "}
+              {retrievalLog.createdAt
+                ? new Date(retrievalLog.createdAt).toLocaleString("ko-KR")
+                : "시간 정보 없음"}
+              {retrievalLog.interactionId
+                ? ` · interaction ${retrievalLog.interactionId}`
+                : ""}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-full p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
+            aria-label="닫기"
+          >
+            <XIcon className="size-4" />
+          </button>
+        </div>
+        <div className="min-h-0 flex-1 space-y-4 overflow-auto p-5 text-sm">
+          <section className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+            <div className="grid gap-3 md:grid-cols-4">
+              <div>
+                <p className="text-[11px] font-semibold uppercase text-slate-400">
+                  Retrieved
+                </p>
+                <p className="mt-1 text-lg font-semibold text-slate-900">
+                  {retrievalLog.retrievedCount ?? retrievedMemories.length}
+                </p>
+              </div>
+              <div>
+                <p className="text-[11px] font-semibold uppercase text-slate-400">
+                  Current setup
+                </p>
+                <p className="mt-1 text-lg font-semibold text-slate-900">
+                  {retrievalLog.includedCurrentSetupMemoryCount ??
+                    setupMemories.length}
+                </p>
+              </div>
+              <div>
+                <p className="text-[11px] font-semibold uppercase text-slate-400">
+                  Candidates
+                </p>
+                <p className="mt-1 text-lg font-semibold text-slate-900">
+                  {retrievalLog.memoryCount ?? 0}
+                </p>
+              </div>
+              <div>
+                <p className="text-[11px] font-semibold uppercase text-slate-400">
+                  Before-session
+                </p>
+                <p className="mt-1 text-lg font-semibold text-slate-900">
+                  {retrievalLog.profileItemCount ?? 0}
+                </p>
+              </div>
+            </div>
+            {retrievalLog.query && (
+              <div className="mt-4">
+                <p className="text-xs font-semibold text-slate-500">Query</p>
+                <pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap rounded-lg bg-white p-3 text-xs leading-relaxed text-slate-700">
+                  {retrievalLog.query}
+                </pre>
+              </div>
+            )}
+          </section>
+
+          <section>
+            <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+              Retrieved memories
+            </h3>
+            <div className="mt-2 space-y-2">
+              {retrievedMemories.length > 0 ? (
+                retrievedMemories.map((memory) => (
+                  <div
+                    key={memory.id}
+                    className="rounded-xl border border-slate-200 bg-white p-3"
+                  >
+                    <div className="flex flex-wrap items-center gap-2 text-xs text-slate-400">
+                      <span className="font-mono">{memory.id}</span>
+                      {memory.similarity != null && (
+                        <span>similarity {memory.similarity}</span>
+                      )}
+                      {memory.weight != null && <span>weight {memory.weight}</span>}
+                      {memory.source?.missionId && (
+                        <span>mission {memory.source.missionId}</span>
+                      )}
+                    </div>
+                    <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-slate-700">
+                      {memory.semantic ||
+                        memory.episodic ||
+                        memory.input ||
+                        memory.output ||
+                        "내용 없음"}
+                    </p>
+                  </div>
+                ))
+              ) : (
+                <p className="rounded-xl border border-dashed border-slate-200 p-4 text-sm text-slate-400">
+                  검색된 메모리가 없습니다.
+                </p>
+              )}
+            </div>
+          </section>
+
+          {setupMemories.length > 0 && (
+            <section>
+              <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                Current before-session setup
+              </h3>
+              <div className="mt-2 space-y-2">
+                {setupMemories.map((memory) => (
+                  <div
+                    key={memory.id}
+                    className="rounded-xl border border-sky-100 bg-sky-50/50 p-3"
+                  >
+                    <div className="flex flex-wrap items-center gap-2 text-xs text-sky-500">
+                      <span className="font-mono">{memory.id}</span>
+                      {memory.source?.missionId && (
+                        <span>mission {memory.source.missionId}</span>
+                      )}
+                    </div>
+                    <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-slate-700">
+                      {memory.semantic ||
+                        memory.episodic ||
+                        memory.input ||
+                        memory.output ||
+                        "내용 없음"}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
+
+          <details className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+            <summary className="cursor-pointer text-xs font-semibold text-slate-500">
+              Raw retrieval log JSON
+            </summary>
+            <pre className="mt-3 max-h-72 overflow-auto whitespace-pre-wrap rounded-lg bg-slate-950 p-3 text-xs leading-relaxed text-slate-100">
+              {stringifyDebugJson(retrievalLog)}
+            </pre>
+          </details>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function isMemoryLinkedToMessage(
   item: SessionMemoryItem,
   messageIds: Set<string>,
@@ -2290,6 +2547,10 @@ export default function MainScreenPage() {
     rawPrompt: unknown;
     rawPromptSanitization?: unknown;
     rawResponseMeta?: unknown;
+  } | null>(null);
+  const [retrievalLogModal, setRetrievalLogModal] = useState<{
+    turnId: string;
+    retrievalLog: SessionRetrievalLog;
   } | null>(null);
   const [reviewDetailModal, setReviewDetailModal] = useState<{
     mode: "memory" | "turn-memory";
@@ -2697,7 +2958,10 @@ export default function MainScreenPage() {
     [isReadOnly, missionId],
   );
   const retrieveMemoryForQuery = useCallback(
-    async (query: string): Promise<MemoryRetrievalResponse | null> => {
+    async (
+      query: string,
+      options?: { interactionId?: string; userMessageId?: string },
+    ): Promise<MemoryRetrievalResponse | null> => {
       if (isReadOnly || !missionId || !query.trim()) return null;
       const currentUser = firebaseAuth.currentUser;
       if (!currentUser) return null;
@@ -2713,6 +2977,8 @@ export default function MainScreenPage() {
             query,
             missionId,
             limit: 5,
+            interactionId: options?.interactionId,
+            userMessageId: options?.userMessageId,
           }),
         });
         if (!res.ok) return null;
@@ -4393,7 +4659,10 @@ export default function MainScreenPage() {
       ]
         .filter(Boolean)
         .join("\n\n");
-      const memoryRetrieval = await retrieveMemoryForQuery(retrievalQuery);
+      const memoryRetrieval = await retrieveMemoryForQuery(retrievalQuery, {
+        interactionId: assistantId,
+        userMessageId: userMsg.id,
+      });
       const retrievedMemory = memoryRetrieval?.retrieved ?? null;
       const currentBeforeSessionSetup =
         memoryRetrieval?.currentBeforeSessionSetup ?? [];
@@ -7226,6 +7495,13 @@ export default function MainScreenPage() {
           onClose={() => setRawPromptModal(null)}
         />
       )}
+      {retrievalLogModal && (
+        <RetrievalLogViewer
+          turnId={retrievalLogModal.turnId}
+          retrievalLog={retrievalLogModal.retrievalLog}
+          onClose={() => setRetrievalLogModal(null)}
+        />
+      )}
       <SessionProductTour
         open={isProductTourOpen}
         hasIdeas={ideas.length > 0}
@@ -8198,6 +8474,14 @@ export default function MainScreenPage() {
                     : null;
                 const retrievedReviewMemories = reviewTurn?.retrieved ?? [];
                 const reviewTurnId = msg.reviewTurnId ?? msg.id;
+                const retrievalLog =
+                  msg.role === "assistant" && showReviewAnnotations
+                    ? retrievalLogForMessage(
+                        msg,
+                        messages,
+                        sessionMemorySummary.retrievalLogs,
+                      )
+                    : null;
                 const turnMemoryDraft = showReviewAnnotations && msg.role === "assistant"
                   ? sessionMemorySummary.drafts.find((d) => d.id === reviewTurnId) ??
                     sessionMemorySummary.promoted.find(
@@ -8251,6 +8535,11 @@ export default function MainScreenPage() {
                       msg.role === "assistant" &&
                         isViewingAsAdmin &&
                         reviewTurn?.rawPrompt != null,
+                    )}
+                    hasRetrievalLog={Boolean(
+                      msg.role === "assistant" &&
+                        isViewingAsAdmin &&
+                        retrievalLog,
                     )}
                     isReferenceLoading={
                       msg.role === "assistant" &&
@@ -8309,6 +8598,13 @@ export default function MainScreenPage() {
                         rawPromptSanitization:
                           reviewTurn.rawPromptSanitization,
                         rawResponseMeta: reviewTurn.rawResponseMeta,
+                      });
+                    }}
+                    onShowRetrievalLog={() => {
+                      if (!retrievalLog) return;
+                      setRetrievalLogModal({
+                        turnId: reviewTurnId,
+                        retrievalLog,
                       });
                     }}
                   />

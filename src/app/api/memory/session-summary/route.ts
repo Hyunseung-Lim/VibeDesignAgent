@@ -74,6 +74,24 @@ function scoreDeltaArray(value: unknown) {
     : [];
 }
 
+function retrievalScopeArray(value: unknown) {
+  return Array.isArray(value)
+    ? value
+        .map((item) => {
+          if (!item || typeof item !== "object") return null;
+          const scope = item as Record<string, unknown>;
+          const id = stringOrNull(scope.id);
+          if (!id) return null;
+          return {
+            id,
+            sourceMissionId: stringOrNull(scope.sourceMissionId),
+            beforeSessionScope: stringOrNull(scope.beforeSessionScope),
+          };
+        })
+        .filter((item): item is NonNullable<typeof item> => Boolean(item))
+    : [];
+}
+
 function timestampMs(value: unknown) {
   if (typeof value === "number" && Number.isFinite(value)) return value;
   if (typeof value === "string") {
@@ -344,16 +362,110 @@ export async function POST(request: Request) {
       return {
         id,
         missionId: stringOrNull(doc.missionId),
+        interactionId: stringOrNull(doc.interactionId),
+        userMessageId: stringOrNull(doc.userMessageId),
         createdAt: numberOrNull(doc.createdAt),
+        query: stringOrNull(doc.query),
+        memoryCount: numberOrNull(doc.memoryCount),
+        retrievedCount: Array.isArray(doc.retrievedMemoryIds)
+          ? doc.retrievedMemoryIds.length
+          : 0,
         retrievedMemoryIds: Array.isArray(doc.retrievedMemoryIds)
           ? doc.retrievedMemoryIds.map(String)
           : [],
         similarities: numberArray(doc.similarities),
+        includedCurrentSetupMemoryIds: Array.isArray(
+          doc.includedCurrentSetupMemoryIds,
+        )
+          ? doc.includedCurrentSetupMemoryIds.map(String)
+          : [],
+        includedCurrentSetupMemoryCount: numberOrNull(
+          doc.includedCurrentSetupMemoryCount,
+        ),
+        includedCurrentSetupMemoryScopes: retrievalScopeArray(
+          doc.includedCurrentSetupMemoryScopes,
+        ),
+        profileItemCount: numberOrNull(doc.profileItemCount),
+        profileCurrentMissionItemCount: numberOrNull(
+          doc.profileCurrentMissionItemCount,
+        ),
+        profilePriorMissionItemCount: numberOrNull(
+          doc.profilePriorMissionItemCount,
+        ),
+        profileCandidateCount: numberOrNull(doc.profileCandidateCount),
+        profileItemIds: Array.isArray(doc.profileItemIds)
+          ? doc.profileItemIds.map(String)
+          : [],
+        profileItemScopes: retrievalScopeArray(doc.profileItemScopes),
+        profileSimilarities: numberArray(doc.profileSimilarities),
+        retrievalRankingPolicy:
+          doc.retrievalRankingPolicy &&
+          typeof doc.retrievalRankingPolicy === "object"
+            ? doc.retrievalRankingPolicy
+            : null,
         scoreDeltas: scoreDeltaArray(doc.scoreDeltas),
         idleDecayDeltas: scoreDeltaArray(doc.idleDecayDeltas),
       };
     }),
   );
+  const retrievalLogs = logs
+    .filter((log) => log.missionId === missionId)
+    .sort((a, b) => Number(a.createdAt ?? 0) - Number(b.createdAt ?? 0))
+    .map((log) => {
+      const memorySummary = (id: string, index: number) => {
+        const memory = memoryById.get(id);
+        return {
+          id,
+          similarity: log.similarities[index] ?? null,
+          episodic: memory?.episodic ?? null,
+          semantic: memory?.semantic ?? null,
+          input: memory?.input ?? null,
+          output: memory?.output ?? null,
+          source: memory?.source ?? null,
+          timestamp: memory?.timestamp ?? null,
+          weight: memory?.weight ?? null,
+        };
+      };
+      return {
+        id: log.id,
+        missionId: log.missionId,
+        interactionId: log.interactionId,
+        userMessageId: log.userMessageId,
+        createdAt: log.createdAt,
+        query: log.query,
+        memoryCount: log.memoryCount,
+        retrievedCount: log.retrievedCount,
+        retrievedMemoryIds: log.retrievedMemoryIds,
+        similarities: log.similarities,
+        retrievedMemories: log.retrievedMemoryIds.map(memorySummary),
+        includedCurrentSetupMemoryIds: log.includedCurrentSetupMemoryIds,
+        includedCurrentSetupMemoryCount: log.includedCurrentSetupMemoryCount,
+        includedCurrentSetupMemoryScopes: log.includedCurrentSetupMemoryScopes,
+        includedCurrentSetupMemories: log.includedCurrentSetupMemoryIds.map(
+          (id) => {
+            const memory = memoryById.get(id);
+            return {
+              id,
+              episodic: memory?.episodic ?? null,
+              semantic: memory?.semantic ?? null,
+              input: memory?.input ?? null,
+              output: memory?.output ?? null,
+              source: memory?.source ?? null,
+              timestamp: memory?.timestamp ?? null,
+              weight: memory?.weight ?? null,
+            };
+          },
+        ),
+        profileItemCount: log.profileItemCount,
+        profileCurrentMissionItemCount: log.profileCurrentMissionItemCount,
+        profilePriorMissionItemCount: log.profilePriorMissionItemCount,
+        profileCandidateCount: log.profileCandidateCount,
+        profileItemIds: log.profileItemIds,
+        profileItemScopes: log.profileItemScopes,
+        profileSimilarities: log.profileSimilarities,
+        retrievalRankingPolicy: log.retrievalRankingPolicy,
+      };
+    });
   const referencedEvents = new Map<
     string,
     Array<{
@@ -481,5 +593,6 @@ export async function POST(request: Request) {
     graphEdges: selectedClusterDoc?.graphEdges ?? [],
     clustersByVariant,
     missionOrder,
+    retrievalLogs,
   });
 }

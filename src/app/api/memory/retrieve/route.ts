@@ -453,9 +453,13 @@ export async function POST(request: Request) {
     query?: unknown;
     missionId?: unknown;
     limit?: unknown;
+    interactionId?: unknown;
+    userMessageId?: unknown;
   };
   const query = String(body.query ?? "").trim();
   const missionId = String(body.missionId ?? "").trim();
+  const interactionId = String(body.interactionId ?? "").trim().slice(0, 200);
+  const userMessageId = String(body.userMessageId ?? "").trim().slice(0, 200);
   const limit = Math.max(
     1,
     Math.min(10, Number(body.limit ?? DEFAULT_LIMIT) || DEFAULT_LIMIT),
@@ -544,6 +548,8 @@ export async function POST(request: Request) {
       `users/${user.localId}/${RETRIEVAL_LOG_COLLECTION}/${retrievalLogId(now, query)}`,
       {
         query: query.slice(0, 1000),
+        interactionId: interactionId || null,
+        userMessageId: userMessageId || null,
         queryEmbeddingModel: EMBEDDING_MODEL,
         missionId: missionId || null,
         memoryVersion: "0.1.2",

@@ -48,12 +48,14 @@ type ChatBubbleProps = {
   adminMemoryCount: number;
   hasTurnMemory: boolean;
   hasRawPrompt: boolean;
+  hasRetrievalLog: boolean;
   isReferenceLoading?: boolean;
   onToggleChatPhases: () => void;
   onToggleChip: (key: string) => void;
   onShowRetrievedMemory: () => void;
   onToggleTurnMemory: () => void;
   onShowRawPrompt: () => void;
+  onShowRetrievalLog: () => void;
 };
 
 function TypingDots() {
@@ -123,12 +125,14 @@ export function ChatBubble({
   adminMemoryCount,
   hasTurnMemory,
   hasRawPrompt,
+  hasRetrievalLog,
   isReferenceLoading = false,
   onToggleChatPhases,
   onToggleChip,
   onShowRetrievedMemory,
   onToggleTurnMemory,
   onShowRawPrompt,
+  onShowRetrievalLog,
 }: ChatBubbleProps) {
   const isUser = message.role === "user";
   const visibleComposerCommand =
@@ -330,6 +334,16 @@ export function ChatBubble({
             className="mt-3 w-full rounded-xl border border-indigo-100 bg-indigo-50 px-3 py-2 text-left text-xs font-semibold text-indigo-600 transition hover:border-indigo-200 hover:bg-indigo-100"
           >
             Raw prompt 보기
+          </button>
+        )}
+
+        {!isUser && hasRetrievalLog && (
+          <button
+            type="button"
+            onClick={onShowRetrievalLog}
+            className="mt-2 w-full rounded-xl border border-sky-100 bg-sky-50 px-3 py-2 text-left text-xs font-semibold text-sky-700 transition hover:border-sky-200 hover:bg-sky-100"
+          >
+            Retrieval 보기
           </button>
         )}
       </div>
