@@ -1366,6 +1366,54 @@ function stripDesignSpecActionBlocks(content: string) {
     .trim();
 }
 
+function isConditionalDesignSpecOffer(text: string, start: number, end: number) {
+  const before = text.slice(Math.max(0, start - 260), start);
+  const after = text.slice(end, Math.min(text.length, end + 260));
+  if (
+    !/(?:원하시면|필요하면|원한다면|괜찮으시면|희망하시면|요청하시면|if\s+(?:you\s+)?(?:want|needed|you'd\s+like|you\s+would\s+like)|i\s+can)/i.test(
+      before,
+    )
+  ) {
+    return false;
+  }
+  return /(?:형태로|정리해드릴게요|만들어드릴게요|진행해드릴게요|해드릴게요|format|I\s+can)/i.test(
+    `${before}\n${after}`,
+  );
+}
+
+function stripConditionalDesignSpecOffers(content: string) {
+  let result = content;
+  let searchFrom = 0;
+  let changed = false;
+  for (;;) {
+    const start = result.indexOf("[CREATE_DESIGN_SPEC:", searchFrom);
+    if (start === -1) break;
+    const end = actionBlockEnd(result, start, "CREATE_DESIGN_SPEC");
+    if (!isConditionalDesignSpecOffer(result, start, end)) {
+      searchFrom = Math.max(end, start + 1);
+      continue;
+    }
+    const before = result
+      .slice(0, start)
+      .replace(
+        /(?:\s|\n)*(?:\*\*)?\s*디자인 스타일 추가됨\s*(?:\*\*)?\s*$/g,
+        "",
+      );
+    result = `${before}${result.slice(end)}`;
+    searchFrom = before.length;
+    changed = true;
+  }
+  if (!changed) return content;
+  return result
+    .replace(
+      /원하시면\s+제가\s+바로\s*(?:\*\*)?\s*(?:\*\*)?\s*형태로\s*정리해드릴게요/g,
+      "원하시면 제가 바로 디자인 스타일 형태로 정리해드릴게요",
+    )
+    .replace(/\*\*\s*\*\*/g, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
 function isSameDesignStyle(a?: string | null, b?: string | null) {
   const normalize = (value?: string | null) =>
     (value ?? "").replace(/\s+/g, " ").trim().toLowerCase();
@@ -4464,8 +4512,8 @@ export default function MainScreenPage() {
             [assistantId]: chatPhases.phases,
           }));
         }
-        const normalizedText = normalizeActionBlockAliases(
-          chatPhases.visibleText,
+        const normalizedText = stripConditionalDesignSpecOffers(
+          normalizeActionBlockAliases(chatPhases.visibleText),
         );
         const displayText = splitPendingMockupCompletionText(normalizedText);
         deferredMockupCompletionText = displayText.completionText;
@@ -4483,8 +4531,8 @@ export default function MainScreenPage() {
       }
 
       const finalChatPhases = extractChatPhases(fullText).phases;
-      fullText = normalizeActionBlockAliases(
-        extractChatPhases(fullText).visibleText,
+      fullText = stripConditionalDesignSpecOffers(
+        normalizeActionBlockAliases(extractChatPhases(fullText).visibleText),
       );
       const activeIdeaAtTurnStart =
         ideas.find((idea) => idea.id === activeIdeaId) ?? null;

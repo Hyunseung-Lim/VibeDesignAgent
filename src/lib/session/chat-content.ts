@@ -99,6 +99,43 @@ function findNoteBlock(
   return { index, matchStr: text.slice(index), done: false };
 }
 
+function replaceNoteLikeActionBlocks(
+  text: string,
+  tag: string,
+  replacement: string,
+) {
+  let result = text;
+  for (;;) {
+    const found = findNoteBlock(result, tag);
+    if (!found) return result;
+    result = `${result.slice(0, found.index)}${replacement}${result.slice(
+      found.index + found.matchStr.length,
+    )}`;
+  }
+}
+
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function stripTrailingActionStatusLabel(
+  text: string,
+  labels: Array<string | undefined>,
+) {
+  const labelPattern = labels.filter(Boolean).map((label) => escapeRegExp(label as string));
+  if (labelPattern.length === 0) return text;
+  return text
+    .replace(
+      new RegExp(
+        String.raw`(?:^|\n)\s*(?:\*\*)?\s*(?:${labelPattern.join(
+          "|",
+        )})\s*(?:\*\*)?\s*$`,
+      ),
+      "",
+    )
+    .trim();
+}
+
 const BLOCK_RULES = [
   {
     complete: /\[GENERATE_MOCKUP(?::[^\]]*)?\]/,
@@ -208,7 +245,10 @@ export function processMessageContent(content: string): ContentPart[] {
       break;
     }
 
-    const before = remaining.slice(0, earliest.index).trim();
+    const before = stripTrailingActionStatusLabel(
+      remaining.slice(0, earliest.index).trim(),
+      [earliest.label, earliest.failedLabel],
+    );
     if (before) parts.push({ type: "text", content: before });
 
     const afterChip = remaining.slice(earliest.index + earliest.matchStr.length);
@@ -316,9 +356,22 @@ export function normalizeActionBlockAliases(content: string) {
 }
 
 export function cleanMessageContentForModel(content: string) {
-  return normalizeActionBlockAliases(content)
-    .replace(/\[CREATE_NOTE:\s*\{[\s\S]*?\}\]/g, "[Design Brief 생성]")
-    .replace(/\[UPDATE_NOTE:\s*\{[\s\S]*?\}\]/g, "[Design Brief 수정]")
+  const normalized = normalizeActionBlockAliases(content);
+  const noteCleaned = replaceNoteLikeActionBlocks(
+    replaceNoteLikeActionBlocks(
+      replaceNoteLikeActionBlocks(
+        normalized,
+        "CREATE_NOTE",
+        "[Design Brief 생성]",
+      ),
+      "UPDATE_NOTE",
+      "[Design Brief 수정]",
+    ),
+    "CREATE_DESIGN_SPEC",
+    "[디자인 스타일 추가]",
+  );
+
+  return noteCleaned
     .replace(
       /\[GENERATE_MOCKUP:[\s\S]*?\]/g,
       "이전 액션: mockup generation requested.",
@@ -342,7 +395,6 @@ export function cleanMessageContentForModel(content: string) {
       },
     )
     .replace(/\[WEB_SEARCHED\]/g, "이전 액션: web search completed.")
-    .replace(/\[CREATE_DESIGN_SPEC:\s*\{[\s\S]*?\}\]/g, "[디자인 스타일 추가]")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
 }

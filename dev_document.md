@@ -123,7 +123,7 @@
 - **missionBrief 보완 주입**: 신규 목업 생성 시 아이디어 내용이 300자 미만으로 빈약하면 `missionBrief`를 `buildMockupPrompt`에 직접 주입해 제품 데이터가 Stitch에 전달되도록 보장 (수정 시에는 주입 안 함)
 - **이미지 주도 생성**: 사용자가 참고 이미지를 첨부/붙여넣거나(Phase 1) 신규 목업 요청에 URL을 주면(Phase 2 — 채팅 메시지 내 URL 또는 인용 레퍼런스의 URL), 텍스트 design.md 단계 없이 그 화면을 Stitch에 `upload`→`edit`로 재구성해 목업을 만들고 결과에서 design.md를 역추출·저장한다. URL은 서버가 스크린샷(Microlink 무키, `captureScreenshot` 추상화)으로 캡처하며 첨부 이미지가 우선. 모바일 목업이면 URL 캡처도 390×844 모바일 viewport, 데스크톱이면 1280×900 viewport로 찍는다. 이미지/URL이 있으면 "디자인 스타일 필수" 게이트를 우회한다. `src/app/api/stitch/route.ts`의 `isImageLed` 분기 참고 `[현행 2026-06-15 → 15.81/15.83]`
 - **콘텐츠 자산 주도 생성(asset-led)**: 미션 옵션에 어드민이 등록한 콘텐츠 이미지(`assetImages`, 실제 상품 사진·UI 캡쳐)가 있으면 신규 목업 생성 시 그 URL과 설명(`note`)을 `/api/stitch`로 넘겨, 서버가 다운로드→`upload`→`edit`하면서 asset manifest와 함께 "이 이미지들을 그대로 콘텐츠로 박아 넣어라"(`assetImageEmbedPrompt`)로 생성한다. 이미지 주도 생성과 달리 이미지를 스타일로 재구성하지 않고 콘텐츠 자산으로 보존하며, 레이아웃·스타일은 brief와 디자인 시스템을 따른다. 그래서 디자인 스타일을 미리 적용하고 결과 기반 design.md 역추출은 하지 않는다. 사용자가 그 턴에 스타일 이미지/URL을 첨부하면 그쪽(isImageLed)이 우선. `src/app/api/stitch/route.ts`의 `isAssetLed` 분기 참고 `[현행 2026-06-18 → 15.89/15.93]`
-- **액션/화면 완료 보장**: `CREATE_DESIGN_SPEC`는 JSON 뒤 닫는 대괄호가 빠지거나 일반 마크다운 payload로 와도 균형 스캔과 loose parser로 복구하며, 복구 불가능하면 영구적인 작성 중 상태 대신 명시적 실패로 표시한다. Stitch가 screen metadata만 먼저 반환하면 HTML을 재조회한 뒤 아트보드를 확정하고, 저장된 screen의 HTML 복원 중에는 빈 iframe 대신 로딩/실패 상태를 표시한다. `src/lib/session/chat-content.ts`와 `src/app/main/[missionId]/page.tsx`를 직접 확인 `[현행 2026-06-21 → 15.97]`
+- **액션/화면 완료 보장**: `CREATE_DESIGN_SPEC`는 JSON 뒤 닫는 대괄호가 빠지거나 일반 마크다운 payload로 와도 균형 스캔과 loose parser로 복구하며, 복구 불가능하면 영구적인 작성 중 상태 대신 명시적 실패로 표시한다. 단, assistant가 `원하시면...` 같은 조건부 제안 문맥에서 `CREATE_DESIGN_SPEC`를 예시/미리보기처럼 출력한 경우에는 실행 명령으로 저장하지 않고 화면에서도 제거한다. Stitch가 screen metadata만 먼저 반환하면 HTML을 재조회한 뒤 아트보드를 확정하고, 저장된 screen의 HTML 복원 중에는 빈 iframe 대신 로딩/실패 상태를 표시한다. `src/lib/session/chat-content.ts`와 `src/app/main/[missionId]/page.tsx`를 직접 확인 `[현행 2026-07-06 → 15.97/15.192]`
 - **캔버스**: 드래그 패닝, 휠 줌, Fit 버튼, 확대(fullscreen) 모드. 선택 스크립트는 iframe HTML에 항상 주입하고, 편집 모드 토글은 pointer event와 선택 해제 메시지로 제어해 iframe `srcDoc` reload를 피한다. 동적 문서 높이를 측정할 때 원본 `html/body` height를 덮어쓰지 않고, viewport 단위와 `h-screen` 계열만 artboard device 크기에 고정해 원본/Final Design과 같은 첫 화면 레이아웃을 보존한다. 또한 iframe이 아직 device 높이일 때(= 첫 높이 보고 전에) vh를 쓰는 요소(예: 컨테이너 h-[80vh])와 모든 이미지의 box를 인라인 px(!important)로 고정한다. 인라인 선언이 클래스 규칙을 specificity로 이기므로 Tailwind Play CDN의 스타일시트 재생성과 무관하게 유지되고, iframe이 전체 문서 높이로 커져도 full-bleed 이미지가 늘어나거나 vh 컨테이너가 부풀어 높이가 발산하는 피드백 루프가 생기지 않는다(box와 iframe 높이를 분리). `src/lib/session/mockup-html.ts`의 `injectHeightReporter` 참고 `[현행 2026-06-24 → 15.78/15.113/15.121]`
 - **편집 모드**: 특정 UI 요소 클릭 선택 → `[EDIT_MOCKUP: {prompt}]`로 수정. 선택 요소가 있는 상태에서 "크게/색/문구/삭제" 등 짧은 타깃 편집 요청이 오면 planner 판단과 무관하게 현재 목업 HTML과 선택 요소 컨텍스트를 함께 주입한다 `[현행 2026-06-15 → 15.77]`
 - Stitch edit가 기존 screen을 mutate하지 않고 새 screen을 만들면 기존 artboard를 덮어쓰지 않고 새 artboard로 추가한 뒤 active로 전환한다 `[현행 2026-06-15 → 15.79]`
@@ -156,7 +156,7 @@
   - `[CREATE_NOTE: ...]` → 새 아이디어(시안) 생성. 저장 payload는 목표/대상 사용자, 핵심 경험, 화면 구조, 미션 필수 콘텐츠, 제약을 포함한 독립적인 Design Brief여야 한다. 모델이 한 줄 작업 지시문을 반환하면 클라이언트가 먼저 assistant 응답 본문에서 실질 브리프를 복구하고, 없을 때 미션 맥락과 현재 사용자 요청으로 시작 가능한 브리프를 복구한다. 단, 현재 시안이 빈 shell이면(디자인 스타일만 먼저 작성된 경우, 또는 세션 시작 시 시드된 빈 디폴트 시안 1: description·designStyle·artboard 모두 없음) 새 시안을 만들지 않고 해당 시안 내용을 채움 `[현행 2026-06-30 → 15.98/15.116/15.153]`
   - 세션은 빈 디폴트 시안 1로 시작한다(read-only/완료 세션 제외). 워크스페이스·탭·Brief/Style/Mockup 구조를 처음부터 노출하고, 첫 brief가 위 shell-fill 규칙으로 이 시안을 채운다 `[현행 2026-06-23 → 15.116]`
   - `[UPDATE_NOTE: ...]` → 현재 아이디어 내용 업데이트. 의도적인 짧은 수정은 허용하되, 디자인 브리프 생성/작성 성격의 턴에서 payload가 한 줄 상태문으로 축약되면 assistant 응답 본문 또는 미션 맥락으로 실질 Design Brief를 복구한 뒤 저장한다 `[현행 2026-06-30 → 15.153]`
-  - `[CREATE_DESIGN_SPEC: ...]` → 현재 아이디어의 디자인 스타일 정의/교체. Design Brief가 아직 없어도 세션 초반부터 생성할 수 있으며, 현재 아이디어가 없으면 빈 시안을 자동 생성하고 그 시안에 스타일을 저장한다. 이후 첫 Design Brief는 shell-fill 규칙으로 같은 시안을 채운다 `[현행 2026-06-30 → 15.154]`
+  - `[CREATE_DESIGN_SPEC: ...]` → 현재 아이디어의 디자인 스타일 정의/교체. Design Brief가 아직 없어도 세션 초반부터 생성할 수 있으며, 현재 아이디어가 없으면 빈 시안을 자동 생성하고 그 시안에 스타일을 저장한다. 이후 첫 Design Brief는 shell-fill 규칙으로 같은 시안을 채운다. 조건부 제안이나 예시 문장 안의 `CREATE_DESIGN_SPEC`는 실행하지 않으며, 과거 대화 컨텍스트로 재투입할 때는 평문형 payload까지 `[디자인 스타일 추가]`로 축약한다 `[현행 2026-07-06 → 15.154/15.192]`
   - `[GENERATE_MOCKUP: ...]` → Stitch 목업 생성
   - `[EDIT_MOCKUP: ...]` → 목업 수정
   - `[FETCH_REFERENCES: ...]` → OpenAI web_search_preview 검색
@@ -4033,3 +4033,11 @@ type ChatPlan = {
 - 수정: `/api/chat`의 profile memory compact JSON을 다시 단일 before-session context(`episodic`/`semantic`)로 통일했다. 각 item의 `beforeSessionScope`와 `sourceMissionId`는 보존하므로 모델은 current/prior 출처를 구분할 수 있다.
 - 수정: `chatProfileMemoryPrompt`에서 prior를 semantic-only로 제한하거나 현재 미션 조건으로 쓰지 말라는 강한 문구를 제거했다. 대신 current/prior source metadata를 참고하되 현재 user request와 mission context를 존중하라는 일반 지시로 완화했다.
 - 유지: current mission before-session setup은 retrieval 여부와 무관하게 항상 prompt에 포함되고, top-k retrieved memory와 id가 겹치면 prompt 삽입에서 중복 제거한다.
+
+### 15.192 조건부 디자인 스타일 제안의 액션 태그 실행 차단 `[implemented 2026-07-06]`
+
+- 배경: assistant가 "원하시면 디자인 스타일 형태로 정리해드릴게요"처럼 조건부 제안을 해야 하는 턴에서 `[CREATE_DESIGN_SPEC: ...]`를 예시처럼 함께 출력해 실제 디자인 스타일 생성/저장 액션으로 실행되는 사례가 있었다. 평문 payload 형태는 과거 대화 컨텍스트 정리에서도 완전히 축약되지 않아 재유입될 수 있었다.
+- 수정: `CHAT_AGENT_BASE_PROMPT`와 `CHAT_DESIGN_SPEC_ACTION_PROMPT`에 조건부 제안, 예시, preview, template 안에는 bracket action tag를 절대 넣지 말라는 규칙을 추가했다.
+- 수정: `/main/[missionId]`의 완료 응답 정규화 단계에서 `원하시면`, `필요하면`, `if you want` 등 조건부 제안 문맥에 붙은 `CREATE_DESIGN_SPEC` 블록을 저장/파싱 전에 제거한다. 함께 나온 가짜 상태 문구 `디자인 스타일 추가됨`도 제거해 최종 chat bubble이 일반 제안 문장으로 남게 했다.
+- 수정: `cleanMessageContentForModel()`은 JSON payload뿐 아니라 평문/부분 `CREATE_DESIGN_SPEC` 블록도 균형 스캐너로 `[디자인 스타일 추가]`로 축약한다. ToolActionChip 렌더링은 액션 블록 직전의 중복 상태 라벨을 숨겨 chat bubble에 같은 상태가 텍스트와 chip으로 이중 표시되지 않게 했다.
+- 문서: 1~9장 Current Snapshot의 액션 완료 보장과 `CREATE_DESIGN_SPEC` 계약에 조건부 제안 예외와 컨텍스트 축약 계약을 반영했다.

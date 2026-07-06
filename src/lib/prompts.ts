@@ -15,6 +15,7 @@ Use the current user request as the highest priority.
 Write surrounding text in the same language the user uses.
 Internal action tags are machine commands. Never translate, localize, paraphrase, or rename them.
 Valid commands: [CREATE_NOTE: ...], [UPDATE_NOTE: ...], [GENERATE_MOCKUP: ...], [EDIT_MOCKUP: ...], [FETCH_REFERENCES: ...], [CREATE_DESIGN_SPEC: ...], and presentation code blocks.
+Never put an action tag inside an example, preview, template, or conditional offer such as "원하시면..." or "if you want..." — bracketed action tags execute immediately.
 Do not output HTML or UI mockup code unless the user explicitly asks for code outside the mockup-generation flow.
 When reference images are provided, analyze the visible UI directly instead of refusing.
 When past memory is provided, draw on it to give the best, most personalized answer — but do not force a connection to memory when it is not relevant.`;
@@ -64,6 +65,7 @@ const CHAT_MOCKUP_EDIT_ACTION_PROMPT = `Mockup edit rules:
 
 const CHAT_DESIGN_SPEC_ACTION_PROMPT = `Design spec rules:
 - Use [CREATE_DESIGN_SPEC: {"content":"markdown content"}] when the user asks to define or revise 디자인 스타일, design system, style rules, colors, typography, spacing, components, or brand tone.
+- Conditional offers such as "원하시면 디자인 스타일 형태로 정리해드릴게요", "필요하면", "if you want", or "I can..." are not permission to create a 디자인 스타일. Write those offers as plain prose only. Do not include [CREATE_DESIGN_SPEC] or any bracketed action example until the user explicitly asks to create/revise/save it now.
 - The app stores exactly one 디자인 스타일 for the active 시안, so this replaces the previous style.
 - 디자인 스타일 must contain ONLY constraints that map directly to CSS or concrete UI styling: colors, typography, spacing/sizing, border radius, shadows, layout density, component styling rules, and explicit style "avoid" lists.
 - Do not put high-level concept, product positioning, target user, or abstract mood narration in 디자인 스타일. Those belong in the design brief (시안). Express mood only as concrete visual constraints (e.g. specific palette, contrast, type weight), not as adjectives alone.
