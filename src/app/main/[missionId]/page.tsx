@@ -16,6 +16,7 @@ import {
   collection,
   doc,
   getDoc,
+  getDocs,
   setDoc,
   onSnapshot,
 } from "firebase/firestore";
@@ -2421,6 +2422,12 @@ export default function MainScreenPage() {
   const [editMode, setEditMode] = useState(false);
   const [device, setDevice] = useState<Device>("desktop");
   const [missionTitle, setMissionTitle] = useState("");
+  // Global mission id → title map, so review side-panel memory items from prior
+  // missions show real names instead of the `미션 {id.slice(0,10)}` fallback
+  // (mirrors the /agent page).
+  const [missionTitleById, setMissionTitleById] = useState<
+    Record<string, string>
+  >({});
   const [missionBrief, setMissionBrief] = useState("");
   const [isMissionContextReady, setIsMissionContextReady] = useState(false);
   const [sessionLoaded, setSessionLoaded] = useState(false);
@@ -3593,6 +3600,29 @@ export default function MainScreenPage() {
     reviewMemoryIdsKey,
     reviewMemoryIds,
   ]);
+
+  // Load the global mission title map once the memory diff / review view can be
+  // shown, so prior-mission memory items render real names. Mirrors /agent.
+  useEffect(() => {
+    if (!isMemoryDiffOpen && !showReviewAnnotations) return;
+    if (Object.keys(missionTitleById).length > 0) return;
+    let cancelled = false;
+    getDocs(collection(db, "missions"))
+      .then((snap) => {
+        if (cancelled) return;
+        setMissionTitleById(
+          Object.fromEntries(
+            snap.docs.map((d) => [d.id, String(d.data()?.title ?? d.id)]),
+          ),
+        );
+      })
+      .catch((err) => {
+        console.error("[main] failed to load mission titles", err);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isMemoryDiffOpen, showReviewAnnotations, missionTitleById]);
 
   useEffect(() => {
     if (!showReviewAnnotations || !targetSessionUserId || !missionId) {
@@ -7227,6 +7257,13 @@ export default function MainScreenPage() {
           setSelectedGraphMemoryId(target.id);
         }
       };
+      const addedCountByClusterId: Record<string, number> = {};
+      for (const cluster of graphClusters) {
+        const added = cluster.itemIds.filter((id) =>
+          promotedIds.has(id),
+        ).length;
+        if (added > 0) addedCountByClusterId[cluster.id] = added;
+      }
       return (
         <div className="flex h-full w-full min-h-0 gap-4 overflow-hidden">
           <MemoryClusterList
@@ -7235,6 +7272,7 @@ export default function MainScreenPage() {
             generatedAt={null}
             hasStaleCache={false}
             isRegenerating={false}
+            addedCountByClusterId={addedCountByClusterId}
             onSelectCluster={(clusterId) => {
               setSelectedSessionGraphClusterId(clusterId);
               setSelectedGraphMemoryId(null);
@@ -7263,7 +7301,10 @@ export default function MainScreenPage() {
                 if (originMissionId === missionId && missionTitle) {
                   return missionTitle;
                 }
-                return `미션 ${originMissionId.slice(0, 10)}`;
+                return (
+                  missionTitleById[originMissionId] ??
+                  `${originMissionId.slice(0, 10)}…`
+                );
               }}
               mentionMode={memoryReviewMentionMode}
               onMentionCluster={(selected) =>
@@ -7738,7 +7779,11 @@ export default function MainScreenPage() {
               <div className="mt-6 flex gap-2">
                 <button
                   type="button"
-                  onClick={openSessionReview}
+                  onClick={() => {
+                    setIsCompletingSession(false);
+                    setSessionCompletionReady(false);
+                    setIsMemoryDiffOpen(true);
+                  }}
                   className="flex-1 rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-slate-700"
                 >
                   리뷰 보기

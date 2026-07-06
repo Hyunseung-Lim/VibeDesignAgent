@@ -50,6 +50,9 @@ type MemoryClusterListProps = {
   presentation?: "default" | "review";
   nodeCount?: number;
   edgeCount?: number;
+  // Per-cluster count of nodes newly added in this session. Rendered as "+n"
+  // next to the cluster; omitted when 0/undefined.
+  addedCountByClusterId?: Record<string, number>;
 };
 
 export function MemoryClusterList({
@@ -65,6 +68,7 @@ export function MemoryClusterList({
   presentation = "default",
   nodeCount,
   edgeCount,
+  addedCountByClusterId,
 }: MemoryClusterListProps) {
   const reviewPresentation = presentation === "review";
   const [collapsed, setCollapsed] = useState(() =>
@@ -195,6 +199,7 @@ export function MemoryClusterList({
         {clusters.map((cluster, index) => {
           const selected = selectedClusterId === cluster.id;
           const color = memoryClusterColor(index);
+          const addedCount = addedCountByClusterId?.[cluster.id] ?? 0;
           if (reviewPresentation) {
             return (
               <button
@@ -232,10 +237,18 @@ export function MemoryClusterList({
                 >
                   {cluster.count}
                 </span>
-                <span className="flex min-w-0 flex-1 items-center px-2.5 py-2">
-                  <span className="line-clamp-2 text-[13px] font-semibold leading-[18px]">
+                <span className="flex min-w-0 flex-1 items-center gap-2 px-2.5 py-2">
+                  <span className="line-clamp-2 min-w-0 flex-1 text-[13px] font-semibold leading-[18px]">
                     {cluster.label}
                   </span>
+                  {addedCount > 0 ? (
+                    <span
+                      className="shrink-0 rounded-full bg-indigo-100 px-1.5 py-0.5 text-[10px] font-bold text-indigo-700"
+                      title={`이번 세션에 ${addedCount}개 노드 추가됨`}
+                    >
+                      +{addedCount}
+                    </span>
+                  ) : null}
                 </span>
               </button>
             );

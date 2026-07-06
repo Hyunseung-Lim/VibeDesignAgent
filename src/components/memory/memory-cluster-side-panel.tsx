@@ -261,8 +261,17 @@ export function MemoryClusterSidePanel({
                         }`}
                       >
                       <div className="mb-2 flex items-center justify-between gap-3 text-[11px] text-muted-foreground">
-                        <span className="min-w-0 truncate font-medium text-slate-500">
-                          {missionLabel}
+                        <span className="flex min-w-0 items-center gap-1.5">
+                          {isNewThisSession ? (
+                            <span
+                              className="size-2 shrink-0 rounded-full bg-green-500"
+                              title="이번 세션에 생성됨"
+                              aria-hidden="true"
+                            />
+                          ) : null}
+                          <span className="min-w-0 truncate font-medium text-slate-500">
+                            {missionLabel}
+                          </span>
                         </span>
                         {item.timestamp ? (
                           <span className="shrink-0 tabular-nums">

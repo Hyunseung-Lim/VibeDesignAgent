@@ -324,6 +324,28 @@ export function MemoryClusterPage({
     );
   }, [clusterEdges, filteredClusterItems]);
 
+  // Per-cluster count of notes newly created in the selected session tab. "new"
+  // matches the graph's "promoted" ring: memories authored in the selected
+  // mission itself (highlightMissionId), not the carried-over base. "전체"/no-
+  // session tabs have no single mission, so every cluster shows nothing.
+  const addedCountByClusterId = useMemo(() => {
+    const result: Record<string, number> = {};
+    if (!highlightMissionId) return result;
+    const newMemoryIdSet = new Set(
+      memories
+        .filter((memory) => memory.source?.missionId === highlightMissionId)
+        .map((memory) => memory.id),
+    );
+    if (newMemoryIdSet.size === 0) return result;
+    for (const cluster of filteredClusters) {
+      const added = cluster.itemIds.filter((id) =>
+        newMemoryIdSet.has(id),
+      ).length;
+      if (added > 0) result[cluster.id] = added;
+    }
+    return result;
+  }, [filteredClusters, memories, highlightMissionId]);
+
   // Keep the selected cluster valid whenever the session filter narrows the list.
   useEffect(() => {
     setSelectedClusterId((current) =>
@@ -448,6 +470,7 @@ export function MemoryClusterPage({
               presentation="review"
               nodeCount={filteredClusterItems.length}
               edgeCount={filteredClusterEdges.length}
+              addedCountByClusterId={addedCountByClusterId}
             />
 
             <div className="flex min-w-0 flex-1 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
