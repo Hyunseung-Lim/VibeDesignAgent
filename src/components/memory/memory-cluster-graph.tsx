@@ -12,7 +12,10 @@ import { ZoomOutIcon, ZoomInIcon, MaximizeIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { memoryClusterColor } from "@/components/memory/memory-cluster-colors";
-import type { ClusterGraphEdge } from "@/components/memory/memory-cluster-types";
+import type {
+  ClusterGraphEdge,
+  MemorySource,
+} from "@/components/memory/memory-cluster-types";
 import { visibleMemoryActionLabels } from "@/components/memory/memory-action-labels";
 
 type MemoryCluster = {
@@ -42,7 +45,7 @@ type ClusterableMemoryItem = {
   keyword: string[];
   keywords: string[];
   row?: {
-    source?: { missionId?: string; draftId?: string };
+    source?: MemorySource;
     embedding?: number[];
   };
 };
@@ -119,9 +122,21 @@ function defaultMissionLabel(missionId: string | null | undefined) {
   return `미션 ${missionId.slice(0, 10)}`;
 }
 
+function beforeSessionSourceText(item: ClusterableMemoryItem) {
+  return (item.row?.source?.sourceText ?? "").trim();
+}
+
 function userInputText(item: ClusterableMemoryItem) {
+  const sourceText = beforeSessionSourceText(item);
+  if (sourceText) return sourceText;
   const raw = (item.input || "").trim().replace(/^user input:\s*/i, "").trim();
   return raw || item.episodic || item.episode || item.semantic || item.id;
+}
+
+function originalInputText(item: ClusterableMemoryItem) {
+  const sourceText = beforeSessionSourceText(item);
+  if (sourceText) return sourceText;
+  return (item.input || "").trim().replace(/^user input:\s*/i, "").trim();
 }
 
 function isFinalDesignSelection(item: ClusterableMemoryItem) {
@@ -794,6 +809,9 @@ export default function MemoryClusterGraph({
   const selectedPointActionLabels = visibleMemoryActionLabels(
     selectedPoint?.item.action,
   );
+  const selectedPointInput = selectedPoint
+    ? originalInputText(selectedPoint.item)
+    : "";
   const hoveredPoint = hoveredPointId ? pointById.get(hoveredPointId) : null;
   const hoverCardLeft = clamp(
     hoverPosition.x + 14,
@@ -1009,7 +1027,7 @@ export default function MemoryClusterGraph({
                   ? "Semantic memory"
                   : selectedPoint.item.episode || selectedPoint.item.episodic
                     ? "Episodic memory"
-                    : selectedPoint.item.input
+                    : selectedPointInput
                       ? "User input"
                       : "Memory node"}
               </p>
@@ -1057,9 +1075,9 @@ export default function MemoryClusterGraph({
                 {selectedPoint.item.episode || selectedPoint.item.episodic}
               </p>
             ) : null}
-            {selectedPoint.item.input ? (
+            {selectedPointInput ? (
               <p className="wrap-anywhere rounded-lg bg-slate-50 px-3 py-2 leading-relaxed text-slate-500">
-                Input: {selectedPoint.item.input}
+                Input: {selectedPointInput}
               </p>
             ) : null}
             {selectedPoint.item.keywords.length > 0 ? (

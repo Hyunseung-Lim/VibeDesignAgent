@@ -1,3 +1,10 @@
+export type MemorySource = {
+  missionId?: string;
+  draftId?: string;
+  missionTitle?: string;
+  sourceText?: string;
+};
+
 export type MemoryItem = {
   id: string;
   episodic: string | null;
@@ -13,7 +20,7 @@ export type MemoryItem = {
   timestamp: number | null;
   archivedAt: number | null;
   archiveReason: string | null;
-  source: { missionId?: string; draftId?: string; missionTitle?: string } | null;
+  source: MemorySource | null;
 };
 
 export type MemoryCluster = {
@@ -48,6 +55,6 @@ export type ClusterGraphItem = {
   keyword: string[];
   keywords: string[];
   row: {
-    source?: { missionId?: string; draftId?: string; missionTitle?: string };
+    source?: MemorySource;
   };
 };

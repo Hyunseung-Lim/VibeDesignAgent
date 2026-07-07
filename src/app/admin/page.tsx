@@ -112,7 +112,7 @@ type AdminMemoryRow = {
     archivedAt?: number | null;
   }>;
   agentActionCategory?: string;
-  source?: { missionId?: string; draftId?: string };
+  source?: { missionId?: string; draftId?: string; sourceText?: string };
 };
 
 type MemoryCounts = Record<string, number>;

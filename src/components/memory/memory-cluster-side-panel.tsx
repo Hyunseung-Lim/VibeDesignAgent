@@ -79,10 +79,16 @@ function MemoryField({
   );
 }
 
+function beforeSessionSourceText(item: ClusterGraphItem) {
+  return (item.row.source?.sourceText ?? "").trim();
+}
+
 // The genuine user input only - stored input is sometimes prefixed with
-// "user input:" or carries action/reference wrappers. Strip those so both the
-// card headline and the Original input field show just what the user typed.
+// "user input:" or carries action/reference wrappers. Strip those so the card
+// headline shows just what the user typed.
 function userInputText(item: ClusterGraphItem) {
+  const sourceText = beforeSessionSourceText(item);
+  if (sourceText) return sourceText;
   const raw = (item.input || "").trim().replace(/^user input:\s*/i, "").trim();
   return raw || item.episodic || item.semantic || item.id;
 }
@@ -113,7 +119,7 @@ function memoryHeadlineText(item: ClusterGraphItem) {
 
 function originalInputText(item: ClusterGraphItem) {
   const raw = (item.input || "").trim().replace(/^user input:\s*/i, "").trim();
-  return raw || userInputText(item);
+  return raw || beforeSessionSourceText(item);
 }
 
 function missionIdFor(item: ClusterGraphItem, memory: MemoryItem | null) {
@@ -225,6 +231,7 @@ export function MemoryClusterSidePanel({
                     ? getMissionLabel(missionId)
                     : "미션 출처 없음";
                   const actionLabels = visibleMemoryActionLabels(item.action);
+                  const originalInput = originalInputText(item);
                   return (
                     <div
                       key={item.id}
@@ -341,10 +348,10 @@ export function MemoryClusterSidePanel({
                           {item.episodic ? (
                             <MemoryField label="Episodic" value={item.episodic} />
                           ) : null}
-                          {item.input ? (
+                          {originalInput ? (
                             <MemoryField
                               label="Original input"
-                              value={originalInputText(item)}
+                              value={originalInput}
                             />
                           ) : null}
                           {item.keywords.length > 0 ? (

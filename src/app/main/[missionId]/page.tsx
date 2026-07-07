@@ -275,7 +275,7 @@ type SessionMemoryItem = {
     semantic?: string | null;
     similarity?: number;
   } | null;
-  source?: { missionId?: string; draftId?: string } | null;
+  source?: { missionId?: string; draftId?: string; sourceText?: string } | null;
 };
 
 type ReviewTimelineItem =

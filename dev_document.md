@@ -173,7 +173,7 @@
 - **Prompt 주입 방식**: profile input은 `profile_memories`에 source of truth로 보관한 뒤 derived memory로 쪼개 retrieved memory와 같은 chat context 경로로 들어간다. prompt compact JSON은 before-session memory를 current/prior로 분리하지 않고 `episodic`/`semantic` 배열에 함께 넣되, 각 항목의 `beforeSessionScope`와 `sourceMissionId`는 보존한다. 현재 미션 before-session setup은 retrieval 여부와 무관하게 항상 포함되고, top-k에도 retrieved된 경우 prompt에는 중복 삽입하지 않는다. Prior before-session도 retrieved되면 episodic/semantic 모두 기존처럼 사용할 수 있으며, memory id/weight/similarity는 제외한다 `[현행 2026-07-05 → 15.187/15.190/15.191]`
 - **Legacy**: `GET /api/memory/bootstrap`은 세션 시작 시 memory를 preload하던 구 방식이며, 현재 main client에서는 호출하지 않음
 - **Retrieval 쿼리 구성**: `[user text] + Mission: [parentMissionTitle] + Active idea: [description]` — 선택된 옵션 이름(페르소나 등)은 제외해 임베딩 노이즈 방지
-- **Admin 관측**: researcher가 `/admin/users/[uid]/memory`에서 `/agent`와 동일한 user별 memory cluster graph/list/detail을 확인 가능. detail panel은 그래프 왼쪽에 있고 cluster list는 요약 없이 색상·제목·개수만 표시한다 `[현행 2026-06-27 → 15.130]` `[stale 2026-06-30 → 15.169: cluster list가 main 세션리뷰와 동일한 review presentation(rounded card + 색상 count rail + 접기 rail)로 통일됨]`
+- **Admin 관측**: researcher가 `/admin/users/[uid]/memory`에서 `/agent`와 동일한 user별 memory cluster graph/list/detail을 확인 가능. detail panel은 그래프 왼쪽에 있고 cluster list는 요약 없이 색상·제목·개수만 표시한다 `[현행 2026-06-27 → 15.130]` `[stale 2026-06-30 → 15.169: cluster list가 main 세션리뷰와 동일한 review presentation(rounded card + 색상 count rail + 접기 rail)로 통일됨]` Before-session memory의 detail card 제목은 분리된 `source.sourceText`를 우선 표시하고, `Original input`은 별도 강조 없이 전체 `input` rawMarkdown을 표시한다 `[현행 2026-07-07 → 15.195/15.196]`
 - **Retrieval MVP**: v0.1.2 memory document에 embedding과 `weight` metadata를 저장하고, retrieve된 memory의 weight를 천천히 올림. memory embedding 입력은 clustering과 동일하게 keyword + episodic + semantic + link로 고정하고 원문 interaction input/output은 제외한다. 생성(`/api/memory/complete-session`)과 retrieve 재생성(`/api/memory/retrieve`)의 텍스트 계약이 동일해야 하며, 계약이 바뀌면 `embeddingSource` 태그를 올려(`during_session_record_text_v2`) 기존 embedding을 stale 처리해 재생성한다 `[현행 2026-07-06 → 15.194]`
 - **Forgetting MVP**: low-weight/duplicate 후보를 `archivedAt` 기반으로 soft archive
 
@@ -4058,3 +4058,16 @@ type ChatPlan = {
 - 수정: 텍스트 계약이 바뀌었으므로 interaction embeddingSource 태그를 `during_session_record_text` → `during_session_record_text_v2`로 올리고 `ACCEPTED_EMBEDDING_SOURCES`에서 구 태그를 제외했다. retrieve 시 `ensureV2Embeddings`가 구 태그 embedding을 stale로 보고 새 계약으로 재생성한다.
 - 유지: profile(before-session) embedding 계약(Source + keyword + episodic + semantic)과 `before_session_unit_text` 태그는 그대로 두어 프로필 재생성은 강제하지 않는다.
 - 문서: 4.7 Retrieval MVP 항목에 memory embedding 입력 계약과 embeddingSource 버전업 규칙을 반영했다.
+
+### 15.195 Before-session original input unit 강조 `[implemented 2026-07-07]` `[stale 2026-07-07 → 15.196: Original input 안의 unit bold highlight 제거]`
+
+- 배경(Notion `세션 전에 입력한 내용 쪼개기`): before-session profile memory는 저장 시 여러 unit으로 분리되지만, memory detail panel의 `Original input`은 각 memory document의 `input`에 저장된 전체 rawMarkdown을 그대로 보여줘 어떤 memory가 어느 입력 조각에서 왔는지 구분하기 어려웠다.
+- 원인: `/api/memory/profile`은 분리된 원문 조각을 `source.sourceText`에 저장하고, 호환용 전체 원문을 `input`에 저장한다. 하지만 `MemoryClusterSidePanel`은 before-session 여부와 무관하게 `item.input`만 카드 제목과 `Original input`에 사용했다.
+- 수정: memory source 타입에 `sourceText`를 포함하고, before-session memory detail card의 제목은 `source.sourceText`를 우선 표시한다. `Original input` 필드는 전체 `input` rawMarkdown을 유지하되, 그 안에서 `source.sourceText`에 해당하는 분리 unit만 굵게 표시한다. `input`이 없으면 `sourceText`로 fallback한다.
+- 유지: Firestore schema와 profile memory 생성/embedding 계약은 바꾸지 않았다. 이미 저장된 before-session memory도 `source.sourceText`가 있으면 새 표시 규칙을 바로 탄다.
+
+### 15.196 Before-session original input 강조 제거 `[implemented 2026-07-07]`
+
+- 배경(Page Feedback): `Original input` 안에서 쪼개진 source unit을 굵게 표시하는 효과가 기대와 맞지 않았다.
+- 수정: `MemoryClusterSidePanel`의 `Original input`은 다시 plain text로만 렌더링한다. Before-session memory card 제목은 `source.sourceText` 우선 표시를 유지하고, `Original input`은 전체 `input` rawMarkdown을 그대로 보여준다.
+- 유지: graph tooltip/detail에서 before-session headline/input fallback에 `source.sourceText`를 쓰는 타입 보강은 유지한다.
