@@ -122,8 +122,10 @@
 - **채팅 컨텍스트**: 미션 제목/브리핑, 현재 아이디어 내용, 기존 목업 HTML, 선택된 UI 요소, 인용 레퍼런스, 대화 히스토리
 - **missionBrief 보완 주입**: 신규 목업 생성 시 아이디어 내용이 300자 미만으로 빈약하면 `missionBrief`를 `buildMockupPrompt`에 직접 주입해 제품 데이터가 Stitch에 전달되도록 보장 (수정 시에는 주입 안 함)
 - **이미지 주도 생성**: 사용자가 참고 이미지를 첨부/붙여넣거나(Phase 1) 신규 목업 요청에 URL을 주면(Phase 2 — 채팅 메시지 내 URL 또는 인용 레퍼런스의 URL), 텍스트 design.md 단계 없이 그 화면을 Stitch에 `upload`→`edit`로 재구성해 목업을 만들고 결과에서 design.md를 역추출·저장한다. URL은 서버가 스크린샷(Microlink 무키, `captureScreenshot` 추상화)으로 캡처하며 첨부 이미지가 우선. 모바일 목업이면 URL 캡처도 390×844 모바일 viewport, 데스크톱이면 1280×900 viewport로 찍는다. 이미지/URL이 있으면 "디자인 스타일 필수" 게이트를 우회한다. `src/app/api/stitch/route.ts`의 `isImageLed` 분기 참고 `[현행 2026-06-15 → 15.81/15.83]`
-- **콘텐츠 자산 주도 생성(asset-led)**: 미션 옵션에 어드민이 등록한 콘텐츠 이미지(`assetImages`, 실제 상품 사진·UI 캡쳐)가 있으면 신규 목업 생성 시 그 URL과 설명(`note`)을 `/api/stitch`로 넘겨, 서버가 다운로드→`upload`→`edit`하면서 asset manifest와 함께 "이 이미지들을 그대로 콘텐츠로 박아 넣어라"(`assetImageEmbedPrompt`)로 생성한다. 이미지 주도 생성과 달리 이미지를 스타일로 재구성하지 않고 콘텐츠 자산으로 보존하며, 레이아웃·스타일은 brief와 디자인 시스템을 따른다. 그래서 디자인 스타일을 미리 적용하고 결과 기반 design.md 역추출은 하지 않는다. 사용자가 그 턴에 스타일 이미지/URL을 첨부하면 그쪽(isImageLed)이 우선. `src/app/api/stitch/route.ts`의 `isAssetLed` 분기 참고 `[현행 2026-06-18 → 15.89/15.93]`
+- **콘텐츠 자산 주도 생성(asset-led)**: 미션 옵션에 어드민이 등록한 콘텐츠 이미지(`assetImages`, 실제 상품 사진·UI 캡쳐)가 있으면 신규 목업 생성 시 그 Storage `path`/URL과 설명(`note`)을 `/api/stitch`로 넘긴다. 서버는 브라우저용 `/api/mission-assets` 프록시를 다시 fetch하지 않고 `mission-assets/` Storage object를 직접 다운로드한 뒤 `upload`→`edit`하면서 asset manifest와 함께 "이 이미지들을 그대로 콘텐츠로 박아 넣어라"(`assetImageEmbedPrompt`)로 생성한다. 만약 Stitch `upload`/`edit_screens`가 인증 경계에서 실패하면 목업 전체를 실패시키지 않고, asset URL을 `img src`에 직접 쓰라는 텍스트 생성 fallback으로 전환한다. 이 fallback도 현재 credential로 실패하면 API key 클라이언트로 새 Stitch project를 만들어 URL 텍스트 생성만 재시도한다. API key 텍스트 생성까지 인증 실패하면 OpenAI가 asset URL을 그대로 쓰는 standalone HTML을 생성해 반환하고, 이 결과는 실제 Stitch screen이 아니므로 `screenId`/`projectId` 연결 없이 저장된다. fallback project에는 기존 design system이 적용되지 않았으므로 응답의 designSystemId/style hash는 비운다. 이미지 주도 생성과 달리 이미지를 스타일로 재구성하지 않고 콘텐츠 자산으로 보존하며, 레이아웃·스타일은 brief와 디자인 시스템을 따른다. 그래서 디자인 스타일을 미리 적용하고 결과 기반 design.md 역추출은 하지 않는다. 사용자가 그 턴에 스타일 이미지/URL을 첨부하면 그쪽(isImageLed)이 우선. `src/app/api/stitch/route.ts`의 `isAssetLed` 분기 참고 `[현행 2026-07-09 → 15.89/15.93]`
+- **Stitch 인증 계약**: 배포 앱에서 사용자의 Google 로그인 계정은 Stitch credential로 쓰지 않는다. `/api/stitch`는 서버 소유 랩 계정 credential 하나로 모든 Stitch 호출을 통일한다. 공식 `@google/stitch-sdk` 계약 기준으로 `STITCH_API_KEY`가 1순위 인증이고, OAuth는 `STITCH_ACCESS_TOKEN` + `GOOGLE_CLOUD_PROJECT` 조합의 대안이다. 여기서 `STITCH_API_KEY`는 Google Cloud Console API key가 아니라 Stitch Settings/API key 화면에서 생성한 Stitch API key다. 서버 helper는 API key가 있으면 먼저 `X-Goog-Api-Key` 경로를 쓰고, API key가 없을 때만 refresh-token OAuth/ADC/static access token을 시도한다. Stitch quota/project id는 Firebase와 분리해 `STITCH_GOOGLE_CLOUD_PROJECT`(없으면 `GOOGLE_CLOUD_PROJECT`, 로컬 ADC는 ADC `quota_project_id`)를 사용한다. 로컬 임시 테스트는 `STITCH_ACCESS_TOKEN` + Stitch project id도 가능하지만 배포 기본값은 Stitch API key다. 서비스 계정 OAuth는 MCP 연결/프로젝트 조회에는 성공해도 `update_design_system`/`edit_screens` 내부 호출에서 인증 누락으로 실패하는 것이 확인되어 Stitch edit 계열 인증 후보로 쓰지 않는다 `[현행 2026-07-09]`
 - **액션/화면 완료 보장**: `CREATE_DESIGN_SPEC`는 JSON 뒤 닫는 대괄호가 빠지거나 일반 마크다운 payload로 와도 균형 스캔과 loose parser로 복구하며, 복구 불가능하면 영구적인 작성 중 상태 대신 명시적 실패로 표시한다. 단, assistant가 `원하시면...` 같은 조건부 제안 문맥에서 `CREATE_DESIGN_SPEC`를 예시/미리보기처럼 출력한 경우에는 실행 명령으로 저장하지 않고 화면에서도 제거한다. Stitch가 screen metadata만 먼저 반환하면 HTML을 재조회한 뒤 아트보드를 확정하고, 저장된 screen의 HTML 복원 중에는 빈 iframe 대신 로딩/실패 상태를 표시한다. `src/lib/session/chat-content.ts`와 `src/app/main/[missionId]/page.tsx`를 직접 확인 `[현행 2026-07-06 → 15.97/15.192]`
+- **Stitch 일시 실패 복구**: `edit_screens`, Stitch 이미지 업로드(`screens:batchCreate`), mission asset Storage 다운로드가 `service unavailable`, timeout, 429/5xx 등 일시 오류를 반환하면 `/api/stitch`가 짧은 backoff로 재시도한다. 업로드 기반 이미지 주도/asset-led 생성도 SDK의 `screen.edit()` 대신 동일한 `editScreen` 복구 경로를 타며, 업로드된 reference screen을 최종 결과 후보로 오인하지 않도록 업로드 screen id를 recovery 기준에 포함한다 `[현행 2026-07-09]`
 - **캔버스**: 드래그 패닝, 휠 줌, Fit 버튼, 확대(fullscreen) 모드. 선택 스크립트는 iframe HTML에 항상 주입하고, 편집 모드 토글은 pointer event와 선택 해제 메시지로 제어해 iframe `srcDoc` reload를 피한다. 동적 문서 높이를 측정할 때 원본 `html/body` height를 덮어쓰지 않고, viewport 단위와 `h-screen` 계열만 artboard device 크기에 고정해 원본/Final Design과 같은 첫 화면 레이아웃을 보존한다. 또한 iframe이 아직 device 높이일 때(= 첫 높이 보고 전에) vh를 쓰는 요소(예: 컨테이너 h-[80vh])와 모든 이미지의 box를 인라인 px(!important)로 고정한다. 인라인 선언이 클래스 규칙을 specificity로 이기므로 Tailwind Play CDN의 스타일시트 재생성과 무관하게 유지되고, iframe이 전체 문서 높이로 커져도 full-bleed 이미지가 늘어나거나 vh 컨테이너가 부풀어 높이가 발산하는 피드백 루프가 생기지 않는다(box와 iframe 높이를 분리). `src/lib/session/mockup-html.ts`의 `injectHeightReporter` 참고 `[현행 2026-06-24 → 15.78/15.113/15.121]`
 - **편집 모드**: 특정 UI 요소 클릭 선택 → `[EDIT_MOCKUP: {prompt}]`로 수정. 선택 요소가 있는 상태에서 "크게/색/문구/삭제" 등 짧은 타깃 편집 요청이 오면 planner 판단과 무관하게 현재 목업 HTML과 선택 요소 컨텍스트를 함께 주입한다 `[현행 2026-06-15 → 15.77]`
 - Stitch edit가 기존 screen을 mutate하지 않고 새 screen을 만들면 기존 artboard를 덮어쓰지 않고 새 artboard로 추가한 뒤 active로 전환한다 `[현행 2026-06-15 → 15.79]`
@@ -333,8 +335,16 @@ type Idea = {
 ## 9. 환경 변수 (`.env`)
 
 ```
-STITCH_API_KEY
+STITCH_API_KEY # Stitch Settings/API key value, not a Google Cloud Console API key
+STITCH_OAUTH_REFRESH_TOKEN # optional Stitch user OAuth refresh token for the server-owned lab account
+STITCH_OAUTH_CLIENT_ID
+STITCH_OAUTH_CLIENT_SECRET
+STITCH_OAUTH_ADC_PATH # optional local path to application_default_credentials.json
+STITCH_ACCESS_TOKEN # optional local temporary Stitch user OAuth override
+STITCH_GOOGLE_CLOUD_PROJECT # Stitch OAuth quota project, separate from Firebase
+GOOGLE_CLOUD_PROJECT # optional fallback for Stitch OAuth quota project
 OPENAI_API_KEY
+OPENAI_STITCH_FALLBACK_MODEL # optional, default gpt-5.4-mini
 CHAT_RESPONSE_PROVIDER # optional: openai | anthropic
 OPENAI_CHAT_MODEL # optional, default gpt-5.4
 ANTHROPIC_API_KEY # required when CHAT_RESPONSE_PROVIDER=anthropic

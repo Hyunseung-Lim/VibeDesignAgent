@@ -2310,7 +2310,10 @@ function compareTimelineItems(a: ReviewTimelineItem, b: ReviewTimelineItem) {
 async function stitchResponseError(response: Response) {
   const data = await response.clone().json().catch(() => null);
   if (data?.code === "stitch-auth") {
-    return "Stitch 인증 정보가 만료되었거나 유효하지 않습니다. 관리자에게 STITCH_API_KEY 갱신을 요청해주세요.";
+    return "Stitch 인증 정보가 만료되었거나 유효하지 않습니다. 서버의 Stitch 사용자 OAuth 설정을 확인해주세요.";
+  }
+  if (data?.code === "stitch-oauth-required") {
+    return "이 Stitch 작업은 edit_screens를 사용하므로 사용자 OAuth 인증이 필요합니다. 서버의 STITCH_OAUTH_REFRESH_TOKEN 또는 STITCH_ACCESS_TOKEN 설정을 확인해주세요.";
   }
   if (typeof data?.error === "string") return data.error;
   const text = await response.text().catch(() => "");
@@ -5572,6 +5575,7 @@ export default function MainScreenPage() {
                   activeOption?.assetImages?.length
                     ? activeOption.assetImages.map((image) => ({
                         url: image.url,
+                        path: image.path,
                         note: image.note,
                       }))
                     : undefined,

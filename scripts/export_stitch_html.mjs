@@ -85,15 +85,34 @@ function collectScreens(sessions) {
 
 await loadDotenv();
 
-if (!process.env.STITCH_API_KEY) {
-  console.log("Stitch HTML export skipped: STITCH_API_KEY is not set.");
+function envValue(name) {
+  const value = process.env[name]?.trim();
+  return value || undefined;
+}
+
+function stitchConfig() {
+  const accessToken = envValue("STITCH_ACCESS_TOKEN");
+  const projectId = envValue("STITCH_GOOGLE_CLOUD_PROJECT") || envValue("GOOGLE_CLOUD_PROJECT");
+  if (accessToken && projectId) return { accessToken, projectId };
+
+  const apiKey = envValue("STITCH_API_KEY");
+  if (apiKey) return { apiKey };
+
+  return null;
+}
+
+const authConfig = stitchConfig();
+if (!authConfig) {
+  console.log(
+    "Stitch HTML export skipped: set STITCH_API_KEY or STITCH_ACCESS_TOKEN with GOOGLE_CLOUD_PROJECT.",
+  );
   process.exit(0);
 }
 
 let sessions;
 try {
   sessions = await readJson(SESSIONS_PATH);
-} catch (error) {
+} catch {
   console.log(`Stitch HTML export skipped: cannot read ${SESSIONS_PATH}.`);
   process.exit(0);
 }
@@ -106,7 +125,7 @@ if (screens.length === 0) {
 
 await fs.mkdir(OUTPUT_DIR, { recursive: true });
 
-const client = new StitchToolClient({ apiKey: process.env.STITCH_API_KEY });
+const client = new StitchToolClient(authConfig);
 const stitchSdk = new Stitch(client);
 const manifest = [];
 
