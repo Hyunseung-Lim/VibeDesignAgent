@@ -1326,6 +1326,7 @@ export async function POST(request: Request) {
           promptPlan,
           promptPlanFallback,
           selectedContextKeys,
+          rawPromptActual: rawPromptInput,
           rawPrompt,
           rawPromptSanitization,
           rawResponseMeta: meta,

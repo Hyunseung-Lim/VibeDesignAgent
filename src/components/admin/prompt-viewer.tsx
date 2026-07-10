@@ -5,6 +5,7 @@ import { XIcon } from "lucide-react";
 
 interface PromptViewerProps {
   turnId: string;
+  rawPromptActual?: unknown;
   rawPrompt: unknown;
   rawPromptSanitization?: unknown;
   rawResponseMeta?: unknown;
@@ -15,9 +16,10 @@ function stringifyPromptJson(value: unknown) {
   return JSON.stringify(value, null, 2) ?? "null";
 }
 
-/** Admin-only modal that shows the sanitized raw prompt sent for a chat turn. */
+/** Admin-only modal that shows the raw prompt sent for a chat turn. */
 export function PromptViewer({
   turnId,
+  rawPromptActual,
   rawPrompt,
   rawPromptSanitization,
   rawResponseMeta,
@@ -52,12 +54,22 @@ export function PromptViewer({
           <div className="space-y-4">
             <section>
               <p className="mb-2 text-xs font-semibold uppercase text-slate-400">
-                Sanitized raw prompt
+                Actual prompt sent to model
               </p>
               <pre className="max-h-[46vh] overflow-y-auto whitespace-pre-wrap wrap-break-word rounded-xl bg-slate-950 p-4 text-xs leading-relaxed text-slate-100">
-                {stringifyPromptJson(rawPrompt)}
+                {stringifyPromptJson(rawPromptActual ?? rawPrompt)}
               </pre>
             </section>
+            {rawPromptActual != null && (
+              <section>
+                <p className="mb-2 text-xs font-semibold uppercase text-slate-400">
+                  Sanitized copy
+                </p>
+                <pre className="max-h-48 overflow-y-auto whitespace-pre-wrap wrap-break-word rounded-xl bg-slate-50 p-4 text-xs leading-relaxed text-slate-600">
+                  {stringifyPromptJson(rawPrompt)}
+                </pre>
+              </section>
+            )}
             {rawPromptSanitization != null && (
               <section>
                 <p className="mb-2 text-xs font-semibold uppercase text-slate-400">

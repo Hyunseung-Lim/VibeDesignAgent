@@ -232,6 +232,7 @@ type ReviewTurn = {
     citedTexts?: string[];
     citedReferences?: unknown[];
   };
+  rawPromptActual?: unknown;
   rawPrompt?: unknown;
   rawPromptSanitization?: unknown;
   rawResponseMeta?: unknown;
@@ -2620,6 +2621,7 @@ export default function MainScreenPage() {
   );
   const [rawPromptModal, setRawPromptModal] = useState<{
     turnId: string;
+    rawPromptActual?: unknown;
     rawPrompt: unknown;
     rawPromptSanitization?: unknown;
     rawResponseMeta?: unknown;
@@ -7615,6 +7617,7 @@ export default function MainScreenPage() {
       {rawPromptModal && (
         <PromptViewer
           turnId={rawPromptModal.turnId}
+          rawPromptActual={rawPromptModal.rawPromptActual}
           rawPrompt={rawPromptModal.rawPrompt}
           rawPromptSanitization={rawPromptModal.rawPromptSanitization}
           rawResponseMeta={rawPromptModal.rawResponseMeta}
@@ -8664,7 +8667,8 @@ export default function MainScreenPage() {
                     hasRawPrompt={Boolean(
                       msg.role === "assistant" &&
                         isViewingAsAdmin &&
-                        reviewTurn?.rawPrompt != null,
+                        (reviewTurn?.rawPromptActual != null ||
+                          reviewTurn?.rawPrompt != null),
                     )}
                     hasRetrievalLog={Boolean(
                       msg.role === "assistant" &&
@@ -8721,10 +8725,16 @@ export default function MainScreenPage() {
                       )
                     }
                     onShowRawPrompt={() => {
-                      if (!reviewTurn?.rawPrompt) return;
+                      if (
+                        reviewTurn?.rawPromptActual == null &&
+                        reviewTurn?.rawPrompt == null
+                      ) {
+                        return;
+                      }
                       setRawPromptModal({
                         turnId: reviewTurnId,
-                        rawPrompt: reviewTurn.rawPrompt,
+                        rawPromptActual: reviewTurn.rawPromptActual,
+                        rawPrompt: reviewTurn.rawPrompt ?? null,
                         rawPromptSanitization:
                           reviewTurn.rawPromptSanitization,
                         rawResponseMeta: reviewTurn.rawResponseMeta,

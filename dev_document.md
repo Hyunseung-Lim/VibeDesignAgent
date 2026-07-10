@@ -643,9 +643,9 @@ archiveReason = "low-weight" | "duplicate" | "manual";
   - `turnId`는 assistant message id를 사용한다. 즉 assistant bubble id와 `reviewTurns/{turnId}`를 1:1로 연결한다.
   - `turnId`와 `assistantMessageId`는 문서 id와 중복되므로 문서 필드에는 저장하지 않는다.
   - 사용자용 prompt compact view에는 `missionBrief` 전체를 표시한다.
-  - `rawPrompt`도 1차 구현부터 저장한다.
+  - `rawPromptActual`과 sanitized `rawPrompt`를 1차 구현부터 저장한다.
   - `rawPrompt` 열람은 admin-only debug view로 분리한다.
-  - `rawPrompt` 저장 전 sanitize를 수행하고, 제거된 항목의 흔적은 `rawPromptSanitization`에 남긴다.
+  - `rawPromptActual`은 모델에 보낸 실제 prompt이고, `rawPrompt`는 저장 전 sanitize한 비교/안전용 copy다. 제거된 항목의 흔적은 `rawPromptSanitization`에 남긴다.
   - raw prompt sanitize 대상:
     - API key
     - auth token
@@ -674,7 +674,8 @@ archiveReason = "low-weight" | "duplicate" | "manual";
     citedTexts?: string[],
     citedReferences?: unknown[]
   },
-  rawPrompt?: unknown, // sanitize 후 저장, admin-only 열람
+  rawPromptActual?: unknown, // 모델에 보낸 실제 prompt, admin-only 열람
+  rawPrompt?: unknown, // sanitize 후 저장한 비교/안전용 copy
   rawPromptSanitization?: {
     removedApiKeys?: number,
     removedAuthTokens?: number,
@@ -701,7 +702,7 @@ archiveReason = "low-weight" | "duplicate" | "manual";
 - [x] `POST /api/chat`에서 assistant message id 기반 `reviewTurns/{turnId}` 저장 파이프라인 구현
   - 클라이언트가 `/api/chat`에 Firebase ID token과 `review` metadata를 전달한다.
   - 서버는 인증된 사용자에 한해 `sessions/{uid}/missions/{missionId}/reviewTurns/{assistantMessageId}`에 저장한다.
-  - 저장 대상: retrieved memory, `promptCompact`, sanitized `rawPrompt`, `rawPromptSanitization`, `rawResponseMeta`
+  - 저장 대상: retrieved memory, `promptCompact`, `rawPromptActual`, sanitized `rawPrompt`, `rawPromptSanitization`, `rawResponseMeta`
   - assistant message에는 `reviewTurnId`를 연결 필드로 둔다.
 - rawPrompt admin-only debug view는 1차 사용자 리뷰 구현에서 데이터 저장/API 계약까지만 포함하고, 상세 UI는 별도 admin 개선 단계에서 만든다.
   - 이유: 12.1.3의 핵심은 사용자가 세션과 memory 활용을 이해하는 리뷰 화면이며, rawPrompt debug UI까지 같이 만들면 범위가 커진다.
@@ -724,7 +725,7 @@ archiveReason = "low-weight" | "duplicate" | "manual";
 - `/main/{missionId}?review=1`은 일반 사용자 세션도 읽기 전용으로 열고, 기존 채팅 로그 위에 저장된 `reviewTurns` 데이터를 연결한다.
 - assistant bubble은 `reviewTurnId`/message id로 `reviewTurns/{turnId}`를 찾아 retrieved memory, `weight`, `weightDelta`, `similarity`, source mission을 표시한다.
 - assistant bubble의 `프롬프트 컨텍스트` 토글에서 retrieval query, 미션 설명 전체, 활성 아이디어, 인용 텍스트/레퍼런스를 확인할 수 있다.
-- admin이 리뷰 화면을 열면 assistant bubble의 `Raw prompt 보기` 버튼으로 sanitized `rawPrompt`, sanitize 내역, response meta를 모달에서 확인할 수 있다. 또한 `Retrieval 보기` 버튼으로 `/api/memory/session-summary`가 반환한 turn별 retrieval log(query, retrieved memory, current before-session setup, raw JSON)를 확인할 수 있다 `[현행 2026-07-06 → 15.193]`
+- admin이 리뷰 화면을 열면 assistant bubble의 `Raw prompt 보기` 버튼으로 모델에 보낸 `rawPromptActual`, sanitized copy, sanitize 내역, response meta를 모달에서 확인할 수 있다. 또한 `Retrieval 보기` 버튼으로 `/api/memory/session-summary`가 반환한 turn별 retrieval log(query, retrieved memory, raw JSON)를 확인할 수 있다 `[현행 2026-07-10 → 15.193/15.200]`
 - 리뷰 화면은 `/api/memory/archive-status`로 retrieved memory의 최신 archive 상태를 조회하고, archived memory에는 `archiveReason`, `archivedAt`, duplicate similarity/similarTo 근거를 표시한다.
 
 #### 12.1.4 3단계: 세션 전후 메모리 변화 시각화
@@ -4120,3 +4121,9 @@ type ChatPlan = {
 - 수정: `/api/memory/retrieve`에서 `currentBeforeSessionSetup` 별도 선별/응답을 제거하고, retrieval log의 `currentBeforeSession` policy를 `same_similarity_ranking_no_forced_prompt_inclusion`으로 변경했다. 호환 필드는 빈 배열/count 0으로 남긴다.
 - 수정: `/main/[missionId]`는 `/api/chat`에 넘길 memory context를 retrieved top-k만으로 구성한다. Reference search turn에서도 current before-session memory가 별도 우회하지 않고, retrieved된 경우에만 기존 reference relevance filter를 탄다.
 - 수정: `chatProfileMemoryPrompt` wording을 "retrieved for this turn" 기준으로 바꿔 current/prior before-session memory 모두 retrieved된 경우에만 활용되는 것으로 맞췄다.
+
+### 15.200 Admin actual raw prompt 표시 `[implemented 2026-07-10]`
+
+- 배경(Notion `Sanitized raw prompt 수정`): admin viewAs 리뷰 화면의 `Raw prompt 보기` 모달이 sanitized copy만 보여줘, 실제 모델에 보낸 prompt를 확인할 수 없었다.
+- 수정: `/api/chat`이 `reviewTurns/{turnId}`에 모델 호출에 사용한 원본 `rawPromptActual`을 함께 저장한다. 기존 sanitized `rawPrompt`, `rawPromptSanitization`, `rawResponseMeta`는 유지한다.
+- UI: `PromptViewer`는 admin-only 모달에서 `Actual prompt sent to model`을 먼저 보여주고, `rawPromptActual`이 있는 경우 sanitized copy를 별도 섹션으로 표시한다. 기존 reviewTurn에는 `rawPromptActual`이 없으므로 sanitized `rawPrompt`로 fallback한다.
