@@ -171,8 +171,8 @@
 - **첨부 이미지 시각 선호**: image normalizer는 의도적으로 선호를 추론하지 않으므로, 첨부 이미지가 주도한 목업 생성이 성공해 derivedDesignStyle가 나오면 그 스타일을 `style-image-preference-{turnId}` interactionId(category `style_image_preference`)로 별도 draft에 기록한다. 이번 미션/시안 맥락의 session-scoped evidence로 담고 전역 취향으로 단정하지 않는다 `[현행 2026-06-21 → 15.101]`
 - **확정 시점**: 사용자가 `세션 종료` 버튼을 누르면 `/api/memory/complete-session`에서 draft를 통합해 장기 메모리로 저장
 - **버전 관리**: admin memory modal에서 v0.1.0 / v0.1.1 / v0.1.2를 분리 조회 `[stale 2026-06-12 → 15.51: legacy fallback 제거로 현재 v0.1.2 단일 버전만 사용(MemoryVersionTab = "0.1.2"). v0.1.0/v0.1.1 분리 조회 없음]`
-- **현재 활용**: 각 채팅 turn 직전에 `/api/memory/retrieve`를 호출한다. 현재 미션 before-session memory는 retrieval 여부와 무관하게 `currentBeforeSessionSetup`으로 별도 반환해 prompt에 항상 포함한다. 동시에 current/prior before-session과 during-session memory는 모두 같은 query similarity ranking 후보로 남아, top-k에 실제로 retrieved되면 weight/retrievedCount가 업데이트된다. 응답과 log는 `sourceMissionId`와 `beforeSessionScope`(`current_mission`/`prior_mission`)를 보존한다. 어드민이 `viewAs`로 리뷰 화면을 볼 때 assistant bubble의 `Retrieval 보기` 버튼에서 해당 turn 근처의 retrieval query, retrieved memory, current setup, raw retrieval log JSON을 확인할 수 있다 `[현행 2026-07-06 → 15.187/15.188/15.189/15.190/15.193]`
-- **Prompt 주입 방식**: profile input은 `profile_memories`에 source of truth로 보관한 뒤 derived memory로 쪼개 retrieved memory와 같은 chat context 경로로 들어간다. prompt compact JSON은 before-session memory를 current/prior로 분리하지 않고 `episodic`/`semantic` 배열에 함께 넣되, 각 항목의 `beforeSessionScope`와 `sourceMissionId`는 보존한다. 현재 미션 before-session setup은 retrieval 여부와 무관하게 항상 포함되고, top-k에도 retrieved된 경우 prompt에는 중복 삽입하지 않는다. Prior before-session도 retrieved되면 episodic/semantic 모두 기존처럼 사용할 수 있으며, memory id/weight/similarity는 제외한다 `[현행 2026-07-05 → 15.187/15.190/15.191]`
+- **현재 활용**: 각 채팅 turn 직전에 `/api/memory/retrieve`를 호출한다. Current/prior before-session과 during-session memory는 모두 같은 query similarity ranking 후보이며, 별도 current-session boost나 prompt 강제 포함은 없다. Top-k에 실제로 retrieved된 항목만 prompt에 들어가고 weight/retrievedCount가 업데이트된다. 응답과 log는 `sourceMissionId`와 `beforeSessionScope`(`current_mission`/`prior_mission`)를 보존한다. 어드민이 `viewAs`로 리뷰 화면을 볼 때 assistant bubble의 `Retrieval 보기` 버튼에서 해당 turn 근처의 retrieval query, retrieved memory, raw retrieval log JSON을 확인할 수 있다 `[현행 2026-07-10 → 15.187/15.190/15.193/15.199]`
+- **Prompt 주입 방식**: profile input은 `profile_memories`에 source of truth로 보관한 뒤 derived memory로 쪼개 retrieved memory와 같은 chat context 경로로 들어간다. Prompt compact JSON은 before-session memory를 current/prior로 분리하지 않고 `episodic`/`semantic` 배열에 함께 넣되, 각 항목의 `beforeSessionScope`와 `sourceMissionId`는 보존한다. Current/prior before-session 모두 retrieved된 경우에만 사용할 수 있으며, memory id/weight/similarity는 제외한다 `[현행 2026-07-10 → 15.187/15.190/15.191/15.199]`
 - **Legacy**: `GET /api/memory/bootstrap`은 세션 시작 시 memory를 preload하던 구 방식이며, 현재 main client에서는 호출하지 않음
 - **Retrieval 쿼리 구성**: `[user text] + Mission: [parentMissionTitle] + Active idea: [description]` — 선택된 옵션 이름(페르소나 등)은 제외해 임베딩 노이즈 방지
 - **Admin 관측**: researcher가 `/admin/users/[uid]/memory`에서 `/agent`와 동일한 user별 memory cluster graph/list/detail을 확인 가능. detail panel은 그래프 왼쪽에 있고 cluster list는 요약 없이 색상·제목·개수만 표시한다 `[현행 2026-06-27 → 15.130]` `[stale 2026-06-30 → 15.169: cluster list가 main 세션리뷰와 동일한 review presentation(rounded card + 색상 count rail + 접기 rail)로 통일됨]` Before-session memory의 detail card 제목은 분리된 `source.sourceText`를 우선 표시하고, `Original input`은 별도 강조 없이 전체 `input` rawMarkdown을 표시한다 `[현행 2026-07-07 → 15.195/15.196]`
@@ -4040,7 +4040,7 @@ type ChatPlan = {
 - Prompt 정책: `/api/chat`은 before-session profile memory를 `currentMission`과 `historicalPriorMissions`로 분리해 compact JSON을 만든다. `currentMission`은 episodic+semantic을 유지하고, `historicalPriorMissions`는 semantic-only로 제한한다.
 - Prompt 지시: `chatProfileMemoryPrompt`는 prior/historical memory를 durable preference, constraint, working pattern일 때만 사용하고 현재 미션 요구사항, target user, product domain, deliverable, source constraint, reference-search query term으로 취급하지 말라고 명시한다. 현재 user request나 mission context와 충돌하면 prior memory를 무시한다.
 
-### 15.189 Current before-session setup을 retrieval/weight와 분리 `[implemented 2026-07-05]` `[stale 2026-07-05 → 15.190: current setup은 prompt에 항상 포함하되 retrieval 후보에서도 제외하지 않음]`
+### 15.189 Current before-session setup을 retrieval/weight와 분리 `[implemented 2026-07-05]` `[stale 2026-07-05 → 15.190: current setup은 prompt에 항상 포함하되 retrieval 후보에서도 제외하지 않음]` `[stale 2026-07-10 → 15.199: current setup prompt 강제 포함 제거]`
 
 - 배경: current mission before-session memory는 사용자가 이번 미션 전에 의도적으로 제공한 setup context라 prompt에는 항상 들어가야 한다. 하지만 retrieval top-k에 넣어 매번 weight/retrievedCount를 올리면 "관련 있어서 검색됨"과 "현재 setup이라 항상 포함됨"이 섞여 weight 측정이 왜곡된다.
 - 수정: `/api/memory/retrieve`가 현재 미션 before-session memory 중 최신 `beforeSessionWriteBatchId`를 `currentBeforeSessionSetup`으로 별도 반환한다. 이 항목들은 retrieval ranking, `updateRetrievedWeights`, idle decay 대상에서 제외한다.
@@ -4048,7 +4048,7 @@ type ChatPlan = {
 - 수정: `/main/[missionId]`는 `currentBeforeSessionSetup`을 reference-search memory filter와 무관하게 항상 `memoryContext.semantic`에 합친다. 따라서 레퍼런스 검색 턴에서도 이번 미션 사전 입력은 빠지지 않고, prior/retrieved memory만 reference 관련성 필터를 탄다.
 - 결과: current before-session은 항상 `currentMission` prompt block에 들어가고, prior before-session은 retrieval로 선별된 뒤 `historicalPriorMissions` semantic-only block에 들어간다.
 
-### 15.190 Before-session retrieval ranking 동등화 `[implemented 2026-07-05]`
+### 15.190 Before-session retrieval ranking 동등화 `[implemented 2026-07-05]` `[stale 2026-07-10 → 15.199: current before-session 별도 currentBeforeSessionSetup 반환과 prompt 강제 포함 제거]`
 
 - 배경: 15.189의 current setup 분리 정책은 prompt 포함과 weight 측정 분리를 엄격히 나눴지만, current before-session memory도 query와 실제로 관련되어 top-k에 retrieved되면 다른 memory처럼 weight/retrievedCount가 오르는 것이 더 자연스럽다. Prior before-session에도 별도 penalty를 두지 않고 다른 memory와 같은 similarity ranking을 적용하기로 했다.
 - 수정: `/api/memory/retrieve`에서 prior before-session penalty를 제거하고, current/prior before-session/during-session 모두 같은 cosine similarity ranking 후보로 둔다. Top-k에 들어온 항목은 기존처럼 `updateRetrievedWeights`와 idle decay 경로를 탄다.
@@ -4113,3 +4113,10 @@ type ChatPlan = {
 
 - 배경: before/after snapshot 비교에서 같은 cluster membership이라도 label/summary 표현이 샘플링으로 흔들리면 변화 해석이 어려워진다.
 - 수정: `memoryClustering.ts`의 cluster label/summary 생성 호출에 `temperature: 0`을 명시했다. Embedding similarity graph, label propagation, merge 로직은 그대로다.
+
+### 15.199 Current before-session prompt priority 제거 `[implemented 2026-07-10]`
+
+- 배경: current mission before-session memory는 retrieval ranking boost/penalty는 없었지만, `/api/memory/retrieve`가 최신 batch를 `currentBeforeSessionSetup`으로 별도 반환하고 `/main`이 이를 retrieved memory 앞에 항상 붙였다. 따라서 top-k에 들지 않아도 prompt에 들어가는 prompt inclusion priority와 reference-search filter 우회가 남아 있었다.
+- 수정: `/api/memory/retrieve`에서 `currentBeforeSessionSetup` 별도 선별/응답을 제거하고, retrieval log의 `currentBeforeSession` policy를 `same_similarity_ranking_no_forced_prompt_inclusion`으로 변경했다. 호환 필드는 빈 배열/count 0으로 남긴다.
+- 수정: `/main/[missionId]`는 `/api/chat`에 넘길 memory context를 retrieved top-k만으로 구성한다. Reference search turn에서도 current before-session memory가 별도 우회하지 않고, retrieved된 경우에만 기존 reference relevance filter를 탄다.
+- 수정: `chatProfileMemoryPrompt` wording을 "retrieved for this turn" 기준으로 바꿔 current/prior before-session memory 모두 retrieved된 경우에만 활용되는 것으로 맞췄다.

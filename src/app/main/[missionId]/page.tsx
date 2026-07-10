@@ -477,7 +477,6 @@ type MemoryRecord = {
 };
 
 type MemoryRetrievalResponse = {
-  currentBeforeSessionSetup?: MemoryRecord[];
   retrieved?: MemoryRecord[];
 };
 
@@ -3061,18 +3060,8 @@ export default function MainScreenPage() {
         if (!res.ok) return null;
         const data = (await res.json()) as MemoryRetrievalResponse;
         const retrieved = Array.isArray(data.retrieved) ? data.retrieved : [];
-        const currentBeforeSessionSetup = Array.isArray(
-          data.currentBeforeSessionSetup,
-        )
-          ? data.currentBeforeSessionSetup
-          : [];
-        if (
-          retrieved.length === 0 &&
-          currentBeforeSessionSetup.length === 0
-        ) {
-          return null;
-        }
-        return { retrieved, currentBeforeSessionSetup };
+        if (retrieved.length === 0) return null;
+        return { retrieved };
       } catch (error) {
         console.warn("Unable to retrieve memory", error);
         return null;
@@ -4764,21 +4753,13 @@ export default function MainScreenPage() {
         userMessageId: userMsg.id,
       });
       const retrievedMemory = memoryRetrieval?.retrieved ?? null;
-      const currentBeforeSessionSetup =
-        memoryRetrieval?.currentBeforeSessionSetup ?? [];
       const isReferenceSearchTurn =
         commandForTurn?.id === "fetch_references" ||
         isReferenceSearchRequest(text);
       const promptMemory = isReferenceSearchTurn
         ? filterMemoryForReferenceSearch(retrievedMemory)
         : retrievedMemory;
-      const currentSetupIds = new Set(
-        currentBeforeSessionSetup.map((memory) => memory.id),
-      );
-      const semanticMemoryContext = [
-        ...currentBeforeSessionSetup,
-        ...(promptMemory ?? []).filter((memory) => !currentSetupIds.has(memory.id)),
-      ];
+      const semanticMemoryContext = promptMemory ?? [];
       const turnMemoryContext =
         semanticMemoryContext.length > 0
           ? {

@@ -193,52 +193,6 @@ function beforeSessionScope(candidate: Candidate, currentMissionId: string) {
     : "prior_mission";
 }
 
-function beforeSessionWriteBatchId(value: unknown) {
-  if (!value || typeof value !== "object") return null;
-  const source = value as Record<string, unknown>;
-  const batchId = source.beforeSessionWriteBatchId;
-  return typeof batchId === "string" && batchId.trim() ? batchId.trim() : null;
-}
-
-function candidateTimestamp(candidate: Candidate) {
-  return timestampValue(candidate.timestamp) ?? 0;
-}
-
-function selectCurrentBeforeSessionSetup(
-  candidates: Candidate[],
-  currentMissionId: string,
-) {
-  const current = candidates.filter(
-    (candidate) =>
-      beforeSessionScope(candidate, currentMissionId) === "current_mission",
-  );
-  if (current.length === 0) return [];
-
-  const withBatch = current.filter((candidate) =>
-    beforeSessionWriteBatchId(candidate.source),
-  );
-  if (withBatch.length === 0) {
-    return current.sort(
-      (a, b) => candidateTimestamp(b) - candidateTimestamp(a),
-    );
-  }
-
-  const latestBatchId = withBatch
-    .map((candidate) => ({
-      batchId: beforeSessionWriteBatchId(candidate.source),
-      timestamp: candidateTimestamp(candidate),
-    }))
-    .sort((a, b) => b.timestamp - a.timestamp)[0]?.batchId;
-  if (!latestBatchId) return current;
-
-  return current
-    .filter(
-      (candidate) =>
-        beforeSessionWriteBatchId(candidate.source) === latestBatchId,
-    )
-    .sort((a, b) => candidateTimestamp(b) - candidateTimestamp(a));
-}
-
 function responseMemory(
   candidate: Candidate,
   missionId: string,
@@ -493,7 +447,6 @@ export async function POST(request: Request) {
   }
 
   let retrieved: Candidate[] = [];
-  let currentBeforeSessionSetup: Candidate[] = [];
   let clusterByItemId = new Map<
     string,
     { clusterId: string; label: string; summary: string }
@@ -504,16 +457,6 @@ export async function POST(request: Request) {
     const [queryEmbedding] = await embedTexts([query]);
 
     const candidates = await loadCandidates(user.localId, token);
-    currentBeforeSessionSetup = selectCurrentBeforeSessionSetup(
-      candidates,
-      missionId,
-    ).map((candidate) => ({
-      ...candidate,
-      similarity:
-        candidate.embedding.length === 0
-          ? -Infinity
-          : cosineSimilarity(queryEmbedding, candidate.embedding),
-    }));
     const memoryCount = candidates.length;
 
     const ranked = candidates
@@ -562,14 +505,6 @@ export async function POST(request: Request) {
       sourceMissionId: sourceMissionId(candidate.source),
       beforeSessionScope: beforeSessionScope(candidate, missionId),
     }));
-    const includedCurrentSetupMemoryScopes = currentBeforeSessionSetup.map(
-      (candidate) => ({
-        id: candidate.id,
-        sourceMissionId: sourceMissionId(candidate.source),
-        beforeSessionScope: beforeSessionScope(candidate, missionId),
-      }),
-    );
-
     await patchFirestoreDocument(
       `users/${user.localId}/${RETRIEVAL_LOG_COLLECTION}/${retrievalLogId(now, query)}`,
       {
@@ -582,13 +517,11 @@ export async function POST(request: Request) {
         retrievalRankingPolicy: {
           beforeSession: "same_similarity_ranking_as_other_memories",
           currentBeforeSession:
-            "always_included_setup_and_also_retrievable_for_weight",
+            "same_similarity_ranking_no_forced_prompt_inclusion",
         },
-        includedCurrentSetupMemoryIds: currentBeforeSessionSetup.map(
-          (candidate) => candidate.id,
-        ),
-        includedCurrentSetupMemoryCount: currentBeforeSessionSetup.length,
-        includedCurrentSetupMemoryScopes,
+        includedCurrentSetupMemoryIds: [],
+        includedCurrentSetupMemoryCount: 0,
+        includedCurrentSetupMemoryScopes: [],
         retrievedMemoryIds: retrieved.map((candidate) => candidate.id),
         similarities: retrieved.map((candidate) =>
           Number(candidate.similarity.toFixed(4)),
@@ -630,9 +563,7 @@ export async function POST(request: Request) {
 
   return Response.json({
     query,
-    currentBeforeSessionSetup: currentBeforeSessionSetup.map((candidate) =>
-      responseMemory(candidate, missionId, clusterByItemId),
-    ),
+    currentBeforeSessionSetup: [],
     retrieved: retrieved.map((candidate) =>
       responseMemory(candidate, missionId, clusterByItemId),
     ),
