@@ -5,6 +5,7 @@ import {
   listFirestoreDocumentIds,
   verifyFirebaseIdToken,
 } from "@/lib/server/firebaseAdminRest";
+import { loadSessionClusterSnapshots } from "@/lib/server/memoryClustering";
 
 export const runtime = "nodejs";
 
@@ -573,6 +574,25 @@ export async function POST(request: Request) {
   >;
   // Variant-agnostic default kept for backward compatibility (other consumers).
   const selectedClusterDoc = latestClusterDoc(clusterDocs);
+  const storedClusterSnapshots = await loadSessionClusterSnapshots(
+    targetUid,
+    missionId,
+    token,
+  );
+  const fallbackSnapshot = (phase: "before" | "after") => ({
+    phase,
+    missionId,
+    isFallback: true,
+    itemIds: [],
+    itemSignature: null,
+    graphClusters: selectedClusterDoc?.graphClusters ?? [],
+    graphEdges: selectedClusterDoc?.graphEdges ?? [],
+    generatedAt: selectedClusterDoc?.generatedAt || null,
+  });
+  const clusterSnapshots = {
+    before: storedClusterSnapshots.before ?? fallbackSnapshot("before"),
+    after: storedClusterSnapshots.after ?? fallbackSnapshot("after"),
+  };
 
   // The target user's per-user mission order, used by the review to compute the
   // cumulative memory set (missions are ordered per user, not by id/time).
@@ -589,9 +609,10 @@ export async function POST(request: Request) {
     referenced,
     idleDecaySummary,
     graphMemories,
-    graphClusters: selectedClusterDoc?.graphClusters ?? [],
-    graphEdges: selectedClusterDoc?.graphEdges ?? [],
+    graphClusters: clusterSnapshots.after.graphClusters,
+    graphEdges: clusterSnapshots.after.graphEdges,
     clustersByVariant,
+    clusterSnapshots,
     missionOrder,
     retrievalLogs,
   });

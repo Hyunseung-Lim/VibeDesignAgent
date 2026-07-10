@@ -4,6 +4,7 @@ import path from "path";
 import { isAdminEmail } from "@/lib/admin";
 import {
   ADMIN_MEMORY_CLUSTER_COLLECTION,
+  ADMIN_MEMORY_CLUSTER_SNAPSHOT_COLLECTION,
   ADMIN_MEMORY_COLLECTION,
   ADMIN_MEMORY_RETRIEVAL_LOG_COLLECTION,
   deleteMissionScopedMemoryData,
@@ -284,6 +285,8 @@ export async function DELETE(
       deletedReviewTurns: deletedSubcollections.reviewTurns,
       deletedMemories: deletedMemoryData.deletedMemories,
       deletedMemoryClusters: deletedMemoryData.deletedMemoryClusters,
+      deletedMemoryClusterSnapshots:
+        deletedMemoryData.deletedMemoryClusterSnapshots,
       deletedMemoryRetrievalLogs: deletedMemoryData.deletedMemoryRetrievalLogs,
     });
   }
@@ -320,6 +323,7 @@ export async function DELETE(
     ),
     deleteUserCollection(uid, ADMIN_MEMORY_COLLECTION, token),
     deleteUserCollection(uid, ADMIN_MEMORY_CLUSTER_COLLECTION, token),
+    deleteUserCollection(uid, ADMIN_MEMORY_CLUSTER_SNAPSHOT_COLLECTION, token),
     deleteUserCollection(uid, ADMIN_MEMORY_RETRIEVAL_LOG_COLLECTION, token),
     deleteDocument(`sessions/${uid}`, token),
     deleteDocument(`users/${uid}`, token),

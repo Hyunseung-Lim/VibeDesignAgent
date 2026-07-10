@@ -6,6 +6,7 @@ import {
 
 export const ADMIN_MEMORY_COLLECTION = "memories_0_1_2";
 export const ADMIN_MEMORY_CLUSTER_COLLECTION = "memoryClusters";
+export const ADMIN_MEMORY_CLUSTER_SNAPSHOT_COLLECTION = "memoryClusterSnapshots";
 export const ADMIN_MEMORY_RETRIEVAL_LOG_COLLECTION = "memoryRetrievalLogs";
 
 function sourceMissionId(doc: Record<string, unknown>) {
@@ -101,10 +102,25 @@ export async function deleteMissionScopedMemoryData(
     ADMIN_MEMORY_CLUSTER_COLLECTION,
     token,
   );
+  const memoryClusterSnapshotIds = await matchingMissionDocumentIds(
+    uid,
+    ADMIN_MEMORY_CLUSTER_SNAPSHOT_COLLECTION,
+    missionId,
+    token,
+  );
+  await Promise.all(
+    memoryClusterSnapshotIds.map((id) =>
+      deleteFirestoreDocument(
+        `users/${uid}/${ADMIN_MEMORY_CLUSTER_SNAPSHOT_COLLECTION}/${id}`,
+        token,
+      ),
+    ),
+  );
 
   return {
     deletedMemories: memoryIds.length,
     deletedMemoryClusters,
+    deletedMemoryClusterSnapshots: memoryClusterSnapshotIds.length,
     deletedMemoryRetrievalLogs: retrievalLogIds.length,
   };
 }

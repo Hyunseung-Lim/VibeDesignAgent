@@ -6,6 +6,7 @@ import {
   listFirestoreDocumentIds,
   patchFirestoreDocument,
 } from "@/lib/server/firebaseAdminRest";
+import { loadUserMemoryItems } from "@/lib/server/memoryItems";
 
 export const EMBEDDING_MODEL = "text-embedding-3-large";
 export const LABEL_MODEL = "gpt-5.4-mini";
@@ -16,8 +17,10 @@ export const GRAPH_STRONG_SIMILARITY = 0.74;
 export const GRAPH_KNN_EDGES = 3;
 export const GRAPH_COMMUNITY_ITERATIONS = 30;
 export const CLUSTER_COLLECTION = "memoryClusters";
+export const CLUSTER_SNAPSHOT_COLLECTION = "memoryClusterSnapshots";
 export const CLUSTERING_METHOD_VERSION = "similarity-graph-v3-persona-summary";
 export const MEMORY_VERSION = "0.1.2";
+export const ONBOARDING_MISSION_ID = "onboarding";
 
 // Fixed clustering embedding input: keyword + episodic + semantic + link.
 export const CLUSTERING_INPUT_VARIANTS = [
@@ -70,6 +73,18 @@ export type ClusterGraphEdge = {
   sourceId: string;
   targetId: string;
   weight: number;
+};
+
+export type ClusterSnapshotPhase = "before" | "after";
+
+export type StoredClusterSnapshot = {
+  phase: ClusterSnapshotPhase;
+  missionId: string;
+  itemIds: string[];
+  itemSignature: string | null;
+  graphClusters: MemoryCluster[];
+  graphEdges: ClusterGraphEdge[];
+  generatedAt: number | null;
 };
 
 export type GraphCommunityDiagnostics = {
@@ -131,6 +146,24 @@ export function clusterDocumentPath(
     memoryVersion,
     itemSignature,
     variant,
+  )}`;
+}
+
+export function clusterSnapshotId(
+  missionId: string,
+  phase: ClusterSnapshotPhase,
+) {
+  return `${missionId.replace(/[^a-zA-Z0-9_-]/g, "_")}_${phase}`;
+}
+
+export function clusterSnapshotDocumentPath(
+  uid: string,
+  missionId: string,
+  phase: ClusterSnapshotPhase,
+) {
+  return `users/${uid}/${CLUSTER_SNAPSHOT_COLLECTION}/${clusterSnapshotId(
+    missionId,
+    phase,
   )}`;
 }
 
@@ -279,6 +312,30 @@ function itemSummary(item: ClusterInputItem) {
   return item.semantic || item.episodic || item.input || item.output || item.action || item.id;
 }
 
+function diverseLabelItemIds(
+  ids: string[],
+  itemsById: Map<string, ClusterInputItem>,
+) {
+  if (ids.length <= 8) return ids;
+  const byTime = [...ids].sort((a, b) => {
+    const aTime = itemsById.get(a)?.timestamp ?? 0;
+    const bTime = itemsById.get(b)?.timestamp ?? 0;
+    return aTime - bTime || a.localeCompare(b);
+  });
+  const picks = new Set<string>();
+  byTime.slice(0, 2).forEach((id) => picks.add(id));
+  byTime.slice(-3).forEach((id) => picks.add(id));
+  const slots = Math.max(1, byTime.length - 1);
+  for (let step = 1; picks.size < 8 && step <= 4; step += 1) {
+    picks.add(byTime[Math.round((slots * step) / 5)]);
+  }
+  for (const id of ids) {
+    if (picks.size >= 8) break;
+    picks.add(id);
+  }
+  return Array.from(picks);
+}
+
 function l2Normalize(vector: number[]) {
   const norm = Math.sqrt(vector.reduce((sum, v) => sum + v * v, 0));
   if (!norm) return vector;
@@ -359,6 +416,7 @@ export async function labelClusters(
   const subject = subjectName?.trim() || "This participant";
   const completion = await openai.chat.completions.create({
     model: LABEL_MODEL,
+    temperature: 0,
     response_format: { type: "json_object" },
     messages: [
       {
@@ -373,7 +431,7 @@ export async function labelClusters(
             relatedActions: cluster.relatedActions,
             count: cluster.count,
             representativeItems: cluster.representativeItems,
-            items: cluster.itemIds.slice(0, 8).map((id) => {
+            items: diverseLabelItemIds(cluster.itemIds, itemsById).map((id) => {
               const item = itemsById.get(id);
               return {
                 id,
@@ -415,6 +473,31 @@ export async function embedItems(items: ClusterInputItem[]) {
     input: items.map((item) => embeddingText(item)),
   });
   return response.data.map((item) => l2Normalize(item.embedding));
+}
+
+async function generateClusterGraph(
+  items: ClusterInputItem[],
+  subjectName?: string,
+) {
+  if (items.length === 0) {
+    return {
+      graphClusters: [] as MemoryCluster[],
+      graphEdges: [] as ClusterGraphEdge[],
+      graphDiagnostics: null,
+    };
+  }
+  const vectors = await embedItems(items);
+  const graphCommunity = buildGraphCommunityClusters(items, vectors);
+  const itemsById = new Map(items.map((item) => [item.id, item]));
+  return {
+    graphClusters: await labelClusters(
+      graphCommunity.clusters,
+      itemsById,
+      subjectName,
+    ),
+    graphEdges: graphCommunity.edges,
+    graphDiagnostics: graphCommunity.diagnostics,
+  };
 }
 
 function similarityEdges(vectors: number[][]) {
@@ -578,16 +661,8 @@ export async function generateAndStoreClusters(
   subjectName?: string,
   variant: ClusteringInputVariant = CLUSTERING_INPUT_VARIANT,
 ) {
-  const vectors = await embedItems(items);
-  const graphCommunity = buildGraphCommunityClusters(items, vectors);
-  const itemsById = new Map(items.map((item) => [item.id, item]));
-  const graphClusters = await labelClusters(
-    graphCommunity.clusters,
-    itemsById,
-    subjectName,
-  );
-  const graphDiagnostics = graphCommunity.diagnostics;
-  const graphEdges = graphCommunity.edges;
+  const { graphClusters, graphEdges, graphDiagnostics } =
+    await generateClusterGraph(items, subjectName);
   const completedAt = Date.now();
 
   const itemSignature = memoryClusterItemSignature(items);
@@ -610,4 +685,156 @@ export async function generateAndStoreClusters(
   );
 
   return { graphClusters, graphEdges, itemSignature };
+}
+
+function sourceMissionId(value: unknown) {
+  if (!value || typeof value !== "object") return null;
+  const source = value as Record<string, unknown>;
+  return typeof source.missionId === "string" && source.missionId.trim()
+    ? source.missionId.trim()
+    : null;
+}
+
+export function isWithinCumulativeMission(
+  memoryMissionId: string | null | undefined,
+  selectedMissionId: string,
+  missionOrder: string[],
+) {
+  if (memoryMissionId === ONBOARDING_MISSION_ID) return true;
+  if (!memoryMissionId) return false;
+  const selectedIndex = missionOrder.indexOf(selectedMissionId);
+  if (selectedIndex === -1) return memoryMissionId === selectedMissionId;
+  const memoryIndex = missionOrder.indexOf(memoryMissionId);
+  if (memoryIndex === -1) return false;
+  return memoryIndex <= selectedIndex;
+}
+
+function snapshotItems(
+  memories: Awaited<ReturnType<typeof loadUserMemoryItems>>,
+  missionId: string,
+  missionOrder: string[],
+  phase: ClusterSnapshotPhase,
+) {
+  return memories
+    .filter((item) => {
+      const itemMissionId = sourceMissionId(item.source);
+      if (!isWithinCumulativeMission(itemMissionId, missionId, missionOrder)) {
+        return false;
+      }
+      if (
+        phase === "before" &&
+        itemMissionId === missionId &&
+        item.sourceType !== "before_session"
+      ) {
+        return false;
+      }
+      return Boolean(item.episodic || item.semantic || item.keywords.length > 0);
+    })
+    .slice(0, MAX_ITEMS)
+    .map((item) => ({
+      id: item.id,
+      action: item.action ?? undefined,
+      keyword: item.keywords,
+      episodic: item.episodic ?? undefined,
+      semantic: item.semantic ?? undefined,
+      input: item.input ?? undefined,
+      output: item.output ?? undefined,
+      originalInteractionContent: item.originalInteractionContent ?? undefined,
+      timestamp: item.timestamp ?? 0,
+    }));
+}
+
+export async function generateAndStoreSessionClusterSnapshots(
+  uid: string,
+  missionId: string,
+  missionOrder: string[],
+  token: string,
+  generatedBy: string,
+  subjectName?: string,
+  variant: ClusteringInputVariant = CLUSTERING_INPUT_VARIANT,
+) {
+  const memories = await loadUserMemoryItems(uid, token);
+  const phases: ClusterSnapshotPhase[] = ["before", "after"];
+  const snapshots = await Promise.all(
+    phases.map(async (phase) => {
+      const items = snapshotItems(memories, missionId, missionOrder, phase);
+      const itemSignature =
+        items.length > 0 ? memoryClusterItemSignature(items) : null;
+      const { graphClusters, graphEdges, graphDiagnostics } =
+        await generateClusterGraph(items, subjectName);
+      const generatedAt = Date.now();
+      await patchFirestoreDocument(
+        clusterSnapshotDocumentPath(uid, missionId, phase),
+        {
+          missionId,
+          phase,
+          itemIds: items.map((item) => item.id),
+          itemSignature,
+          memoryVersion: MEMORY_VERSION,
+          clusteringMethodVersion: clusteringMethodVersion(variant),
+          clusteringInputVariant: variant,
+          sourceItemCount: items.length,
+          graphClusters,
+          graphEdges,
+          graphDiagnostics,
+          generatedAt,
+          generatedBy,
+        },
+        token,
+      );
+      return {
+        phase,
+        missionId,
+        itemIds: items.map((item) => item.id),
+        itemSignature,
+        graphClusters,
+        graphEdges,
+        generatedAt,
+      } satisfies StoredClusterSnapshot;
+    }),
+  );
+  return {
+    before: snapshots.find((snapshot) => snapshot.phase === "before") ?? null,
+    after: snapshots.find((snapshot) => snapshot.phase === "after") ?? null,
+  };
+}
+
+function parseStoredClusterSnapshot(
+  missionId: string,
+  phase: ClusterSnapshotPhase,
+  data: Record<string, unknown> | null,
+): StoredClusterSnapshot | null {
+  if (!data) return null;
+  return {
+    phase,
+    missionId,
+    itemIds: Array.isArray(data.itemIds)
+      ? data.itemIds.map(String).filter(Boolean)
+      : [],
+    itemSignature:
+      typeof data.itemSignature === "string" ? data.itemSignature : null,
+    graphClusters: parseStoredClusters(data.graphClusters),
+    graphEdges: parseStoredGraphEdges(data.graphEdges),
+    generatedAt: typeof data.generatedAt === "number" ? data.generatedAt : null,
+  };
+}
+
+export async function loadSessionClusterSnapshots(
+  uid: string,
+  missionId: string,
+  token: string,
+) {
+  const [before, after] = await Promise.all(
+    (["before", "after"] as const).map(async (phase) =>
+      parseStoredClusterSnapshot(
+        missionId,
+        phase,
+        ((await getFirestoreDocument(
+          clusterSnapshotDocumentPath(uid, missionId, phase),
+          token,
+        )) ?? null) as Record<string, unknown> | null,
+      ),
+    ),
+  );
+  return { before, after };
 }

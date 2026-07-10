@@ -19,6 +19,7 @@ const SESSION_SUBCOLLECTIONS = ["memoryDrafts", "reviewTurns"] as const;
 const USER_MEMORY_COLLECTIONS = [
   "memories_0_1_2",
   "memoryClusters",
+  "memoryClusterSnapshots",
   "memoryRetrievalLogs",
 ] as const;
 
@@ -372,6 +373,7 @@ export async function POST(
     ...sessionDeleteResult,
     deletedMemories: deletedMemoryData.memories_0_1_2,
     deletedMemoryClusters: deletedMemoryData.memoryClusters,
+    deletedMemoryClusterSnapshots: deletedMemoryData.memoryClusterSnapshots,
     deletedMemoryRetrievalLogs: deletedMemoryData.memoryRetrievalLogs,
     deletedParticipantRecords,
     deletedStorageFiles,

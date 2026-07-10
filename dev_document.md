@@ -58,9 +58,9 @@
 - 미션 ID: `mission-YYYYMMDD-HHmmss` 형식 (사람이 읽기 쉬운 구조)
 - 참여자 목록 조회 및 세션 열람 (읽기 전용 뷰)
 - 참여자 카드의 X는 해당 미션 세션과 하위 `memoryDrafts`/`reviewTurns`만 삭제하며, 유저 정보/장기 메모리/다른 미션 기록은 유지
-- 사용자 카드의 `세션 백업 후 삭제`는 세션/참여 기록/Storage 파일/장기 메모리(`memories_0_1_2`)/클러스터 캐시(`memoryClusters`)/retrieval logs를 백업 후 삭제한다 `[현행 2026-06-18 → 15.94]`
+- 사용자 카드의 `세션 백업 후 삭제`는 세션/참여 기록/Storage 파일/장기 메모리(`memories_0_1_2`)/클러스터 캐시(`memoryClusters`)/세션 클러스터 snapshot(`memoryClusterSnapshots`)/retrieval logs를 백업 후 삭제한다 `[현행 2026-07-10 → 15.94/15.197]`
 - 사용자 카드는 1열 전체 폭으로 배치한다. 카드의 미션 영역은 온보딩을 첫 행에 두고 `missionOrder` 순서를 기준으로 참여/세션 미션을 보완한 단일 진행 목록이다. Lobby와 같은 session snapshot 판정으로 `대기`/`준비중`/`진행중`/`시간 초과`/`완료`를 표시하고, 온보딩 미션도 Lobby처럼 실제 세션 진행을 반영하되 완료 판정만 onboarding profile flag로 한다. Lobby의 순차 잠금 규칙(온보딩→`missionOrder` 순서, 첫 미완료가 `현재`, 그 이후는 `잠김`)도 같은 판정으로 계산해 `현재`/`잠김` 배지와 흐릿 처리로 표시한다(관리/조회용이라 잠금은 표시만 하고 링크는 막지 않음). 각 행의 미션 제목 링크는 `/main/{id}?viewAs={uid}`로 해당 세션을 읽기 전용 view-as로 연다. admin viewAs 세션의 헤더 뒤로가기 버튼은 `/admin`으로 돌아가며, read-only banner 안의 별도 `어드민으로 돌아가기` 링크는 두지 않는다(별도 리뷰 링크는 제거 — admin viewAs는 이미 읽기 전용+리뷰 탭 노출이라 `review=1`은 초기 탭만 바꿔 중복이었다) `[현행 2026-07-04 → 15.122/15.123/15.124/15.125/15.127/15.181]`
-- 참여자 모달의 개별 `미션 기록 삭제`는 해당 미션 세션, participant record, `memoryDrafts`/`reviewTurns`, 그 미션의 `source.missionId`를 가진 장기 메모리와 mission-scoped retrieval logs를 삭제하고, `memoryClusters` cache를 비운다 `[현행 2026-06-18 → 15.94]`
+- 참여자 모달의 개별 `미션 기록 삭제`는 해당 미션 세션, participant record, `memoryDrafts`/`reviewTurns`, 그 미션의 `source.missionId`를 가진 장기 메모리, 해당 미션의 `memoryClusterSnapshots`, mission-scoped retrieval logs를 삭제하고, `memoryClusters` cache를 비운다 `[현행 2026-07-10 → 15.94/15.197]`
 - 유저 카드의 `메모리 보기`는 모달을 열지 않고 `/admin/users/[uid]/memory` 전용 페이지로 이동한다. 이 페이지는 `/agent`와 같은 `MemoryClusterPage`를 렌더링해 헤더, 세션 누적 필터, 좁은 cluster list, 좌측 cluster detail panel, similarity graph, empty/loading state를 동일하게 유지한다 `[현행 2026-06-27 → 15.130]`
 - Admin 대상 메모리 목록과 clustering API는 self `/agent` 경로와 같은 normalization 및 clustering helper를 사용한다. 같은 uid와 item signature에는 양쪽 화면이 같은 memory item, cache document, cluster membership/label을 읽는다 `[현행 2026-06-22 → 15.107]`
 
@@ -68,7 +68,7 @@
 
 - 좌측 패널 (스크롤 가능): Mission → Reference → 아이디어 탭 (Idea/Mockup)
 - 우측 패널 (고정): AI 에이전트 채팅
-- 완료 세션 리뷰 우측 패널은 `세션 이전`/`채팅` 탭만 제공하고, 상단 타이머 오른쪽의 `메모리 리뷰하기` CTA가 cluster list → detail panel → memory graph → review panel 순서의 full-screen memory overlay를 바로 연다. `세션 이전` 탭의 `원래 입력한 내용`은 현재 미션의 `profile_memories/{missionId}` 원문만 표시하며, 누적 before-session graph memory의 과거 raw input을 현재 미션 입력처럼 대체 표시하지 않는다. 리뷰 입력창에서 `@`를 입력하면 별도 dropdown 없이 메모리뷰 자체가 선택 모드가 되며, cluster list/detail panel/graph에서 cluster나 memory를 클릭해 답변 본문에 inline mention을 삽입한다. 삽입된 mention은 굵게 표시되고 클릭하면 해당 cluster나 memory로 focus된다. 답변은 v2 7개 단일 번호 질문별 plain text와 structured mentions로 `users/{uid}/memoryReviewFeedback/{missionId}`에 draft autosave된다. 모든 질문을 입력해야 제출할 수 있고, 제출 확인 팝업에서 확정하면 `submittedAt` 저장 후 로비로 이동한다. 로비 완료 미션 카드, admin 유저 카드의 완료 미션 row, admin 참여자 row는 `submittedAt` 여부에 따라 `리뷰 필요` 또는 `리뷰 완료`를 표시한다 `[현행 2026-07-05 → 15.131/15.134/15.155/15.156/15.165/15.166/15.167/15.183/15.186]`
+- 완료 세션 리뷰 우측 패널은 `세션 이전`/`채팅` 탭만 제공하고, 상단 타이머 오른쪽의 `메모리 리뷰하기` CTA가 cluster list → detail panel → memory graph → review panel 순서의 full-screen memory overlay를 바로 연다. Overlay의 `세션 이전`/`세션 이후` 토글은 같은 최신 cluster cache를 node filter로 재사용하지 않고, `users/{uid}/memoryClusterSnapshots/{missionId}_{before|after}`에 저장된 phase별 cluster snapshot을 우선 사용한다. Snapshot이 없는 과거 세션은 기존 latest cache fallback으로 표시한다. `세션 이전` 탭의 `원래 입력한 내용`은 현재 미션의 `profile_memories/{missionId}` 원문만 표시하며, 누적 before-session graph memory의 과거 raw input을 현재 미션 입력처럼 대체 표시하지 않는다. 리뷰 입력창에서 `@`를 입력하면 별도 dropdown 없이 메모리뷰 자체가 선택 모드가 되며, cluster list/detail panel/graph에서 cluster나 memory를 클릭해 답변 본문에 inline mention을 삽입한다. 삽입된 mention은 굵게 표시되고 클릭하면 해당 cluster나 memory로 focus된다. 답변은 v2 7개 단일 번호 질문별 plain text와 structured mentions로 `users/{uid}/memoryReviewFeedback/{missionId}`에 draft autosave된다. 모든 질문을 입력해야 제출할 수 있고, 제출 확인 팝업에서 확정하면 `submittedAt` 저장 후 로비로 이동한다. 로비 완료 미션 카드, admin 유저 카드의 완료 미션 row, admin 참여자 row는 `submittedAt` 여부에 따라 `리뷰 필요` 또는 `리뷰 완료`를 표시한다 `[현행 2026-07-10 → 15.131/15.134/15.155/15.156/15.165/15.166/15.167/15.183/15.186/15.197]`
 - 작업 화면에는 실제 화면 영역을 하이라이트하는 제품 투어가 있다. 온보딩 미션에서는 작업 화면 진입 시 자동으로 열리고, 일반 미션에서는 헤더의 `튜토리얼` 버튼을 눌러야 열린다. 튜토리얼은 미션 설명 공간, 채팅 공간, 레퍼런스 섹션, 시안을 여러 개 만들 수 있다는 점, 각 시안이 Design Brief/디자인 스타일/Mockup으로 구성된다는 점, 목업 편집 버튼 사용, Final Design 선택, 타이머와 세션 종료 버튼을 안내한 뒤 마지막에 튜토리얼 버튼 위치를 다시 안내한다 `[현행 2026-06-16 → 15.88]`
 - 제품 투어가 `mission-brief` 단계를 표시할 때는 선택된 옵션 토글을 강제로 접어 미션 설명 본문이 먼저 보이게 한다 `[현행 2026-06-16 → 15.88]`
 
@@ -186,10 +186,10 @@
 - 1단계: 구조화된 keyword + episodic + semantic + link 텍스트를 `text-embedding-3-large`로 embedding
 - 2단계: cosine similarity graph 생성. 강한 유사도 edge와 node별 KNN edge를 함께 사용
 - 3단계: similarity graph에서 label propagation으로 community를 찾고, community가 너무 많으면 centroid similarity 기준으로 최대 16개까지 merge
-- 4단계: LLM은 cluster membership을 바꾸지 않고 최종 cluster label/summary만 생성한다. summary는 작업 목록을 일반적으로 요약하지 않고 Firestore profile의 실제 displayName을 사용해 그 사람의 반복되는 성격, 습관, 작업 방식, 의사결정 패턴과 디자인 취향을 근거와 함께 서술한다. 단일·약한 근거에는 consistently/always 같은 반복 표현을 쓰지 않는다 `[현행 2026-06-21 → 15.99]`
+- 4단계: LLM은 cluster membership을 바꾸지 않고 최종 cluster label/summary만 생성한다. Labeler는 비교 안정성을 위해 `temperature: 0`으로 고정한다. Summary는 작업 목록을 일반적으로 요약하지 않고 Firestore profile의 실제 displayName을 사용해 그 사람의 반복되는 성격, 습관, 작업 방식, 의사결정 패턴과 디자인 취향을 근거와 함께 서술한다. 단일·약한 근거에는 consistently/always 같은 반복 표현을 쓰지 않는다 `[현행 2026-07-10 → 15.99/15.198]`
 - `/agent`(self·admin 공용) UI 헤더에는 고정 입력 구성(keyword · episodic · semantic · link)만 표시하고, 입력 variant 토글은 렌더하지 않는다 `[현행 2026-07-03 → 15.178]`
 - `/agent` cluster UI는 좌측에서 cluster list → detail panel → graph 순서로 배치한다. cluster list는 main 세션 리뷰와 동일한 `MemoryClusterList` review presentation을 사용한다 — 색상 count rail이 달린 rounded card, cluster label만 표시, 좌측 접기 rail 제공. cluster summary와 선택됨 badge는 숨긴다 `[현행 2026-06-30 → 15.169]`
-- `/agent`의 세션 필터와 세션 리뷰 overlay는 모두 유저별 `missionOrder` 기준의 누적 메모리 집합을 사용한다. 예를 들어 세션 2를 선택하면 세션 2까지의 누적 메모리를 보여주고, 세션 2에서 새로 생성된 메모리만 다이아몬드로 표시한다. 세션 리뷰 overlay도 같은 고정 입력 cache를 사용하고, 기본 그래프 필터는 전체 메모리다 `[현행 2026-07-03 → 15.178]`
+- `/agent`의 세션 필터는 유저별 `missionOrder` 기준의 누적 메모리 집합을 사용한다. 예를 들어 세션 2를 선택하면 세션 2까지의 누적 메모리를 보여주고, 세션 2에서 새로 생성된 메모리만 다이아몬드로 표시한다. 세션 리뷰 overlay는 세션 완료 시 생성된 before/after cluster snapshot을 사용해 phase별 cluster label/summary/membership/edge를 분리 표시한다. 기본 그래프 필터는 전체 메모리다 `[현행 2026-07-10 → 15.178/15.197]`
 - 캐시 키는 memory version + item signature + clustering method version으로 관리하고, method version에는 고정 입력 이름 `keyword-episodic-semantic-link`가 포함된다. 과거 compact-context/full-context cache와 섞지 않는다 `[현행 2026-07-03 → 15.178]`
 - Self/admin API는 `loadUserMemoryItems`와 `loadClusterInputItems`를 공유하며, admin 전용 cluster route도 `generateAndStoreClusters`를 호출한다. 별도 admin clustering 알고리즘은 두지 않는다 `[현행 2026-06-22 → 15.107]`
 
@@ -246,6 +246,23 @@ diagnostics: {
 generatedAt, generatedBy
 ```
 
+### `users/{userId}/memoryClusterSnapshots/{missionId}_{before|after}`
+
+```
+missionId
+phase: "before" | "after"
+itemIds
+itemSignature
+memoryVersion
+clusteringInputVariant
+clusteringMethodVersion
+sourceItemCount
+graphClusters: MemoryCluster[]
+graphEdges: ClusterGraphEdge[]
+graphDiagnostics
+generatedAt, generatedBy
+```
+
 ### 주요 타입
 
 ```typescript
@@ -282,6 +299,7 @@ type Idea = {
 | `POST /api/memory/complete-session`               | 세션 종료 시 draft를 장기 메모리로 확정                                 |
 | `GET /api/memory/bootstrap`                       | Legacy: 세션 시작 시 user memory preload. 현재 main client에서는 미사용 |
 | `POST /api/memory/retrieve`                       | query embedding 기반 memory top 5 검색 및 weight 업데이트               |
+| `POST /api/memory/session-clusters`               | 완료 세션 리뷰용 before/after cluster snapshot 생성                      |
 | `GET/POST /api/memory/profile`                    | profile source 저장/조회 및 derived memory 생성                         |
 | `POST /api/admin/missions`                        | 미션 생성 (관리자 전용)                                                 |
 | `GET /api/admin/users/[uid]/memory`               | admin memory/cluster view용 메모리 조회                                 |
@@ -4081,3 +4099,17 @@ type ChatPlan = {
 - 배경(Page Feedback): `Original input` 안에서 쪼개진 source unit을 굵게 표시하는 효과가 기대와 맞지 않았다.
 - 수정: `MemoryClusterSidePanel`의 `Original input`은 다시 plain text로만 렌더링한다. Before-session memory card 제목은 `source.sourceText` 우선 표시를 유지하고, `Original input`은 전체 `input` rawMarkdown을 그대로 보여준다.
 - 유지: graph tooltip/detail에서 before-session headline/input fallback에 `source.sourceText`를 쓰는 타입 보강은 유지한다.
+
+### 15.197 Session cluster snapshot 분리 `[implemented 2026-07-10]`
+
+- 배경: 세션 리뷰 overlay의 `세션 이전`/`세션 이후`가 같은 최신 cluster cache의 label/summary를 공유하고 node만 필터링해, 이전/이후가 둘 다 최신 클러스터 해석처럼 보였다. Cluster labeler도 각 cluster의 최신순 `itemIds.slice(0, 8)`만 LLM에 넘겨 큰 클러스터에서 최근 표현에 끌릴 수 있었다.
+- 수정: `users/{uid}/memoryClusterSnapshots/{missionId}_{before|after}` 문서를 추가했다. 세션 완료 시 `/api/memory/session-clusters`가 유저별 `missionOrder` 기준으로 before snapshot(온보딩+이전 미션+현재 미션 before_session)과 after snapshot(before+현재 세션 memory)을 각각 생성해 cluster label/summary/membership/edge를 저장한다.
+- UI: `/api/memory/session-summary`는 snapshot을 `clusterSnapshots.before/after`로 반환하고, main 리뷰 overlay는 phase toggle에 따라 snapshot의 clusters/edges/itemIds를 바꿔 렌더한다. Snapshot이 없는 과거 세션은 기존 latest cache fallback을 사용한다.
+- 라벨링 안정화: `memoryClustering.ts`의 cluster label input은 최신 8개 대신 오래된 항목, 최신 항목, 중간 지점 항목을 섞은 최대 8개 샘플로 구성해 recency bias를 줄인다.
+- 정리 경로: 사용자 전체 삭제/백업과 미션 기록 삭제에서 `memoryClusterSnapshots`도 함께 백업 또는 삭제한다.
+- 검증: `npm run lint`, `npx tsc --noEmit` 통과. 기존 warning만 유지.
+
+### 15.198 Cluster labeler temperature 고정 `[implemented 2026-07-10]`
+
+- 배경: before/after snapshot 비교에서 같은 cluster membership이라도 label/summary 표현이 샘플링으로 흔들리면 변화 해석이 어려워진다.
+- 수정: `memoryClustering.ts`의 cluster label/summary 생성 호출에 `temperature: 0`을 명시했다. Embedding similarity graph, label propagation, merge 로직은 그대로다.

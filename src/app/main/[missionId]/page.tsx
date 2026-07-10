@@ -368,6 +368,15 @@ type ReviewClusterBundle = {
   graphEdges: SessionGraphEdge[];
 };
 
+type ReviewClusterSnapshot = ReviewClusterBundle & {
+  phase: "before" | "after";
+  missionId?: string;
+  isFallback?: boolean;
+  itemIds: string[];
+  itemSignature?: string | null;
+  generatedAt?: number | null;
+};
+
 type SessionMemorySummary = {
   drafts: SessionMemoryItem[];
   promoted: SessionMemoryItem[];
@@ -377,6 +386,10 @@ type SessionMemorySummary = {
   graphClusters: SessionGraphCluster[];
   graphEdges: SessionGraphEdge[];
   clustersByVariant: Record<ReviewClusterVariant, ReviewClusterBundle>;
+  clusterSnapshots: {
+    before: ReviewClusterSnapshot;
+    after: ReviewClusterSnapshot;
+  };
   // The target user's per-user mission order, used to compute the cumulative set.
   missionOrder: string[];
   retrievalLogs: SessionRetrievalLog[];
@@ -389,6 +402,17 @@ const EMPTY_CLUSTERS_BY_VARIANT: Record<ReviewClusterVariant, ReviewClusterBundl
     "keyword-episodic-semantic-link": { graphClusters: [], graphEdges: [] },
   };
 
+const EMPTY_CLUSTER_SNAPSHOT = (
+  phase: "before" | "after",
+): ReviewClusterSnapshot => ({
+  phase,
+  itemIds: [],
+  itemSignature: null,
+  generatedAt: null,
+  graphClusters: [],
+  graphEdges: [],
+});
+
 const EMPTY_SESSION_MEMORY_SUMMARY: SessionMemorySummary = {
   drafts: [],
   promoted: [],
@@ -398,6 +422,10 @@ const EMPTY_SESSION_MEMORY_SUMMARY: SessionMemorySummary = {
   graphClusters: [],
   graphEdges: [],
   clustersByVariant: EMPTY_CLUSTERS_BY_VARIANT,
+  clusterSnapshots: {
+    before: EMPTY_CLUSTER_SNAPSHOT("before"),
+    after: EMPTY_CLUSTER_SNAPSHOT("after"),
+  },
   missionOrder: [],
   retrievalLogs: [],
 };
@@ -508,10 +536,49 @@ async function fetchSessionMemorySummary(
       : [],
     graphEdges: Array.isArray(data?.graphEdges) ? data.graphEdges : [],
     clustersByVariant: parseClustersByVariant(data?.clustersByVariant),
+    clusterSnapshots: parseClusterSnapshots(data?.clusterSnapshots, {
+      graphClusters: Array.isArray(data?.graphClusters) ? data.graphClusters : [],
+      graphEdges: Array.isArray(data?.graphEdges) ? data.graphEdges : [],
+    }),
     missionOrder: Array.isArray(data?.missionOrder) ? data.missionOrder : [],
     retrievalLogs: Array.isArray(data?.retrievalLogs)
       ? data.retrievalLogs
       : [],
+  };
+}
+
+function parseClusterSnapshot(
+  phase: "before" | "after",
+  value: unknown,
+  fallback: ReviewClusterBundle,
+): ReviewClusterSnapshot {
+  const source = (value ?? {}) as Partial<ReviewClusterSnapshot>;
+  return {
+    phase,
+    missionId: typeof source.missionId === "string" ? source.missionId : undefined,
+    isFallback: source.isFallback === true,
+    itemIds: Array.isArray(source.itemIds) ? source.itemIds.map(String) : [],
+    itemSignature:
+      typeof source.itemSignature === "string" ? source.itemSignature : null,
+    generatedAt:
+      typeof source.generatedAt === "number" ? source.generatedAt : null,
+    graphClusters: Array.isArray(source.graphClusters)
+      ? source.graphClusters
+      : fallback.graphClusters,
+    graphEdges: Array.isArray(source.graphEdges)
+      ? source.graphEdges
+      : fallback.graphEdges,
+  };
+}
+
+function parseClusterSnapshots(
+  value: unknown,
+  fallback: ReviewClusterBundle,
+): SessionMemorySummary["clusterSnapshots"] {
+  const source = (value ?? {}) as Record<string, unknown>;
+  return {
+    before: parseClusterSnapshot("before", source.before, fallback),
+    after: parseClusterSnapshot("after", source.after, fallback),
   };
 }
 
@@ -6451,6 +6518,7 @@ export default function MainScreenPage() {
       }
       setTimerEndedAt(completedAt);
       setSessionCompletionStep(1);
+      const reviewTargetUid = userId ?? currentUser.uid;
       try {
         await fetch("/api/memory/clusters", {
           method: "POST",
@@ -6459,8 +6527,22 @@ export default function MainScreenPage() {
       } catch {
         // clustering failure is non-fatal
       }
+      try {
+        await fetch("/api/memory/session-clusters", {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            targetUid: reviewTargetUid,
+            missionId,
+          }),
+        });
+      } catch {
+        // session snapshot failure is non-fatal; review falls back to legacy cache
+      }
       setSessionCompletionStep(2);
-      const reviewTargetUid = userId ?? currentUser.uid;
       try {
         const summary = await fetchSessionMemorySummary(
           token,
@@ -7028,42 +7110,55 @@ export default function MainScreenPage() {
     ? artboards.find((artboard) => artboard.id === designContextMenu.artboardId)
     : null;
   const memoryPhaseToggle = (
-    <div className="flex items-center gap-1 rounded-full bg-white/90 p-1 shadow-sm ring-1 ring-slate-100">
-      {(["before", "after"] as const).map((phase) => (
-        <button
-          key={phase}
-          type="button"
-          onClick={() => {
-            setMemoryGraphPhase(phase);
-            if (
-              phase === "before" &&
-              (memoryGraphFilter === "promoted" ||
-                memoryGraphFilter === "archived")
-            ) {
-              setMemoryGraphFilter("changed");
-            }
-          }}
-          className={`rounded-full px-2.5 py-1 text-[11px] font-semibold transition ${
-            memoryGraphPhase === phase
-              ? "bg-slate-900 text-white"
-              : "text-slate-400 hover:bg-slate-100 hover:text-slate-700"
-          }`}
-        >
-          {phase === "before" ? "세션 이전" : "세션 이후"}
-        </button>
-      ))}
+    <div className="flex flex-wrap items-center gap-2">
+      <div className="flex items-center gap-1 rounded-full bg-white/90 p-1 shadow-sm ring-1 ring-slate-100">
+        {(["before", "after"] as const).map((phase) => (
+          <button
+            key={phase}
+            type="button"
+            onClick={() => {
+              setMemoryGraphPhase(phase);
+              if (
+                phase === "before" &&
+                (memoryGraphFilter === "promoted" ||
+                  memoryGraphFilter === "archived")
+              ) {
+                setMemoryGraphFilter("changed");
+              }
+            }}
+            className={`rounded-full px-2.5 py-1 text-[11px] font-semibold transition ${
+              memoryGraphPhase === phase
+                ? "bg-slate-900 text-white"
+                : "text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+            }`}
+          >
+            {phase === "before" ? "세션 이전" : "세션 이후"}
+          </button>
+        ))}
+      </div>
+      <span className="rounded-full bg-white/90 px-2.5 py-1 text-[10px] font-semibold text-slate-500 shadow-sm ring-1 ring-slate-100">
+        {memoryGraphPhase === "before"
+          ? "미션 시작 시점 snapshot"
+          : "세션 종료 후 snapshot"}
+      </span>
     </div>
   );
-  const activeReviewClusters =
+  const legacyReviewClusters =
     sessionMemorySummary.clustersByVariant["keyword-episodic-semantic-link"];
-  // Use the fixed-input cache; fall back to the variant-agnostic default when
-  // that cache has not been generated yet so the graph never goes blank.
-  const reviewGraphClusters = activeReviewClusters.graphClusters.length
-    ? activeReviewClusters.graphClusters
-    : sessionMemorySummary.graphClusters;
-  const reviewGraphEdges = activeReviewClusters.graphClusters.length
-    ? activeReviewClusters.graphEdges
-    : sessionMemorySummary.graphEdges;
+  const activeClusterSnapshot =
+    sessionMemorySummary.clusterSnapshots[memoryGraphPhase];
+  // Prefer the phase-specific session snapshot. Legacy completed sessions may not
+  // have one yet, so fall back to the previous fixed-input cache behavior.
+  const reviewGraphClusters = activeClusterSnapshot.isFallback
+    ? legacyReviewClusters.graphClusters.length
+      ? legacyReviewClusters.graphClusters
+      : sessionMemorySummary.graphClusters
+    : activeClusterSnapshot.graphClusters;
+  const reviewGraphEdges = activeClusterSnapshot.isFallback
+    ? legacyReviewClusters.graphClusters.length
+      ? legacyReviewClusters.graphEdges
+      : sessionMemorySummary.graphEdges
+    : activeClusterSnapshot.graphEdges;
   const renderSessionImpactGraph = (variant: "panel" | "overlay" = "overlay") => {
     const isOverlay = variant === "overlay";
     const referencedByMemoryId = new Map(
@@ -7075,8 +7170,13 @@ export default function MainScreenPage() {
     const sessionArchivedIds = new Set(
       sessionArchivedMemories.map((item) => item.id),
     );
+    const snapshotItemIds = new Set(activeClusterSnapshot.itemIds);
+    const shouldUseSnapshotItems = !activeClusterSnapshot.isFallback;
     const visibleMemoryItems = cumulativeGraphMemories.filter(
       (memory) => {
+        if (shouldUseSnapshotItems && !snapshotItemIds.has(memory.id)) {
+          return false;
+        }
         const referenced = referencedByMemoryId.get(memory.id);
         const isPromoted = promotedIds.has(memory.id);
         const isArchived = sessionArchivedIds.has(memory.id);
@@ -7273,7 +7373,7 @@ export default function MainScreenPage() {
           <MemoryClusterList
             clusters={graphClusters}
             selectedClusterId={selectedClusterId}
-            generatedAt={null}
+            generatedAt={activeClusterSnapshot.generatedAt ?? null}
             hasStaleCache={false}
             isRegenerating={false}
             addedCountByClusterId={addedCountByClusterId}
