@@ -1,4 +1,3 @@
-import OpenAI from "openai";
 import { createHash } from "crypto";
 import {
   getFirebaseAccessToken,
@@ -11,21 +10,16 @@ import {
   clusterSummaryByItemId,
   loadLatestStoredClusters,
 } from "@/lib/server/memoryClustering";
+import {
+  embedMemoryTexts,
+  ensureFreshMemoryEmbeddings,
+  MEMORY_EMBEDDING_MODEL,
+} from "@/lib/server/memoryEmbedding";
 
 export const runtime = "nodejs";
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const MEMORY_COLLECTION = "memories_0_1_2";
 const RETRIEVAL_LOG_COLLECTION = "memoryRetrievalLogs";
-const EMBEDDING_MODEL = "text-embedding-3-large";
-// v2: embedding text dropped original interaction content. Old-tagged embeddings
-// are no longer accepted, so retrieve regenerates them with the new contract.
-const INTERACTION_EMBEDDING_SOURCE = "during_session_record_text_v2";
-const PROFILE_EMBEDDING_SOURCE = "before_session_unit_text";
-const ACCEPTED_EMBEDDING_SOURCES = new Set([
-  INTERACTION_EMBEDDING_SOURCE,
-  PROFILE_EMBEDDING_SOURCE,
-]);
 const MAX_MEMORY_DOCS = 200;
 const DEFAULT_LIMIT = 5;
 // Usage-based forgetting: every retrieval nudges down all memories that were
@@ -57,6 +51,7 @@ type Candidate = {
   output: string;
   originalInteractionContent: string;
   link: string | null;
+  sourceType: string | null;
   embedding: number[];
   embeddingSource: string;
   weight: number;
@@ -94,12 +89,6 @@ function timestampValue(value: unknown) {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
-function l2Normalize(vector: number[]) {
-  const norm = Math.sqrt(vector.reduce((sum, value) => sum + value * value, 0));
-  if (!norm) return vector;
-  return vector.map((value) => value / norm);
-}
-
 function cosineSimilarity(a: number[], b: number[]) {
   let sum = 0;
   const length = Math.min(a.length, b.length);
@@ -107,34 +96,8 @@ function cosineSimilarity(a: number[], b: number[]) {
   return sum;
 }
 
-async function embedTexts(texts: string[]) {
-  if (texts.length === 0) return [];
-  const response = await openai.embeddings.create({
-    model: EMBEDDING_MODEL,
-    input: texts,
-  });
-  return response.data.map((item) => l2Normalize(item.embedding));
-}
-
 function stableHash(value: string) {
   return createHash("sha256").update(value).digest("hex").slice(0, 16);
-}
-
-function buildEmbeddingText(
-  candidate: Pick<Candidate, "keyword" | "episodic" | "semantic" | "link">,
-) {
-  // Timestamp is retrieval metadata only; do not include it in vector text.
-  // Raw interaction content (input/output) is intentionally excluded so the vector
-  // stays keyword/episodic/semantic-based; must match the creation-path contract in
-  // complete-session so freshly created and regenerated embeddings agree.
-  return [
-    candidate.keyword.length ? `Keywords: ${candidate.keyword.join(", ")}` : "",
-    candidate.episodic ? `Episodic: ${candidate.episodic}` : "",
-    candidate.semantic ? `Semantic: ${candidate.semantic}` : "",
-    candidate.link ? `Link: ${candidate.link}` : "",
-  ]
-    .filter(Boolean)
-    .join("\n");
 }
 
 function retrievalLogId(now: number, query: string) {
@@ -237,6 +200,9 @@ function responseMemory(
 }
 
 function v2Candidate(uid: string, doc: MemoryDoc): Candidate | null {
+  const sourceType = String(
+    doc.sourceType ?? doc.memorySource ?? doc.type ?? "",
+  );
   const episodic = String(
     doc.episodic ?? doc.episode ?? doc.content ?? "",
   ).trim();
@@ -262,6 +228,7 @@ function v2Candidate(uid: string, doc: MemoryDoc): Candidate | null {
     output: String(doc.output ?? ""),
     originalInteractionContent: String(doc.originalInteractionContent ?? ""),
     link: doc.link ? String(doc.link) : null,
+    sourceType,
     embedding,
     embeddingSource: String(
       doc.embeddingSource ?? (semantic ? "semantic" : "episodic"),
@@ -276,49 +243,12 @@ function v2Candidate(uid: string, doc: MemoryDoc): Candidate | null {
   };
 }
 
-async function ensureV2Embeddings(candidates: Candidate[], token: string) {
-  // Regenerate: missing embedding OR built with an outdated text contract.
-  const stale = candidates.filter(
-    (candidate) =>
-      candidate.embedding.length === 0 ||
-      !ACCEPTED_EMBEDDING_SOURCES.has(candidate.embeddingSource),
-  );
-  if (stale.length === 0) return;
-  const now = Date.now();
-  const embeddings = await embedTexts(
-    stale.map((candidate) => buildEmbeddingText(candidate)),
-  );
-  await Promise.all(
-    stale.map((candidate, index) => {
-      const embeddingSource = isBeforeSessionDoc(candidate.doc)
-        ? PROFILE_EMBEDDING_SOURCE
-        : INTERACTION_EMBEDDING_SOURCE;
-      candidate.embedding = embeddings[index] ?? [];
-      candidate.embeddingSource = embeddingSource;
-      candidate.doc.embedding = candidate.embedding;
-      candidate.doc.embeddingSource = embeddingSource;
-      candidate.doc.embeddingModel = EMBEDDING_MODEL;
-      candidate.doc.updatedAt = now;
-      return patchFirestoreDocument(
-        candidate.path,
-        {
-          embedding: candidate.embedding,
-          embeddingSource,
-          embeddingModel: EMBEDDING_MODEL,
-          updatedAt: now,
-        },
-        token,
-      );
-    }),
-  );
-}
-
 async function loadCandidates(uid: string, token: string) {
   const v2Docs = await loadCollectionDocs(uid, MEMORY_COLLECTION, token);
   const v2 = v2Docs
     .map((doc) => v2Candidate(uid, doc))
     .filter((item): item is Candidate => Boolean(item));
-  await ensureV2Embeddings(v2, token);
+  await ensureFreshMemoryEmbeddings(v2, token);
   return v2;
 }
 
@@ -454,7 +384,7 @@ export async function POST(request: Request) {
   try {
     const token = await getFirebaseAccessToken();
     const now = Date.now();
-    const [queryEmbedding] = await embedTexts([query]);
+    const [queryEmbedding] = await embedMemoryTexts([query]);
 
     const candidates = await loadCandidates(user.localId, token);
     const memoryCount = candidates.length;
@@ -511,7 +441,7 @@ export async function POST(request: Request) {
         query: query.slice(0, 1000),
         interactionId: interactionId || null,
         userMessageId: userMessageId || null,
-        queryEmbeddingModel: EMBEDDING_MODEL,
+        queryEmbeddingModel: MEMORY_EMBEDDING_MODEL,
         missionId: missionId || null,
         memoryVersion: "0.1.2",
         retrievalRankingPolicy: {

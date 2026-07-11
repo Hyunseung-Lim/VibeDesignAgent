@@ -1,4 +1,3 @@
-import OpenAI from "openai";
 import {
   getFirebaseAccessToken,
   getFirestoreDocument,
@@ -6,16 +5,17 @@ import {
   patchFirestoreDocument,
   verifyFirebaseIdToken,
 } from "@/lib/server/firebaseAdminRest";
+import {
+  embedMemoryInputs,
+  INTERACTION_MEMORY_EMBEDDING_SOURCE,
+  MEMORY_EMBEDDING_MODEL,
+} from "@/lib/server/memoryEmbedding";
 import { archiveDuplicateMemoriesForTargets } from "@/lib/server/memoryForgetting";
 
 export const runtime = "nodejs";
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const MEMORY_SCHEMA_VERSION = "0.1.2";
 const MEMORY_COLLECTION = "memories_0_1_2";
-const EMBEDDING_MODEL = "text-embedding-3-large";
-// v2: embedding text no longer includes original interaction content (input/output).
-const EMBEDDING_SOURCE = "during_session_record_text_v2";
 
 function jsonArray(value: unknown) {
   if (Array.isArray(value)) return value.map(String).filter(Boolean);
@@ -26,21 +26,6 @@ function jsonArray(value: unknown) {
   } catch {
     return [];
   }
-}
-
-function l2Normalize(vector: number[]) {
-  const norm = Math.sqrt(vector.reduce((sum, value) => sum + value * value, 0));
-  if (!norm) return vector;
-  return vector.map((value) => value / norm);
-}
-
-async function embedMemoryTexts(texts: string[]) {
-  if (texts.length === 0) return [];
-  const response = await openai.embeddings.create({
-    model: EMBEDDING_MODEL,
-    input: texts,
-  });
-  return response.data.map((item) => l2Normalize(item.embedding));
 }
 
 export async function POST(request: Request) {
@@ -109,15 +94,6 @@ export async function POST(request: Request) {
           [`User input:\n${input}`, `Agent output:\n${output}`]
             .filter((section) => !section.endsWith("\n"))
             .join("\n\n");
-        // Keep timestamp as metadata only; vector similarity should stay content-based.
-        // Raw interaction content (input/output) is stored on the doc but intentionally
-        // excluded from the embedding so vectors stay keyword/episodic/semantic-based.
-        const embeddingText = [
-          keywords.length ? `Keywords: ${keywords.join(", ")}` : "",
-          episodic ? `Episodic: ${episodic}` : "",
-          semantic ? `Semantic: ${semantic}` : "",
-        ].filter(Boolean).join("\n");
-        const [embedding] = await embedMemoryTexts(embeddingText ? [embeddingText] : []);
         // Promote whenever the draft carries any usable content, not only when an
         // episodic line exists. Episodic-empty drafts (UI events, final-design
         // selections and legacy semantic-only memories) were previously skipped here yet
@@ -128,6 +104,15 @@ export async function POST(request: Request) {
         );
         let memoryId: string | null = null;
         if (hasContent) {
+          const [embedding] = await embedMemoryInputs([
+            {
+              sourceType: "during_session",
+              keyword: keywords,
+              episodic,
+              semantic,
+              link: null,
+            },
+          ]);
           memoryId = `during-session-${sourceId}-${draft.id}`;
           await patchFirestoreDocument(
             `users/${user.localId}/${MEMORY_COLLECTION}/${encodeURIComponent(memoryId)}`,
@@ -162,8 +147,8 @@ export async function POST(request: Request) {
                 draft.referenceSourceAnalysisFingerprintsJson ?? "[]",
               link: null,
               embedding: embedding ?? [],
-              embeddingSource: EMBEDDING_SOURCE,
-              embeddingModel: EMBEDDING_MODEL,
+              embeddingSource: INTERACTION_MEMORY_EMBEDDING_SOURCE,
+              embeddingModel: MEMORY_EMBEDDING_MODEL,
               weight: 0.5,
               retrievedCount: 0,
               lastRetrievedAt: null,

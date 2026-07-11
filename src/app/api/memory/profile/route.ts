@@ -12,14 +12,17 @@ import {
   PROFILE_MEMORY_ENCODE_PROMPT,
   PROFILE_MEMORY_SEGMENT_PROMPT,
 } from "@/lib/prompts";
+import {
+  BEFORE_SESSION_MEMORY_EMBEDDING_SOURCE,
+  embedMemoryInputs,
+  MEMORY_EMBEDDING_MODEL,
+} from "@/lib/server/memoryEmbedding";
 
 export const runtime = "nodejs";
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const MEMORY_COLLECTION = "memories_0_1_2";
 const PROFILE_MEMORY_SCHEMA_VERSION = "0.1.2-before-session";
-const EMBEDDING_MODEL = "text-embedding-3-large";
-const EMBEDDING_SOURCE = "before_session_unit_text";
 const PROFILE_MEMORY_MAX_ITEMS = 5;
 const PROFILE_MEMORY_MAX_CHARS = 240;
 const PROFILE_MEMORY_MAX_RAW_CHARS = 6000;
@@ -94,33 +97,6 @@ function stringArray(value: unknown) {
 
 function stableHash(value: string) {
   return createHash("sha256").update(value).digest("hex").slice(0, 16);
-}
-
-function l2Normalize(vector: number[]) {
-  const norm = Math.sqrt(vector.reduce((sum, value) => sum + value * value, 0));
-  if (!norm) return vector;
-  return vector.map((value) => value / norm);
-}
-
-async function embedTexts(texts: string[]) {
-  if (texts.length === 0) return [];
-  const response = await openai.embeddings.create({
-    model: EMBEDDING_MODEL,
-    input: texts,
-  });
-  return response.data.map((item) => l2Normalize(item.embedding));
-}
-
-function buildEmbeddingText(memory: DerivedProfileMemory) {
-  // Keep profile revision timestamps as metadata only; vectors use semantic content.
-  return [
-    memory.sourceText ? `Source: ${memory.sourceText}` : "",
-    memory.keywords.length ? `Keywords: ${memory.keywords.join(", ")}` : "",
-    memory.episodic ? `Episodic: ${memory.episodic}` : "",
-    memory.semantic ? `Semantic: ${memory.semantic}` : "",
-  ]
-    .filter(Boolean)
-    .join("\n");
 }
 
 function parseProfileSegments(raw: string): string[] {
@@ -240,8 +216,15 @@ async function writeProfileDerivedMemories(
   const derived = await deriveProfileMemories(rawMarkdown, missionContext);
   if (derived.length === 0) return { count: 0, ids: [] as string[] };
   const writeBatchId = randomUUID();
-  const embeddings = await embedTexts(
-    derived.map((memory) => buildEmbeddingText(memory)),
+  const embeddings = await embedMemoryInputs(
+    derived.map((memory) => ({
+      sourceType: "before_session",
+      source: { sourceText: memory.sourceText },
+      keyword: memory.keywords,
+      episodic: memory.episodic,
+      semantic: memory.semantic,
+      link: null,
+    })),
   );
   const ids = await Promise.all(
     derived.map(async (memory, index) => {
@@ -267,8 +250,8 @@ async function writeProfileDerivedMemories(
           output: "",
           link: null,
           embedding: embeddings[index] ?? [],
-          embeddingSource: EMBEDDING_SOURCE,
-          embeddingModel: EMBEDDING_MODEL,
+          embeddingSource: BEFORE_SESSION_MEMORY_EMBEDDING_SOURCE,
+          embeddingModel: MEMORY_EMBEDDING_MODEL,
           weight: 0.5,
           retrievedCount: 0,
           lastRetrievedAt: null,

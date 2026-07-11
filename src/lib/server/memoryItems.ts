@@ -6,6 +6,10 @@ import type { ClusterInputItem } from "@/lib/server/memoryClustering";
 
 export const MEMORY_COLLECTION = "memories_0_1_2";
 
+type LoadMemoryItemsOptions = {
+  includeArchived?: boolean;
+};
+
 function stringValue(value: unknown): string | null {
   return typeof value === "string" && value.trim() ? value.trim() : null;
 }
@@ -32,7 +36,11 @@ function stringArray(primary: unknown, fallback?: unknown): string[] {
   return value.map(String).map((item) => item.trim()).filter(Boolean);
 }
 
-export async function loadUserMemoryItems(uid: string, token: string) {
+export async function loadUserMemoryItems(
+  uid: string,
+  token: string,
+  options: LoadMemoryItemsOptions = {},
+) {
   const ids = await listFirestoreDocumentIds(
     `users/${uid}/${MEMORY_COLLECTION}`,
     token,
@@ -46,6 +54,7 @@ export async function loadUserMemoryItems(uid: string, token: string) {
         )) ?? {}) as Record<string, unknown>;
       return {
         id,
+        path: `users/${uid}/${MEMORY_COLLECTION}/${encodeURIComponent(id)}`,
         episodic: stringValue(data.episodic ?? data.episode),
         semantic: stringValue(data.semantic),
         input: stringValue(data.input),
@@ -55,9 +64,11 @@ export async function loadUserMemoryItems(uid: string, token: string) {
         ),
         action: stringValue(data.action),
         sourceType: stringValue(data.sourceType ?? data.memorySource),
+        link: stringValue(data.link),
         keywords: stringArray(data.keywords, data.keyword),
         weight: numberValue(data.weight),
         embedding: numberArray(data.embedding),
+        embeddingSource: stringValue(data.embeddingSource),
         timestamp: numberValue(data.timestamp ?? data.createdAt),
         archivedAt: numberValue(data.archivedAt),
         archiveReason: stringValue(data.archiveReason),
@@ -70,11 +81,14 @@ export async function loadUserMemoryItems(uid: string, token: string) {
   return docs
     .filter(
       (item) =>
-        item.episodic ||
-        item.semantic ||
-        item.input ||
-        item.output ||
-        item.keywords.length > 0,
+        (options.includeArchived || !item.archivedAt) &&
+        Boolean(
+          item.episodic ||
+            item.semantic ||
+            item.input ||
+            item.output ||
+            item.keywords.length > 0,
+        ),
     )
     .sort((a, b) => (b.timestamp ?? 0) - (a.timestamp ?? 0));
 }
@@ -93,6 +107,7 @@ export async function loadClusterInputItems(
     .slice(0, maxItems)
     .map((item) => ({
       id: item.id,
+      path: item.path,
       action: item.action ?? undefined,
       keyword: item.keywords,
       episodic: item.episodic ?? undefined,
@@ -100,6 +115,11 @@ export async function loadClusterInputItems(
       input: item.input ?? undefined,
       output: item.output ?? undefined,
       originalInteractionContent: item.originalInteractionContent ?? undefined,
+      link: item.link ?? undefined,
+      sourceType: item.sourceType,
+      source: item.source,
+      embedding: item.embedding,
+      embeddingSource: item.embeddingSource,
       timestamp: item.timestamp ?? 0,
     }));
 }

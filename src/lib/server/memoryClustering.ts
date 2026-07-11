@@ -6,9 +6,14 @@ import {
   listFirestoreDocumentIds,
   patchFirestoreDocument,
 } from "@/lib/server/firebaseAdminRest";
+import {
+  embedMemoryInputs,
+  ensureFreshMemoryEmbeddings,
+  MEMORY_EMBEDDING_MODEL,
+} from "@/lib/server/memoryEmbedding";
 import { loadUserMemoryItems } from "@/lib/server/memoryItems";
 
-export const EMBEDDING_MODEL = "text-embedding-3-large";
+export const EMBEDDING_MODEL = MEMORY_EMBEDDING_MODEL;
 export const LABEL_MODEL = "gpt-5.4-mini";
 export const MAX_GRAPH_CLUSTER_COUNT = 16;
 export const MAX_ITEMS = 160;
@@ -18,11 +23,12 @@ export const GRAPH_KNN_EDGES = 3;
 export const GRAPH_COMMUNITY_ITERATIONS = 30;
 export const CLUSTER_COLLECTION = "memoryClusters";
 export const CLUSTER_SNAPSHOT_COLLECTION = "memoryClusterSnapshots";
-export const CLUSTERING_METHOD_VERSION = "similarity-graph-v3-persona-summary";
+export const CLUSTERING_METHOD_VERSION =
+  "similarity-graph-v4-stored-memory-embedding";
 export const MEMORY_VERSION = "0.1.2";
 export const ONBOARDING_MISSION_ID = "onboarding";
 
-// Fixed clustering embedding input: keyword + episodic + semantic + link.
+// Fixed clustering vector source: the stored memory embedding contract.
 export const CLUSTERING_INPUT_VARIANTS = [
   "keyword-episodic-semantic-link",
 ] as const;
@@ -42,6 +48,7 @@ const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 export type ClusterInputItem = {
   id: string;
+  path?: string;
   action?: string;
   keyword?: string[];
   episodic?: string;
@@ -50,6 +57,10 @@ export type ClusterInputItem = {
   output?: string;
   originalInteractionContent?: string;
   link?: string;
+  sourceType?: string | null;
+  source?: unknown;
+  embedding?: number[];
+  embeddingSource?: string | null;
   timestamp?: number;
 };
 
@@ -295,19 +306,6 @@ export function parseStoredGraphEdges(value: unknown): ClusterGraphEdge[] {
     );
 }
 
-function embeddingText(item: ClusterInputItem) {
-  return (
-    [
-      item.keyword?.length ? `Keywords: ${item.keyword.join(", ")}` : "",
-      item.episodic ? `Episodic: ${item.episodic}` : "",
-      item.semantic ? `Semantic: ${item.semantic}` : "",
-      item.link ? `Link: ${item.link}` : "",
-    ]
-      .filter(Boolean)
-      .join("\n") || item.id
-  );
-}
-
 function itemSummary(item: ClusterInputItem) {
   return item.semantic || item.episodic || item.input || item.output || item.action || item.id;
 }
@@ -467,16 +465,25 @@ export async function labelClusters(
   });
 }
 
-export async function embedItems(items: ClusterInputItem[]) {
-  const response = await openai.embeddings.create({
-    model: EMBEDDING_MODEL,
-    input: items.map((item) => embeddingText(item)),
-  });
-  return response.data.map((item) => l2Normalize(item.embedding));
+export async function embedItems(items: ClusterInputItem[], token?: string) {
+  if (token) {
+    await ensureFreshMemoryEmbeddings(items, token);
+  }
+  const missing = items.filter(
+    (item) => !Array.isArray(item.embedding) || item.embedding.length === 0,
+  );
+  if (missing.length > 0) {
+    const embeddings = await embedMemoryInputs(missing);
+    missing.forEach((item, index) => {
+      item.embedding = embeddings[index] ?? [];
+    });
+  }
+  return items.map((item) => l2Normalize(item.embedding ?? []));
 }
 
 async function generateClusterGraph(
   items: ClusterInputItem[],
+  token: string,
   subjectName?: string,
 ) {
   if (items.length === 0) {
@@ -486,7 +493,7 @@ async function generateClusterGraph(
       graphDiagnostics: null,
     };
   }
-  const vectors = await embedItems(items);
+  const vectors = await embedItems(items, token);
   const graphCommunity = buildGraphCommunityClusters(items, vectors);
   const itemsById = new Map(items.map((item) => [item.id, item]));
   return {
@@ -662,7 +669,7 @@ export async function generateAndStoreClusters(
   variant: ClusteringInputVariant = CLUSTERING_INPUT_VARIANT,
 ) {
   const { graphClusters, graphEdges, graphDiagnostics } =
-    await generateClusterGraph(items, subjectName);
+    await generateClusterGraph(items, token, subjectName);
   const completedAt = Date.now();
 
   const itemSignature = memoryClusterItemSignature(items);
@@ -740,6 +747,11 @@ function snapshotItems(
       input: item.input ?? undefined,
       output: item.output ?? undefined,
       originalInteractionContent: item.originalInteractionContent ?? undefined,
+      link: item.link ?? undefined,
+      sourceType: item.sourceType,
+      source: item.source,
+      embedding: item.embedding,
+      embeddingSource: item.embeddingSource,
       timestamp: item.timestamp ?? 0,
     }));
 }
@@ -761,7 +773,7 @@ export async function generateAndStoreSessionClusterSnapshots(
       const itemSignature =
         items.length > 0 ? memoryClusterItemSignature(items) : null;
       const { graphClusters, graphEdges, graphDiagnostics } =
-        await generateClusterGraph(items, subjectName);
+        await generateClusterGraph(items, token, subjectName);
       const generatedAt = Date.now();
       await patchFirestoreDocument(
         clusterSnapshotDocumentPath(uid, missionId, phase),

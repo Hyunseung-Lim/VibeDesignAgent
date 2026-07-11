@@ -176,21 +176,21 @@
 - **Legacy**: `GET /api/memory/bootstrap`은 세션 시작 시 memory를 preload하던 구 방식이며, 현재 main client에서는 호출하지 않음
 - **Retrieval 쿼리 구성**: `[user text] + Mission: [parentMissionTitle] + Active idea: [description]` — 선택된 옵션 이름(페르소나 등)은 제외해 임베딩 노이즈 방지
 - **Admin 관측**: researcher가 `/admin/users/[uid]/memory`에서 `/agent`와 동일한 user별 memory cluster graph/list/detail을 확인 가능. detail panel은 그래프 왼쪽에 있고 cluster list는 요약 없이 색상·제목·개수만 표시한다 `[현행 2026-06-27 → 15.130]` `[stale 2026-06-30 → 15.169: cluster list가 main 세션리뷰와 동일한 review presentation(rounded card + 색상 count rail + 접기 rail)로 통일됨]` Before-session memory의 detail card 제목은 분리된 `source.sourceText`를 우선 표시하고, `Original input`은 별도 강조 없이 전체 `input` rawMarkdown을 표시한다 `[현행 2026-07-07 → 15.195/15.196]`
-- **Retrieval MVP**: v0.1.2 memory document에 embedding과 `weight` metadata를 저장하고, retrieve된 memory의 weight를 천천히 올림. memory embedding 입력은 clustering과 동일하게 keyword + episodic + semantic + link로 고정하고 원문 interaction input/output은 제외한다. 생성(`/api/memory/complete-session`)과 retrieve 재생성(`/api/memory/retrieve`)의 텍스트 계약이 동일해야 하며, 계약이 바뀌면 `embeddingSource` 태그를 올려(`during_session_record_text_v2`) 기존 embedding을 stale 처리해 재생성한다 `[현행 2026-07-06 → 15.194]`
-- **Forgetting MVP**: low-weight/duplicate 후보를 `archivedAt` 기반으로 soft archive
+- **Retrieval MVP**: v0.1.2 memory document에 embedding과 `weight` metadata를 저장하고, retrieve된 memory의 weight를 천천히 올림. retrieval과 clustering은 `memories_0_1_2.embedding`에 저장된 같은 vector를 사용하며, 누락·stale embedding은 공용 `memoryEmbedding` helper가 같은 텍스트 계약으로 재생성해 원본 memory document에 write-back한다. During-session embedding 입력은 keyword + episodic + semantic + link이고, before-session embedding 입력은 source.sourceText + keyword + episodic + semantic + link다. 원문 interaction input/output은 embedding에서 제외한다. 계약이 바뀌면 `embeddingSource` 태그를 올려(`during_session_record_text_v2`, `before_session_unit_text`) 기존 embedding을 stale 처리해 재생성한다 `[현행 2026-07-10 → 15.194/15.201]`
+- **Forgetting MVP**: low-weight/duplicate 후보를 `archivedAt` 기반으로 soft archive한다. Archived memory document는 감사/리뷰/사라짐 표현을 위해 Firestore에 남기지만, `/agent`/admin 현재 memory graph와 clustering 입력의 기본 대상에서는 제외한다 `[현행 2026-07-11 → 15.202]`
 
 #### 메모리 클러스터링
 
 - 경로: 일반 사용자 본인 memory는 `GET/POST /api/memory/clusters`, admin의 타인 memory 진단은 `GET/POST /api/admin/users/[uid]/memory/clusters`
-- 입력: clustering embedding 입력은 keyword + episodic + semantic + link로 고정한다. 원문 interaction input/output은 clustering embedding에 포함하지 않고, 입력 variant 비교는 제공하지 않는다 `[현행 2026-07-03 → 15.178]`
-- 1단계: 구조화된 keyword + episodic + semantic + link 텍스트를 `text-embedding-3-large`로 embedding
+- 입력: clustering vector는 retrieval과 같은 active `memories_0_1_2.embedding` 저장값을 사용한다. `archivedAt`이 있는 memory는 현재 graph/clustering 입력에서 제외한다. 저장값이 없거나 `embeddingSource`가 현재 sourceType 계약과 맞지 않으면 keyword/episodic/semantic/link(before-session은 source.sourceText 포함) 텍스트로 재생성해 문서에 write-back한다. 원문 interaction input/output은 clustering embedding에 포함하지 않고, 입력 variant 비교는 제공하지 않는다 `[현행 2026-07-11 → 15.178/15.201/15.202]`
+- 1단계: 저장된 `text-embedding-3-large` memory embedding으로 cosine similarity graph를 만든다. Clustering 자체가 별도 embedding API 호출을 반복하지 않으며, 누락·stale 항목만 공용 helper로 보정한다.
 - 2단계: cosine similarity graph 생성. 강한 유사도 edge와 node별 KNN edge를 함께 사용
 - 3단계: similarity graph에서 label propagation으로 community를 찾고, community가 너무 많으면 centroid similarity 기준으로 최대 16개까지 merge
 - 4단계: LLM은 cluster membership을 바꾸지 않고 최종 cluster label/summary만 생성한다. Labeler는 비교 안정성을 위해 `temperature: 0`으로 고정한다. Summary는 작업 목록을 일반적으로 요약하지 않고 Firestore profile의 실제 displayName을 사용해 그 사람의 반복되는 성격, 습관, 작업 방식, 의사결정 패턴과 디자인 취향을 근거와 함께 서술한다. 단일·약한 근거에는 consistently/always 같은 반복 표현을 쓰지 않는다 `[현행 2026-07-10 → 15.99/15.198]`
 - `/agent`(self·admin 공용) UI 헤더에는 고정 입력 구성(keyword · episodic · semantic · link)만 표시하고, 입력 variant 토글은 렌더하지 않는다 `[현행 2026-07-03 → 15.178]`
 - `/agent` cluster UI는 좌측에서 cluster list → detail panel → graph 순서로 배치한다. cluster list는 main 세션 리뷰와 동일한 `MemoryClusterList` review presentation을 사용한다 — 색상 count rail이 달린 rounded card, cluster label만 표시, 좌측 접기 rail 제공. cluster summary와 선택됨 badge는 숨긴다 `[현행 2026-06-30 → 15.169]`
 - `/agent`의 세션 필터는 유저별 `missionOrder` 기준의 누적 메모리 집합을 사용한다. 예를 들어 세션 2를 선택하면 세션 2까지의 누적 메모리를 보여주고, 세션 2에서 새로 생성된 메모리만 다이아몬드로 표시한다. 세션 리뷰 overlay는 세션 완료 시 생성된 before/after cluster snapshot을 사용해 phase별 cluster label/summary/membership/edge를 분리 표시한다. 기본 그래프 필터는 전체 메모리다 `[현행 2026-07-10 → 15.178/15.197]`
-- 캐시 키는 memory version + item signature + clustering method version으로 관리하고, method version에는 고정 입력 이름 `keyword-episodic-semantic-link`가 포함된다. 과거 compact-context/full-context cache와 섞지 않는다 `[현행 2026-07-03 → 15.178]`
+- 캐시 키는 memory version + item signature + clustering method version으로 관리하고, method version에는 고정 입력 이름 `keyword-episodic-semantic-link`가 포함된다. 저장 embedding 공유 전환 후 method version은 `similarity-graph-v4-stored-memory-embedding`이며, 과거 compact-context/full-context/v3 cache와 섞지 않는다 `[현행 2026-07-10 → 15.178/15.201]`
 - Self/admin API는 `loadUserMemoryItems`와 `loadClusterInputItems`를 공유하며, admin 전용 cluster route도 `generateAndStoreClusters`를 호출한다. 별도 admin clustering 알고리즘은 두지 않는다 `[현행 2026-06-22 → 15.107]`
 
 ---
@@ -4127,3 +4127,17 @@ type ChatPlan = {
 - 배경(Notion `Sanitized raw prompt 수정`): admin viewAs 리뷰 화면의 `Raw prompt 보기` 모달이 sanitized copy만 보여줘, 실제 모델에 보낸 prompt를 확인할 수 없었다.
 - 수정: `/api/chat`이 `reviewTurns/{turnId}`에 모델 호출에 사용한 원본 `rawPromptActual`을 함께 저장한다. 기존 sanitized `rawPrompt`, `rawPromptSanitization`, `rawResponseMeta`는 유지한다.
 - UI: `PromptViewer`는 admin-only 모달에서 `Actual prompt sent to model`을 먼저 보여주고, `rawPromptActual`이 있는 경우 sanitized copy를 별도 섹션으로 표시한다. 기존 reviewTurn에는 `rawPromptActual`이 없으므로 sanitized `rawPrompt`로 fallback한다.
+
+### 15.201 Retrieval clustering 저장 embedding 공유 `[implemented 2026-07-10]`
+
+- 배경(Notion `Memory embedding backfill` Part 4): retrieval과 clustering이 같은 memory를 보면서도 각각 embedding API를 호출하면, 같은 항목의 vector 계약이 갈라질 수 있고 clustering 재생성마다 불필요한 embedding 비용이 발생한다.
+- 수정: `src/lib/server/memoryEmbedding.ts`를 공용 helper로 추가해 memory embedding text 생성, embedding 생성, stale 검사, Firestore write-back을 한 곳으로 모았다. During-session은 `during_session_record_text_v2`, before-session은 기존 `before_session_unit_text` 계약을 유지한다.
+- 수정: `/api/memory/complete-session`, `/api/memory/profile`, `/api/memory/retrieve`가 모두 공용 helper를 사용한다. Retrieve는 query embedding만 새로 만들고, memory candidate의 저장 embedding이 없거나 source 계약과 맞지 않을 때만 재생성한다.
+- 수정: `loadUserMemoryItems`와 `loadClusterInputItems`가 path, link, sourceType, source, embedding, embeddingSource를 clustering으로 넘긴다. `memoryClustering.ts`는 저장 embedding을 우선 사용하고 누락·stale 항목만 공용 helper로 보정해 같은 memory document에 저장한다.
+- 캐시: clustering method version을 `similarity-graph-v4-stored-memory-embedding`으로 올려 v3 persona-summary cache와 섞이지 않게 했다. 표시용 input variant 이름은 `keyword-episodic-semantic-link`를 유지한다.
+
+### 15.202 Archived memory current graph 제외 `[implemented 2026-07-11]`
+
+- 배경: Part 4 데이터 검증 중 최근 세션의 before/after cluster snapshot과 current graph 입력에 `archivedAt`이 있는 duplicate memory가 섞여 있었다. Archived memory는 삭제된 것이 아니라 사라짐/감사 표현을 위해 데이터로 남아야 하지만, 현재 기억 상태를 보여주는 client cluster graph에는 node로 나타나면 안 된다.
+- 수정: `loadUserMemoryItems`의 기본값을 active memory only로 바꿔 `archivedAt`이 있는 memory를 `/api/memory/all`, admin memory API, self/admin clustering 입력, 앞으로 생성되는 session cluster snapshot에서 제외한다. 필요하면 `includeArchived` 옵션으로 명시적으로 포함할 수 있게 했다.
+- 유지: Firestore memory document와 admin archived/forgetting 조회, session-summary의 archive status 기반 리뷰 표현은 유지한다. 즉 archived memory는 데이터로 남지만 current graph/clustering source item에는 들어가지 않는다.
