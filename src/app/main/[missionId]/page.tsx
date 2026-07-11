@@ -2473,10 +2473,20 @@ export default function MainScreenPage() {
     useState<SelectedElement | null>(null);
   const [selectedReferences, setSelectedReferences] = useState<Reference[]>([]);
   const [citedTexts, setCitedTexts] = useState<string[]>([]);
+  const citedTextsRef = useRef<string[]>([]);
   const mockupFrameRefs = useRef(new Map<string, HTMLIFrameElement>());
   const missionPanelRef = useRef<HTMLElement>(null);
   const citeMenuRef = useRef<HTMLDivElement>(null);
   const pendingCiteTextRef = useRef<string>("");
+  const updateCitedTexts = useCallback(
+    (next: string[] | ((current: string[]) => string[])) => {
+      const resolved =
+        typeof next === "function" ? next(citedTextsRef.current) : next;
+      citedTextsRef.current = resolved;
+      setCitedTexts(resolved);
+    },
+    [],
+  );
   const sessionRefFor = useCallback(
     (uid: string) => doc(db, "sessions", uid, "missions", missionId),
     [missionId],
@@ -4568,6 +4578,7 @@ export default function MainScreenPage() {
     // Snapshot the attached style image for this turn; the GENERATE_MOCKUP call
     // happens later in the streaming handler, after we clear the composer chip.
     const styleImageForTurn = attachedStyleImage?.dataUrl ?? null;
+    const citedTextsForTurn = [...citedTextsRef.current];
     // Phase 2: if no image is attached, a URL in the message or a cited
     // reference's URL drives appearance (server screenshots it). Attached image
     // wins. Snapshotted now because selectedReferences is cleared on send.
@@ -4600,7 +4611,7 @@ export default function MainScreenPage() {
               imageUrl: r.imageUrl,
             }))
           : null,
-      citedTexts: citedTexts.length > 0 ? [...citedTexts] : null,
+      citedTexts: citedTextsForTurn.length > 0 ? citedTextsForTurn : null,
       styleImage: attachedStyleImage,
       composerCommand: commandForTurn,
       composerMention: mentionForTurn,
@@ -4628,7 +4639,7 @@ export default function MainScreenPage() {
     const manualReference = parseManualReferencePrompt(text);
     const memoryInput = text;
     const memorySources: MemoryDraftSources = {
-      texts: [...citedTexts],
+      texts: citedTextsForTurn,
       links: selectedReferences.map(memorySourceLinkFromReference),
       image: attachedStyleImage,
       uiResult: selectedElement
@@ -4649,7 +4660,7 @@ export default function MainScreenPage() {
       setSelectedElement(null);
     }
     setSelectedReferences([]);
-    setCitedTexts([]);
+    updateCitedTexts([]);
     setAttachedStyleImage(null);
 
     if (manualReference) {
@@ -4800,7 +4811,8 @@ export default function MainScreenPage() {
             turnMemoryContext.semantic.length > 0
               ? turnMemoryContext
               : undefined,
-          citedTexts: citedTexts.length > 0 ? citedTexts : undefined,
+          citedTexts:
+            citedTextsForTurn.length > 0 ? citedTextsForTurn : undefined,
           referencePreferenceContext: missionId
             ? buildReferencePreferenceContext(
                 missionId,
@@ -6143,7 +6155,7 @@ export default function MainScreenPage() {
     activeIdeaId,
     selectedElement,
     selectedReferences,
-    citedTexts,
+    updateCitedTexts,
     attachedStyleImage,
     ideas,
     references,
@@ -7577,7 +7589,7 @@ export default function MainScreenPage() {
           onMouseDown={(e) => {
             e.preventDefault();
             const text = pendingCiteTextRef.current;
-            if (text) setCitedTexts((prev) => [...prev, text]);
+            if (text) updateCitedTexts((prev) => [...prev, text]);
             if (citeMenuRef.current) citeMenuRef.current.style.display = "none";
             pendingCiteTextRef.current = "";
             window.getSelection()?.removeAllRanges();
@@ -8770,9 +8782,9 @@ export default function MainScreenPage() {
               generatingCurrentIdeaMockup={generatingMockupIdeaId === activeIdeaId}
               mockupOperation={mockupOperation}
               onClearSelectedElement={clearSelectedElement}
-              onClearCitedTexts={() => setCitedTexts([])}
+              onClearCitedTexts={() => updateCitedTexts([])}
               onRemoveCitedText={(index) =>
-                setCitedTexts((prev) => prev.filter((_, j) => j !== index))
+                updateCitedTexts((prev) => prev.filter((_, j) => j !== index))
               }
               onClearSelectedReferences={() => setSelectedReferences([])}
               onRemoveSelectedReference={(id) =>

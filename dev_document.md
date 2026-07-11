@@ -119,7 +119,7 @@
 
 - **생성 조건**: 아이디어가 1개 이상 저장된 경우에만 생성 가능
 - **생성 흐름**: 채팅 모델이 `[GENERATE_MOCKUP: {prompt}]` 출력 → Google Stitch API 호출 → HTML 반환 → 캔버스에 표시
-- **채팅 컨텍스트**: 미션 제목/브리핑, 현재 아이디어 내용, 기존 목업 HTML, 선택된 UI 요소, 인용 레퍼런스, 대화 히스토리
+- **채팅 컨텍스트**: 미션 제목/브리핑, 현재 아이디어 내용, 기존 목업 HTML, 선택된 UI 요소, 인용 레퍼런스, 대화 히스토리. 텍스트 인용은 client가 state/ref를 동기화해 선택 직후 전송한 turn에도 포함시키고, `/api/chat`이 raw excerpt를 truncate해 넘기며 `chatCitedTextsPrompt`가 `[인용 N]` 라벨을 한 번만 붙인다. 사용자가 명시적으로 붙인 `citedTexts`는 planner pruning보다 우선해 presence 기반으로 raw prompt에 포함한다. `/레퍼런스검색` memory는 15.199 결정대로 별도 before-session 우회 없이 기존 reference relevance filter를 탄다 `[현행 2026-07-11 → 15.199/15.203/15.205]`
 - **missionBrief 보완 주입**: 신규 목업 생성 시 아이디어 내용이 300자 미만으로 빈약하면 `missionBrief`를 `buildMockupPrompt`에 직접 주입해 제품 데이터가 Stitch에 전달되도록 보장 (수정 시에는 주입 안 함)
 - **이미지 주도 생성**: 사용자가 참고 이미지를 첨부/붙여넣거나(Phase 1) 신규 목업 요청에 URL을 주면(Phase 2 — 채팅 메시지 내 URL 또는 인용 레퍼런스의 URL), 텍스트 design.md 단계 없이 그 화면을 Stitch에 `upload`→`edit`로 재구성해 목업을 만들고 결과에서 design.md를 역추출·저장한다. URL은 서버가 스크린샷(Microlink 무키, `captureScreenshot` 추상화)으로 캡처하며 첨부 이미지가 우선. 모바일 목업이면 URL 캡처도 390×844 모바일 viewport, 데스크톱이면 1280×900 viewport로 찍는다. 이미지/URL이 있으면 "디자인 스타일 필수" 게이트를 우회한다. `src/app/api/stitch/route.ts`의 `isImageLed` 분기 참고 `[현행 2026-06-15 → 15.81/15.83]`
 - **콘텐츠 자산 주도 생성(asset-led)**: 미션 옵션에 어드민이 등록한 콘텐츠 이미지(`assetImages`, 실제 상품 사진·UI 캡쳐)가 있으면 신규 목업 생성 시 그 Storage `path`/URL과 설명(`note`)을 `/api/stitch`로 넘긴다. 서버는 브라우저용 `/api/mission-assets` 프록시를 다시 fetch하지 않고 `mission-assets/` Storage object를 직접 다운로드한 뒤 `upload`→`edit`하면서 asset manifest와 함께 "이 이미지들을 그대로 콘텐츠로 박아 넣어라"(`assetImageEmbedPrompt`)로 생성한다. 만약 Stitch `upload`/`edit_screens`가 인증 경계에서 실패하면 목업 전체를 실패시키지 않고, asset URL을 `img src`에 직접 쓰라는 텍스트 생성 fallback으로 전환한다. 이 fallback도 현재 credential로 실패하면 API key 클라이언트로 새 Stitch project를 만들어 URL 텍스트 생성만 재시도한다. API key 텍스트 생성까지 인증 실패하면 OpenAI가 asset URL을 그대로 쓰는 standalone HTML을 생성해 반환하고, 이 결과는 실제 Stitch screen이 아니므로 `screenId`/`projectId` 연결 없이 저장된다. fallback project에는 기존 design system이 적용되지 않았으므로 응답의 designSystemId/style hash는 비운다. 이미지 주도 생성과 달리 이미지를 스타일로 재구성하지 않고 콘텐츠 자산으로 보존하며, 레이아웃·스타일은 brief와 디자인 시스템을 따른다. 그래서 디자인 스타일을 미리 적용하고 결과 기반 design.md 역추출은 하지 않는다. 사용자가 그 턴에 스타일 이미지/URL을 첨부하면 그쪽(isImageLed)이 우선. `src/app/api/stitch/route.ts`의 `isAssetLed` 분기 참고 `[현행 2026-07-09 → 15.89/15.93]`
@@ -4141,3 +4141,15 @@ type ChatPlan = {
 - 배경: Part 4 데이터 검증 중 최근 세션의 before/after cluster snapshot과 current graph 입력에 `archivedAt`이 있는 duplicate memory가 섞여 있었다. Archived memory는 삭제된 것이 아니라 사라짐/감사 표현을 위해 데이터로 남아야 하지만, 현재 기억 상태를 보여주는 client cluster graph에는 node로 나타나면 안 된다.
 - 수정: `loadUserMemoryItems`의 기본값을 active memory only로 바꿔 `archivedAt`이 있는 memory를 `/api/memory/all`, admin memory API, self/admin clustering 입력, 앞으로 생성되는 session cluster snapshot에서 제외한다. 필요하면 `includeArchived` 옵션으로 명시적으로 포함할 수 있게 했다.
 - 유지: Firestore memory document와 admin archived/forgetting 조회, session-summary의 archive status 기반 리뷰 표현은 유지한다. 즉 archived memory는 데이터로 남지만 current graph/clustering source item에는 들어가지 않는다.
+
+### 15.203 citedTexts 이중 라벨링 제거 `[implemented 2026-07-11]`
+
+- 배경(Notion `citedTexts 이중 라벨링`): `/api/chat`이 cited text마다 `[인용 N]`을 붙인 뒤 `chatCitedTextsPrompt`가 다시 같은 라벨을 붙여 최종 system prompt에 `[인용 1] [인용 1] ...`처럼 중복 표시됐다.
+- 수정: `/api/chat`은 cited text를 truncate한 raw excerpt 배열로만 `chatCitedTextsPrompt`에 전달하고, 인용 번호 라벨은 prompt helper 한 곳에서만 붙인다. Client는 `citedTexts` state와 ref를 함께 갱신해 텍스트 인용 직후 바로 `/레퍼런스검색` 같은 composer command를 보내도 user message, memory source, `/api/chat` payload가 같은 cited text snapshot을 사용한다.
+- 영향: prompt compact 저장용 `citedTexts`는 기존처럼 raw text truncate 배열을 유지한다. Reference citation flow는 바뀌지 않는다.
+
+### 15.205 citedTexts presence 기반 prompt 주입 `[implemented 2026-07-11]`
+
+- 배경(raw prompt 점검): 사용자가 미션 패널 텍스트를 드래그해 인용했는데도 `/레퍼런스검색` raw prompt에 cited text block이 없었다. Client race 보완 후에도 서버의 context planner가 `citedTexts: false`를 반환하거나 explicit composer command force path가 `citedTexts` needs를 세팅하지 않으면, `/api/chat`의 `shouldIncludePlannedContext("citedTexts")`에서 인용 텍스트가 빠질 수 있었다.
+- 수정: `/api/chat`은 request body에 `citedTexts`가 1개 이상 있으면 planner confidence/intent와 무관하게 cited text context를 raw prompt에 포함한다. `fetch_references` forced intent와 explicit composer command force path도 cited text count가 있으면 `needs.citedTexts`를 true로 유지한다.
+- 영향: 사용자가 명시적으로 붙인 텍스트 인용은 reference search 같은 standalone command에서도 prompt에 들어간다. 인용 번호 라벨은 계속 `chatCitedTextsPrompt` 한 곳에서만 붙인다.

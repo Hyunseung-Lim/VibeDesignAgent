@@ -314,6 +314,7 @@ function normalizeMentionIdentifier(value: unknown) {
 function forceRequestedCommand(
   plan: ChatPlan,
   command: ChatComposerCommandId | null,
+  citedTextCount: number,
 ): ChatPlan {
   if (!command) return plan;
   const intentByCommand: Record<ChatComposerCommandId, ChatPlanIntent> = {
@@ -334,6 +335,7 @@ function forceRequestedCommand(
       designSpec: command === "generate_mockup",
       mockupHtml: false,
       selectedElement: false,
+      citedTexts: citedTextCount > 0 || plan.needs.citedTexts,
       conversationHistory: "recent",
     },
     reason: `Explicit composer command: ${command}`,
@@ -666,6 +668,7 @@ function forceIntentFromUserText(
   hasMockupHtml: boolean,
   hasSelectedElement: boolean,
   citedReferenceCount: number,
+  citedTextCount: number,
 ) {
   const text = latestUserText.toLowerCase();
 
@@ -693,6 +696,7 @@ function forceIntentFromUserText(
         designSpec: false,
         mockupHtml: false,
         selectedElement: false,
+        citedTexts: citedTextCount > 0 || plan.needs.citedTexts,
         conversationHistory: plan.needs.conversationHistory ?? "minimal",
       },
       reason: `${plan.reason ? `${plan.reason} ` : ""}Forced fetch_references because the user asked to find references.`,
@@ -959,8 +963,10 @@ export async function POST(request: Request) {
       Boolean(mockupHtml),
       Boolean(selectedElement),
       Array.isArray(citedReferences) ? citedReferences.length : 0,
+      Array.isArray(citedTexts) ? citedTexts.length : 0,
     ),
     requestedCommandId,
+    Array.isArray(citedTexts) ? citedTexts.length : 0,
   );
   const promptPlanReliable =
     !promptPlanFallback && promptPlan.confidence >= 0.55;
@@ -973,6 +979,12 @@ export async function POST(request: Request) {
   const shouldIncludePlannedContext = (key: keyof ChatPlanNeeds) => {
     if (key === "selectedElement" && selectedElement) return true;
     if (key === "mockupHtml" && selectedElement) return true;
+    if (
+      key === "citedTexts" &&
+      Array.isArray(citedTexts) &&
+      citedTexts.length > 0
+    )
+      return true;
     if (promptPlanFallback) return true;
     if (promptPlanReliable) return Boolean(promptPlan.needs[key]);
     if (key === "mockupHtml") return lowConfidenceNeedsMockup;
@@ -1087,7 +1099,7 @@ export async function POST(request: Request) {
     systemMessages.push({
       role: "system",
       content: chatCitedTextsPrompt(
-        citedTexts.map((t: string, i: number) => `[인용 ${i + 1}] ${truncateText(t, 1200)}`),
+        citedTexts.map((text: string) => truncateText(text, 1200)),
       ),
     });
   }
