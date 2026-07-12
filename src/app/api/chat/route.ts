@@ -146,6 +146,40 @@ function compactMemoryContext(memoryContext: unknown) {
   return { episodic, semantic };
 }
 
+function memorySimilaritySignal(similarity: unknown) {
+  const score = typeof similarity === "number" ? similarity : NaN;
+  if (!Number.isFinite(score)) return "mid";
+  if (score >= 0.48) return "high";
+  if (score <= 0.39) return "low";
+  return "mid";
+}
+
+function compactPlannerSemanticMemories(memoryItems: unknown[]) {
+  return memoryItems
+    .map((item) => {
+      const record = item as Record<string, unknown>;
+      const semantic =
+        typeof record.semantic === "string" ? record.semantic.trim() : "";
+      if (!semantic) return null;
+      const similarity =
+        typeof record.similarity === "number" &&
+        Number.isFinite(record.similarity)
+          ? Number(record.similarity.toFixed(4))
+          : null;
+      return {
+        semantic: truncateText(semantic, 500),
+        similarity,
+        signal: memorySimilaritySignal(similarity),
+      };
+    })
+    .filter((item): item is {
+      semantic: string;
+      similarity: number | null;
+      signal: string;
+    } => Boolean(item))
+    .slice(0, 5);
+}
+
 function createPromptSanitization(): PromptSanitization {
   return {
     removedApiKeys: 0,
@@ -253,6 +287,8 @@ const CHAT_PLAN_INTENTS = new Set([
   "clarify",
 ]);
 
+const MEMORY_RELEVANCE_LEVELS = new Set(["light", "medium", "strong"]);
+
 type ChatPlanIntent =
   | "answer"
   | "create_note"
@@ -266,7 +302,6 @@ type ChatPlanIntent =
 
 type ChatPlanNeeds = {
   mission: boolean;
-  interactionMemory: boolean;
   activeIdea: boolean;
   designSpec: boolean;
   mockupHtml: boolean;
@@ -276,9 +311,12 @@ type ChatPlanNeeds = {
   conversationHistory: "minimal" | "recent" | "full";
 };
 
+type MemoryRelevance = "light" | "medium" | "strong";
+
 type ChatPlan = {
   intent: ChatPlanIntent;
   confidence: number;
+  memoryRelevance: MemoryRelevance;
   needs: ChatPlanNeeds;
   reason: string;
 };
@@ -356,9 +394,9 @@ function defaultChatPlan(overrides?: Partial<ChatPlan>): ChatPlan {
   return {
     intent: "answer",
     confidence: 0,
+    memoryRelevance: "medium",
     needs: {
       mission: true,
-      interactionMemory: true,
       activeIdea: true,
       designSpec: true,
       mockupHtml: true,
@@ -583,6 +621,9 @@ function parseChatPlan(text: string): ChatPlan | null {
     const parsed = JSON.parse(jsonText) as Record<string, unknown>;
     const needs = parsed.needs as Record<string, unknown> | undefined;
     const intent = String(parsed.intent ?? "answer");
+    const rawMemoryRelevance = String(
+      parsed.memoryRelevance ?? parsed.memoryRelavance ?? "medium",
+    );
     const conversationHistory = String(
       needs?.conversationHistory ?? "recent",
     );
@@ -595,9 +636,11 @@ function parseChatPlan(text: string): ChatPlan | null {
         Number.isFinite(parsed.confidence)
           ? Math.max(0, Math.min(1, parsed.confidence))
           : 0,
+      memoryRelevance: MEMORY_RELEVANCE_LEVELS.has(rawMemoryRelevance)
+        ? (rawMemoryRelevance as MemoryRelevance)
+        : "medium",
       needs: {
         mission: Boolean(needs?.mission),
-        interactionMemory: Boolean(needs?.interactionMemory),
         activeIdea: Boolean(needs?.activeIdea),
         designSpec: Boolean(needs?.designSpec),
         mockupHtml: Boolean(needs?.mockupHtml),
@@ -612,7 +655,9 @@ function parseChatPlan(text: string): ChatPlan | null {
             : "recent",
       },
       reason:
-        typeof parsed.reason === "string"
+        typeof parsed.analysis === "string"
+          ? truncateText(parsed.analysis, 300)
+          : typeof parsed.reason === "string"
           ? truncateText(parsed.reason, 300)
           : "",
     };
@@ -898,35 +943,9 @@ export async function POST(request: Request) {
     (item: unknown) => isBeforeSessionMemoryItem(item),
   ).length;
   const interactionMemoryCount = memoryItems.length - profileMemoryCount;
-  // Distinct persona-cluster summaries of the retrieved memory, attached by the
-  // retrieve endpoint. Gives the planner a compact "what kind of user is this"
-  // signal so it can choose user-specific actions without re-summarizing memory.
-  // Empty when clusters are not yet cached (planner falls back to the counts).
-  const userClusterSummaries: Array<{ label: string; summary: string }> = [];
-  const seenClusterIds = new Set<string>();
-  for (const item of memoryItems) {
-    const record = item as Record<string, unknown>;
-    const summary =
-      typeof record.clusterSummary === "string"
-        ? record.clusterSummary.trim()
-        : "";
-    if (!summary) continue;
-    const clusterId =
-      typeof record.clusterId === "string" && record.clusterId
-        ? record.clusterId
-        : summary;
-    if (seenClusterIds.has(clusterId)) continue;
-    seenClusterIds.add(clusterId);
-    userClusterSummaries.push({
-      label:
-        typeof record.clusterLabel === "string" ? record.clusterLabel.trim() : "",
-      summary: truncateText(summary, 400),
-    });
-    if (userClusterSummaries.length >= 3) break;
-  }
   const plannerInput = {
     latestUserText: truncateText(latestUserText, 1200),
-    recentMessages: messageList.slice(-6).map(
+    recentMessages: messageList.slice(-3).map(
       (message: { role?: string; content?: string }) => ({
         role: message.role,
         content: truncateText(message.content, 700),
@@ -945,11 +964,11 @@ export async function POST(request: Request) {
       interactionMemoryCount,
       device: device === "mobile" ? "mobile" : "desktop",
     },
+    semanticMemories: compactPlannerSemanticMemories(memoryItems),
     mission: {
       title: truncateText(missionTitle, 200),
       briefPreview: truncateText(missionBrief, 500),
     },
-    userClusterSummaries,
     requestedCommand: requestedCommandId,
     mentionedArtifact: normalizedMention,
   };
@@ -1065,11 +1084,14 @@ export async function POST(request: Request) {
       });
       systemMessages.push({
         role: "system",
-        content: chatProfileMemoryPrompt(JSON.stringify(compactProfile)),
+        content: chatProfileMemoryPrompt(
+          JSON.stringify(compactProfile),
+          promptPlan.memoryRelevance,
+        ),
       });
     }
 
-    if (interactionItems.length > 0 && shouldIncludePlannedContext("interactionMemory")) {
+    if (interactionItems.length > 0) {
       markContext("interactionMemory");
       const compactMemory = compactMemoryContext({
         episodic: [],
@@ -1077,7 +1099,10 @@ export async function POST(request: Request) {
       });
       systemMessages.push({
         role: "system",
-        content: chatInteractionMemoryPrompt(JSON.stringify(compactMemory)),
+        content: chatInteractionMemoryPrompt(
+          JSON.stringify(compactMemory),
+          promptPlan.memoryRelevance,
+        ),
       });
     }
   }

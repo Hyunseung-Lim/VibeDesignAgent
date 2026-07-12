@@ -937,13 +937,16 @@ archiveReason = "low-weight" | "duplicate" | "manual";
   - 비목표: 첫 구현에서 multi-agent orchestration이나 tool execution 순서를 크게 바꾸지 않는다. 기존 action tag(`[GENERATE_MOCKUP]`, `[EDIT_MOCKUP]`, `[FETCH_REFERENCES]` 등)는 유지
   - Planner 입력:
     - latest user input
-    - 최근 message 3~5개 compact
-    - 현재 UI 상태 boolean/count: hasActiveIdea, hasMockupHtml, hasSelectedElement, hasDesignSpec, citedReferenceCount, citedTextCount, profileMemoryCount, interactionMemoryCount `[stale 2026-06-23 → 15.114: planner 입력에 관련 cluster persona 요약 userClusterSummaries(최대 3개)가 추가됨]`
+    - 최근 message 3개 compact
+    - 현재 UI 상태 boolean/count: hasActiveIdea, hasMockupHtml, hasSelectedElement, hasDesignSpec, citedReferenceCount, citedTextCount, profileMemoryCount, interactionMemoryCount
+    - retrieved/filter를 통과한 memoryContext 중 semantic memory 최대 5개. 각 항목은 semantic, similarity, signal(high/mid/low)을 포함한다. signal은 현재 실험값 기준 similarity 0.48 이상 high, 0.39 이하 low, 그 사이는 mid다 `[현행 2026-07-11 → 15.206]`
+    - `[stale 2026-07-11 → 15.206: planner 입력의 userClusterSummaries는 제거하고 retrieved semantic memory 직접 입력으로 대체]`
     - mission title + 짧은 mission summary
   - Planner 출력 schema 초안:
 
 ```typescript
 type ChatPlan = {
+  analysis: string; // JSON 출력에서는 맨 위에 두는 선행 판단 메모
   intent:
     | "answer"
     | "create_note"
@@ -954,9 +957,9 @@ type ChatPlan = {
     | "create_design_spec"
     | "clarify";
   confidence: number; // 0~1
+  memoryRelevance: "light" | "medium" | "strong";
   needs: {
     mission: boolean;
-    interactionMemory: boolean;
     activeIdea: boolean;
     designSpec: boolean;
     mockupHtml: boolean;
@@ -965,7 +968,7 @@ type ChatPlan = {
     citedReferences: boolean;
     conversationHistory: "minimal" | "recent" | "full";
   };
-  reason: string; // admin/debug용 짧은 설명
+  reason: string; // 내부/admin 저장용. parser가 analysis를 우선 읽고 legacy reason으로 fallback
 };
 ```
 
@@ -973,7 +976,7 @@ type ChatPlan = {
   - 항상 포함: `CHAT_AGENT_BASE_PROMPT`, planner intent별 `chatActionInstructionPrompt(...)`, target device, current request
   - mission: 기본 포함하되 brief는 planner가 `mission=true`일 때만 긴 버전 사용. 아니면 title + 1~2줄 summary만 사용
   - profile input: 14.4 이후 `/api/memory/profile`에서 derived memory로 분해되어 interaction memory와 같은 retrieval/context path를 사용
-  - interactionMemory: planner가 `interactionMemory=true`일 때만 주입. prompt compact JSON은 `episodic[].episodic`과 `semantic[].semantic`만 포함
+  - memory: retrieved/filter를 통과해 memoryContext에 들어온 memory는 prompt에 주입한다. planner는 주입 여부 bool 대신 `memoryRelevance`로 light/medium/strong 반영 강도를 고르고, chat memory prompt가 그 강도에 맞는 instruction을 붙인다 `[현행 2026-07-11 → 15.206]`
   - activeIdea: Design Brief 생성/수정/mockup 관련 intent에서만 주입. 내부 action id는 기존 계약 때문에 `create_note`/`update_note`를 유지한다 `[현행 2026-06-16 → 15.87]`
   - designSpec: mockup generate/edit/design spec 관련 intent에서만 주입
   - mockupHtml: edit/현재 화면 분석 intent에서만 주입. generate intent에서는 사용자가 기존 mockup 기반 변형을 요구한 경우에만 주입
@@ -983,7 +986,7 @@ type ChatPlan = {
   1. [x] planner prompt/function을 `src/lib/prompts.ts`에 추가
   2. [x] `/api/chat`에서 plan 생성 후 `reviewTurns/{turnId}.promptPlan`에 저장
   3. [x] 실제 context pruning은 `mockupHtml`, `activeIdea`, `designSpec`부터 적용
-  4. [x] interaction memory selection 적용 — planner가 `interactionMemory=true`일 때만 주입
+  4. [x] interaction memory selection 적용 `[stale 2026-07-11 → 15.206: interactionMemory bool 제거. retrieved memory는 주입하고 memoryRelevance로 반영 강도만 조절]`
 - 실패/불확실성 처리:
   - planner 실패 시 기존 단일 프롬프트 방식으로 fallback
   - `confidence < 0.55`면 큰 context는 유지하되 `mockupHtml`만 selectedElement/edit 요청이 아닐 때 제외
@@ -992,7 +995,7 @@ type ChatPlan = {
   - `/api/chat`에서 compact planner input을 만들고 `gpt-5.4`로 `ChatPlan`을 생성한다.
   - 기존 단일 system prompt는 제거하고, `CHAT_AGENT_BASE_PROMPT` + intent별 `chatActionInstructionPrompt(...)` 조합으로 분리했다.
   - `promptPlan`, `promptPlanFallback`, `selectedContextKeys`를 reviewTurn top-level과 `promptCompact`에 함께 저장한다.
-  - pruning은 `activeIdea`, `designSpec`, `mockupHtml`, `citedTexts`, `citedReferences`, `interactionMemory`에 적용했다.
+  - pruning은 `activeIdea`, `designSpec`, `mockupHtml`, `citedTexts`, `citedReferences`에 적용한다. `citedTexts`는 사용자가 명시적으로 붙인 경우 planner pruning보다 우선한다. `interactionMemory` bool pruning은 제거했고, memory prompt는 `memoryRelevance` 강도 instruction으로 조절한다 `[현행 2026-07-11 → 15.205/15.206]`
   - retrieved interaction memory는 prompt에 넣기 직전 `episodic[].episodic`과 `semantic[].semantic`으로 재그룹화한다. 검색은 combined embedding 기준으로 유지하되, 모델에게 전달되는 표현은 "이전 상호작용"과 "지속적 선호/패턴" 텍스트만 남긴다.
   - 같은 retrieved memory에 episodic/semantic이 모두 있으면 두 그룹에 각각 포함하고, prompt에는 memory id/source 연결 정보를 넣지 않는다.
   - planner 실패 시 기존 방식으로 fallback한다. `confidence < 0.55`면 대부분 context는 유지하되 `mockupHtml`은 selected/edit/current-screen 계열 요청일 때만 포함한다.
@@ -3482,14 +3485,14 @@ type ChatPlan = {
   - canvas render path는 이미 계산한 artboard viewport를 wrapper width, iframe width, height reporter에 공통 사용해 device 기준 불일치를 막는다.
 - 검증: isolated helper fixture에서 1280×900 viewport 고정, 기존 auto override 제거, width freeze를 확인했다. `./node_modules/.bin/tsc --noEmit`, 변경 파일 ESLint(0 error, 기존 page warning만), `git diff --check`, `npm run build` 통과. Build의 기존 presentation route NFT trace warning은 유지. 문제를 재현한 실제 Stitch HTML에서 canvas/Final Design 레이아웃 일치와 긴 scroll page의 overflow height 측정은 라이브 확인이 필요하다.
 
-### 15.114 Planner에 관련 클러스터 요약 주입 `[implemented 2026-06-23]`
+### 15.114 Planner에 관련 클러스터 요약 주입 `[implemented 2026-06-23]` `[stale 2026-07-11 → 15.206: userClusterSummaries 제거, retrieved semantic memory 직접 입력으로 대체]`
 
 - 배경(QA Note `답변 실행 전에 어떤 행동할지 결정하는 단계에서도 메모리가 들어가는지`): planner(행동 결정) 입력에는 메모리 개수(`profileMemoryCount`, `interactionMemoryCount`)만 들어가고 실제 내용은 답변 실행 단계에서만 주입돼, planner가 유저 특화 액션(intent/needs)을 고를 근거가 없었다. `[13.4의 Planner 입력 목록 stale 2026-06-23 → 15.114]`
 - 결정: 풀 컨텐츠를 또 넣어 요약 LLM을 돌리는 대신, 세션 종료 시 이미 생성·캐시된 persona cluster summary를 재사용한다. planner엔 짧은 요약, 답변 단계엔 기존 풀 컨텐츠로 역할을 분리한다.
-- 데이터 흐름: `/api/memory/retrieve`가 매 턴 검색 결과의 각 메모리에 소속 cluster의 `clusterId`/`clusterLabel`/`clusterSummary`를 부착한다. 이 필드는 `memoryContext`를 타고 `/api/chat`까지 전달되고, planner 입력에 distinct summary 최대 3개(`userClusterSummaries`)로 들어간다. chat 핫패스에는 새 Firestore 읽기를 추가하지 않는다.
-- 매핑/폴백: retrieve의 memory doc id와 cluster `itemIds`는 둘 다 `memories_0_1_2` 문서 id라 직접 매칭된다. cluster를 `loadLatestStoredClusters`로 best-effort 로드하며(LLM 재생성 없음), 캐시가 없거나 매칭 실패 시 `userClusterSummaries`는 빈 배열이 되어 기존 카운트 기반 동작으로 자연 폴백한다.
+- 데이터 흐름: `/api/memory/retrieve`가 매 턴 검색 결과의 각 메모리에 소속 cluster의 `clusterId`/`clusterLabel`/`clusterSummary`를 부착한다. 이 필드는 `memoryContext`를 타고 `/api/chat`까지 전달되고, planner 입력에 distinct summary 최대 3개(`userClusterSummaries`)로 들어간다. chat 핫패스에는 새 Firestore 읽기를 추가하지 않는다. `[stale 2026-07-11 → 15.206: planner는 userClusterSummaries 대신 retrieved semantic memory 최대 5개를 직접 받음]`
+- 매핑/폴백: retrieve의 memory doc id와 cluster `itemIds`는 둘 다 `memories_0_1_2` 문서 id라 직접 매칭된다. cluster를 `loadLatestStoredClusters`로 best-effort 로드하며(LLM 재생성 없음), 캐시가 없거나 매칭 실패 시 `userClusterSummaries`는 빈 배열이 되어 기존 카운트 기반 동작으로 자연 폴백한다. `[stale 2026-07-11 → 15.206: planner 입력에서 userClusterSummaries fallback 제거]`
 - 적용 범위: planner 규칙은 cluster summary를 요청이 애매할 때 intent/needs를 가르는 데만 쓰고, 콘텐츠·스타일·레퍼런스 선택(답변 실행 단계의 역할)에는 쓰지 않도록 제한한다. 요청이 이미 명확하면 무시한다.
-- 변경 파일: `src/lib/server/memoryClustering.ts`(`loadLatestStoredClusters`, `clusterSummaryByItemId` 추가), `src/app/api/memory/retrieve/route.ts`(요약 부착), `src/app/api/chat/route.ts`(`userClusterSummaries` 추출·주입), `src/lib/prompts.ts`(planner 규칙), `src/app/main/[missionId]/page.tsx`(`MemoryRecord` 타입).
+- 변경 파일: `src/lib/server/memoryClustering.ts`(`loadLatestStoredClusters`, `clusterSummaryByItemId` 추가), `src/app/api/memory/retrieve/route.ts`(요약 부착), `src/app/api/chat/route.ts`(`userClusterSummaries` 추출·주입), `src/lib/prompts.ts`(planner 규칙), `src/app/main/[missionId]/page.tsx`(`MemoryRecord` 타입). `[stale 2026-07-11 → 15.206: /api/chat의 userClusterSummaries 추출·주입은 제거]`
 - 검증: `npx tsc --noEmit`, 변경 파일 ESLint(0 error) 통과. 런타임 효과는 cluster 캐시가 있는 유저(최소 1세션 완료 후)로 라이브 확인이 필요하다.
 
 ### 15.115 before-session 메모리 주입·인코딩을 during-session과 정렬 `[implemented 2026-06-23]`
@@ -4153,3 +4156,11 @@ type ChatPlan = {
 - 배경(raw prompt 점검): 사용자가 미션 패널 텍스트를 드래그해 인용했는데도 `/레퍼런스검색` raw prompt에 cited text block이 없었다. Client race 보완 후에도 서버의 context planner가 `citedTexts: false`를 반환하거나 explicit composer command force path가 `citedTexts` needs를 세팅하지 않으면, `/api/chat`의 `shouldIncludePlannedContext("citedTexts")`에서 인용 텍스트가 빠질 수 있었다.
 - 수정: `/api/chat`은 request body에 `citedTexts`가 1개 이상 있으면 planner confidence/intent와 무관하게 cited text context를 raw prompt에 포함한다. `fetch_references` forced intent와 explicit composer command force path도 cited text count가 있으면 `needs.citedTexts`를 true로 유지한다.
 - 영향: 사용자가 명시적으로 붙인 텍스트 인용은 reference search 같은 standalone command에서도 prompt에 들어간다. 인용 번호 라벨은 계속 `chatCitedTextsPrompt` 한 곳에서만 붙인다.
+
+### 15.206 Planner analysis와 memoryRelevance 도입 `[implemented 2026-07-11]`
+
+- 배경(Notion `Planner`): planner가 gpt-5.4 non-reasoning 호출인데 output에서 `reason`이 맨 뒤에 있어 intent/needs 결정 전 사고를 유도하기 어려웠다. 또한 planner input의 `userClusterSummaries`보다 retrieved semantic memory 자체가 짧고 유의미했고, `interactionMemory` bool은 memory를 넣을지 말지만 결정해 반영 강도를 조절하지 못했다.
+- 수정: `chatPlannerPrompt` output shape를 `analysis → intent → confidence → memoryRelevance → needs` 순서로 바꿨다. 내부 `ChatPlan.reason` 필드는 review/debug 호환을 위해 유지하되 parser는 `analysis`를 우선 읽고 legacy `reason`으로 fallback한다.
+- 수정: planner input의 `recentMessages`를 6개에서 3개로 줄이고 `userClusterSummaries`를 제거했다. 대신 이미 retrieved/filter를 통과한 `memoryContext`에서 semantic memory 최대 5개를 `semantic`, `similarity`, `signal`로 넣는다. signal 실험값은 similarity 0.48 이상 high, 0.39 이하 low, 그 사이는 mid다.
+- 수정: planner output에서 `needs.interactionMemory`를 제거하고 `memoryRelevance`를 `light | medium | strong`으로 추가했다. Memory context는 retrieved/filter를 통과해 있으면 prompt에 주입하고, `chatProfileMemoryPrompt`와 `chatInteractionMemoryPrompt`가 memoryRelevance별 instruction을 붙인다.
+- 유지: 15.199의 before-session retrieval/filter 계약은 유지한다. Planner semantic memory input은 retrieval/filter 우회가 아니라 `/main`이 넘긴 `memoryContext`의 compact view다.

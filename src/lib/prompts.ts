@@ -132,12 +132,32 @@ export function chatMissionPrompt(missionTitle: string, missionBrief: string) {
   return `Current mission context:\nTitle: ${missionTitle}\nBrief: ${missionBrief}`;
 }
 
-export function chatProfileMemoryPrompt(compactMemoryJson: string) {
-  return `Before-session memory the user explicitly provided before a mission and retrieved for this turn. The JSON groups episodic and semantic separately. Items may include beforeSessionScope and sourceMissionId so you can tell whether they came from the current mission setup or an earlier mission setup. Current-mission and prior-mission items are both retrieved because they may be relevant; use them when helpful while respecting the current user request and current mission context. Apply useful memory silently without referencing it directly.\n${compactMemoryJson}`;
+type MemoryRelevance = "light" | "medium" | "strong";
+
+function memoryRelevanceInstruction(
+  relevance: MemoryRelevance = "medium",
+) {
+  if (relevance === "light") {
+    return "Memory relevance for this turn: light. Treat memory as quiet background only; do not force it into the response.";
+  }
+  if (relevance === "strong") {
+    return "Memory relevance for this turn: strong. Actively align with relevant memory while still prioritizing the latest user request.";
+  }
+  return "Memory relevance for this turn: medium. Reflect memory when it materially helps the current response.";
 }
 
-export function chatInteractionMemoryPrompt(compactMemoryJson: string) {
-  return `After-session memory retrieved for this turn. The JSON groups episodic and semantic memory separately. Episodic items summarize prior completed interaction turns, including the user request/context and the agent's outcome when relevant. Semantic items contain only durable user preferences, constraints, or working patterns. Use only what is helpful; do not mention memory unless it directly improves the answer.\n${compactMemoryJson}`;
+export function chatProfileMemoryPrompt(
+  compactMemoryJson: string,
+  memoryRelevance: MemoryRelevance = "medium",
+) {
+  return `Before-session memory the user explicitly provided before a mission and retrieved for this turn. The JSON groups episodic and semantic separately. Items may include beforeSessionScope and sourceMissionId so you can tell whether they came from the current mission setup or an earlier mission setup. Current-mission and prior-mission items are both retrieved because they may be relevant; use them when helpful while respecting the current user request and current mission context. Apply useful memory silently without referencing it directly.\n${memoryRelevanceInstruction(memoryRelevance)}\n${compactMemoryJson}`;
+}
+
+export function chatInteractionMemoryPrompt(
+  compactMemoryJson: string,
+  memoryRelevance: MemoryRelevance = "medium",
+) {
+  return `After-session memory retrieved for this turn. The JSON groups episodic and semantic memory separately. Episodic items summarize prior completed interaction turns, including the user request/context and the agent's outcome when relevant. Semantic items contain only durable user preferences, constraints, or working patterns. Use only what is helpful; do not mention memory unless it directly improves the answer.\n${memoryRelevanceInstruction(memoryRelevance)}\n${compactMemoryJson}`;
 }
 
 export function chatDesignSpecPrompt(designSpec: string) {
@@ -268,11 +288,12 @@ Return valid JSON only. Do not include markdown.
 
 Output shape:
 {
+  "analysis": "Work through the decision in 1-2 sentences: which rule(s) in the list apply to the latest user request, any ambiguity, and why the intent below follows. Do NOT restate the request; reason about it.",
   "intent": "answer" | "create_note" | "update_note" | "generate_mockup" | "edit_mockup" | "fetch_references" | "create_design_spec" | "presentation" | "clarify",
   "confidence": 0.0,
+  "memoryRelevance": "light" | "medium" | "strong",
   "needs": {
     "mission": true,
-    "interactionMemory": false,
     "activeIdea": false,
     "designSpec": false,
     "mockupHtml": false,
@@ -280,8 +301,7 @@ Output shape:
     "citedTexts": false,
     "citedReferences": false,
     "conversationHistory": "minimal" | "recent" | "full"
-  },
-  "reason": "short English explanation"
+  }
 }
 
 Rules:
@@ -297,9 +317,13 @@ Rules:
 - Need activeIdea for design brief updates, mockup generation from the current design brief, presentations, or design spec work tied to the brief.
 - Need designSpec for mockup generation/editing or design spec revision.
 - Need citedTexts or citedReferences only when the current request refers to selected/cited material, examples, references, or inspiration.
-- Need interactionMemory when during-session memory could help continue or reference past design decisions, revise previous work, or generate/edit a mockup. Skip for standalone queries: reference searches, simple factual questions, or first-turn clarifications with no prior context.
+- If semanticMemories are present in the compact input, choose memoryRelevance instead of deciding whether to include memory:
+  - "light": memory is weak, generic, or only background; use it only as a quiet tie-breaker.
+  - "medium": memory is somewhat relevant to the request or design direction; reflect it when it helps.
+  - "strong": memory is directly relevant, high-signal, or the user asks for personalization/continuity; actively align the response with it.
 - Use "clarify" when the user request cannot be answered without asking a question.
-- "userClusterSummaries" (when present) summarize this user's habitual working patterns. Use them ONLY to disambiguate intent/needs when the request is too vague to decide the action from its text — not to pick content, style, or references (that happens when the answer is written). Ignore them when the action is already clear or when absent. Never quote them.
+- semanticMemories, when present, are retrieved memory items already selected by the app's retrieval/filter policy. Use them only to judge memoryRelevance and disambiguate vague requests. Do not override the latest user request or quote memory.
+- In analysis, apply the rules before choosing intent/needs. Mention ambiguity if relevant. Keep analysis concise.
 
 Compact input:
 ${compactInputJson}`;
