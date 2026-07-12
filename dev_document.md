@@ -319,8 +319,8 @@ type Idea = {
 | ---------------------------------------------------- | -------- | ----------------------------------------------------------- |
 | `CHAT_AGENT_BASE_PROMPT`                             | const    | `chat/route.ts` — 공통 에이전트 역할/명령 태그 정의         |
 | `chatActionInstructionPrompt(intent, includeRouter)` | function | `chat/route.ts` — planner intent에 맞는 행동 규칙만 주입    |
-| `chatDevicePrompt(deviceLabel)`                      | function | `chat/route.ts` — 대상 디바이스 명시                        |
-| `chatMissionPrompt(title, brief)`                    | function | `chat/route.ts` — 미션 컨텍스트 주입                        |
+| `chatDevicePrompt(deviceLabel)`                      | function | legacy helper — 현행 `/api/chat`은 target device를 mission block에 통합 `[현행 2026-07-13 → 15.214]` |
+| `chatMissionPrompt(title, brief, deviceLabel?)`      | function | `chat/route.ts` — 미션 컨텍스트와 대상 디바이스 주입         |
 | `chatRetrievedMemoryPrompt(json)`                    | function | `chat/route.ts` — retrieved memory 단일 주입                |
 | `chatDesignSpecPrompt(spec)`                         | function | `chat/route.ts` — 디자인 스타일 가이드 주입                 |
 | `chatCitedTextsPrompt(texts)`                        | function | `chat/route.ts` — 인용 텍스트 주입                          |
@@ -974,13 +974,14 @@ type ChatPlan = {
 ```
 
 - Context selection rule 초안:
-  - 항상 포함: `CHAT_AGENT_BASE_PROMPT`, planner intent별 `chatActionInstructionPrompt(...)`, target device, current request
+  - prompt block 순서는 OpenAI prompt caching을 고려해 상대적으로 고정적인 context를 위에 두고 turn별로 자주 바뀌는 context를 아래로 둔다. 현행 순서: `CHAT_AGENT_BASE_PROMPT` → mission(+target device) → activeIdea → designSpec → compacted mockupHtml → retrievedMemory → citedTexts/citedReferences/selectedElement/referencePreference → mentionedArtifact → requestedCommand → planner intent별 `chatActionInstructionPrompt(...)` → currentRequest → builtMessages `[현행 2026-07-13 → 15.214]`
+  - 항상 포함: `CHAT_AGENT_BASE_PROMPT`, planner intent별 `chatActionInstructionPrompt(...)`, current request. target device는 별도 system block이 아니라 mission context 하위 라인으로 주입한다 `[현행 2026-07-13 → 15.214]`
   - mission: 기본 포함하되 brief는 planner가 `mission=true`일 때만 긴 버전 사용. 아니면 title + 1~2줄 summary만 사용
   - profile input: 14.4 이후 `/api/memory/profile`에서 derived memory로 분해되어 interaction memory와 같은 retrieval/context path를 사용
   - memory: retrieved/filter를 통과해 memoryContext에 들어온 memory는 prompt에 주입한다. planner는 주입 여부 bool 대신 `memoryRelevance`로 light/medium/strong 반영 강도를 고르고, `chatRetrievedMemoryPrompt`가 그 강도에 맞는 instruction을 붙인다. before-session/profile과 during-session/interaction을 별도 prompt로 나누지 않는다 `[현행 2026-07-13 → 15.206/15.208]`
   - activeIdea: Design Brief 생성/수정/mockup/design spec 관련 intent에서만 주입. Planner intent는 `create_design_brief`/`edit_design_brief`/`create_mockup` 이름을 쓰지만, 실행 action tag는 기존 계약 때문에 `[CREATE_NOTE]`/`[UPDATE_NOTE]`/`[GENERATE_MOCKUP]`를 유지한다 `[현행 2026-07-13 → 15.87/15.212/15.213]`
   - designSpec: mockup generate/edit, `edit_design_spec`, 기존 style 기반 variant 생성 intent에서 주입
-  - mockupHtml: edit/현재 화면 분석 intent에서만 주입. generate intent에서는 사용자가 기존 mockup 기반 변형을 요구한 경우에만 주입
+  - mockupHtml: edit/현재 화면 분석 intent에서만 주입. generate intent에서는 사용자가 기존 mockup 기반 변형을 요구한 경우에만 주입. 모델 prompt 주입 전용으로 HTML 주석, script, base64 image data URI, inline SVG 내부, 과도한 공백을 압축한 뒤 12000자로 truncate한다. `/api/stitch` 편집 경로의 원본 HTML은 건드리지 않는다 `[현행 2026-07-13 → 15.214]`
   - selectedElement: selectedElement가 있으면 우선 주입. 선택 요소가 있는 상태의 타깃 편집 요청은 planner가 놓쳐도 `edit_mockup` intent와 `mockupHtml`/`selectedElement` 컨텍스트를 강제한다 `[현행 2026-06-15 → 15.77]`
   - citedTexts/citedReferences: 사용자가 현재 turn에서 인용했거나 planner가 reference/design inspiration intent로 판단한 경우만 주입
 - MVP 구현 순서:
@@ -4222,3 +4223,11 @@ type ChatPlan = {
 - 수정: 실행 action tag `[EDIT_DESIGN_SPEC: {"content":"full updated markdown content"}]`를 추가했다. Payload는 diff가 아니라 저장될 전체 최신 디자인 스타일이다. 세션 runtime은 기존 `designStyle` 슬롯을 갱신하되 chip label은 "디자인 스타일 수정됨", memory action category는 `design_spec_edit`로 남긴다.
 - 호환: legacy planner output `edit_design_style`은 `edit_design_spec`으로 alias 처리한다. `[CREATE_DESIGN_SPEC]` 파서와 동일하게 JSON, loose string field, plain markdown payload 복구를 지원하고, 조건부 제안 문맥에서는 실행 action으로 저장하지 않는다.
 - 유지: 실제 revision history 저장소와 style variant UI/data model은 아직 별도 구현하지 않았다. 이번 변경은 그 기능을 붙일 수 있도록 planner/action taxonomy와 review/memory 기록을 먼저 분리한 것이다.
+
+### 15.214 Chat prompt block 순서와 mockupHtml compact `[implemented 2026-07-13]`
+
+- 배경(Notion `Chat Prompt`): OpenAI prompt caching 효율을 위해 매 turn 동일하거나 덜 변하는 prompt block을 위로 올리고, 매 turn 바뀌는 command/mention/actionInstruction/currentRequest를 아래쪽으로 내려야 했다. 또한 `mockupHtml` 12000자 truncate가 Tailwind/SVG/script 보일러플레이트에 예산을 많이 쓰고 있었다.
+- 수정: `/api/chat` system message 조립 순서를 `CHAT_AGENT_BASE_PROMPT` → mission(+device) → activeIdea → designSpec → mockupHtml → retrievedMemory → cited/selected/reference context → mentionedArtifact → requestedCommand → actionInstruction → currentRequest로 재배치했다. builtMessages는 기존처럼 system message 뒤에 붙는다.
+- 수정: target device는 별도 system prompt block에서 mission prompt 하위 라인으로 합쳤다. 이에 따라 `selectedContextKeys` 초기값에서 `device`를 제거하고 mission context가 device까지 포함하는 계약으로 바꿨다.
+- 수정: `compactHtmlForModel()`을 추가해 모델 prompt에 넣는 mockupHtml에서 HTML 주석, script, base64 image data URI, inline SVG 내부, 과도한 공백을 제거한 뒤 12000자로 자른다. 이 compact는 chat prompt 전용이며 Stitch 편집 API로 전달되는 원본 HTML에는 적용하지 않는다.
+- 유지: cited reference는 system context에 넣으면서도 기존처럼 builtMessages의 최신 user message 앞에 인용 레퍼런스 제목을 덧붙인다. retrieved memory는 15.208의 단일 `chatRetrievedMemoryPrompt` 경로를 유지한다.

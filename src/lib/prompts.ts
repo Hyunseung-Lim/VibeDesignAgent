@@ -151,8 +151,15 @@ export function chatDevicePrompt(deviceLabel: string) {
   return `Target device: ${deviceLabel}. Design all mockups for this device's viewport.`;
 }
 
-export function chatMissionPrompt(missionTitle: string, missionBrief: string) {
-  return `Current mission context:\nTitle: ${missionTitle}\nBrief: ${missionBrief}`;
+export function chatMissionPrompt(
+  missionTitle: string,
+  missionBrief: string,
+  deviceLabel?: string,
+) {
+  const deviceLine = deviceLabel
+    ? `\nTarget device: ${deviceLabel}. Design all mockups for this device's viewport.`
+    : "";
+  return `Current mission context:\nTitle: ${missionTitle}\nBrief: ${missionBrief}${deviceLine}`;
 }
 
 type MemoryRelevance = "light" | "medium" | "strong";

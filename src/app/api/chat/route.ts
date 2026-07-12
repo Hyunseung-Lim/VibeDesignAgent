@@ -8,7 +8,6 @@ import {
 import {
   CHAT_AGENT_BASE_PROMPT,
   chatActionInstructionPrompt,
-  chatDevicePrompt,
   chatMissionPrompt,
   chatRetrievedMemoryPrompt,
   chatDesignSpecPrompt,
@@ -61,6 +60,22 @@ function truncateText(value: unknown, maxLength: number) {
   const text = typeof value === "string" ? value : "";
   if (text.length <= maxLength) return text;
   return `${text.slice(0, maxLength)}\n...[truncated]`;
+}
+
+function compactHtmlForModel(value: unknown, maxLength: number) {
+  const html = typeof value === "string" ? value : "";
+  const compacted = html
+    .replace(/<!--[\s\S]*?-->/g, "")
+    .replace(/<script\b[\s\S]*?<\/script>/gi, "")
+    .replace(
+      /data:image\/[a-zA-Z0-9.+-]+;base64,[A-Za-z0-9+/=]+/g,
+      "data:[omitted]",
+    )
+    .replace(/(<svg\b[^>]*>)[\s\S]*?(<\/svg>)/gi, "$1[svg omitted]$2")
+    .replace(/\n\s+/g, "\n")
+    .replace(/[ \t]{2,}/g, " ")
+    .trim();
+  return truncateText(compacted, maxLength);
 }
 
 function memoryContextItems(memoryContext: unknown) {
@@ -1021,7 +1036,7 @@ export async function POST(request: Request) {
     if (key === "mockupHtml") return lowConfidenceNeedsMockup;
     return true;
   };
-  const selectedContextKeys = ["system", "device"];
+  const selectedContextKeys = ["system"];
   const markContext = (key: string) => {
     selectedContextKeys.push(key);
   };
@@ -1029,40 +1044,6 @@ export async function POST(request: Request) {
   const systemMessages: BuiltChatMessage[] = [
     { role: "system", content: CHAT_AGENT_BASE_PROMPT },
   ];
-  if (requestedCommandId) {
-    markContext("requestedCommand");
-    systemMessages.push({
-      role: "system",
-      content: `The user explicitly selected the composer command ${requestedCommandId}. Execute the mapped action for this turn. Do not reinterpret it as a different intent.`,
-    });
-  }
-  if (normalizedMention?.ideaId) {
-    markContext("mentionedArtifact");
-    const mentionTargetLabel: Record<string, string> = {
-      idea: "the mentioned idea (시안)",
-      design_brief: "the mentioned Design Brief",
-      design_style: "the mentioned Design Style",
-      mockup: "the mentioned Mockup",
-    };
-    const target = mentionTargetLabel[normalizedMention.kind] ?? "the mentioned artifact";
-    systemMessages.push({
-      role: "system",
-      content: `The user explicitly mentioned an existing workspace artifact. Kind: ${normalizedMention.kind}; ideaId: ${normalizedMention.ideaId}; artifactId: ${normalizedMention.artifactId || "(none)"}. The client has already aligned activeIdea to this target. Treat the structured target as authoritative. Scope this turn to ${target}: work on that artifact itself and prefer the matching action for its kind. Do not branch into other artifacts or run unrelated actions (for example, generating a Design Style or Mockup when the user mentioned the Design Brief) unless the user explicitly asks for them this turn.`,
-    });
-  }
-  markContext("actionInstruction");
-  systemMessages.push({
-    role: "system",
-    content: chatActionInstructionPrompt(
-      promptPlan.intent,
-      promptPlanFallback || !promptPlanReliable,
-    ),
-  });
-
-  systemMessages.push({
-    role: "system",
-    content: chatDevicePrompt(deviceLabel),
-  });
 
   if (missionTitle || missionBrief) {
     markContext(
@@ -1076,7 +1057,35 @@ export async function POST(request: Request) {
           missionBrief || "(없음)",
           shouldIncludePlannedContext("mission") ? 1800 : 350,
         ),
+        deviceLabel,
       ),
+    });
+  }
+
+  if (activeIdea && shouldIncludePlannedContext("activeIdea")) {
+    markContext("activeIdea");
+    systemMessages.push({
+      role: "system",
+      content: chatActiveIdeaPrompt(
+        truncateText(activeIdea.title, 200),
+        truncateText(activeIdea.description || "(내용 없음)", 3000),
+      ),
+    });
+  }
+
+  if (designSpec && shouldIncludePlannedContext("designSpec")) {
+    markContext("designSpec");
+    systemMessages.push({
+      role: "system",
+      content: chatDesignSpecPrompt(truncateText(designSpec, 2500)),
+    });
+  }
+
+  if (mockupHtml && shouldIncludePlannedContext("mockupHtml")) {
+    markContext("mockupHtml");
+    systemMessages.push({
+      role: "system",
+      content: chatMockupHtmlPrompt(compactHtmlForModel(mockupHtml, 12000)),
     });
   }
 
@@ -1097,14 +1106,6 @@ export async function POST(request: Request) {
     }
   }
 
-  if (designSpec && shouldIncludePlannedContext("designSpec")) {
-    markContext("designSpec");
-    systemMessages.push({
-      role: "system",
-      content: chatDesignSpecPrompt(truncateText(designSpec, 2500)),
-    });
-  }
-
   if (
     Array.isArray(citedTexts) &&
     citedTexts.length > 0 &&
@@ -1116,33 +1117,6 @@ export async function POST(request: Request) {
       content: chatCitedTextsPrompt(
         citedTexts.map((text: string) => truncateText(text, 1200)),
       ),
-    });
-  }
-
-  if (activeIdea && shouldIncludePlannedContext("activeIdea")) {
-    markContext("activeIdea");
-    systemMessages.push({
-      role: "system",
-      content: chatActiveIdeaPrompt(
-        truncateText(activeIdea.title, 200),
-        truncateText(activeIdea.description || "(내용 없음)", 3000),
-      ),
-    });
-  }
-
-  if (latestUserText) {
-    markContext("currentRequest");
-    systemMessages.push({
-      role: "system",
-      content: chatCurrentRequestPrompt(),
-    });
-  }
-
-  if (mockupHtml && shouldIncludePlannedContext("mockupHtml")) {
-    markContext("mockupHtml");
-    systemMessages.push({
-      role: "system",
-      content: chatMockupHtmlPrompt(truncateText(mockupHtml, 12000)),
     });
   }
 
@@ -1176,7 +1150,8 @@ export async function POST(request: Request) {
     });
   }
 
-  // Build messages, injecting cited reference images into the last user message
+  // Build messages early so cited reference context can annotate the latest
+  // user turn while the system prompt ordering remains stable.
   const conversationHistoryMode = promptPlanFallback
     ? "recent"
     : promptPlan.needs.conversationHistory;
@@ -1186,7 +1161,6 @@ export async function POST(request: Request) {
       : conversationHistoryMode === "full"
         ? 20
         : 12;
-  markContext(`conversationHistory:${conversationHistoryMode}`);
   const builtMessages: BuiltChatMessage[] = messageList
     .slice(-conversationHistoryLimit)
     .flatMap((message: { role?: string; content?: string }) => {
@@ -1201,9 +1175,9 @@ export async function POST(request: Request) {
         {
           role: message.role,
           content: truncateText(message.content, 6000),
-        },
-      ];
-    });
+      },
+    ];
+  });
 
   let includedRefUrls: string[] = [];
   if (
@@ -1263,6 +1237,48 @@ export async function POST(request: Request) {
     });
   }
 
+  if (normalizedMention?.ideaId) {
+    markContext("mentionedArtifact");
+    const mentionTargetLabel: Record<string, string> = {
+      idea: "the mentioned idea (시안)",
+      design_brief: "the mentioned Design Brief",
+      design_style: "the mentioned Design Style",
+      mockup: "the mentioned Mockup",
+    };
+    const target =
+      mentionTargetLabel[normalizedMention.kind] ?? "the mentioned artifact";
+    systemMessages.push({
+      role: "system",
+      content: `The user explicitly mentioned an existing workspace artifact. Kind: ${normalizedMention.kind}; ideaId: ${normalizedMention.ideaId}; artifactId: ${normalizedMention.artifactId || "(none)"}. The client has already aligned activeIdea to this target. Treat the structured target as authoritative. Scope this turn to ${target}: work on that artifact itself and prefer the matching action for its kind. Do not branch into other artifacts or run unrelated actions (for example, generating a Design Style or Mockup when the user mentioned the Design Brief) unless the user explicitly asks for them this turn.`,
+    });
+  }
+
+  if (requestedCommandId) {
+    markContext("requestedCommand");
+    systemMessages.push({
+      role: "system",
+      content: `The user explicitly selected the composer command ${requestedCommandId}. Execute the mapped action for this turn. Do not reinterpret it as a different intent.`,
+    });
+  }
+
+  markContext("actionInstruction");
+  systemMessages.push({
+    role: "system",
+    content: chatActionInstructionPrompt(
+      promptPlan.intent,
+      promptPlanFallback || !promptPlanReliable,
+    ),
+  });
+
+  if (latestUserText) {
+    markContext("currentRequest");
+    systemMessages.push({
+      role: "system",
+      content: chatCurrentRequestPrompt(),
+    });
+  }
+
+  markContext(`conversationHistory:${conversationHistoryMode}`);
   const hasRefUrls = includedRefUrls.length > 0;
   const rawPromptInput = [...systemMessages, ...builtMessages];
   const { rawPrompt, rawPromptSanitization } =
