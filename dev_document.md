@@ -173,7 +173,7 @@
 - **확정 시점**: 사용자가 `세션 종료` 버튼을 누르면 `/api/memory/complete-session`에서 draft를 통합해 장기 메모리로 저장
 - **버전 관리**: admin memory modal에서 v0.1.0 / v0.1.1 / v0.1.2를 분리 조회 `[stale 2026-06-12 → 15.51: legacy fallback 제거로 현재 v0.1.2 단일 버전만 사용(MemoryVersionTab = "0.1.2"). v0.1.0/v0.1.1 분리 조회 없음]`
 - **현재 활용**: 각 채팅 turn 직전에 `/api/memory/retrieve`를 호출한다. Current/prior before-session과 during-session memory는 모두 같은 query similarity ranking 후보이며, 별도 current-session boost나 prompt 강제 포함은 없다. Top-k에 실제로 retrieved된 항목만 prompt에 들어가고 weight/retrievedCount가 업데이트된다. 응답과 log는 `sourceMissionId`와 `beforeSessionScope`(`current_mission`/`prior_mission`)를 보존한다. 어드민이 `viewAs`로 리뷰 화면을 볼 때 assistant bubble의 `Retrieval 보기` 버튼에서 해당 turn 근처의 retrieval query, retrieved memory, raw retrieval log JSON을 확인할 수 있다 `[현행 2026-07-10 → 15.187/15.190/15.193/15.199]`
-- **Prompt 주입 방식**: profile input은 `profile_memories`에 source of truth로 보관한 뒤 derived memory로 쪼개 retrieved memory와 같은 chat context 경로로 들어간다. Prompt compact JSON은 before-session memory를 current/prior로 분리하지 않고 `episodic`/`semantic` 배열에 함께 넣되, 각 항목의 `beforeSessionScope`와 `sourceMissionId`는 보존한다. Current/prior before-session 모두 retrieved된 경우에만 사용할 수 있으며, memory id/weight/similarity는 제외한다 `[현행 2026-07-10 → 15.187/15.190/15.191/15.199]`
+- **Prompt 주입 방식**: profile input은 `profile_memories`에 source of truth로 보관한 뒤 derived memory로 쪼개 retrieved memory와 같은 chat context 경로로 들어간다. `/api/chat`은 retrieved/filter를 통과한 memory를 before-session/profile과 during-session/interaction으로 다시 나누지 않고 `chatRetrievedMemoryPrompt` 단일 system message로 주입한다. Prompt compact JSON은 모든 retrieved memory를 `episodic`/`semantic` 배열에 재그룹화하되, before-session 항목의 `beforeSessionScope`와 `sourceMissionId`는 보존한다. Current/prior before-session memory도 top-k에 실제로 retrieved된 경우에만 사용할 수 있으며, memory id/weight/similarity는 prompt에서 제외한다 `[현행 2026-07-13 → 15.187/15.190/15.191/15.199/15.208]`
 - **Legacy**: `GET /api/memory/bootstrap`은 세션 시작 시 memory를 preload하던 구 방식이며, 현재 main client에서는 호출하지 않음
 - **Retrieval 쿼리 구성**: `[user text] + Mission: [parentMissionTitle] + Active idea: [description]` — 선택된 옵션 이름(페르소나 등)은 제외해 임베딩 노이즈 방지
 - **Admin 관측**: researcher가 `/admin/users/[uid]/memory`에서 `/agent`와 동일한 user별 memory cluster graph/list/detail을 확인 가능. detail panel은 그래프 왼쪽에 있고 cluster list는 요약 없이 색상·제목·개수만 표시한다 `[현행 2026-06-27 → 15.130]` `[stale 2026-06-30 → 15.169: cluster list가 main 세션리뷰와 동일한 review presentation(rounded card + 색상 count rail + 접기 rail)로 통일됨]` Before-session memory의 detail card 제목은 분리된 `source.sourceText`를 우선 표시하고, `Original input`은 별도 강조 없이 전체 `input` rawMarkdown을 표시한다 `[현행 2026-07-07 → 15.195/15.196]`
@@ -320,8 +320,7 @@ type Idea = {
 | `chatActionInstructionPrompt(intent, includeRouter)` | function | `chat/route.ts` — planner intent에 맞는 행동 규칙만 주입    |
 | `chatDevicePrompt(deviceLabel)`                      | function | `chat/route.ts` — 대상 디바이스 명시                        |
 | `chatMissionPrompt(title, brief)`                    | function | `chat/route.ts` — 미션 컨텍스트 주입                        |
-| `chatProfileMemoryPrompt(lines)`                     | function | `chat/route.ts` — Legacy/backcompat profile_input 직접 주입 |
-| `chatInteractionMemoryPrompt(json)`                  | function | `chat/route.ts` — 상호작용 메모리 주입                      |
+| `chatRetrievedMemoryPrompt(json)`                    | function | `chat/route.ts` — retrieved memory 단일 주입                |
 | `chatDesignSpecPrompt(spec)`                         | function | `chat/route.ts` — 디자인 스타일 가이드 주입                 |
 | `chatCitedTextsPrompt(texts)`                        | function | `chat/route.ts` — 인용 텍스트 주입                          |
 | `chatActiveIdeaPrompt(title, desc)`                  | function | `chat/route.ts` — 현재 작업 시안 주입                       |
@@ -939,7 +938,7 @@ archiveReason = "low-weight" | "duplicate" | "manual";
   - Planner 입력:
     - latest user input
     - 최근 message 3개 compact
-    - 현재 UI 상태 boolean/count: hasActiveIdea, hasMockupHtml, hasSelectedElement, hasDesignSpec, citedReferenceCount, citedTextCount, profileMemoryCount, interactionMemoryCount
+    - 현재 UI 상태 boolean/count: hasActiveIdea, hasMockupHtml, hasSelectedElement, hasDesignSpec, citedReferenceCount, citedTextCount, retrievedMemoryCount
     - retrieved/filter를 통과한 memoryContext 중 semantic memory 최대 5개. 각 항목은 semantic, similarity, signal(high/mid/low)을 포함한다. signal은 현재 실험값 기준 similarity 0.48 이상 high, 0.39 이하 low, 그 사이는 mid다 `[현행 2026-07-11 → 15.206]`
     - `[stale 2026-07-11 → 15.206: planner 입력의 userClusterSummaries는 제거하고 retrieved semantic memory 직접 입력으로 대체]`
     - mission title + 짧은 mission summary
@@ -977,7 +976,7 @@ type ChatPlan = {
   - 항상 포함: `CHAT_AGENT_BASE_PROMPT`, planner intent별 `chatActionInstructionPrompt(...)`, target device, current request
   - mission: 기본 포함하되 brief는 planner가 `mission=true`일 때만 긴 버전 사용. 아니면 title + 1~2줄 summary만 사용
   - profile input: 14.4 이후 `/api/memory/profile`에서 derived memory로 분해되어 interaction memory와 같은 retrieval/context path를 사용
-  - memory: retrieved/filter를 통과해 memoryContext에 들어온 memory는 prompt에 주입한다. planner는 주입 여부 bool 대신 `memoryRelevance`로 light/medium/strong 반영 강도를 고르고, chat memory prompt가 그 강도에 맞는 instruction을 붙인다 `[현행 2026-07-11 → 15.206]`
+  - memory: retrieved/filter를 통과해 memoryContext에 들어온 memory는 prompt에 주입한다. planner는 주입 여부 bool 대신 `memoryRelevance`로 light/medium/strong 반영 강도를 고르고, `chatRetrievedMemoryPrompt`가 그 강도에 맞는 instruction을 붙인다. before-session/profile과 during-session/interaction을 별도 prompt로 나누지 않는다 `[현행 2026-07-13 → 15.206/15.208]`
   - activeIdea: Design Brief 생성/수정/mockup 관련 intent에서만 주입. 내부 action id는 기존 계약 때문에 `create_note`/`update_note`를 유지한다 `[현행 2026-06-16 → 15.87]`
   - designSpec: mockup generate/edit/design spec 관련 intent에서만 주입
   - mockupHtml: edit/현재 화면 분석 intent에서만 주입. generate intent에서는 사용자가 기존 mockup 기반 변형을 요구한 경우에만 주입
@@ -996,8 +995,8 @@ type ChatPlan = {
   - `/api/chat`에서 compact planner input을 만들고 `gpt-5.4`로 `ChatPlan`을 생성한다.
   - 기존 단일 system prompt는 제거하고, `CHAT_AGENT_BASE_PROMPT` + intent별 `chatActionInstructionPrompt(...)` 조합으로 분리했다.
   - `promptPlan`, `promptPlanFallback`, `selectedContextKeys`를 reviewTurn top-level과 `promptCompact`에 함께 저장한다.
-  - pruning은 `activeIdea`, `designSpec`, `mockupHtml`, `citedTexts`, `citedReferences`에 적용한다. `citedTexts`는 사용자가 명시적으로 붙인 경우 planner pruning보다 우선한다. `interactionMemory` bool pruning은 제거했고, memory prompt는 `memoryRelevance` 강도 instruction으로 조절한다 `[현행 2026-07-11 → 15.205/15.206]`
-  - retrieved interaction memory는 prompt에 넣기 직전 `episodic[].episodic`과 `semantic[].semantic`으로 재그룹화한다. 검색은 combined embedding 기준으로 유지하되, 모델에게 전달되는 표현은 "이전 상호작용"과 "지속적 선호/패턴" 텍스트만 남긴다.
+  - pruning은 `activeIdea`, `designSpec`, `mockupHtml`, `citedTexts`, `citedReferences`에 적용한다. `citedTexts`는 사용자가 명시적으로 붙인 경우 planner pruning보다 우선한다. memory 주입 여부 bool pruning은 제거했고, retrieved memory prompt는 `memoryRelevance` 강도 instruction으로 조절한다 `[현행 2026-07-13 → 15.205/15.206/15.208]`
+  - retrieved memory는 prompt에 넣기 직전 `episodic[].episodic`과 `semantic[].semantic`으로 재그룹화한다. 검색은 combined embedding 기준으로 유지하되, 모델에게 전달되는 표현은 이전 맥락/결과와 지속적 선호/패턴 텍스트만 남긴다. before-session/profile과 during-session/interaction은 별도 system message로 분리하지 않는다 `[현행 2026-07-13 → 15.208]`
   - 같은 retrieved memory에 episodic/semantic이 모두 있으면 두 그룹에 각각 포함하고, prompt에는 memory id/source 연결 정보를 넣지 않는다.
   - planner 실패 시 기존 방식으로 fallback한다. `confidence < 0.55`면 대부분 context는 유지하되 `mockupHtml`은 selected/edit/current-screen 계열 요청일 때만 포함한다.
   - client assistant bubble의 `참조한 맥락` 요약은 제거했다. 대신 `/api/chat`이 stream 초반에 `[CHAT_PHASE: ...]` 이벤트를 여러 개 보내고, client는 이를 본문에 저장하지 않는 Codex식 단계 로그로 표시한다. 단계 로그는 `처리 과정 N개` disclosure 안에서 Marker-style status row로 렌더한다 `[현행 2026-06-30 → 15.158]`
@@ -4173,3 +4172,11 @@ type ChatPlan = {
 - Draft 입력 계약: client는 `feedback-{assistantMessageId}` interactionId로 `/api/memory/drafts`를 호출한다. input은 `답변 평가: 좋아요/싫어요`, optional reason, 평가된 답변의 원래 질문(최대 1000자)이고 output은 evaluated assistant answer를 `cleanMessageContentForModel`로 정리해 최대 6000자로 보낸다. 같은 message에 재투표하면 같은 draft id를 덮어써 최종 상태만 남긴다.
 - Encoding: `/api/memory/drafts`는 `assistantFeedback` payload가 있으면 `MEMORY_FEEDBACK_ENCODE_ADDENDUM`을 `MEMORY_ENCODE_PROMPT` 뒤에 붙인다. Addendum은 episode를 평가 사실 한 문장으로 쓰고 semantic은 답변 내용 요약이 아니라 평가 신호에서 파생하라고 지시한다. dislike without reason은 좁고 조심스러운 hypothesis로 제한한다.
 - Activity/review: session `activityLog`에는 `section: feedback`, `action: submit` 이벤트를 남겨 좋아요/싫어요와 이유를 타임라인에서 볼 수 있게 했다. Memory draft/promoted event의 action category도 `assistant_feedback`으로 분류해 기존 action tag 재해석과 섞이지 않게 했다.
+
+### 15.208 Retrieved memory prompt 통합 `[implemented 2026-07-13]`
+
+- 배경(Notion `[updated] retrieval 메모리 prompt에 들어가는지 확인`): 15.199에서 current before-session always-on 주입은 제거했지만, `/api/chat`은 retrieved memory를 다시 before-session/profile과 during-session/interaction으로 분리해 `chatProfileMemoryPrompt`와 `chatInteractionMemoryPrompt`를 따로 붙이고 있었다. 이 때문에 retrieval은 단일 top-k 경쟁인데 chat prompt 단계에서 다시 source별 특권처럼 보일 여지가 남았다.
+- 수정: `chatProfileMemoryPrompt`와 `chatInteractionMemoryPrompt`를 제거하고 `chatRetrievedMemoryPrompt` 단일 helper로 통합했다. `/api/chat`은 `memoryContext` 전체를 `compactMemoryContext`로 한 번만 변환하고, `selectedContextKeys`에도 `retrievedMemory` 하나만 기록한다.
+- 수정: planner compact input의 UI count도 `profileMemoryCount`/`interactionMemoryCount` 대신 `retrievedMemoryCount` 하나로 바꿨다. Planner가 보는 semantic memory 목록은 기존처럼 retrieval/filter를 통과한 항목 최대 5개다.
+- 유지: before-session 항목의 `beforeSessionScope`와 `sourceMissionId`는 compact JSON에 계속 남겨 모델이 출처를 참고할 수 있게 했다. 단, prompt 문구는 이 metadata를 자동 미션 요구사항이나 검색 query term으로 쓰지 말고 retrieval-selected evidence로만 다루도록 설명한다.
+- 유지: `/api/memory/retrieve`의 호환 응답 필드 `currentBeforeSessionSetup: []`와 retrieval log의 profile count/debug fields는 이번 변경에서 건드리지 않았다. 다음 별도 작업은 top-k limit 조정이다.

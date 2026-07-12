@@ -146,18 +146,11 @@ function memoryRelevanceInstruction(
   return "Memory relevance for this turn: medium. Reflect memory when it materially helps the current response.";
 }
 
-export function chatProfileMemoryPrompt(
+export function chatRetrievedMemoryPrompt(
   compactMemoryJson: string,
   memoryRelevance: MemoryRelevance = "medium",
 ) {
-  return `Before-session memory the user explicitly provided before a mission and retrieved for this turn. The JSON groups episodic and semantic separately. Items may include beforeSessionScope and sourceMissionId so you can tell whether they came from the current mission setup or an earlier mission setup. Current-mission and prior-mission items are both retrieved because they may be relevant; use them when helpful while respecting the current user request and current mission context. Apply useful memory silently without referencing it directly.\n${memoryRelevanceInstruction(memoryRelevance)}\n${compactMemoryJson}`;
-}
-
-export function chatInteractionMemoryPrompt(
-  compactMemoryJson: string,
-  memoryRelevance: MemoryRelevance = "medium",
-) {
-  return `After-session memory retrieved for this turn. The JSON groups episodic and semantic memory separately. Episodic items summarize prior completed interaction turns, including the user request/context and the agent's outcome when relevant. Semantic items contain only durable user preferences, constraints, or working patterns. Use only what is helpful; do not mention memory unless it directly improves the answer.\n${memoryRelevanceInstruction(memoryRelevance)}\n${compactMemoryJson}`;
+  return `Memory retrieved for this turn. The JSON groups episodic and semantic memory separately. Items may come from before-session setup or completed interaction turns; before-session items may include beforeSessionScope and sourceMissionId. Treat all items as retrieval-selected memory evidence, not as automatic mission requirements. Episodic items summarize prior context and outcomes when relevant. Semantic items contain durable user preferences, constraints, or working patterns. Use only what is helpful, prioritize the latest user request and current mission context, and apply useful memory silently without referencing it directly.\n${memoryRelevanceInstruction(memoryRelevance)}\n${compactMemoryJson}`;
 }
 
 export function chatDesignSpecPrompt(designSpec: string) {

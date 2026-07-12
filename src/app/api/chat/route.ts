@@ -10,8 +10,7 @@ import {
   chatActionInstructionPrompt,
   chatDevicePrompt,
   chatMissionPrompt,
-  chatProfileMemoryPrompt,
-  chatInteractionMemoryPrompt,
+  chatRetrievedMemoryPrompt,
   chatDesignSpecPrompt,
   chatCitedTextsPrompt,
   chatActiveIdeaPrompt,
@@ -696,8 +695,7 @@ function promptPhaseLabels(
     ["selectedElement", "Reading selected element..."],
     ["citedReferences", "Reading cited references..."],
     ["citedTexts", "Reading cited text..."],
-    ["profileMemory", "Reading before-session memory..."],
-    ["interactionMemory", "Reading during-session memory..."],
+    ["retrievedMemory", "Reading retrieved memory..."],
   ];
   for (const [key, label] of contextLabels) {
     if (selectedContextKeys.includes(key)) phases.push(label);
@@ -931,18 +929,6 @@ export async function POST(request: Request) {
       ? latestUserMessage.content.trim()
       : "";
   const memoryItems = memoryContextItems(memoryContext);
-  const isBeforeSessionMemoryItem = (item: unknown) =>
-    Boolean(
-      item &&
-        typeof item === "object" &&
-        (String((item as Record<string, unknown>).type ?? "") ===
-          "before_session_memory" ||
-          (item as Record<string, unknown>).sourceType === "before_session"),
-    );
-  const profileMemoryCount = memoryItems.filter(
-    (item: unknown) => isBeforeSessionMemoryItem(item),
-  ).length;
-  const interactionMemoryCount = memoryItems.length - profileMemoryCount;
   const plannerInput = {
     latestUserText: truncateText(latestUserText, 1200),
     recentMessages: messageList.slice(-3).map(
@@ -960,8 +946,7 @@ export async function POST(request: Request) {
       citedTextCount: Array.isArray(citedTexts) ? citedTexts.length : 0,
       hasActiveIdea: Boolean(activeIdea),
       hasDesignSpec: Boolean(designSpec),
-      profileMemoryCount,
-      interactionMemoryCount,
+      retrievedMemoryCount: memoryItems.length,
       device: device === "mobile" ? "mobile" : "desktop",
     },
     semanticMemories: compactPlannerSemanticMemories(memoryItems),
@@ -1069,37 +1054,15 @@ export async function POST(request: Request) {
   }
 
   if (memoryContext) {
-    const profileItems = memoryItems.filter(
-      (item) => isBeforeSessionMemoryItem(item),
-    );
-    const interactionItems = memoryItems.filter(
-      (item) => !isBeforeSessionMemoryItem(item),
-    );
-
-    if (profileItems.length > 0) {
-      markContext("profileMemory");
-      const compactProfile = compactMemoryContext({
-        episodic: [],
-        semantic: profileItems,
-      });
+    const compactMemory = compactMemoryContext(memoryContext);
+    if (
+      compactMemory &&
+      (compactMemory.episodic.length > 0 || compactMemory.semantic.length > 0)
+    ) {
+      markContext("retrievedMemory");
       systemMessages.push({
         role: "system",
-        content: chatProfileMemoryPrompt(
-          JSON.stringify(compactProfile),
-          promptPlan.memoryRelevance,
-        ),
-      });
-    }
-
-    if (interactionItems.length > 0) {
-      markContext("interactionMemory");
-      const compactMemory = compactMemoryContext({
-        episodic: [],
-        semantic: interactionItems,
-      });
-      systemMessages.push({
-        role: "system",
-        content: chatInteractionMemoryPrompt(
+        content: chatRetrievedMemoryPrompt(
           JSON.stringify(compactMemory),
           promptPlan.memoryRelevance,
         ),
