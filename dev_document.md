@@ -146,7 +146,7 @@
 
 ### 4.6 AI 채팅
 
-- **구조화 composer 문법**: `/`는 새 산출물 생성 명령(`/시안생성`, `/디자인스타일생성`, `/목업생성`, `/레퍼런스검색`), `@`는 현재 세션에 이미 존재하는 시안/Design Brief/Design Style/Mockup 언급이다. 대상이 없으면 현재 활성 시안을 사용하고, `@디자인스타일` 같은 검색은 dropdown에서 `시안 N · 디자인 스타일` 실제 대상을 확인한 뒤 ID 기반 metadata로 고정한다. 자동완성 선택값은 별도 상단 chip이 아니라 Lexical composer 안에 `/시안생성`, `@시안 1 · 디자인 브리프` 같은 inline token으로 삽입되고, token 구간은 Lexical TextNode style로 bold/color highlight된다. 레퍼런스 카드·미션 이미지·텍스트 하이라이트·목업 요소는 기존 전용 선택/인용 UI를 유지하며 `@`에 중복 노출하지 않는다. 선택 요소, 텍스트 인용, 레퍼런스 인용, 미션 이미지 인용, 스타일 이미지는 composer 위 attachment tray에 동일한 Attachment-style item으로 표시한다. 명령/언급은 raw token 파싱이 아니라 구조화 metadata로 `/api/chat`에 전달되고 명시적 `/` 명령이 planner 추론보다 우선한다. memory draft input에는 command/mention 메타 라인을 붙이지 않고 사용자가 본 실제 입력문만 저장한다. `src/lib/session/chat-composer.ts`, `src/components/session/chat-input.tsx`, `src/app/api/chat/route.ts`를 직접 확인 `[현행 2026-07-03 → 15.108/15.157/15.164/15.177/15.179]`
+- **구조화 composer 문법**: `/`는 산출물 명령(`/새시안추가`, `/디자인브리프작성`, `/디자인스타일작성`, `/목업생성`, `/레퍼런스검색`), `@`는 현재 세션에 이미 존재하는 시안/Design Brief/Design Style/Mockup 언급이다. `/새시안추가`는 빈 새 시안을 로컬로 추가하는 내부 `create_blank_idea` command이고, `/디자인브리프작성`은 현재 활성 시안의 Design Brief를 작성하는 내부 `create_idea` command이며, `/디자인스타일작성`은 현재 활성 시안의 Design Style을 작성하는 내부 `create_design_style` command다. 디자인 스타일만 먼저 작성된 빈 시안에서는 `/디자인브리프작성`이 새 시안을 만들지 않고 해당 시안의 Brief를 채운다. 대상이 없으면 현재 활성 시안을 사용하고, `@디자인스타일` 같은 검색은 dropdown에서 `시안 N · 디자인 스타일` 실제 대상을 확인한 뒤 ID 기반 metadata로 고정한다. 자동완성 선택값은 별도 상단 chip이 아니라 Lexical composer 안에 `/디자인브리프작성`, `@시안 1 · 디자인 브리프` 같은 inline token으로 삽입되고, token 구간은 Lexical TextNode style로 bold/color highlight된다. 레퍼런스 카드·미션 이미지·텍스트 하이라이트·목업 요소는 기존 전용 선택/인용 UI를 유지하며 `@`에 중복 노출하지 않는다. 선택 요소, 텍스트 인용, 레퍼런스 인용, 미션 이미지 인용, 스타일 이미지는 composer 위 attachment tray에 동일한 Attachment-style item으로 표시한다. 명령/언급은 raw token 파싱이 아니라 구조화 metadata로 `/api/chat`에 전달되고 명시적 `/` 명령이 planner 추론보다 우선한다. memory draft input에는 command/mention 메타 라인을 붙이지 않고 사용자가 본 실제 입력문만 저장한다. `src/lib/session/chat-composer.ts`, `src/components/session/chat-input.tsx`, `src/app/api/chat/route.ts`를 직접 확인 `[현행 2026-07-13 → 15.108/15.157/15.164/15.177/15.179/15.215]`
 - **응답 생성 provider**: 기본 OpenAI `gpt-5.4` (Responses API). `CHAT_RESPONSE_PROVIDER=anthropic` 또는 `LLM_PROVIDER=anthropic`이면 최종 chat 응답 생성만 Claude Messages API로 전환
 - **Provider 범위**: planner, embedding, memory retrieval/encoding, clustering label은 기존 OpenAI 경로 유지. `/api/chat`의 최종 assistant response streaming만 provider switch 대상. Admin UI에서는 메인 채팅 헤더의 LLM selector로 turn별 provider override 가능
 - **웹 검색**: OpenAI provider일 때 `web_search_preview` 툴 활성화, 레퍼런스 URL 인용 시 `tool_choice: "required"`로 강제. Anthropic provider일 때는 prompt에 포함된 reference title/url context를 사용하고 web search tool은 호출하지 않음
@@ -3382,11 +3382,11 @@ type ChatPlan = {
 - 결정:
   - `/`는 존재하지 않는 산출물을 만드는 명시적 생성 액션, `@`는 이미 존재하는 시안/산출물을 언급하는 문법으로 분리한다.
   - 별도 대상이 없으면 현재 활성 시안 탭을 기본 대상으로 사용한다. 일반적인 현재 시안 작업에는 `@시안 N`을 요구하지 않는다.
-  - `/시안생성`은 새 시안 컨테이너와 그 시안의 Design Brief를 함께 생성하고 새 탭을 활성화한다. 따라서 일반 흐름에서는 `/디자인브리프생성`을 별도 노출하지 않는다.
-  - 1차 `/` 목록은 `/시안생성`, `/디자인스타일생성`, `/목업생성`, `/레퍼런스검색`으로 제한한다. 실제 동작이 검색이므로 `레퍼런스생성`이라는 이름은 사용하지 않는다.
+  - `/시안생성`은 새 시안 컨테이너와 그 시안의 Design Brief를 함께 생성하고 새 탭을 활성화한다. 따라서 일반 흐름에서는 `/디자인브리프생성`을 별도 노출하지 않는다. `[stale 2026-07-13 → 15.215: visible command는 `/새시안추가`, `/디자인브리프작성`, `/디자인스타일작성`, `/목업생성`, `/레퍼런스검색`으로 분리됨]`
+  - 1차 `/` 목록은 `/시안생성`, `/디자인스타일생성`, `/목업생성`, `/레퍼런스검색`으로 제한한다. 실제 동작이 검색이므로 `레퍼런스생성`이라는 이름은 사용하지 않는다. `[stale 2026-07-13 → 15.215: 기본 command는 `/새시안추가`, `/디자인브리프작성`, `/디자인스타일작성`, `/목업생성`, `/레퍼런스검색`]`
   - `@디자인브리프`, `@디자인스타일`, `@목업`은 현재 활성 시안에 존재하는 해당 산출물의 contextual shortcut이다. 자동완성 결과에는 `시안 N · 디자인 스타일`처럼 실제 결합 대상을 표시하고, 선택 시점의 `ideaId`와 artifact type에 고정한다.
   - 다른 시안을 직접 지목할 때는 동적으로 `@시안 1`, `@시안 2` 등을 제공한다. 해당 시안을 검색한 경우 존재하는 하위 산출물도 `시안 N · Design Brief/Design Style/Mockup` 결과로 찾을 수 있다. 사용자에게 이 긴 조합을 직접 입력하도록 요구하지 않고 dropdown이 완성한다.
-  - 존재하지 않는 산출물은 `@` 결과에 표시하지 않는다. 예를 들어 현재 시안에 Design Style이 없으면 `@디자인스타일` 대신 `/디자인스타일생성` 안내를 보여준다.
+  - 존재하지 않는 산출물은 `@` 결과에 표시하지 않는다. 예를 들어 현재 시안에 Design Style이 없으면 `@디자인스타일` 대신 `/디자인스타일생성` 안내를 보여준다. `[stale 2026-07-13 → 15.215: 현행 visible label은 `/디자인스타일작성`]`
   - 레퍼런스/텍스트/선택 요소는 `@` 목록에 넣지 않는다. 레퍼런스 카드 선택 → citation tray, 텍스트 하이라이트 → cited text tray, 목업 클릭 → selected element pill이라는 현행 전용 UI를 유지한다. 발표와 요소 수정도 `/` 또는 `@` 항목으로 만들지 않고 자연어 + 기존 선택 상태로 처리한다.
 - composer UX:
   - textarea에서 단어 시작 위치의 `/` 또는 `@`를 감지해 입력창 위 dropdown을 연다. `/`는 생성 명령, `@`는 현재 세션에 실제로 존재하는 시안/산출물만 검색한다.
@@ -3399,8 +3399,8 @@ type ChatPlan = {
 - 구조화 상태와 전송 계약:
   - client composer에 `ComposerCommand`와 `ComposerMention` 상태를 둔다. mention은 최소 `kind`, `ideaId`, `artifactId?`, `label`을 가지며 표시 문자열을 식별자로 사용하지 않는다.
   - `/api/chat` 요청에 plain text와 별도로 `requestedCommand` 및 `mentionedArtifact`를 전달한다. client dropdown은 현재 UI 상태와 선행 조건으로 생성 명령을 비활성화하고, 서버는 command/mention allowlist와 identifier를 검증한 후 planner 결과보다 명시적 명령을 우선한다.
-  - 명령 매핑은 `/시안생성` → 새 idea 강제 + `create_note`, `/디자인스타일생성` → `create_design_spec`, `/목업생성` → `generate_mockup`, `/레퍼런스검색` → `fetch_references`다.
-  - `/시안생성`은 현재의 자연어 fork 휴리스틱에 의존하지 않고 explicit new-idea flag로 새 시안을 만든다. 나머지 시안 종속 명령은 mention의 `ideaId`, 없으면 전송 시점의 `activeIdeaId`를 대상으로 한다.
+  - 명령 매핑은 `/시안생성` → 새 idea 강제 + `create_note`, `/디자인스타일생성` → `create_design_spec`, `/목업생성` → `generate_mockup`, `/레퍼런스검색` → `fetch_references`다. `[stale 2026-07-13 → 15.215: `/새시안추가`는 내부 `create_blank_idea`, `/디자인브리프작성`은 내부 `create_idea`, `/디자인스타일작성`은 내부 `create_design_style` command id를 사용함]`
+  - `/시안생성`은 현재의 자연어 fork 휴리스틱에 의존하지 않고 explicit new-idea flag로 새 시안을 만든다. 나머지 시안 종속 명령은 mention의 `ideaId`, 없으면 전송 시점의 `activeIdeaId`를 대상으로 한다. `[stale 2026-07-13 → 15.215: `/디자인브리프작성`은 현재 시안의 빈 Design Brief를 채우며 별도 새 시안만 추가하려면 `/새시안추가`를 사용함]`
   - 명령/언급 metadata는 user message와 review turn에 저장해 재접속 시 표시, admin prompt 진단, memory draft의 실제 입력 맥락이 서로 어긋나지 않게 한다. 모델에 보낼 때는 raw token 문자열 파싱에 의존하지 않고 구조화 metadata를 system context로 직렬화한다.
   - planner/API 실패 시 임의의 다른 생성 intent로 fallback하지 않는다. 명시적 명령의 선행 조건이 맞지 않으면 현재 시안에 무엇이 부족한지 채팅 오류/안내로 반환한다.
 - 구현 순서:
@@ -3413,13 +3413,13 @@ type ChatPlan = {
 - 검증 계획:
   - 현재 시안이 1/2일 때 `@디자인브리프`가 각각 올바른 `ideaId`에 고정되고, 선택 후 탭 변경에도 대상이 변하지 않는지 확인한다.
   - 존재/미존재 Design Style과 Mockup에 따라 `@` 결과와 `/` 생성 안내가 올바르게 달라지는지 확인한다.
-  - `/시안생성`이 새 시안 + substantive Design Brief를 한 번만 만들고 새 탭을 활성화하는지, `/디자인스타일생성`과 `/목업생성`이 현재 또는 명시된 시안만 갱신하는지 확인한다.
+  - `/시안생성`이 새 시안 + substantive Design Brief를 한 번만 만들고 새 탭을 활성화하는지, `/디자인스타일생성`과 `/목업생성`이 현재 또는 명시된 시안만 갱신하는지 확인한다. `[stale 2026-07-13 → 15.215: 현행 visible label은 `/디자인스타일작성`]`
   - 레퍼런스 카드, 텍스트 인용, 선택 요소의 현행 선택·해제·전송이 바뀌지 않고 `@` 목록에 중복 노출되지 않는지 회귀 검증한다.
   - 한글 IME, Enter 전송, Shift+Enter 줄바꿈, dropdown 키보드 탐색, 명령/언급 chip 삭제, 요청 취소 후 composer 초기화를 확인한다. `[stale 2026-06-30 → 15.157: chip 삭제 대신 textarea inline token 삭제 시 metadata clearing을 확인]`
   - TypeScript, 변경 파일 ESLint, `git diff --check`, production build와 실제 provider를 통한 command별 라이브 요청을 검증한다.
 - 구현/검증 결과:
   - `src/lib/session/chat-composer.ts`에 공용 command/mention 계약과 검색 normalization을 추가하고, `ChatInput`에 `/`·`@` dropdown, 키보드/IME 처리, 구조화 chip, slash toolbar 버튼을 연결했다.
-  - 메시지/메모리 입력/review turn/API prompt에 command와 mention metadata를 보존하고, `/api/chat`이 명시적 command를 planner intent보다 우선하도록 연결했다. `/시안생성`은 기존 시안이 있어도 새 `CREATE_NOTE` 결과를 새 시안으로 materialize하며 명시적 command turn에는 자연어 style-fork 휴리스틱을 적용하지 않는다.
+  - 메시지/메모리 입력/review turn/API prompt에 command와 mention metadata를 보존하고, `/api/chat`이 명시적 command를 planner intent보다 우선하도록 연결했다. `/시안생성`은 기존 시안이 있어도 새 `CREATE_NOTE` 결과를 새 시안으로 materialize하며 명시적 command turn에는 자연어 style-fork 휴리스틱을 적용하지 않는다. `[stale 2026-07-13 → 15.215: 현행 빈 새 시안 추가는 `/새시안추가`/`create_blank_idea`, 현재 시안 Brief 작성은 `/디자인브리프작성`/`create_idea`로 분리됨]`
   - 빈 채팅 catalog와 제품 투어를 새 문법으로 갱신했다. 레퍼런스/텍스트/선택 요소의 기존 citation UI는 변경하지 않았다.
   - `./node_modules/.bin/tsc --noEmit`, 변경 파일 ESLint(0 error, 기존 warning만), `git diff --check`, `npm run build` 통과. Build의 기존 presentation route NFT trace warning은 유지. 실제 provider command별 end-to-end와 한글 IME dropdown 조작은 라이브 확인이 필요하다.
 
@@ -3803,9 +3803,9 @@ type ChatPlan = {
 
 ### 15.154 세션 초반 Design Style 생성 허용 `[implemented 2026-06-30]`
 
-- 배경(Notion `38ed5dc81f6680989f97f4fc64078732`): `/디자인스타일생성`을 세션 초반부터 사용할 수 있어야 했다.
-- 원인: runtime은 `CREATE_DESIGN_SPEC`가 현재 아이디어가 없을 때 빈 시안을 만들고 스타일을 저장할 수 있었지만, composer command UI가 Design Brief가 없으면 `/디자인스타일생성`을 비활성화했다.
-- 수정: `/디자인스타일생성`은 현재 시안에 이미 Design Style이 있을 때만 비활성화한다. 빈 디폴트 시안 또는 Design Brief 없는 시안에도 먼저 스타일을 저장할 수 있고, 이후 첫 Design Brief는 기존 shell-fill 규칙으로 같은 시안을 채운다.
+- 배경(Notion `38ed5dc81f6680989f97f4fc64078732`): `/디자인스타일생성`을 세션 초반부터 사용할 수 있어야 했다. `[stale 2026-07-13 → 15.215: 현행 visible label은 `/디자인스타일작성`]`
+- 원인: runtime은 `CREATE_DESIGN_SPEC`가 현재 아이디어가 없을 때 빈 시안을 만들고 스타일을 저장할 수 있었지만, composer command UI가 Design Brief가 없으면 `/디자인스타일생성`을 비활성화했다. `[stale 2026-07-13 → 15.215: 현행 visible label은 `/디자인스타일작성`]`
+- 수정: `/디자인스타일생성`은 현재 시안에 이미 Design Style이 있을 때만 비활성화한다. 빈 디폴트 시안 또는 Design Brief 없는 시안에도 먼저 스타일을 저장할 수 있고, 이후 첫 Design Brief는 기존 shell-fill 규칙으로 같은 시안을 채운다. `[stale 2026-07-13 → 15.215: 현행 visible label은 `/디자인스타일작성`]`
 - 문서: 4.6 Current Snapshot의 `CREATE_DESIGN_SPEC` 계약을 Design Brief 선행 불필요 흐름에 맞게 갱신했다.
 
 ### 15.155 메모리 리뷰 질문지와 제출 흐름 업데이트 `[implemented 2026-06-30]`
@@ -4231,3 +4231,12 @@ type ChatPlan = {
 - 수정: target device는 별도 system prompt block에서 mission prompt 하위 라인으로 합쳤다. 이에 따라 `selectedContextKeys` 초기값에서 `device`를 제거하고 mission context가 device까지 포함하는 계약으로 바꿨다.
 - 수정: `compactHtmlForModel()`을 추가해 모델 prompt에 넣는 mockupHtml에서 HTML 주석, script, base64 image data URI, inline SVG 내부, 과도한 공백을 제거한 뒤 12000자로 자른다. 이 compact는 chat prompt 전용이며 Stitch 편집 API로 전달되는 원본 HTML에는 적용하지 않는다.
 - 유지: cited reference는 system context에 넣으면서도 기존처럼 builtMessages의 최신 user message 앞에 인용 레퍼런스 제목을 덧붙인다. retrieved memory는 15.208의 단일 `chatRetrievedMemoryPrompt` 경로를 유지한다.
+
+### 15.215 Design Brief command 분리와 style shell fill `[implemented 2026-07-13]`
+
+- 배경: 디자인 스타일을 먼저 만든 경우 활성 시안은 Design Style만 있고 Design Brief가 비어 있는 shell이 된다. 이 상태에서 기존 `/시안생성` 라벨은 새 시안을 만들라는 뜻처럼 보여, 사용자가 "현재 시안에 Design Brief만 작성"하려는 상황과 충돌했다.
+- 수정: 기본 command 순서는 `/새시안추가`, `/디자인브리프작성`, `/디자인스타일작성`, `/목업생성`, `/레퍼런스검색`으로 둔다. 빈 새 시안 추가 command는 `/새시안추가` / `create_blank_idea`로 유지하고, 현재 시안의 Design Brief 작성 command는 `/디자인브리프작성` / `create_idea`로 유지한다. 새 시안 추가와 Design Brief 작성을 한 번에 묶는 별도 shortcut command는 제거했다.
+- 수정: Design Brief와 Design Style은 둘 다 텍스트 산출물이므로 visible label의 동사를 `작성`으로 통일했다. 이에 따라 Design Style command label은 `/디자인스타일작성`이고 내부 command id는 기존 `create_design_style`을 유지한다.
+- 수정: 빈 새 시안 추가는 LLM 호출 없이 클라이언트에서 처리해 Design Brief 또는 Design Style 중 원하는 것부터 작성할 수 있게 한다.
+- 수정: 디자인 스타일만 있고 Design Brief와 artboard가 없는 활성 시안에서는 명시적 `create_idea` command로 온 `[CREATE_NOTE]`도 새 시안을 만들지 않고 해당 style shell의 Design Brief를 채운다.
+- 문서: 4.6 Current Snapshot과 15.157 decision log의 `/시안생성` 설명을 stale 처리하고 새 label/동작 계약을 기록했다.

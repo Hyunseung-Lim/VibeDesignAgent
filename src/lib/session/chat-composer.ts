@@ -1,5 +1,6 @@
 export type ChatComposerCommandId =
   | "create_idea"
+  | "create_blank_idea"
   | "create_design_style"
   | "generate_mockup"
   | "fetch_references";
@@ -28,16 +29,22 @@ export type ChatComposerMention = {
 
 export const CHAT_COMPOSER_COMMANDS: ChatComposerCommand[] = [
   {
+    id: "create_blank_idea",
+    label: "/새시안추가",
+    description: "빈 새 시안 추가",
+    defaultPrompt: "새 빈 시안을 추가해줘",
+  },
+  {
     id: "create_idea",
-    label: "/시안생성",
-    description: "새 시안과 Design Brief 만들기",
-    defaultPrompt: "새로운 디자인 시안을 생성해줘",
+    label: "/디자인브리프작성",
+    description: "현재 시안의 Design Brief 작성",
+    defaultPrompt: "현재 시안의 Design Brief를 작성해줘",
   },
   {
     id: "create_design_style",
-    label: "/디자인스타일생성",
-    description: "현재 시안의 Design Style 만들기",
-    defaultPrompt: "현재 시안의 디자인 스타일을 생성해줘",
+    label: "/디자인스타일작성",
+    description: "현재 시안의 Design Style 작성",
+    defaultPrompt: "현재 시안의 Design Style을 작성해줘",
   },
   {
     id: "generate_mockup",

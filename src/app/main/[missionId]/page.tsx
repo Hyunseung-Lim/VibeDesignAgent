@@ -4576,6 +4576,17 @@ export default function MainScreenPage() {
     );
     return CHAT_COMPOSER_COMMANDS.map((command) => {
       let disabledReason: string | undefined;
+      if (command.id === "create_idea") {
+        if (activeIdea?.description.trim()) {
+          disabledReason = "현재 시안에 이미 Design Brief가 있어요";
+        }
+        return {
+          ...command,
+          description: "현재 시안의 Design Brief 작성",
+          defaultPrompt: "현재 시안의 Design Brief를 작성해줘",
+          disabledReason,
+        };
+      }
       if (command.id === "create_design_style") {
         if (activeIdea?.designStyle?.content?.trim()) {
           disabledReason = "현재 시안에 이미 Design Style이 있어요";
@@ -4760,6 +4771,54 @@ export default function MainScreenPage() {
     const text = typedText || commandForTurn?.defaultPrompt || "";
     if (!text || !isMissionContextReady || isLoading || isGeneratingMockup)
       return;
+    if (commandForTurn?.id === "create_blank_idea") {
+      const now = Date.now();
+      const blankIdea: Idea = {
+        id: crypto.randomUUID(),
+        title: nextDraftTitle(ideas),
+        description: "",
+        createdAt: now,
+      };
+      const userMsg: Message = {
+        id: crypto.randomUUID(),
+        role: "user",
+        content: text,
+        createdAt: now,
+        composerCommand: commandForTurn,
+        composerMention: mentionForTurn,
+      };
+      const assistantMsg: Message = {
+        id: crypto.randomUUID(),
+        role: "assistant",
+        content:
+          "새 빈 시안을 추가했어요. Design Brief나 Design Style 중 원하는 것부터 작성할 수 있습니다.",
+        createdAt: now,
+      };
+      setMessages((prev) => [...prev, userMsg, assistantMsg]);
+      setIdeas((prev) => [...prev, blankIdea]);
+      setActiveIdeaId(blankIdea.id);
+      setActiveArtboardId(null);
+      setIsIdeaExpanded(true);
+      setActiveIdeaTab("idea");
+      appendActivityLog({
+        section: "note",
+        action: "create",
+        input: text,
+        output: "",
+        outputTitle: blankIdea.title,
+      });
+      setInputText("");
+      setComposerCommand(null);
+      setComposerMention(null);
+      if (selectedElement) {
+        clearIframeSelections(selectedElement.artboardId);
+        setSelectedElement(null);
+      }
+      setSelectedReferences([]);
+      updateCitedTexts([]);
+      setAttachedStyleImage(null);
+      return;
+    }
     // Snapshot the attached style image for this turn; the GENERATE_MOCKUP call
     // happens later in the streaming handler, after we clear the composer chip.
     const styleImageForTurn = attachedStyleImage?.dataUrl ?? null;
@@ -5180,7 +5239,7 @@ export default function MainScreenPage() {
           activeIdea &&
           activeIdea.designStyle &&
           !activeIdea.description.trim() &&
-          commandForTurn?.id !== "create_idea";
+          !activeIdeaHasArtboards;
         if (
           activeIdea &&
           ((shouldFillStyleShell && !shouldForkStyleDirection) ||

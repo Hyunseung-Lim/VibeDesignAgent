@@ -335,6 +335,7 @@ type ChatPlan = {
 
 const CHAT_COMPOSER_COMMAND_IDS = new Set<ChatComposerCommandId>([
   "create_idea",
+  "create_blank_idea",
   "create_design_style",
   "generate_mockup",
   "fetch_references",
@@ -380,6 +381,7 @@ function forceRequestedCommand(
   if (!command) return plan;
   const intentByCommand: Record<ChatComposerCommandId, ChatPlanIntent> = {
     create_idea: "create_design_brief",
+    create_blank_idea: "answer",
     create_design_style: "create_design_spec",
     generate_mockup: "create_mockup",
     fetch_references: "fetch_references",
@@ -392,7 +394,8 @@ function forceRequestedCommand(
     needs: {
       ...plan.needs,
       mission: true,
-      activeIdea: command !== "create_idea" && command !== "fetch_references",
+      activeIdea:
+        command !== "create_blank_idea" && command !== "fetch_references",
       designSpec: command === "generate_mockup",
       mockupHtml: false,
       selectedElement: false,
