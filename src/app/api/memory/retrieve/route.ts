@@ -21,7 +21,7 @@ export const runtime = "nodejs";
 const MEMORY_COLLECTION = "memories_0_1_2";
 const RETRIEVAL_LOG_COLLECTION = "memoryRetrievalLogs";
 const MAX_MEMORY_DOCS = 200;
-const DEFAULT_LIMIT = 5;
+const DEFAULT_LIMIT = 10;
 // Usage-based forgetting: every retrieval nudges down all memories that were
 // NOT retrieved this turn, so unused memories drift toward the floor while
 // repeatedly-used ones stay high. Wall-clock independent (safe for the 3-day

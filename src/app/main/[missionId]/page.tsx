@@ -3218,7 +3218,7 @@ export default function MainScreenPage() {
           body: JSON.stringify({
             query,
             missionId,
-            limit: 5,
+            limit: 10,
             interactionId: options?.interactionId,
             userMessageId: options?.userMessageId,
           }),

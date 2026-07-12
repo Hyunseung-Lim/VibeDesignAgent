@@ -133,14 +133,14 @@ function compactMemoryContext(memoryContext: unknown) {
       const record = item as Record<string, unknown>;
       return Boolean(truncateText(record.episodic ?? record.episode, 500));
     })
-    .slice(0, 8)
+    .slice(0, 10)
     .map(compactEpisodic);
   const semantic = items
     .filter((item) => {
       const record = item as Record<string, unknown>;
       return typeof record.semantic === "string" && record.semantic.trim();
     })
-    .slice(0, 8)
+    .slice(0, 10)
     .map(compactSemantic);
   return { episodic, semantic };
 }

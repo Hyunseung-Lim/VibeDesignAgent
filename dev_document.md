@@ -172,7 +172,7 @@
 - **첨부 이미지 시각 선호**: image normalizer는 의도적으로 선호를 추론하지 않으므로, 첨부 이미지가 주도한 목업 생성이 성공해 derivedDesignStyle가 나오면 그 스타일을 `style-image-preference-{turnId}` interactionId(category `style_image_preference`)로 별도 draft에 기록한다. 이번 미션/시안 맥락의 session-scoped evidence로 담고 전역 취향으로 단정하지 않는다 `[현행 2026-06-21 → 15.101]`
 - **확정 시점**: 사용자가 `세션 종료` 버튼을 누르면 `/api/memory/complete-session`에서 draft를 통합해 장기 메모리로 저장
 - **버전 관리**: admin memory modal에서 v0.1.0 / v0.1.1 / v0.1.2를 분리 조회 `[stale 2026-06-12 → 15.51: legacy fallback 제거로 현재 v0.1.2 단일 버전만 사용(MemoryVersionTab = "0.1.2"). v0.1.0/v0.1.1 분리 조회 없음]`
-- **현재 활용**: 각 채팅 turn 직전에 `/api/memory/retrieve`를 호출한다. Current/prior before-session과 during-session memory는 모두 같은 query similarity ranking 후보이며, 별도 current-session boost나 prompt 강제 포함은 없다. Top-k에 실제로 retrieved된 항목만 prompt에 들어가고 weight/retrievedCount가 업데이트된다. 응답과 log는 `sourceMissionId`와 `beforeSessionScope`(`current_mission`/`prior_mission`)를 보존한다. 어드민이 `viewAs`로 리뷰 화면을 볼 때 assistant bubble의 `Retrieval 보기` 버튼에서 해당 turn 근처의 retrieval query, retrieved memory, raw retrieval log JSON을 확인할 수 있다 `[현행 2026-07-10 → 15.187/15.190/15.193/15.199]`
+- **현재 활용**: 각 채팅 turn 직전에 `/api/memory/retrieve`를 호출한다. Current/prior before-session과 during-session memory는 모두 같은 query similarity ranking 후보이며, 별도 current-session boost나 prompt 강제 포함은 없다. 기본 retrieval limit은 top 10이고, 실제로 retrieved된 항목만 prompt에 들어가며 weight/retrievedCount가 업데이트된다. 응답과 log는 `sourceMissionId`와 `beforeSessionScope`(`current_mission`/`prior_mission`)를 보존한다. 어드민이 `viewAs`로 리뷰 화면을 볼 때 assistant bubble의 `Retrieval 보기` 버튼에서 해당 turn 근처의 retrieval query, retrieved memory, raw retrieval log JSON을 확인할 수 있다 `[현행 2026-07-13 → 15.187/15.190/15.193/15.199/15.209]`
 - **Prompt 주입 방식**: profile input은 `profile_memories`에 source of truth로 보관한 뒤 derived memory로 쪼개 retrieved memory와 같은 chat context 경로로 들어간다. `/api/chat`은 retrieved/filter를 통과한 memory를 before-session/profile과 during-session/interaction으로 다시 나누지 않고 `chatRetrievedMemoryPrompt` 단일 system message로 주입한다. Prompt compact JSON은 모든 retrieved memory를 `episodic`/`semantic` 배열에 재그룹화하되, before-session 항목의 `beforeSessionScope`와 `sourceMissionId`는 보존한다. Current/prior before-session memory도 top-k에 실제로 retrieved된 경우에만 사용할 수 있으며, memory id/weight/similarity는 prompt에서 제외한다 `[현행 2026-07-13 → 15.187/15.190/15.191/15.199/15.208]`
 - **Legacy**: `GET /api/memory/bootstrap`은 세션 시작 시 memory를 preload하던 구 방식이며, 현재 main client에서는 호출하지 않음
 - **Retrieval 쿼리 구성**: `[user text] + Mission: [parentMissionTitle] + Active idea: [description]` — 선택된 옵션 이름(페르소나 등)은 제외해 임베딩 노이즈 방지
@@ -299,7 +299,7 @@ type Idea = {
 | `POST /api/memory/drafts`                         | interaction turn 단위 memory draft 생성                                 |
 | `POST /api/memory/complete-session`               | 세션 종료 시 draft를 장기 메모리로 확정                                 |
 | `GET /api/memory/bootstrap`                       | Legacy: 세션 시작 시 user memory preload. 현재 main client에서는 미사용 |
-| `POST /api/memory/retrieve`                       | query embedding 기반 memory top 5 검색 및 weight 업데이트               |
+| `POST /api/memory/retrieve`                       | query embedding 기반 memory top 10 검색 및 weight 업데이트              |
 | `POST /api/memory/session-clusters`               | 완료 세션 리뷰용 before/after cluster snapshot 생성                      |
 | `GET/POST /api/memory/profile`                    | profile source 저장/조회 및 derived memory 생성                         |
 | `POST /api/admin/missions`                        | 미션 생성 (관리자 전용)                                                 |
@@ -4179,4 +4179,12 @@ type ChatPlan = {
 - 수정: `chatProfileMemoryPrompt`와 `chatInteractionMemoryPrompt`를 제거하고 `chatRetrievedMemoryPrompt` 단일 helper로 통합했다. `/api/chat`은 `memoryContext` 전체를 `compactMemoryContext`로 한 번만 변환하고, `selectedContextKeys`에도 `retrievedMemory` 하나만 기록한다.
 - 수정: planner compact input의 UI count도 `profileMemoryCount`/`interactionMemoryCount` 대신 `retrievedMemoryCount` 하나로 바꿨다. Planner가 보는 semantic memory 목록은 기존처럼 retrieval/filter를 통과한 항목 최대 5개다.
 - 유지: before-session 항목의 `beforeSessionScope`와 `sourceMissionId`는 compact JSON에 계속 남겨 모델이 출처를 참고할 수 있게 했다. 단, prompt 문구는 이 metadata를 자동 미션 요구사항이나 검색 query term으로 쓰지 말고 retrieval-selected evidence로만 다루도록 설명한다.
-- 유지: `/api/memory/retrieve`의 호환 응답 필드 `currentBeforeSessionSetup: []`와 retrieval log의 profile count/debug fields는 이번 변경에서 건드리지 않았다. 다음 별도 작업은 top-k limit 조정이다.
+- 유지: `/api/memory/retrieve`의 호환 응답 필드 `currentBeforeSessionSetup: []`와 retrieval log의 profile count/debug fields는 이번 변경에서 건드리지 않았다. Top-k limit 조정은 15.209에서 별도 처리했다.
+
+### 15.209 Memory retrieval top-k 10 적용 `[implemented 2026-07-13]`
+
+- 배경(Notion `검색되는 메모리 수 k=10 ←5 으로 늘리기`): unit memory retrieval에서는 k=10 전후가 더 일반적이고, top 5로는 before-session memory가 관련 있어도 prompt에 들어오지 않을 확률이 높았다. 15.199/15.208로 before-session forced inclusion과 source별 prompt split을 제거했으므로 retrieval top-k 자체를 10으로 올리는 방향이 자연스럽다.
+- 수정: `/api/memory/retrieve`의 `DEFAULT_LIMIT`을 5에서 10으로 올렸다. route는 기존처럼 body `limit`을 1~10으로 clamp하므로 최대 retrieval budget은 그대로 10이다.
+- 수정: `/main/[missionId]`의 memory retrieve 호출이 명시적으로 `limit: 10`을 보내도록 변경했다. 클라이언트가 값을 보내지 않는 다른 호출도 서버 기본값 10을 따른다.
+- 수정: `/api/chat`의 retrieved memory prompt compact cap을 episodic/semantic 각각 8에서 10으로 올려, top 10 retrieved memory가 prompt 단계에서 임의로 8개로 잘리지 않게 했다.
+- 유지: planner input의 `semanticMemories`는 의도 판단용 compact signal이라 기존 최대 5개를 유지했다. 실제 답변 prompt에는 `chatRetrievedMemoryPrompt`를 통해 top 10 retrieval context가 들어간다.
