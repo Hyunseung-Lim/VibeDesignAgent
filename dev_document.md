@@ -167,6 +167,7 @@
 ### 4.7 메모리 (Memory)
 
 - **생성 단위**: 세션 중 interaction turn마다 `/api/memory/drafts`에서 keyword, factual episode, semantic을 생성한다. semantic은 사용자 성향/선호/작업 방식에 대한 근거 기반 한 문장 insight이며, `interpretationConfidence`는 생성·저장하지 않는다. `semantic`이 canonical 필드이고 `semanticJson`은 배열 호환용으로 함께 저장한다. before-session profile에서 사용자가 직접 제공한 durable 정보와 기존 memory의 semantic도 계속 읽는다 `[현행 2026-06-28 → 15.135]`
+- **Assistant response feedback**: assistant bubble의 좋아요/싫어요는 optional reason dialog를 열고, 제출 시 기존 `/api/memory/drafts` 경로로 `feedback-{messageId}` draft를 만든다. input은 vote, reason, 평가된 답변의 원래 질문(최대 1000자), output은 평가된 assistant answer(최대 6000자)이며 재투표는 같은 draft id를 덮어쓴다. Feedback turn은 `MEMORY_ENCODE_PROMPT`에 전용 addendum을 붙여 답변 요약이 아니라 평가 신호 기반 episode/semantic을 생성하고, `agentActionCategory`는 `assistant_feedback`으로 저장한다 `[현행 2026-07-13 → 15.207]`
 - **Source normalization**: 채팅 turn의 인용 text, link, 선택 UI result, 첨부 image를 structured source로 draft API에 전달한다. link는 메모리 turn 해석 전에 source 유형별로 lazy 분석해 별도 cache artifact로 저장한다. article/case study와 live product는 실제 URL의 case·기능·포지셔닝·UX 근거를 분리하고, visual curation/style source는 선택 이미지 자체를 vision 분석한다. 이후 user input·agent output과 source evidence를 함께 해석해 이번 interaction의 참고 측면과 적용 범위를 정한다. 세부 구현은 `src/lib/server/referenceSourceAnalysis.ts`와 `src/lib/server/memorySourceNormalization.ts`를 직접 확인한다 `[현행 2026-06-23 → 15.110]`
 - **첨부 이미지 시각 선호**: image normalizer는 의도적으로 선호를 추론하지 않으므로, 첨부 이미지가 주도한 목업 생성이 성공해 derivedDesignStyle가 나오면 그 스타일을 `style-image-preference-{turnId}` interactionId(category `style_image_preference`)로 별도 draft에 기록한다. 이번 미션/시안 맥락의 session-scoped evidence로 담고 전역 취향으로 단정하지 않는다 `[현행 2026-06-21 → 15.101]`
 - **확정 시점**: 사용자가 `세션 종료` 버튼을 누르면 `/api/memory/complete-session`에서 draft를 통합해 장기 메모리로 저장
@@ -4164,3 +4165,11 @@ type ChatPlan = {
 - 수정: planner input의 `recentMessages`를 6개에서 3개로 줄이고 `userClusterSummaries`를 제거했다. 대신 이미 retrieved/filter를 통과한 `memoryContext`에서 semantic memory 최대 5개를 `semantic`, `similarity`, `signal`로 넣는다. signal 실험값은 similarity 0.48 이상 high, 0.39 이하 low, 그 사이는 mid다.
 - 수정: planner output에서 `needs.interactionMemory`를 제거하고 `memoryRelevance`를 `light | medium | strong`으로 추가했다. Memory context는 retrieved/filter를 통과해 있으면 prompt에 주입하고, `chatProfileMemoryPrompt`와 `chatInteractionMemoryPrompt`가 memoryRelevance별 instruction을 붙인다.
 - 유지: 15.199의 before-session retrieval/filter 계약은 유지한다. Planner semantic memory input은 retrieval/filter 우회가 아니라 `/main`이 넘긴 `memoryContext`의 compact view다.
+
+### 15.207 Assistant response feedback memory draft `[implemented 2026-07-13]`
+
+- 배경(Notion `채팅마다 good or bad response 체크할 수 있게`): 사용자가 개별 assistant response에 좋아요/싫어요와 선택적 이유를 남기고, 그 평가를 기존 memory creation pipeline으로 학습 신호화해야 했다. 별도 memory infra를 만들지 않고 기존 draft encode/complete-session 경로를 재사용하는 방향으로 결정했다.
+- UI: assistant bubble 하단에 `ThumbsUp`/`ThumbsDown` icon button을 추가했다. 버튼은 스트리밍 중이거나 read-only/admin viewAs, 에러 답변에서는 비활성화된다. 클릭 시 채팅 입력창이 아니라 화면 레벨 dialog를 열고, evaluated answer preview와 optional reason textarea를 보여준다. 제출 성공 후 message의 마지막 `assistantFeedback` 상태를 갱신해 선택된 vote를 표시한다.
+- Draft 입력 계약: client는 `feedback-{assistantMessageId}` interactionId로 `/api/memory/drafts`를 호출한다. input은 `답변 평가: 좋아요/싫어요`, optional reason, 평가된 답변의 원래 질문(최대 1000자)이고 output은 evaluated assistant answer를 `cleanMessageContentForModel`로 정리해 최대 6000자로 보낸다. 같은 message에 재투표하면 같은 draft id를 덮어써 최종 상태만 남긴다.
+- Encoding: `/api/memory/drafts`는 `assistantFeedback` payload가 있으면 `MEMORY_FEEDBACK_ENCODE_ADDENDUM`을 `MEMORY_ENCODE_PROMPT` 뒤에 붙인다. Addendum은 episode를 평가 사실 한 문장으로 쓰고 semantic은 답변 내용 요약이 아니라 평가 신호에서 파생하라고 지시한다. dislike without reason은 좁고 조심스러운 hypothesis로 제한한다.
+- Activity/review: session `activityLog`에는 `section: feedback`, `action: submit` 이벤트를 남겨 좋아요/싫어요와 이유를 타임라인에서 볼 수 있게 했다. Memory draft/promoted event의 action category도 `assistant_feedback`으로 분류해 기존 action tag 재해석과 섞이지 않게 했다.

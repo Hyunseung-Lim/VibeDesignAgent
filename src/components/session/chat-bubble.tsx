@@ -6,6 +6,8 @@ import {
   ChevronDown,
   ChevronUp,
   Circle,
+  ThumbsDown,
+  ThumbsUp,
   TriangleAlert,
 } from "lucide-react";
 import { ToolActionChip, type ToolActionChipData } from "./tool-action-chip";
@@ -31,6 +33,8 @@ export type ChatBubbleMessage = {
   error?: string;
 };
 
+export type AssistantFeedbackVote = "good" | "bad";
+
 export type ChatContentPart =
   | { type: "text"; content: string }
   | { type: "chip"; chip: ToolActionChipData };
@@ -49,6 +53,8 @@ type ChatBubbleProps = {
   hasTurnMemory: boolean;
   hasRawPrompt: boolean;
   hasRetrievalLog: boolean;
+  feedbackVote?: AssistantFeedbackVote | null;
+  canGiveFeedback?: boolean;
   isReferenceLoading?: boolean;
   onToggleChatPhases: () => void;
   onToggleChip: (key: string) => void;
@@ -56,6 +62,7 @@ type ChatBubbleProps = {
   onToggleTurnMemory: () => void;
   onShowRawPrompt: () => void;
   onShowRetrievalLog: () => void;
+  onOpenFeedback?: (vote: AssistantFeedbackVote) => void;
 };
 
 function TypingDots() {
@@ -126,6 +133,8 @@ export function ChatBubble({
   hasTurnMemory,
   hasRawPrompt,
   hasRetrievalLog,
+  feedbackVote = null,
+  canGiveFeedback = false,
   isReferenceLoading = false,
   onToggleChatPhases,
   onToggleChip,
@@ -133,6 +142,7 @@ export function ChatBubble({
   onToggleTurnMemory,
   onShowRawPrompt,
   onShowRetrievalLog,
+  onOpenFeedback,
 }: ChatBubbleProps) {
   const isUser = message.role === "user";
   const visibleComposerCommand =
@@ -345,6 +355,34 @@ export function ChatBubble({
           >
             Retrieval 보기
           </button>
+        )}
+
+        {!isUser && (canGiveFeedback || feedbackVote) && (
+          <div className="mt-2 flex items-center gap-1">
+            {(["good", "bad"] as const).map((vote) => {
+              const active = feedbackVote === vote;
+              const Icon = vote === "good" ? ThumbsUp : ThumbsDown;
+              const label = vote === "good" ? "좋아요" : "싫어요";
+              return (
+                <button
+                  key={vote}
+                  type="button"
+                  aria-label={label}
+                  aria-pressed={active}
+                  title={label}
+                  disabled={!canGiveFeedback}
+                  onClick={() => onOpenFeedback?.(vote)}
+                  className={`inline-flex size-7 cursor-pointer items-center justify-center rounded-full border transition ${
+                    active
+                      ? "border-slate-700 bg-slate-900 text-white"
+                      : "border-slate-200 bg-white text-slate-400 hover:border-slate-300 hover:bg-slate-50 hover:text-slate-700"
+                  } disabled:cursor-default disabled:hover:border-slate-200 disabled:hover:bg-white disabled:hover:text-slate-400`}
+                >
+                  <Icon className="size-3.5" />
+                </button>
+              );
+            })}
+          </div>
         )}
       </div>
     </div>

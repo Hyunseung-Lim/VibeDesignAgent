@@ -402,6 +402,21 @@ Return exactly this JSON shape:
   // Required one-sentence English interpretive insight about the user.
 }`;
 
+export const MEMORY_FEEDBACK_ENCODE_ADDENDUM = `# Feedback Turn Addendum
+
+This interaction is explicit user feedback on one assistant answer.
+The user input contains a vote, an optional reason, and the original user question for the evaluated answer.
+The agent output is the evaluated assistant answer.
+
+Additional rules:
+- The episode must be one factual sentence recording which answer received which vote and why, if a reason exists.
+- The semantic insight must derive from the evaluation signal, not summarize the assistant answer.
+- For a positive vote, encode the concrete supported behavior as a preference when evidence is specific enough.
+- For a negative vote with a reason, encode the scoped expectation or avoidance implied by the reason.
+- For a negative vote without a reason, write only a narrow cautious hypothesis and avoid broad conclusions.
+- Do not create global always/never rules from one feedback turn.
+- The semantic insight should include polarity, for example "prefers ..." or "finds ... unhelpful".`;
+
 export const FINAL_DESIGN_INPUT_PROMPT = `# Task
 
 Build the factual interaction record for a "final design selection" turn in a UI/UX design agent session. At the end of a session the user confirmed ONE design (mockup) as final, chosen among the candidate mockups they compared. Your output becomes the memory "input" that a later step encodes into a durable user-preference memory.

@@ -9,6 +9,7 @@ import React, {
   useRef,
   useState,
 } from "react";
+import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { firebaseAuth, db } from "@/lib/firebase";
 import { getIdToken, onAuthStateChanged } from "firebase/auth";
@@ -43,17 +44,29 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { ChatBubble } from "@/components/session/chat-bubble";
+import {
+  ChatBubble,
+  type AssistantFeedbackVote,
+} from "@/components/session/chat-bubble";
 import { ChatCapabilityCatalog } from "@/components/session/chat-capability-catalog";
 import { ChatInput, type ChatInputHandle } from "@/components/session/chat-input";
 import { Spinner } from "@/components/ui/spinner";
 import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
 import { ChatPanel } from "@/components/session/chat-panel";
 import { DesignStyleSection } from "@/components/session/design-style-section";
 import { FinalDesignSelector } from "@/components/session/final-design-selector";
@@ -170,12 +183,24 @@ type Message = {
   composerMention?: ChatComposerMention | null;
   reviewTurnId?: string | null;
   chatPhases?: string[];
+  assistantFeedback?: {
+    vote: AssistantFeedbackVote;
+    reason?: string;
+    submittedAt: number;
+  } | null;
   // Explicit, prominent error surfaced in the chat bubble (red callout),
   // independent of the collapsible phase toggle. See QA: 목업/요청 에러 명시.
   error?: string;
 };
 
 type ChatResponseProvider = "openai" | "anthropic";
+
+type AssistantFeedbackMemoryPayload = {
+  vote: AssistantFeedbackVote;
+  reason?: string;
+  targetMessageId: string;
+  targetUserMessageId?: string | null;
+};
 
 type ReviewTurnMemory = {
   memoryId: string;
@@ -434,8 +459,8 @@ const EMPTY_SESSION_MEMORY_SUMMARY: SessionMemorySummary = {
 type ActivityLogEvent = {
   id: string;
   createdAt: number;
-  section: "reference" | "note" | "mockup";
-  action: "add" | "delete" | "create" | "update" | "stitch_prompt";
+  section: "reference" | "note" | "mockup" | "feedback";
+  action: "add" | "delete" | "create" | "update" | "stitch_prompt" | "submit";
   input?: string;
   output?: string;
   outputTitle?: string;
@@ -2005,6 +2030,7 @@ function memoryActionCategory(item: SessionMemoryItem) {
   if (id.startsWith("delete-idea-")) return "note_delete";
   if (id.startsWith("delete-design-")) return "mockup_delete";
   if (id.startsWith("final-design-")) return "final_design_select";
+  if (id.startsWith("feedback-")) return "assistant_feedback";
   if (item.agentActionCategory) return item.agentActionCategory;
   return "memory_event";
 }
@@ -2042,6 +2068,8 @@ function memoryEventLabel(item: SessionMemoryItem) {
       return "시안 삭제";
     case "mockup_delete":
       return "목업 삭제";
+    case "assistant_feedback":
+      return "답변 평가";
     default:
       return "세션 이벤트";
   }
@@ -2062,6 +2090,8 @@ function memoryEventDetail(item: SessionMemoryItem) {
       return `삭제한 목업: ${target}`;
     case "final_design_select":
       return finalDesignEventSummary(item);
+    case "assistant_feedback":
+      return `평가한 답변: ${target}`;
     default:
       return target || "내용 없는 메모리";
   }
@@ -2076,7 +2106,8 @@ function memorySummaryText(item: SessionMemoryItem | ReviewTurnMemory) {
       action === "references_fetch" ||
       action === "note_delete" ||
       action === "mockup_delete" ||
-      action === "final_design_select"
+      action === "final_design_select" ||
+      action === "assistant_feedback"
     ) {
       return memoryEventDetail(item);
     }
@@ -2320,6 +2351,7 @@ function shouldShowMemoryEventCard(item: SessionMemoryItem) {
     "note_delete",
     "mockup_delete",
     "final_design_select",
+    "assistant_feedback",
   ].includes(category);
 }
 
@@ -2329,13 +2361,18 @@ function activityEventCategory(event: ActivityLogEvent) {
   if (event.section === "note" && event.action === "delete") return "note_delete";
   if (event.section === "mockup" && event.action === "delete")
     return "mockup_delete";
+  if (event.section === "feedback" && event.action === "submit")
+    return "assistant_feedback";
   return "activity_event";
 }
 
 function shouldShowActivityEventCard(event: ActivityLogEvent) {
-  return ["reference_delete", "note_delete", "mockup_delete"].includes(
-    activityEventCategory(event),
-  );
+  return [
+    "reference_delete",
+    "note_delete",
+    "mockup_delete",
+    "assistant_feedback",
+  ].includes(activityEventCategory(event));
 }
 
 function activityEventLabel(event: ActivityLogEvent) {
@@ -2346,12 +2383,17 @@ function activityEventLabel(event: ActivityLogEvent) {
       return "시안 삭제";
     case "mockup_delete":
       return "목업 삭제";
+    case "assistant_feedback":
+      return "답변 평가";
     default:
       return "세션 이벤트";
   }
 }
 
 function activityEventDetail(event: ActivityLogEvent) {
+  if (activityEventCategory(event) === "assistant_feedback") {
+    return [event.input, event.output].filter(Boolean).join(" · ");
+  }
   return event.outputTitle || event.output || event.input || event.link || event.id;
 }
 
@@ -2458,6 +2500,13 @@ export default function MainScreenPage() {
     useState<ChatComposerCommand | null>(null);
   const [composerMention, setComposerMention] =
     useState<ChatComposerMention | null>(null);
+  const [assistantFeedbackDraft, setAssistantFeedbackDraft] = useState<{
+    messageId: string;
+    vote: AssistantFeedbackVote;
+  } | null>(null);
+  const [assistantFeedbackReason, setAssistantFeedbackReason] = useState("");
+  const [isSubmittingAssistantFeedback, setIsSubmittingAssistantFeedback] =
+    useState(false);
   const [attachedStyleImage, setAttachedStyleImage] = useState<{
     dataUrl: string;
     name?: string;
@@ -3011,6 +3060,7 @@ export default function MainScreenPage() {
       timestamp: number,
       sources?: MemoryDraftSources,
       finalDesign?: FinalDesignEnrichmentPayload,
+      assistantFeedback?: AssistantFeedbackMemoryPayload,
     ) => {
       if (isReadOnly || !missionId || !input.trim() || !output.trim())
         return false;
@@ -3032,6 +3082,7 @@ export default function MainScreenPage() {
             timestamp,
             sources,
             finalDesign,
+            assistantFeedback,
           }),
         });
         if (!response.ok) {
@@ -3045,6 +3096,109 @@ export default function MainScreenPage() {
     },
     [isReadOnly, missionId],
   );
+
+  const openAssistantFeedbackDialog = useCallback(
+    (messageId: string, vote: AssistantFeedbackVote) => {
+      const message = messages.find((item) => item.id === messageId);
+      setAssistantFeedbackDraft({ messageId, vote });
+      setAssistantFeedbackReason(message?.assistantFeedback?.reason ?? "");
+    },
+    [messages],
+  );
+
+  const submitAssistantFeedback = useCallback(async () => {
+    if (!assistantFeedbackDraft || isSubmittingAssistantFeedback) return;
+    const assistantIndex = messages.findIndex(
+      (item) =>
+        item.id === assistantFeedbackDraft.messageId &&
+        item.role === "assistant",
+    );
+    if (assistantIndex < 0) {
+      setAssistantFeedbackDraft(null);
+      return;
+    }
+    const assistantMessage = messages[assistantIndex];
+    const userMessage =
+      messages
+        .slice(0, assistantIndex)
+        .reverse()
+        .find((item) => item.role === "user") ?? null;
+    const reason = assistantFeedbackReason.trim();
+    const voteLabel =
+      assistantFeedbackDraft.vote === "good" ? "좋아요" : "싫어요";
+    const originalQuestion = cleanMessageContentForModel(
+      userMessage?.content ?? "",
+    )
+      .trim()
+      .slice(0, 1000);
+    const evaluatedAnswer = cleanMessageContentForModel(assistantMessage.content)
+      .trim()
+      .slice(0, 6000);
+    if (!evaluatedAnswer) {
+      setAssistantFeedbackDraft(null);
+      return;
+    }
+    const input = [
+      `답변 평가: ${voteLabel}`,
+      reason ? `이유: ${reason}` : "이유: 없음",
+      originalQuestion
+        ? `평가된 답변의 원래 질문:\n${originalQuestion}`
+        : "평가된 답변의 원래 질문: 없음",
+    ].join("\n\n");
+    const submittedAt = Date.now();
+    setIsSubmittingAssistantFeedback(true);
+    const ok = await encodeMemoryDraft(
+      `feedback-${assistantMessage.id}`,
+      input,
+      evaluatedAnswer,
+      submittedAt,
+      undefined,
+      undefined,
+      {
+        vote: assistantFeedbackDraft.vote,
+        reason: reason || undefined,
+        targetMessageId: assistantMessage.id,
+        targetUserMessageId: userMessage?.id ?? null,
+      },
+    );
+    setIsSubmittingAssistantFeedback(false);
+    if (!ok) {
+      toast.error("답변 평가를 저장하지 못했어요.");
+      return;
+    }
+    setMessages((prev) =>
+      prev.map((item) =>
+        item.id === assistantMessage.id
+          ? {
+              ...item,
+              assistantFeedback: {
+                vote: assistantFeedbackDraft.vote,
+                reason: reason || undefined,
+                submittedAt,
+              },
+            }
+          : item,
+      ),
+    );
+    appendActivityLog({
+      section: "feedback",
+      action: "submit",
+      input: voteLabel,
+      output: reason || "이유 없음",
+      outputTitle: "답변 평가",
+    });
+    setAssistantFeedbackDraft(null);
+    setAssistantFeedbackReason("");
+    toast.success("답변 평가를 저장했어요.");
+  }, [
+    appendActivityLog,
+    assistantFeedbackDraft,
+    assistantFeedbackReason,
+    encodeMemoryDraft,
+    isSubmittingAssistantFeedback,
+    messages,
+  ]);
+
   const retrieveMemoryForQuery = useCallback(
     async (
       query: string,
@@ -7546,6 +7700,11 @@ export default function MainScreenPage() {
 
   const isInitialSessionContextPending =
     !sessionLoaded || !isMissionContextReady;
+  const assistantFeedbackDialogMessage = assistantFeedbackDraft
+    ? messages.find((message) => message.id === assistantFeedbackDraft.messageId)
+    : null;
+  const assistantFeedbackDialogVoteLabel =
+    assistantFeedbackDraft?.vote === "good" ? "좋아요" : "싫어요";
 
   return (
     <div className="flex h-screen flex-col bg-[#f5f5f5] text-slate-900">
@@ -7578,6 +7737,69 @@ export default function MainScreenPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+      <Dialog
+        open={Boolean(assistantFeedbackDraft)}
+        onOpenChange={(open) => {
+          if (open) return;
+          if (isSubmittingAssistantFeedback) return;
+          setAssistantFeedbackDraft(null);
+          setAssistantFeedbackReason("");
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>답변 평가</DialogTitle>
+            <DialogDescription>
+              {assistantFeedbackDialogVoteLabel}로 기록하고, 필요하면 이유를
+              남겨주세요.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            {assistantFeedbackDialogMessage?.content && (
+              <div className="max-h-28 overflow-auto rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs leading-5 text-slate-500">
+                <ReactMarkdown
+                  remarkPlugins={CHAT_REMARK_PLUGINS}
+                  components={CHAT_MARKDOWN_COMPONENTS}
+                >
+                  {cleanMessageContentForModel(
+                    assistantFeedbackDialogMessage.content,
+                  )}
+                </ReactMarkdown>
+              </div>
+            )}
+            <Textarea
+              value={assistantFeedbackReason}
+              onChange={(event) =>
+                setAssistantFeedbackReason(event.currentTarget.value)
+              }
+              placeholder="이유는 선택 사항입니다."
+              className="min-h-28 resize-none"
+              disabled={isSubmittingAssistantFeedback}
+            />
+          </div>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                if (isSubmittingAssistantFeedback) return;
+                setAssistantFeedbackDraft(null);
+                setAssistantFeedbackReason("");
+              }}
+              disabled={isSubmittingAssistantFeedback}
+            >
+              취소
+            </Button>
+            <Button
+              type="button"
+              onClick={submitAssistantFeedback}
+              disabled={isSubmittingAssistantFeedback}
+            >
+              {isSubmittingAssistantFeedback ? "저장 중..." : "저장"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       <div
         ref={citeMenuRef}
         data-cite-menu="1"
@@ -8687,6 +8909,18 @@ export default function MainScreenPage() {
                         isViewingAsAdmin &&
                         retrievalLog,
                     )}
+                    feedbackVote={
+                      msg.role === "assistant"
+                        ? msg.assistantFeedback?.vote ?? null
+                        : null
+                    }
+                    canGiveFeedback={Boolean(
+                      msg.role === "assistant" &&
+                        !isReadOnly &&
+                        !isStreamingThis &&
+                        !msg.error &&
+                        cleanMessageContentForModel(msg.content).trim(),
+                    )}
                     isReferenceLoading={
                       msg.role === "assistant" &&
                       referenceLoadingMessageId === msg.id
@@ -8759,6 +8993,9 @@ export default function MainScreenPage() {
                         retrievalLog,
                       });
                     }}
+                    onOpenFeedback={(vote) =>
+                      openAssistantFeedbackDialog(msg.id, vote)
+                    }
                   />
                 );
               })}

@@ -6,7 +6,10 @@ import {
   patchFirestoreDocument,
   verifyFirebaseIdToken,
 } from "@/lib/server/firebaseAdminRest";
-import { MEMORY_ENCODE_PROMPT } from "@/lib/prompts";
+import {
+  MEMORY_ENCODE_PROMPT,
+  MEMORY_FEEDBACK_ENCODE_ADDENDUM,
+} from "@/lib/prompts";
 import type { MemoryDraftSources } from "@/lib/memory-sources";
 import type { FinalDesignEnrichmentPayload } from "@/lib/memory-final-design";
 import { buildFinalDesignMemoryInput } from "@/lib/server/finalDesignMemoryInput";
@@ -27,6 +30,13 @@ export const maxDuration = 120;
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const MEMORY_SCHEMA_VERSION = "0.1.2";
 const FIRST_SESSION_TURN = "This is the first turn of this session.";
+
+type AssistantFeedbackMemoryPayload = {
+  vote?: "good" | "bad";
+  reason?: string | null;
+  targetMessageId?: string | null;
+  targetUserMessageId?: string | null;
+};
 
 type EncodedMemory = {
   keywords: string[];
@@ -120,6 +130,7 @@ function extractAgentActions(output: string): AgentAction[] {
 }
 
 function inferAgentActionCategory(output: string, interactionId: string) {
+  if (interactionId.startsWith("feedback-")) return "assistant_feedback";
   if (/\[CREATE_NOTE:/i.test(output)) return "note_create";
   if (/\[UPDATE_NOTE:/i.test(output)) return "note_update";
   if (/\[GENERATE_MOCKUP:/i.test(output)) return "mockup_generate";
@@ -246,6 +257,7 @@ export async function POST(request: Request) {
     timestamp?: number;
     sources?: MemoryDraftSources;
     finalDesign?: FinalDesignEnrichmentPayload;
+    assistantFeedback?: AssistantFeedbackMemoryPayload;
   };
   const missionId = body.missionId?.trim();
   const interactionId = body.interactionId?.trim();
@@ -266,6 +278,25 @@ export async function POST(request: Request) {
     ? await buildFinalDesignMemoryInput(body.finalDesign)
     : null;
   const input = enrichedInput || fallbackInput;
+  const assistantFeedback =
+    body.assistantFeedback?.vote === "good" ||
+    body.assistantFeedback?.vote === "bad"
+      ? {
+          vote: body.assistantFeedback.vote,
+          reason:
+            typeof body.assistantFeedback.reason === "string"
+              ? body.assistantFeedback.reason.trim().slice(0, 2000)
+              : "",
+          targetMessageId:
+            typeof body.assistantFeedback.targetMessageId === "string"
+              ? body.assistantFeedback.targetMessageId
+              : "",
+          targetUserMessageId:
+            typeof body.assistantFeedback.targetUserMessageId === "string"
+              ? body.assistantFeedback.targetUserMessageId
+              : "",
+        }
+      : null;
 
   const createdAt = Date.now();
   const timestamp = Number(body.timestamp ?? createdAt);
@@ -300,7 +331,7 @@ export async function POST(request: Request) {
     token,
   );
   const agentActionCategory = inferAgentActionCategory(output, interactionId);
-  const agentActions = extractAgentActions(output);
+  const agentActions = assistantFeedback ? [] : extractAgentActions(output);
   const originalInteractionContent = [
     `User input:\n${input}`,
     normalizedSources.text
@@ -332,7 +363,12 @@ export async function POST(request: Request) {
     model: "gpt-5.4-mini",
     response_format: { type: "json_object" },
     messages: [
-      { role: "system", content: MEMORY_ENCODE_PROMPT },
+      {
+        role: "system",
+        content: assistantFeedback
+          ? `${MEMORY_ENCODE_PROMPT}\n\n${MEMORY_FEEDBACK_ENCODE_ADDENDUM}`
+          : MEMORY_ENCODE_PROMPT,
+      },
       { role: "user", content },
     ],
   });
@@ -367,6 +403,14 @@ export async function POST(request: Request) {
       previousEpisode: String(previousDraft?.episode ?? "").slice(0, 2000),
       agentActionCategory,
       agentActionsJson: JSON.stringify(agentActions),
+      assistantFeedback: assistantFeedback
+        ? {
+            vote: assistantFeedback.vote,
+            reason: assistantFeedback.reason,
+            targetMessageId: assistantFeedback.targetMessageId,
+            targetUserMessageId: assistantFeedback.targetUserMessageId,
+          }
+        : null,
       status: "draft",
       createdAt,
     },
