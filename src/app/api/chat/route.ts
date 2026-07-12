@@ -276,28 +276,26 @@ function compactReferences(references: unknown) {
 
 const CHAT_PLAN_INTENTS = new Set([
   "answer",
-  "create_note",
-  "update_note",
-  "generate_mockup",
+  "create_design_brief",
+  "edit_design_brief",
+  "create_mockup",
   "edit_mockup",
   "fetch_references",
   "create_design_spec",
-  "presentation",
-  "clarify",
+  "edit_design_spec",
 ]);
 
 const MEMORY_RELEVANCE_LEVELS = new Set(["light", "medium", "strong"]);
 
 type ChatPlanIntent =
   | "answer"
-  | "create_note"
-  | "update_note"
-  | "generate_mockup"
+  | "create_design_brief"
+  | "edit_design_brief"
+  | "create_mockup"
   | "edit_mockup"
   | "fetch_references"
   | "create_design_spec"
-  | "presentation"
-  | "clarify";
+  | "edit_design_spec";
 
 type ChatPlanNeeds = {
   mission: boolean;
@@ -335,6 +333,17 @@ function normalizeRequestedCommand(value: unknown): ChatComposerCommandId | null
     : null;
 }
 
+function normalizeChatPlanIntent(value: unknown): ChatPlanIntent {
+  const intent = String(value ?? "answer").trim();
+  if (CHAT_PLAN_INTENTS.has(intent)) return intent as ChatPlanIntent;
+  if (intent === "create_note") return "create_design_brief";
+  if (intent === "update_note") return "edit_design_brief";
+  if (intent === "generate_mockup") return "create_mockup";
+  if (intent === "edit_design_style") return "edit_design_spec";
+  if (intent === "presentation" || intent === "clarify") return "answer";
+  return "answer";
+}
+
 const CHAT_COMPOSER_MENTION_KINDS = new Set([
   "idea",
   "design_brief",
@@ -355,9 +364,9 @@ function forceRequestedCommand(
 ): ChatPlan {
   if (!command) return plan;
   const intentByCommand: Record<ChatComposerCommandId, ChatPlanIntent> = {
-    create_idea: "create_note",
+    create_idea: "create_design_brief",
     create_design_style: "create_design_spec",
-    generate_mockup: "generate_mockup",
+    generate_mockup: "create_mockup",
     fetch_references: "fetch_references",
   };
   const intent = intentByCommand[command];
@@ -619,7 +628,7 @@ function parseChatPlan(text: string): ChatPlan | null {
   try {
     const parsed = JSON.parse(jsonText) as Record<string, unknown>;
     const needs = parsed.needs as Record<string, unknown> | undefined;
-    const intent = String(parsed.intent ?? "answer");
+    const intent = normalizeChatPlanIntent(parsed.intent);
     const rawMemoryRelevance = String(
       parsed.memoryRelevance ?? parsed.memoryRelavance ?? "medium",
     );
@@ -627,9 +636,7 @@ function parseChatPlan(text: string): ChatPlan | null {
       needs?.conversationHistory ?? "recent",
     );
     return {
-      intent: CHAT_PLAN_INTENTS.has(intent)
-        ? (intent as ChatPlanIntent)
-        : "answer",
+      intent,
       confidence:
         typeof parsed.confidence === "number" &&
         Number.isFinite(parsed.confidence)
@@ -667,14 +674,17 @@ function parseChatPlan(text: string): ChatPlan | null {
 
 function promptStatusLabel(plan: ChatPlan, fallback: boolean) {
   if (fallback && plan.intent === "answer") return "";
-  if (plan.intent === "create_note" || plan.intent === "update_note") {
+  if (
+    plan.intent === "create_design_brief" ||
+    plan.intent === "edit_design_brief"
+  ) {
     return "Reading design brief rules...";
   }
-  if (plan.intent === "generate_mockup") return "Reading mockup generation rules...";
+  if (plan.intent === "create_mockup") return "Reading mockup generation rules...";
   if (plan.intent === "edit_mockup") return "Reading mockup edit rules...";
   if (plan.intent === "fetch_references") return "Reading reference search rules...";
   if (plan.intent === "create_design_spec") return "Reading design style rules...";
-  if (plan.intent === "presentation") return "Reading presentation rules...";
+  if (plan.intent === "edit_design_spec") return "Reading design style edit rules...";
   return "";
 }
 
@@ -785,7 +795,7 @@ function forceIntentFromUserText(
   if (styleRemakeGenerateRequest) {
     return {
       ...plan,
-      intent: "generate_mockup" as const,
+      intent: "create_mockup" as const,
       confidence: Math.max(plan.confidence, 0.9),
       needs: {
         ...plan.needs,
@@ -797,7 +807,7 @@ function forceIntentFromUserText(
         citedReferences: citedReferenceCount > 0,
         conversationHistory: plan.needs.conversationHistory ?? "recent",
       },
-      reason: `${plan.reason ? `${plan.reason} ` : ""}Forced generate_mockup because the user asked to remake as a new style/reference direction; the client will fork a new idea.`,
+      reason: `${plan.reason ? `${plan.reason} ` : ""}Forced create_mockup because the user asked to remake as a new style/reference direction; the client will fork a new idea.`,
     };
   }
 
@@ -816,9 +826,24 @@ function forceIntentFromUserText(
 
   if (!explicitDesignSpec && !styleCreation) return plan;
 
+  const styleVariantRequest =
+    hasDesignSpec &&
+    /(새\s*(?:스타일|디자인\s*스타일|버전|variant|variation)|새로운\s*(?:스타일|디자인\s*스타일|버전|variant|variation)|다른\s*(?:스타일|디자인\s*스타일|무드|톤|방향)|별도\s*(?:스타일|버전|variant|variation)|분리|variant|variation|new\s+(?:style|variant|variation|version)|different\s+(?:style|mood|direction))/i.test(
+      text,
+    );
+  const stylePartialEdit =
+    hasDesignSpec &&
+    !styleVariantRequest &&
+    /(일부|부분|조금|살짝|만\s*(?:수정|변경|바꿔|고쳐)|만\s*(?:추가|빼|삭제|제거)|추가|빼|삭제|제거|유지|revision|history|리비전|히스토리|preserve|keep|partial|tweak|refine|revise|append|remove|delete|update|change)/i.test(
+      text,
+    ) &&
+    /(스타일|디자인\s*스타일|style|design\s*spec|design\s*style|컬러|색|타이포|폰트|typography|font|톤|무드|mood|tone|spacing|간격|radius|shadow|그림자|avoid)/i.test(
+      text,
+    );
+
   return {
     ...plan,
-    intent: "create_design_spec" as const,
+    intent: (stylePartialEdit ? "edit_design_spec" : "create_design_spec") as ChatPlanIntent,
     confidence: Math.max(plan.confidence, 0.9),
     needs: {
       ...plan.needs,
@@ -829,7 +854,9 @@ function forceIntentFromUserText(
       selectedElement: false,
       conversationHistory: plan.needs.conversationHistory ?? "recent",
     },
-    reason: `${plan.reason ? `${plan.reason} ` : ""}Forced create_design_spec because the user explicitly requested design style rules.`,
+    reason: `${plan.reason ? `${plan.reason} ` : ""}Forced ${
+      stylePartialEdit ? "edit_design_spec" : "create_design_spec"
+    } because the user explicitly requested design style rules.`,
   };
 }
 
@@ -977,7 +1004,7 @@ export async function POST(request: Request) {
   const lowerLatestUserText = latestUserText.toLowerCase();
   const lowConfidenceNeedsMockup =
     Boolean(selectedElement) ||
-    /(edit|modify|change|revise|presentation|mockup|html|수정|변경|바꿔|고쳐|편집|발표|목업|화면|현재)/i.test(
+    /(edit|modify|change|revise|mockup|html|수정|변경|바꿔|고쳐|편집|목업|화면|현재)/i.test(
       lowerLatestUserText,
     );
   const shouldIncludePlannedContext = (key: keyof ChatPlanNeeds) => {

@@ -14,6 +14,7 @@ const actionLabels: Record<string, string> = {
   note_update: "시안 수정",
   note_delete: "시안 삭제",
   design_spec_create: "디자인 스타일 작성",
+  design_spec_edit: "디자인 스타일 수정",
   mockup_generate: "목업 생성",
   mockup_edit: "목업 수정",
   mockup_delete: "목업 삭제",

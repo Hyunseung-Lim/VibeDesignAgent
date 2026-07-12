@@ -42,6 +42,14 @@ const DESIGN_SPEC_RULE = {
   failedMarker: "디자인 스타일을 저장하지 못했습니다.",
 } as const;
 
+const DESIGN_SPEC_EDIT_RULE = {
+  tag: "EDIT_DESIGN_SPEC",
+  doneLabel: "디자인 스타일 수정됨",
+  pendingLabel: "디자인 스타일 수정 중...",
+  failedLabel: "디자인 스타일 수정 실패",
+  failedMarker: "디자인 스타일을 저장하지 못했습니다.",
+} as const;
+
 function findNoteBlock(
   text: string,
   tag: string,
@@ -198,21 +206,21 @@ export function processMessageContent(content: string): ContentPart[] {
     // as note payloads. A balanced JSON object is actionable even when the
     // model omits the trailing `]`, so keep the chip state aligned with the
     // runtime parser instead of leaving a permanent "작성 중" chip.
-    const designSpec = findNoteBlock(remaining, DESIGN_SPEC_RULE.tag);
-    if (
-      designSpec &&
-      (earliest === null || designSpec.index < earliest.index)
-    ) {
-      earliest = {
-        index: designSpec.index,
-        matchStr: designSpec.matchStr,
-        label: designSpec.done
-          ? DESIGN_SPEC_RULE.doneLabel
-          : DESIGN_SPEC_RULE.pendingLabel,
-        done: designSpec.done,
-        failedLabel: DESIGN_SPEC_RULE.failedLabel,
-        failedMarker: DESIGN_SPEC_RULE.failedMarker,
-      };
+    for (const rule of [DESIGN_SPEC_RULE, DESIGN_SPEC_EDIT_RULE]) {
+      const designSpec = findNoteBlock(remaining, rule.tag);
+      if (
+        designSpec &&
+        (earliest === null || designSpec.index < earliest.index)
+      ) {
+        earliest = {
+          index: designSpec.index,
+          matchStr: designSpec.matchStr,
+          label: designSpec.done ? rule.doneLabel : rule.pendingLabel,
+          done: designSpec.done,
+          failedLabel: rule.failedLabel,
+          failedMarker: rule.failedMarker,
+        };
+      }
     }
 
     // Regex-based blocks (mockup, references, web search).
@@ -360,15 +368,19 @@ export function cleanMessageContentForModel(content: string) {
   const noteCleaned = replaceNoteLikeActionBlocks(
     replaceNoteLikeActionBlocks(
       replaceNoteLikeActionBlocks(
-        normalized,
-        "CREATE_NOTE",
-        "[Design Brief 생성]",
+        replaceNoteLikeActionBlocks(
+          normalized,
+          "CREATE_NOTE",
+          "[Design Brief 생성]",
+        ),
+        "UPDATE_NOTE",
+        "[Design Brief 수정]",
       ),
-      "UPDATE_NOTE",
-      "[Design Brief 수정]",
+      "CREATE_DESIGN_SPEC",
+      "[디자인 스타일 추가]",
     ),
-    "CREATE_DESIGN_SPEC",
-    "[디자인 스타일 추가]",
+    "EDIT_DESIGN_SPEC",
+    "[디자인 스타일 수정]",
   );
 
   return noteCleaned

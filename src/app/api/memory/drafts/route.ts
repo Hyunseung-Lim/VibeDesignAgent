@@ -118,6 +118,7 @@ function extractAgentActions(output: string): AgentAction[] {
     ["note_update", "UPDATE_NOTE"],
     ["references_fetch", "FETCH_REFERENCES"],
     ["design_spec_create", "CREATE_DESIGN_SPEC"],
+    ["design_spec_edit", "EDIT_DESIGN_SPEC"],
   ];
   for (const [type, tag] of bracketTags) {
     const content = extractBracketContent(output, tag);
@@ -140,6 +141,7 @@ function inferAgentActionCategory(output: string, interactionId: string) {
   if (/\[GENERATE_MOCKUP:/i.test(output)) return "mockup_generate";
   if (/\[EDIT_MOCKUP:/i.test(output)) return "mockup_edit";
   if (/\[CREATE_DESIGN_SPEC:/i.test(output)) return "design_spec_create";
+  if (/\[EDIT_DESIGN_SPEC:/i.test(output)) return "design_spec_edit";
   if (/\[FETCH_REFERENCES:/i.test(output)) return "references_fetch";
   if (/```(?:json)?\s*\{[\s\S]*?"slides"/i.test(output))
     return "presentation_create";

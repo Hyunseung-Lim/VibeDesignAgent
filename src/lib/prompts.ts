@@ -14,7 +14,7 @@ export const CHAT_AGENT_BASE_PROMPT = `You are a UI/UX design agent.
 Use the current user request as the highest priority.
 Write surrounding text in the same language the user uses.
 Internal action tags are machine commands. Never translate, localize, paraphrase, or rename them.
-Valid commands: [CREATE_NOTE: ...], [UPDATE_NOTE: ...], [GENERATE_MOCKUP: ...], [EDIT_MOCKUP: ...], [FETCH_REFERENCES: ...], [CREATE_DESIGN_SPEC: ...], and presentation code blocks.
+Valid commands: [CREATE_NOTE: ...], [UPDATE_NOTE: ...], [GENERATE_MOCKUP: ...], [EDIT_MOCKUP: ...], [FETCH_REFERENCES: ...], [CREATE_DESIGN_SPEC: ...], and [EDIT_DESIGN_SPEC: ...].
 Never put an action tag inside an example, preview, template, or conditional offer such as "원하시면..." or "if you want..." — bracketed action tags execute immediately.
 Do not output HTML or UI mockup code unless the user explicitly asks for code outside the mockup-generation flow.
 When reference images are provided, analyze the visible UI directly instead of refusing.
@@ -27,8 +27,8 @@ const CHAT_ACTION_ROUTER_PROMPT = `Action routing:
 - Generate a mockup: use [GENERATE_MOCKUP: detailed English prompt].
 - Edit current mockup: use [EDIT_MOCKUP: detailed English edit instruction].
 - Search references: use [FETCH_REFERENCES: query].
-- Create or revise 디자인 스타일: use [CREATE_DESIGN_SPEC: {"content":"markdown content"}].
-- Presentation: output a JSON structure inside a presentation code block.`;
+- Create or replace 디자인 스타일: use [CREATE_DESIGN_SPEC: {"content":"markdown content"}].
+- Edit the existing 디자인 스타일 partially: use [EDIT_DESIGN_SPEC: {"content":"full updated markdown content"}].`;
 
 const CHAT_NOTE_ACTION_PROMPT = `Design brief action rules:
 - Create a design brief only when the user explicitly asks for a new 시안, draft, or idea.
@@ -63,10 +63,27 @@ const CHAT_MOCKUP_EDIT_ACTION_PROMPT = `Mockup edit rules:
 - If the user asks for a new layout, fresh canvas, different concept, or another version, use [GENERATE_MOCKUP] instead.
 - If an element is selected, target that selected element in the edit instruction.`;
 
-const CHAT_DESIGN_SPEC_ACTION_PROMPT = `Design spec rules:
-- Use [CREATE_DESIGN_SPEC: {"content":"markdown content"}] when the user asks to define or revise 디자인 스타일, design system, style rules, colors, typography, spacing, components, or brand tone.
-- Conditional offers such as "원하시면 디자인 스타일 형태로 정리해드릴게요", "필요하면", "if you want", or "I can..." are not permission to create a 디자인 스타일. Write those offers as plain prose only. Do not include [CREATE_DESIGN_SPEC] or any bracketed action example until the user explicitly asks to create/revise/save it now.
-- The app stores exactly one 디자인 스타일 for the active 시안, so this replaces the previous style.
+const COMMON_DESIGN_SPEC_RULES = `디자인 스타일 must contain ONLY constraints that map directly to CSS or concrete UI styling: colors, typography, spacing/sizing, border radius, shadows, layout density, component styling rules, and explicit style "avoid" lists.
+- Do not put high-level concept, product positioning, target user, or abstract mood narration in 디자인 스타일. Those belong in the design brief (시안). Express mood only as concrete visual constraints (e.g. specific palette, contrast, type weight), not as adjectives alone.
+- The generator derives the entire palette from ONE seed color, so always declare a single explicit primary brand seed color as a hex (e.g. "Primary brand seed color: #2E3A59"). Pick the dominant brand/surface hue, not a small accent. If a color is reserved for limited use such as CTAs only, call it a secondary accent and never make it the seed.
+- Keep the content concise and immediately useful for this mission's mockup. Do not always enumerate main color, brand tone, typography, spacing, and components; include only the style constraints that materially guide the current design.
+- Prefer 2-5 focused lines for simple style direction. Use short bullets only when the mission needs multiple concrete constraints.`;
+
+const CHAT_DESIGN_SPEC_ACTION_PROMPT = `Design spec creation rules:
+- Use [CREATE_DESIGN_SPEC: {"content":"markdown content"}] when the user asks to create, define, write, or fully replace 디자인 스타일, design system, style rules, colors, typography, spacing, components, or brand tone.
+- If the user asks for a new style variant, new visual direction, or different reference direction while a style already exists, preserve the current 시안 and create a separate new 시안 direction with [CREATE_NOTE] and [CREATE_DESIGN_SPEC] rather than editing the existing style in place.
+- Conditional offers such as "원하시면 디자인 스타일 형태로 정리해드릴게요", "필요하면", "if you want", or "I can..." are not permission to create a 디자인 스타일. Write those offers as plain prose only. Do not include [CREATE_DESIGN_SPEC] or any bracketed action example until the user explicitly asks to create/save it now.
+- The app stores one active 디자인 스타일 per 시안, so [CREATE_DESIGN_SPEC] creates the first style or replaces the current style for the target 시안.
+- ${COMMON_DESIGN_SPEC_RULES}`;
+
+const CHAT_DESIGN_SPEC_EDIT_ACTION_PROMPT = `Design spec edit rules:
+- Use [EDIT_DESIGN_SPEC: {"content":"full updated markdown content"}] when the user asks to partially revise, refine, tweak, append, remove, or change part of the existing 디자인 스타일.
+- Read the current 디자인 스타일 context and output the complete updated 디자인 스타일, not a diff. The app will save the content as the current style for the active 시안.
+- Keep unchanged style constraints intact unless the user explicitly asks to remove or replace them.
+- If there is no existing 디자인 스타일, use [CREATE_DESIGN_SPEC] instead.
+- If the user asks for revision history, label this as a style revision in plain prose and still emit [EDIT_DESIGN_SPEC] with the complete updated style. Revision history storage can be layered on top of this separated action category.
+- If the user asks for a new variant, new visual direction, different mood, or different reference direction, do NOT use [EDIT_DESIGN_SPEC]. Treat it as a new style direction and use [CREATE_NOTE] plus [CREATE_DESIGN_SPEC] for a separate 시안 when enough brief context exists.
+- Conditional offers such as "원하시면 디자인 스타일 형태로 정리해드릴게요", "필요하면", "if you want", or "I can..." are not permission to edit a 디자인 스타일. Write those offers as plain prose only. Do not include [EDIT_DESIGN_SPEC] or any bracketed action example until the user explicitly asks to edit/save it now.
 - 디자인 스타일 must contain ONLY constraints that map directly to CSS or concrete UI styling: colors, typography, spacing/sizing, border radius, shadows, layout density, component styling rules, and explicit style "avoid" lists.
 - Do not put high-level concept, product positioning, target user, or abstract mood narration in 디자인 스타일. Those belong in the design brief (시안). Express mood only as concrete visual constraints (e.g. specific palette, contrast, type weight), not as adjectives alone.
 - The generator derives the entire palette from ONE seed color, so always declare a single explicit primary brand seed color as a hex (e.g. "Primary brand seed color: #2E3A59"). Pick the dominant brand/surface hue, not a small accent. If a color is reserved for limited use such as CTAs only, call it a secondary accent and never make it the seed.
@@ -81,38 +98,44 @@ const CHAT_REFERENCE_ACTION_PROMPT = `Reference search rules:
 - If the user refines a previous reference search, output a new [FETCH_REFERENCES: ...] query.
 - The actual reference search runs AFTER your reply, and its real results are appended to the message automatically. You have NOT seen any results yet.
 - Do not name, describe, evaluate, recommend, or preview any specific reference, site, brand, app, or URL in your reply — anything you describe now would contradict the references the user actually receives. Your entire reply for a reference search is the [FETCH_REFERENCES: query] action plus at most one short neutral sentence stating that you are searching.
-- Output only the [FETCH_REFERENCES: query] action this turn. Do NOT also emit [CREATE_NOTE], [UPDATE_NOTE], [GENERATE_MOCKUP], [EDIT_MOCKUP], or [CREATE_DESIGN_SPEC] — searching references is the entire task for this turn unless the user explicitly asked for a note or mockup in the same message.`;
-
-const CHAT_PRESENTATION_ACTION_PROMPT = `Presentation rules:
-- Output exactly one presentation code block: \`\`\`presentation\n{json}\n\`\`\`.
-- JSON format: {"title":"Presentation Title","slides":[{"title":"Slide Title","content":"3-5 key points as plain text","imagePrompt":"specific visual description"}]}.
-- Generate one slide summarizing problem, solution, key design decisions, and next steps.
-- If current mockup HTML is provided, the imagePrompt must describe the actual visible layout, sections, components, hierarchy, colors, and device frame.
-- Say that the presentation image is being generated now; do not say it was already created.`;
+- Output only the [FETCH_REFERENCES: query] action this turn. Do NOT also emit [CREATE_NOTE], [UPDATE_NOTE], [GENERATE_MOCKUP], [EDIT_MOCKUP], [CREATE_DESIGN_SPEC], or [EDIT_DESIGN_SPEC] — searching references is the entire task for this turn unless the user explicitly asked for a note or mockup in the same message.`;
 
 const CHAT_WEB_LOOKUP_ACTION_PROMPT = `Web lookup rule:
 When the user asks about a specific website, app, brand, product, or visible reference image source, use web_search to verify current information before answering.`;
+
+function normalizedChatActionIntent(intent: string) {
+  if (intent === "create_note") return "create_design_brief";
+  if (intent === "update_note") return "edit_design_brief";
+  if (intent === "generate_mockup") return "create_mockup";
+  if (intent === "edit_design_style") return "edit_design_spec";
+  if (intent === "presentation" || intent === "clarify") return "answer";
+  return intent;
+}
 
 export function chatActionInstructionPrompt(
   intent: string,
   includeRouter = false,
 ) {
+  const normalizedIntent = normalizedChatActionIntent(intent);
   const prompts = [includeRouter ? CHAT_ACTION_ROUTER_PROMPT : ""];
-  if (intent === "create_note" || intent === "update_note") {
+  if (
+    normalizedIntent === "create_design_brief" ||
+    normalizedIntent === "edit_design_brief"
+  ) {
     prompts.push(CHAT_NOTE_ACTION_PROMPT);
-  } else if (intent === "generate_mockup") {
+  } else if (normalizedIntent === "create_mockup") {
     prompts.push(CHAT_MOCKUP_GENERATE_ACTION_PROMPT);
-  } else if (intent === "edit_mockup") {
+  } else if (normalizedIntent === "edit_mockup") {
     prompts.push(CHAT_MOCKUP_EDIT_ACTION_PROMPT);
-  } else if (intent === "create_design_spec") {
+  } else if (normalizedIntent === "create_design_spec") {
     prompts.push(CHAT_DESIGN_SPEC_ACTION_PROMPT);
-  } else if (intent === "fetch_references") {
+  } else if (normalizedIntent === "edit_design_spec") {
+    prompts.push(CHAT_DESIGN_SPEC_EDIT_ACTION_PROMPT);
+  } else if (normalizedIntent === "fetch_references") {
     // No web-lookup instruction here: on a reference-search turn the model must
     // not independently web-search and narrate a site, since the actual cards
     // come from /api/references after the reply. Keeping them in sync.
     prompts.push(CHAT_REFERENCE_ACTION_PROMPT);
-  } else if (intent === "presentation") {
-    prompts.push(CHAT_PRESENTATION_ACTION_PROMPT);
   } else {
     prompts.push(CHAT_WEB_LOOKUP_ACTION_PROMPT);
   }
@@ -154,7 +177,7 @@ export function chatRetrievedMemoryPrompt(
 }
 
 export function chatDesignSpecPrompt(designSpec: string) {
-  return `Applied 디자인 스타일 for the current 시안:\n${designSpec}\n\nAlways follow these constraints when generating or editing mockups for this 시안. If the user asks for small refinements to this 시안's current style, update this single note-level 디자인 스타일 with [CREATE_DESIGN_SPEC: {...}]. If the user asks to remake/recreate with a different style, new mood, new version, or newly cited reference direction, preserve the current 시안 and create a separate new 시안 with its own 디자인 스타일 instead of overwriting this one.`;
+  return `Applied 디자인 스타일 for the current 시안:\n${designSpec}\n\nAlways follow these constraints when generating or editing mockups for this 시안. If the user asks for small refinements to this 시안's current style, update this single note-level 디자인 스타일 with [EDIT_DESIGN_SPEC: {...}]. If the user asks to remake/recreate with a different style, new mood, new version, or newly cited reference direction, preserve the current 시안 and create a separate new 시안 with its own 디자인 스타일 instead of overwriting this one.`;
 }
 
 export function chatCitedTextsPrompt(citedTexts: string[]) {
@@ -162,7 +185,7 @@ export function chatCitedTextsPrompt(citedTexts: string[]) {
 }
 
 export function chatActiveIdeaPrompt(title: string, description: string) {
-  return `The user is currently working on this design brief:\nTitle: ${title}\nContent: ${description}\n\nAll mockups and presentations generated in this conversation should be designed for this design brief.\n\nFor [GENERATE_MOCKUP], treat the Content above as a binding product/UX brief only. Do not treat design brief content as the visual style source; visual style constraints must come from the separate 디자인 스타일 context. Include the most important product, structure, and requirement details directly in the generated mockup prompt so the downstream design generator receives them.`;
+  return `The user is currently working on this design brief:\nTitle: ${title}\nContent: ${description}\n\nAll mockups generated in this conversation should be designed for this design brief.\n\nFor [GENERATE_MOCKUP], treat the Content above as a binding product/UX brief only. Do not treat design brief content as the visual style source; visual style constraints must come from the separate 디자인 스타일 context. Include the most important product, structure, and requirement details directly in the generated mockup prompt so the downstream design generator receives them.`;
 }
 
 export function chatCurrentRequestPrompt() {
@@ -282,7 +305,7 @@ Return valid JSON only. Do not include markdown.
 Output shape:
 {
   "analysis": "Work through the decision in 1-2 sentences: which rule(s) in the list apply to the latest user request, any ambiguity, and why the intent below follows. Do NOT restate the request; reason about it.",
-  "intent": "answer" | "create_note" | "update_note" | "generate_mockup" | "edit_mockup" | "fetch_references" | "create_design_spec" | "presentation" | "clarify",
+  "intent": "answer" | "create_design_brief" | "edit_design_brief" | "create_mockup" | "edit_mockup" | "fetch_references" | "create_design_spec" | "edit_design_spec",
   "confidence": 0.0,
   "memoryRelevance": "light" | "medium" | "strong",
   "needs": {
@@ -299,22 +322,25 @@ Output shape:
 
 Rules:
 - Always prefer the smallest useful context.
-- "디자인 브리프"(design brief) means the product/UX 시안 — its title and content describing WHAT to build — NOT the visual 디자인 스타일. If the user asks to write, draft, create, or revise a 디자인 브리프 / design brief / product brief / 시안, choose "create_note" (new brief) or "update_note" (revising the active 시안), never "create_design_spec". The word 디자인 alone does not imply 디자인 스타일.
-- If the user asks to create, define, revise, recommend, or write 디자인 스타일, style guide, design system, design spec, visual style notes, colors, typography, spacing, mood, tone, UI style, brand tone, or avoid-list style constraints, choose intent "create_design_spec", not "create_note" or "generate_mockup". This rule covers only the visual style layer (디자인 스타일); for the product 디자인 브리프 use the rule above.
-- If the user asks whether there is enough information to make a mockup, whether a mockup is possible, whether you are ready, or what is still needed before making one, choose intent "answer", not "generate_mockup".
-- If the active idea already has a design style and the current request asks to remake/recreate as a different style, new mood, new version, or newly cited reference direction, choose "generate_mockup" when the user explicitly asks to make it now, and require activeIdea/designSpec/citedReferences as needed. The app will fork this into a new idea; do not treat it as a normal edit of the active idea.
-- If the current request asks to organize visual direction so it can be inserted into a style/reference section, choose intent "create_design_spec".
+- "디자인 브리프"(design brief) means the product/UX 시안 — its title and content describing WHAT to build — NOT the visual 디자인 스타일. If the user asks to write, draft, create, or revise a 디자인 브리프 / design brief / product brief / 시안, choose "create_design_brief" (new brief) or "edit_design_brief" (revising the active 시안), never "create_design_spec". The word 디자인 alone does not imply 디자인 스타일.
+- If the user asks to create, define, recommend, write, or fully replace 디자인 스타일, style guide, design system, design spec, visual style notes, colors, typography, spacing, mood, tone, UI style, brand tone, or avoid-list style constraints, choose intent "create_design_spec", not "create_design_brief" or "create_mockup". This rule covers only the visual style layer (디자인 스타일); for the product 디자인 브리프 use the rule above.
+- If the current request targets an existing 디자인 스타일 and asks to partially revise, refine, tweak, append, remove, or change part of it, choose intent "edit_design_spec" and require designSpec. This includes requests like 기존 스타일 일부만 수정, 톤만 바꿔, 컬러만 수정, typography 추가, avoid list에서 X 제거.
+- If the user asks for style revision history, a style revision, or saving a revised style over the current one, choose intent "edit_design_spec" and require designSpec. The action should still output a complete updated style.
+- If the user asks for a new style variant, different visual direction, different mood, new reference direction, or another style version without overwriting the current one, choose intent "create_design_spec"; require activeIdea and designSpec so the responder can preserve the current brief while creating a separate style direction.
+- If the user asks whether there is enough information to make a mockup, whether a mockup is possible, whether you are ready, or what is still needed before making one, choose intent "answer", not "create_mockup".
+- If the active idea already has a design style and the current request asks to remake/recreate as a different style, new mood, new version, or newly cited reference direction, choose "create_mockup" when the user explicitly asks to make it now, and require activeIdea/designSpec/citedReferences as needed. The app will fork this into a new idea; do not treat it as a normal edit of the active idea.
+- If the current request asks to organize visual direction so it can be inserted into a style/reference section and it does not target an existing style, choose intent "create_design_spec".
 - If the user asks to add, include, or put specific apps, products, brands, sites, or examples into the reference section, list, or panel (e.g. "X랑 Y 레퍼런스에 추가해줘"), choose intent "fetch_references" — they must be searched and added as reference cards, not written into a note.
-- Need mockupHtml for editing, presentation from current mockup, or explicit analysis of the existing mockup.
+- Need mockupHtml for editing or explicit analysis of the existing mockup.
 - Need selectedElement when the user is editing a selected element.
-- Need activeIdea for design brief updates, mockup generation from the current design brief, presentations, or design spec work tied to the brief.
-- Need designSpec for mockup generation/editing or design spec revision.
+- Need activeIdea for design brief updates, mockup generation from the current design brief, or design spec work tied to the brief.
+- Need designSpec for mockup generation/editing, design spec revision, or style variant creation when a current style already exists.
 - Need citedTexts or citedReferences only when the current request refers to selected/cited material, examples, references, or inspiration.
 - If semanticMemories are present in the compact input, choose memoryRelevance instead of deciding whether to include memory:
   - "light": memory is weak, generic, or only background; use it only as a quiet tie-breaker.
   - "medium": memory is somewhat relevant to the request or design direction; reflect it when it helps.
   - "strong": memory is directly relevant, high-signal, or the user asks for personalization/continuity; actively align the response with it.
-- Use "clarify" when the user request cannot be answered without asking a question.
+- If the user request cannot be answered without asking a question, choose "answer" and ask the shortest useful clarifying question in the final response.
 - semanticMemories, when present, are retrieved memory items already selected by the app's retrieval/filter policy. Use them only to judge memoryRelevance and disambiguate vague requests. Do not override the latest user request or quote memory.
 - In analysis, apply the rules before choosing intent/needs. Mention ambiguity if relevant. Keep analysis concise.
 

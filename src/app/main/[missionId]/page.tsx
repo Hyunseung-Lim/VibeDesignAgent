@@ -463,7 +463,15 @@ type ActivityLogEvent = {
   id: string;
   createdAt: number;
   section: "reference" | "note" | "mockup" | "feedback";
-  action: "add" | "delete" | "create" | "update" | "stitch_prompt" | "submit";
+  action:
+    | "add"
+    | "delete"
+    | "create"
+    | "update"
+    | "style_create"
+    | "style_update"
+    | "stitch_prompt"
+    | "submit";
   input?: string;
   output?: string;
   outputTitle?: string;
@@ -1146,7 +1154,7 @@ async function fetchOnboardingMissionData() {
 
 function extractJsonActionPayload(
   text: string,
-  tag: "CREATE_NOTE" | "UPDATE_NOTE" | "CREATE_DESIGN_SPEC",
+  tag: "CREATE_NOTE" | "UPDATE_NOTE" | "CREATE_DESIGN_SPEC" | "EDIT_DESIGN_SPEC",
 ) {
   const start = text.indexOf(`[${tag}:`);
   if (start === -1) return null;
@@ -1184,7 +1192,7 @@ function extractJsonActionPayload(
 
 function extractPlainNoteContent(
   text: string,
-  tag: "CREATE_NOTE" | "UPDATE_NOTE" | "CREATE_DESIGN_SPEC",
+  tag: "CREATE_NOTE" | "UPDATE_NOTE" | "CREATE_DESIGN_SPEC" | "EDIT_DESIGN_SPEC",
 ): string | null {
   const marker = `[${tag}:`;
   const start = text.indexOf(marker);
@@ -1303,6 +1311,7 @@ const NOTE_ACTION_TAGS = [
   "CREATE_NOTE",
   "UPDATE_NOTE",
   "CREATE_DESIGN_SPEC",
+  "EDIT_DESIGN_SPEC",
 ] as const;
 
 function actionBlockEnd(text: string, start: number, tag: string) {
@@ -1470,10 +1479,15 @@ function parseUpdateNoteBlock(text: string): UpdateNoteData | null {
 
 function parseCreateDesignSpecBlock(
   text: string,
-): { title: string; content: string } | null {
-  if (!text.includes("[CREATE_DESIGN_SPEC:")) return null;
+): { title: string; content: string; action: "create" | "edit" } | null {
+  const tag = text.includes("[CREATE_DESIGN_SPEC:")
+    ? "CREATE_DESIGN_SPEC"
+    : text.includes("[EDIT_DESIGN_SPEC:")
+      ? "EDIT_DESIGN_SPEC"
+      : null;
+  if (!tag) return null;
 
-  const jsonPayload = extractJsonActionPayload(text, "CREATE_DESIGN_SPEC");
+  const jsonPayload = extractJsonActionPayload(text, tag);
   if (jsonPayload) {
     try {
       const parsed = JSON.parse(jsonPayload) as Record<string, unknown>;
@@ -1482,28 +1496,35 @@ function parseCreateDesignSpecBlock(
         typeof parsed.title === "string" && parsed.title.trim()
           ? parsed.title.trim()
           : "디자인 스타일";
-      return { title, content };
+      return {
+        title,
+        content,
+        action: tag === "EDIT_DESIGN_SPEC" ? "edit" : "create",
+      };
     } catch {
       return {
         title:
           extractStringFieldLoose(jsonPayload, ["title"]) || "디자인 스타일",
         content: extractStringFieldLoose(jsonPayload, NOTE_CONTENT_KEYS),
+        action: tag === "EDIT_DESIGN_SPEC" ? "edit" : "create",
       };
     }
   }
 
-  const plain = extractPlainNoteContent(text, "CREATE_DESIGN_SPEC");
+  const plain = extractPlainNoteContent(text, tag);
   if (!plain) return null;
   const parsed = parsePlainNotePayload(plain);
   return {
     title: parsed.title?.trim() || "디자인 스타일",
     content: parsed.description.trim(),
+    action: tag === "EDIT_DESIGN_SPEC" ? "edit" : "create",
   };
 }
 
 function stripDesignSpecActionBlocks(content: string) {
   return content
     .replace(/\[CREATE_DESIGN_SPEC:[\s\S]*?(?:\](?=\s|$)|$)/g, "")
+    .replace(/\[EDIT_DESIGN_SPEC:[\s\S]*?(?:\](?=\s|$)|$)/g, "")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
 }
@@ -1528,9 +1549,16 @@ function stripConditionalDesignSpecOffers(content: string) {
   let searchFrom = 0;
   let changed = false;
   for (;;) {
-    const start = result.indexOf("[CREATE_DESIGN_SPEC:", searchFrom);
-    if (start === -1) break;
-    const end = actionBlockEnd(result, start, "CREATE_DESIGN_SPEC");
+    const createStart = result.indexOf("[CREATE_DESIGN_SPEC:", searchFrom);
+    const editStart = result.indexOf("[EDIT_DESIGN_SPEC:", searchFrom);
+    const starts = [
+      { tag: "CREATE_DESIGN_SPEC", index: createStart },
+      { tag: "EDIT_DESIGN_SPEC", index: editStart },
+    ].filter((entry) => entry.index !== -1);
+    const next = starts.sort((a, b) => a.index - b.index)[0];
+    if (!next) break;
+    const start = next.index;
+    const end = actionBlockEnd(result, start, next.tag);
     if (!isConditionalDesignSpecOffer(result, start, end)) {
       searchFrom = Math.max(end, start + 1);
       continue;
@@ -1538,7 +1566,7 @@ function stripConditionalDesignSpecOffers(content: string) {
     const before = result
       .slice(0, start)
       .replace(
-        /(?:\s|\n)*(?:\*\*)?\s*디자인 스타일 추가됨\s*(?:\*\*)?\s*$/g,
+        /(?:\s|\n)*(?:\*\*)?\s*디자인 스타일 (?:추가|수정)됨\s*(?:\*\*)?\s*$/g,
         "",
       );
     result = `${before}${result.slice(end)}`;
@@ -5298,7 +5326,8 @@ export default function MainScreenPage() {
 
       const designSpecBlock = parseCreateDesignSpecBlock(fullText);
       if (
-        fullText.includes("[CREATE_DESIGN_SPEC:") &&
+        (fullText.includes("[CREATE_DESIGN_SPEC:") ||
+          fullText.includes("[EDIT_DESIGN_SPEC:")) &&
         !designSpecBlock?.content?.trim()
       ) {
         setMessages((prev) =>
@@ -5419,6 +5448,13 @@ export default function MainScreenPage() {
             designStyle: newSpec,
           };
         }
+        appendActivityLog({
+          section: "note",
+          action: designSpecBlock.action === "edit" ? "style_update" : "style_create",
+          input: text,
+          output: designSpecContent,
+          outputTitle: newSpec.title,
+        });
         setIsDesignSpecOpen(true);
       }
       if (

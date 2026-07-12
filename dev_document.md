@@ -124,7 +124,7 @@
 - **이미지 주도 생성**: 사용자가 참고 이미지를 첨부/붙여넣거나(Phase 1) 신규 목업 요청에 URL을 주면(Phase 2 — 채팅 메시지 내 URL 또는 인용 레퍼런스의 URL), 텍스트 design.md 단계 없이 그 화면을 Stitch에 `upload`→`edit`로 재구성해 목업을 만들고 결과에서 design.md를 역추출·저장한다. URL은 서버가 스크린샷(Microlink 무키, `captureScreenshot` 추상화)으로 캡처하며 첨부 이미지가 우선. 모바일 목업이면 URL 캡처도 390×844 모바일 viewport, 데스크톱이면 1280×900 viewport로 찍는다. 이미지/URL이 있으면 "디자인 스타일 필수" 게이트를 우회한다. `src/app/api/stitch/route.ts`의 `isImageLed` 분기 참고 `[현행 2026-06-15 → 15.81/15.83]`
 - **콘텐츠 자산 주도 생성(asset-led)**: 미션 옵션에 어드민이 등록한 콘텐츠 이미지(`assetImages`, 실제 상품 사진·UI 캡쳐)가 있으면 신규 목업 생성 시 그 Storage `path`/URL과 설명(`note`)을 `/api/stitch`로 넘긴다. 서버는 브라우저용 `/api/mission-assets` 프록시를 다시 fetch하지 않고 `mission-assets/` Storage object를 직접 다운로드한 뒤 `upload`→`edit`하면서 asset manifest와 함께 "이 이미지들을 그대로 콘텐츠로 박아 넣어라"(`assetImageEmbedPrompt`)로 생성한다. 만약 Stitch `upload`/`edit_screens`가 인증 경계에서 실패하면 목업 전체를 실패시키지 않고, asset URL을 `img src`에 직접 쓰라는 텍스트 생성 fallback으로 전환한다. 이 fallback도 현재 credential로 실패하면 API key 클라이언트로 새 Stitch project를 만들어 URL 텍스트 생성만 재시도한다. API key 텍스트 생성까지 인증 실패하면 OpenAI가 asset URL을 그대로 쓰는 standalone HTML을 생성해 반환하고, 이 결과는 실제 Stitch screen이 아니므로 `screenId`/`projectId` 연결 없이 저장된다. fallback project에는 기존 design system이 적용되지 않았으므로 응답의 designSystemId/style hash는 비운다. 이미지 주도 생성과 달리 이미지를 스타일로 재구성하지 않고 콘텐츠 자산으로 보존하며, 레이아웃·스타일은 brief와 디자인 시스템을 따른다. 그래서 디자인 스타일을 미리 적용하고 결과 기반 design.md 역추출은 하지 않는다. 사용자가 그 턴에 스타일 이미지/URL을 첨부하면 그쪽(isImageLed)이 우선. `src/app/api/stitch/route.ts`의 `isAssetLed` 분기 참고 `[현행 2026-07-09 → 15.89/15.93]`
 - **Stitch 인증 계약**: 배포 앱에서 사용자의 Google 로그인 계정은 Stitch credential로 쓰지 않는다. `/api/stitch`는 서버 소유 랩 계정 credential 하나로 모든 Stitch 호출을 통일한다. 공식 `@google/stitch-sdk` 계약 기준으로 `STITCH_API_KEY`가 1순위 인증이고, OAuth는 `STITCH_ACCESS_TOKEN` + `GOOGLE_CLOUD_PROJECT` 조합의 대안이다. 여기서 `STITCH_API_KEY`는 Google Cloud Console API key가 아니라 Stitch Settings/API key 화면에서 생성한 Stitch API key다. 서버 helper는 API key가 있으면 먼저 `X-Goog-Api-Key` 경로를 쓰고, API key가 없을 때만 refresh-token OAuth/ADC/static access token을 시도한다. Stitch quota/project id는 Firebase와 분리해 `STITCH_GOOGLE_CLOUD_PROJECT`(없으면 `GOOGLE_CLOUD_PROJECT`, 로컬 ADC는 ADC `quota_project_id`)를 사용한다. 로컬 임시 테스트는 `STITCH_ACCESS_TOKEN` + Stitch project id도 가능하지만 배포 기본값은 Stitch API key다. 서비스 계정 OAuth는 MCP 연결/프로젝트 조회에는 성공해도 `update_design_system`/`edit_screens` 내부 호출에서 인증 누락으로 실패하는 것이 확인되어 Stitch edit 계열 인증 후보로 쓰지 않는다 `[현행 2026-07-09]`
-- **액션/화면 완료 보장**: `CREATE_DESIGN_SPEC`는 JSON 뒤 닫는 대괄호가 빠지거나 일반 마크다운 payload로 와도 균형 스캔과 loose parser로 복구하며, 복구 불가능하면 영구적인 작성 중 상태 대신 명시적 실패로 표시한다. 단, assistant가 `원하시면...` 같은 조건부 제안 문맥에서 `CREATE_DESIGN_SPEC`를 예시/미리보기처럼 출력한 경우에는 실행 명령으로 저장하지 않고 화면에서도 제거한다. Stitch가 screen metadata만 먼저 반환하면 HTML을 재조회한 뒤 아트보드를 확정하고, 저장된 screen의 HTML 복원 중에는 빈 iframe 대신 로딩/실패 상태를 표시한다. `src/lib/session/chat-content.ts`와 `src/app/main/[missionId]/page.tsx`를 직접 확인 `[현행 2026-07-06 → 15.97/15.192]`
+- **액션/화면 완료 보장**: `CREATE_DESIGN_SPEC`/`EDIT_DESIGN_SPEC`는 JSON 뒤 닫는 대괄호가 빠지거나 일반 마크다운 payload로 와도 균형 스캔과 loose parser로 복구하며, 복구 불가능하면 영구적인 작성 중 상태 대신 명시적 실패로 표시한다. 단, assistant가 `원하시면...` 같은 조건부 제안 문맥에서 design spec action을 예시/미리보기처럼 출력한 경우에는 실행 명령으로 저장하지 않고 화면에서도 제거한다. Stitch가 screen metadata만 먼저 반환하면 HTML을 재조회한 뒤 아트보드를 확정하고, 저장된 screen의 HTML 복원 중에는 빈 iframe 대신 로딩/실패 상태를 표시한다. `src/lib/session/chat-content.ts`와 `src/app/main/[missionId]/page.tsx`를 직접 확인 `[현행 2026-07-13 → 15.97/15.192/15.213]`
 - **Stitch 일시 실패 복구**: `edit_screens`, Stitch 이미지 업로드(`screens:batchCreate`), mission asset Storage 다운로드가 `service unavailable`, timeout, 429/5xx 등 일시 오류를 반환하면 `/api/stitch`가 짧은 backoff로 재시도한다. 업로드 기반 이미지 주도/asset-led 생성도 SDK의 `screen.edit()` 대신 동일한 `editScreen` 복구 경로를 타며, 업로드된 reference screen을 최종 결과 후보로 오인하지 않도록 업로드 screen id를 recovery 기준에 포함한다 `[현행 2026-07-09]`
 - **캔버스**: 드래그 패닝, 휠 줌, Fit 버튼, 확대(fullscreen) 모드. 선택 스크립트는 iframe HTML에 항상 주입하고, 편집 모드 토글은 pointer event와 선택 해제 메시지로 제어해 iframe `srcDoc` reload를 피한다. 동적 문서 높이를 측정할 때 원본 `html/body` height를 덮어쓰지 않고, viewport 단위와 `h-screen` 계열만 artboard device 크기에 고정해 원본/Final Design과 같은 첫 화면 레이아웃을 보존한다. 또한 iframe이 아직 device 높이일 때(= 첫 높이 보고 전에) vh를 쓰는 요소(예: 컨테이너 h-[80vh])와 모든 이미지의 box를 인라인 px(!important)로 고정한다. 인라인 선언이 클래스 규칙을 specificity로 이기므로 Tailwind Play CDN의 스타일시트 재생성과 무관하게 유지되고, iframe이 전체 문서 높이로 커져도 full-bleed 이미지가 늘어나거나 vh 컨테이너가 부풀어 높이가 발산하는 피드백 루프가 생기지 않는다(box와 iframe 높이를 분리). `src/lib/session/mockup-html.ts`의 `injectHeightReporter` 참고 `[현행 2026-06-24 → 15.78/15.113/15.121]`
 - **편집 모드**: 특정 UI 요소 클릭 선택 → `[EDIT_MOCKUP: {prompt}]`로 수정. 선택 요소가 있는 상태에서 "크게/색/문구/삭제" 등 짧은 타깃 편집 요청이 오면 planner 판단과 무관하게 현재 목업 HTML과 선택 요소 컨텍스트를 함께 주입한다 `[현행 2026-06-15 → 15.77]`
@@ -158,7 +158,8 @@
   - `[CREATE_NOTE: ...]` → 새 아이디어(시안) 생성. 저장 payload는 목표/대상 사용자, 핵심 경험, 화면 구조, 미션 필수 콘텐츠, 제약을 포함한 독립적인 Design Brief여야 한다. 모델이 한 줄 작업 지시문을 반환하면 클라이언트가 먼저 assistant 응답 본문에서 실질 브리프를 복구하고, 없을 때 미션 맥락과 현재 사용자 요청으로 시작 가능한 브리프를 복구한다. 단, 현재 시안이 빈 shell이면(디자인 스타일만 먼저 작성된 경우, 또는 세션 시작 시 시드된 빈 디폴트 시안 1: description·designStyle·artboard 모두 없음) 새 시안을 만들지 않고 해당 시안 내용을 채움 `[현행 2026-06-30 → 15.98/15.116/15.153]`
   - 세션은 빈 디폴트 시안 1로 시작한다(read-only/완료 세션 제외). 워크스페이스·탭·Brief/Style/Mockup 구조를 처음부터 노출하고, 첫 brief가 위 shell-fill 규칙으로 이 시안을 채운다 `[현행 2026-06-23 → 15.116]`
   - `[UPDATE_NOTE: ...]` → 현재 아이디어 내용 업데이트. 의도적인 짧은 수정은 허용하되, 디자인 브리프 생성/작성 성격의 턴에서 payload가 한 줄 상태문으로 축약되면 assistant 응답 본문 또는 미션 맥락으로 실질 Design Brief를 복구한 뒤 저장한다 `[현행 2026-06-30 → 15.153]`
-  - `[CREATE_DESIGN_SPEC: ...]` → 현재 아이디어의 디자인 스타일 정의/교체. Design Brief가 아직 없어도 세션 초반부터 생성할 수 있으며, 현재 아이디어가 없으면 빈 시안을 자동 생성하고 그 시안에 스타일을 저장한다. 이후 첫 Design Brief는 shell-fill 규칙으로 같은 시안을 채운다. 조건부 제안이나 예시 문장 안의 `CREATE_DESIGN_SPEC`는 실행하지 않으며, 과거 대화 컨텍스트로 재투입할 때는 평문형 payload까지 `[디자인 스타일 추가]`로 축약한다 `[현행 2026-07-06 → 15.154/15.192]`
+  - `[CREATE_DESIGN_SPEC: ...]` → 현재 아이디어의 디자인 스타일 최초 정의/교체. Design Brief가 아직 없어도 세션 초반부터 생성할 수 있으며, 현재 아이디어가 없으면 빈 시안을 자동 생성하고 그 시안에 스타일을 저장한다. 이후 첫 Design Brief는 shell-fill 규칙으로 같은 시안을 채운다. 조건부 제안이나 예시 문장 안의 `CREATE_DESIGN_SPEC`는 실행하지 않으며, 과거 대화 컨텍스트로 재투입할 때는 평문형 payload까지 `[디자인 스타일 추가]`로 축약한다 `[현행 2026-07-13 → 15.154/15.192/15.213]`
+  - `[EDIT_DESIGN_SPEC: ...]` → 현재 아이디어의 기존 디자인 스타일 일부 수정. 실행 payload는 diff가 아니라 저장될 전체 최신 디자인 스타일이어야 하며, 같은 `designStyle` 슬롯을 갱신하되 UI chip과 memory action은 `design_spec_edit`로 분리한다. 새 스타일 variant나 다른 visual direction은 기존 스타일을 덮어쓰지 않도록 새 시안 방향의 `CREATE_DESIGN_SPEC` 경로를 사용한다 `[현행 2026-07-13 → 15.213]`
   - `[GENERATE_MOCKUP: ...]` → Stitch 목업 생성
   - `[EDIT_MOCKUP: ...]` → 목업 수정
   - `[FETCH_REFERENCES: ...]` → OpenAI web_search_preview 검색
@@ -949,13 +950,13 @@ type ChatPlan = {
   analysis: string; // JSON 출력에서는 맨 위에 두는 선행 판단 메모
   intent:
     | "answer"
-    | "create_note"
-    | "update_note"
-    | "generate_mockup"
+    | "create_design_brief"
+    | "edit_design_brief"
+    | "create_mockup"
     | "edit_mockup"
     | "fetch_references"
     | "create_design_spec"
-    | "clarify";
+    | "edit_design_spec";
   confidence: number; // 0~1
   memoryRelevance: "light" | "medium" | "strong";
   needs: {
@@ -977,8 +978,8 @@ type ChatPlan = {
   - mission: 기본 포함하되 brief는 planner가 `mission=true`일 때만 긴 버전 사용. 아니면 title + 1~2줄 summary만 사용
   - profile input: 14.4 이후 `/api/memory/profile`에서 derived memory로 분해되어 interaction memory와 같은 retrieval/context path를 사용
   - memory: retrieved/filter를 통과해 memoryContext에 들어온 memory는 prompt에 주입한다. planner는 주입 여부 bool 대신 `memoryRelevance`로 light/medium/strong 반영 강도를 고르고, `chatRetrievedMemoryPrompt`가 그 강도에 맞는 instruction을 붙인다. before-session/profile과 during-session/interaction을 별도 prompt로 나누지 않는다 `[현행 2026-07-13 → 15.206/15.208]`
-  - activeIdea: Design Brief 생성/수정/mockup 관련 intent에서만 주입. 내부 action id는 기존 계약 때문에 `create_note`/`update_note`를 유지한다 `[현행 2026-06-16 → 15.87]`
-  - designSpec: mockup generate/edit/design spec 관련 intent에서만 주입
+  - activeIdea: Design Brief 생성/수정/mockup/design spec 관련 intent에서만 주입. Planner intent는 `create_design_brief`/`edit_design_brief`/`create_mockup` 이름을 쓰지만, 실행 action tag는 기존 계약 때문에 `[CREATE_NOTE]`/`[UPDATE_NOTE]`/`[GENERATE_MOCKUP]`를 유지한다 `[현행 2026-07-13 → 15.87/15.212/15.213]`
+  - designSpec: mockup generate/edit, `edit_design_spec`, 기존 style 기반 variant 생성 intent에서 주입
   - mockupHtml: edit/현재 화면 분석 intent에서만 주입. generate intent에서는 사용자가 기존 mockup 기반 변형을 요구한 경우에만 주입
   - selectedElement: selectedElement가 있으면 우선 주입. 선택 요소가 있는 상태의 타깃 편집 요청은 planner가 놓쳐도 `edit_mockup` intent와 `mockupHtml`/`selectedElement` 컨텍스트를 강제한다 `[현행 2026-06-15 → 15.77]`
   - citedTexts/citedReferences: 사용자가 현재 turn에서 인용했거나 planner가 reference/design inspiration intent로 판단한 경우만 주입
@@ -4204,3 +4205,20 @@ type ChatPlan = {
 - 수정: weight 0 memory는 retrieval 후보에서 제외되어 prompt에 들어가지 않고, retrieval weight/retrievedCount도 더 이상 바뀌지 않는다. Self/admin current graph와 clustering 입력도 `loadUserMemoryItems` 기본 필터를 통해 weight 0 memory를 제외한다.
 - 수정: `/api/memory/archive-status`가 `inactive`, `inactiveReason`, `weight`를 반환한다. Review turn에 이미 저장된 retrieved memory는 데이터로 남아 있으므로, main review side panel에서 inactive memory를 회색 카드와 `inactive` badge로 표시한다.
 - 수정: `GET /api/admin/users/[uid]/memory/forgetting`은 더 이상 후보를 자동 archive하지 않고 후보/archived 기록만 조회한다. Admin forgetting view 문구도 자동 archive 완료가 아니라 후보 조회로 바꿨다. PATCH 기반 manual archive route는 legacy/debug API로 유지한다.
+
+### 15.212 Planner intent 이름 정리 `[implemented 2026-07-13]`
+
+- 배경(Notion `Planner Prompt intent 수정`): planner intent 이름이 내부 action tag 이름(`create_note`, `update_note`, `generate_mockup`)과 섞여 있어 UI/UX 도메인 용어와 맞지 않았고, legacy `presentation`/`clarify` intent도 남아 있었다.
+- 수정: planner intent union을 `answer | create_design_brief | edit_design_brief | create_mockup | edit_mockup | fetch_references | create_design_spec`로 정리했다. `presentation`과 `clarify`는 planner output에서 제거했다.
+- 호환: parser는 legacy planner output의 `create_note`, `update_note`, `generate_mockup`을 각각 새 intent로 alias 처리하고, legacy `presentation`/`clarify`는 `answer`로 fallback한다. Composer command id와 실행 action tag는 기존 계약을 유지한다.
+- 수정: `chatPlannerPrompt` output schema와 intent rules를 새 이름으로 바꾸고, 불명확한 요청은 `clarify` intent 대신 `answer` intent에서 짧은 확인 질문을 하도록 지시했다.
+- 수정: `CHAT_PRESENTATION_ACTION_PROMPT`와 router의 presentation action 지시를 제거했다. `presentationSlideImagePrompt`와 `/api/presentation` route는 현재 planner 경로 밖의 legacy API라 이번 변경에서는 삭제하지 않았다.
+- 유지: `create_design_spec`는 디자인 스타일을 생성하거나 교체하는 단일 action 계약으로 남겼다. 별도 `edit_design_spec` intent는 아직 도입하지 않았다. `[stale 2026-07-13 → 15.213: 기존 디자인 스타일 일부 수정용 edit_design_spec intent와 EDIT_DESIGN_SPEC action tag를 도입함]`
+
+### 15.213 edit_design_spec intent/action 도입 `[implemented 2026-07-13]`
+
+- 배경: `create_design_spec` 하나로 최초 작성, 완전 교체, 기존 스타일 일부 수정, 새 스타일 variant까지 모두 처리하면 planner/router/review에서 사용자의 의도를 분리할 수 없었다. 특히 "기존 스타일 일부만 수정", "style revision", "새 스타일 variant"를 구분하려면 기존 스타일을 읽고 갱신하는 별도 edit intent가 필요했다.
+- 수정: planner intent union에 `edit_design_spec`를 추가했다. 기존 디자인 스타일의 일부 수정, 보강, 제거, revision 저장은 `edit_design_spec`로 분류하고 `designSpec` context를 요구한다. 새 variant, 다른 visual direction, 다른 mood/reference direction은 `create_design_spec` 쪽으로 남겨 기존 스타일을 덮어쓰지 않는 새 시안 방향으로 처리하게 했다.
+- 수정: 실행 action tag `[EDIT_DESIGN_SPEC: {"content":"full updated markdown content"}]`를 추가했다. Payload는 diff가 아니라 저장될 전체 최신 디자인 스타일이다. 세션 runtime은 기존 `designStyle` 슬롯을 갱신하되 chip label은 "디자인 스타일 수정됨", memory action category는 `design_spec_edit`로 남긴다.
+- 호환: legacy planner output `edit_design_style`은 `edit_design_spec`으로 alias 처리한다. `[CREATE_DESIGN_SPEC]` 파서와 동일하게 JSON, loose string field, plain markdown payload 복구를 지원하고, 조건부 제안 문맥에서는 실행 action으로 저장하지 않는다.
+- 유지: 실제 revision history 저장소와 style variant UI/data model은 아직 별도 구현하지 않았다. 이번 변경은 그 기능을 붙일 수 있도록 planner/action taxonomy와 review/memory 기록을 먼저 분리한 것이다.
