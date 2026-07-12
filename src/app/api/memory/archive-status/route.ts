@@ -4,6 +4,7 @@ import {
   getFirestoreDocument,
   verifyFirebaseIdToken,
 } from "@/lib/server/firebaseAdminRest";
+import { isInactiveMemoryWeight, memoryWeight } from "@/lib/server/memoryActivity";
 
 export const runtime = "nodejs";
 
@@ -16,6 +17,9 @@ type ArchiveStatus = {
   archiveReason: string | null;
   duplicateOf: string | null;
   duplicate: unknown;
+  inactive: boolean;
+  inactiveReason: string | null;
+  weight: number | null;
 };
 
 function stringOrNull(value: unknown) {
@@ -67,6 +71,11 @@ export async function POST(request: Request) {
           archiveReason: stringOrNull(doc.archiveReason),
           duplicateOf: stringOrNull(doc.duplicateOf),
           duplicate,
+          inactive: isInactiveMemoryWeight(doc.weight),
+          inactiveReason: isInactiveMemoryWeight(doc.weight)
+            ? "weight_zero"
+            : null,
+          weight: memoryWeight(doc.weight),
         },
       ];
     }),

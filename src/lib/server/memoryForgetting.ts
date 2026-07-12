@@ -3,6 +3,7 @@ import {
   listFirestoreDocumentIds,
   patchFirestoreDocument,
 } from "@/lib/server/firebaseAdminRest";
+import { isActiveMemoryDocument } from "@/lib/server/memoryActivity";
 
 export const MEMORY_FORGETTING_COLLECTION = "memories_0_1_2";
 export const MEMORY_DUPLICATE_SIMILARITY_THRESHOLD = 0.92;
@@ -121,7 +122,7 @@ export function indexedMemoriesFromDocs(docs: MemoryDoc[]) {
         typeof doc.semantic === "string" && doc.semantic.trim()
           ? doc.semantic.trim()
           : null;
-      if (!episodic || timestampValue(doc.archivedAt)) return null;
+      if (!episodic || !isActiveMemoryDocument(doc)) return null;
       const weight =
         typeof doc.weight === "number" && Number.isFinite(doc.weight)
           ? doc.weight

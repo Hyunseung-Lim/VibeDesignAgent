@@ -1,6 +1,5 @@
 import { isAdminEmail } from "@/lib/admin";
 import {
-  archiveForgettingCandidates,
   archivedItemsFromDocs,
   buildForgettingCandidates,
   indexedMemoriesFromDocs,
@@ -34,10 +33,9 @@ export async function GET(
   const docs = await loadMemoryDocs(uid, token);
   const items = indexedMemoriesFromDocs(docs);
   const candidates = buildForgettingCandidates(items);
-  const autoArchived = await archiveForgettingCandidates(uid, candidates, token);
 
   return Response.json({
-    candidates: autoArchived,
+    candidates,
     archived: archivedItemsFromDocs(docs),
     thresholds: {
       duplicateSimilarity: MEMORY_DUPLICATE_SIMILARITY_THRESHOLD,

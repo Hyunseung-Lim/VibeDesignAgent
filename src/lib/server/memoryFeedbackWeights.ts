@@ -3,6 +3,7 @@ import {
   listFirestoreDocumentIds,
   patchFirestoreDocument,
 } from "@/lib/server/firebaseAdminRest";
+import { isActiveMemoryDocument } from "@/lib/server/memoryActivity";
 
 const MEMORY_COLLECTION = "memories_0_1_2";
 const RETRIEVAL_LOG_COLLECTION = "memoryRetrievalLogs";
@@ -214,7 +215,7 @@ export async function applyAssistantFeedbackWeightAdjustment(params: {
     adjustments.map(async ({ id, delta }) => {
       const path = `users/${params.uid}/${MEMORY_COLLECTION}/${encodeURIComponent(id)}`;
       const doc = await getFirestoreDocument(path, params.token);
-      if (!doc || typeof doc.archivedAt === "number") return;
+      if (!doc || !isActiveMemoryDocument(doc)) return;
 
       const previousWeight = numberValue(doc.weight, 0.5);
       const weight = clampWeight(previousWeight + delta);

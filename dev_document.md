@@ -172,18 +172,18 @@
 - **첨부 이미지 시각 선호**: image normalizer는 의도적으로 선호를 추론하지 않으므로, 첨부 이미지가 주도한 목업 생성이 성공해 derivedDesignStyle가 나오면 그 스타일을 `style-image-preference-{turnId}` interactionId(category `style_image_preference`)로 별도 draft에 기록한다. 이번 미션/시안 맥락의 session-scoped evidence로 담고 전역 취향으로 단정하지 않는다 `[현행 2026-06-21 → 15.101]`
 - **확정 시점**: 사용자가 `세션 종료` 버튼을 누르면 `/api/memory/complete-session`에서 draft를 통합해 장기 메모리로 저장
 - **버전 관리**: admin memory modal에서 v0.1.0 / v0.1.1 / v0.1.2를 분리 조회 `[stale 2026-06-12 → 15.51: legacy fallback 제거로 현재 v0.1.2 단일 버전만 사용(MemoryVersionTab = "0.1.2"). v0.1.0/v0.1.1 분리 조회 없음]`
-- **현재 활용**: 각 채팅 turn 직전에 `/api/memory/retrieve`를 호출한다. Current/prior before-session과 during-session memory는 모두 같은 query similarity ranking 후보이며, 별도 current-session boost나 prompt 강제 포함은 없다. 기본 retrieval limit은 top 10이고, 실제로 retrieved된 항목만 prompt에 들어가며 weight/retrievedCount가 업데이트된다. 응답과 log는 `sourceMissionId`와 `beforeSessionScope`(`current_mission`/`prior_mission`)를 보존한다. 어드민이 `viewAs`로 리뷰 화면을 볼 때 assistant bubble의 `Retrieval 보기` 버튼에서 해당 turn 근처의 retrieval query, retrieved memory, raw retrieval log JSON을 확인할 수 있다 `[현행 2026-07-13 → 15.187/15.190/15.193/15.199/15.209]`
+- **현재 활용**: 각 채팅 turn 직전에 `/api/memory/retrieve`를 호출한다. Current/prior before-session과 during-session memory는 모두 같은 query similarity ranking 후보이며, 별도 current-session boost나 prompt 강제 포함은 없다. 기본 retrieval limit은 top 10이고, 실제로 retrieved된 active 항목만 prompt에 들어가며 weight/retrievedCount가 업데이트된다. 응답과 log는 `sourceMissionId`와 `beforeSessionScope`(`current_mission`/`prior_mission`)를 보존한다. 어드민이 `viewAs`로 리뷰 화면을 볼 때 assistant bubble의 `Retrieval 보기` 버튼에서 해당 turn 근처의 retrieval query, retrieved memory, raw retrieval log JSON을 확인할 수 있다 `[현행 2026-07-13 → 15.187/15.190/15.193/15.199/15.209/15.211]`
 - **Prompt 주입 방식**: profile input은 `profile_memories`에 source of truth로 보관한 뒤 derived memory로 쪼개 retrieved memory와 같은 chat context 경로로 들어간다. `/api/chat`은 retrieved/filter를 통과한 memory를 before-session/profile과 during-session/interaction으로 다시 나누지 않고 `chatRetrievedMemoryPrompt` 단일 system message로 주입한다. Prompt compact JSON은 모든 retrieved memory를 `episodic`/`semantic` 배열에 재그룹화하되, before-session 항목의 `beforeSessionScope`와 `sourceMissionId`는 보존한다. Current/prior before-session memory도 top-k에 실제로 retrieved된 경우에만 사용할 수 있으며, memory id/weight/similarity는 prompt에서 제외한다 `[현행 2026-07-13 → 15.187/15.190/15.191/15.199/15.208]`
 - **Legacy**: `GET /api/memory/bootstrap`은 세션 시작 시 memory를 preload하던 구 방식이며, 현재 main client에서는 호출하지 않음
 - **Retrieval 쿼리 구성**: `[user text] + Mission: [parentMissionTitle] + Active idea: [description]` — 선택된 옵션 이름(페르소나 등)은 제외해 임베딩 노이즈 방지
 - **Admin 관측**: researcher가 `/admin/users/[uid]/memory`에서 `/agent`와 동일한 user별 memory cluster graph/list/detail을 확인 가능. detail panel은 그래프 왼쪽에 있고 cluster list는 요약 없이 색상·제목·개수만 표시한다 `[현행 2026-06-27 → 15.130]` `[stale 2026-06-30 → 15.169: cluster list가 main 세션리뷰와 동일한 review presentation(rounded card + 색상 count rail + 접기 rail)로 통일됨]` Before-session memory의 detail card 제목은 분리된 `source.sourceText`를 우선 표시하고, `Original input`은 별도 강조 없이 전체 `input` rawMarkdown을 표시한다 `[현행 2026-07-07 → 15.195/15.196]`
 - **Retrieval MVP**: v0.1.2 memory document에 embedding과 `weight` metadata를 저장하고, retrieve된 memory의 weight를 천천히 올림. retrieval과 clustering은 `memories_0_1_2.embedding`에 저장된 같은 vector를 사용하며, 누락·stale embedding은 공용 `memoryEmbedding` helper가 같은 텍스트 계약으로 재생성해 원본 memory document에 write-back한다. During-session embedding 입력은 keyword + episodic + semantic + link이고, before-session embedding 입력은 source.sourceText + keyword + episodic + semantic + link다. 원문 interaction input/output은 embedding에서 제외한다. 계약이 바뀌면 `embeddingSource` 태그를 올려(`during_session_record_text_v2`, `before_session_unit_text`) 기존 embedding을 stale 처리해 재생성한다 `[현행 2026-07-10 → 15.194/15.201]`
-- **Forgetting MVP**: low-weight/duplicate 후보를 `archivedAt` 기반으로 soft archive한다. Archived memory document는 감사/리뷰/사라짐 표현을 위해 Firestore에 남기지만, `/agent`/admin 현재 memory graph와 clustering 입력의 기본 대상에서는 제외한다 `[현행 2026-07-11 → 15.202]`
+- **Forgetting / inactive memory**: active memory의 기준은 `archivedAt`이 없고 `weight > 0`인 문서다. `archivedAt`이 있거나 `weight <= 0`인 memory는 Firestore에는 남지만 retrieval, current `/agent`/admin graph, clustering 입력에서 기본 제외된다. `weight <= 0`은 별도 archive write 없이 inactive로 취급하며, review turn에 이미 저장된 retrieved memory는 리뷰 패널에서 회색 inactive 상태로 표시된다. Admin forgetting 탭은 legacy 후보 조회용으로 남고 GET 호출이 자동 archive를 수행하지 않는다 `[현행 2026-07-13 → 15.202/15.211]`
 
 #### 메모리 클러스터링
 
 - 경로: 일반 사용자 본인 memory는 `GET/POST /api/memory/clusters`, admin의 타인 memory 진단은 `GET/POST /api/admin/users/[uid]/memory/clusters`
-- 입력: clustering vector는 retrieval과 같은 active `memories_0_1_2.embedding` 저장값을 사용한다. `archivedAt`이 있는 memory는 현재 graph/clustering 입력에서 제외한다. 저장값이 없거나 `embeddingSource`가 현재 sourceType 계약과 맞지 않으면 keyword/episodic/semantic/link(before-session은 source.sourceText 포함) 텍스트로 재생성해 문서에 write-back한다. 원문 interaction input/output은 clustering embedding에 포함하지 않고, 입력 variant 비교는 제공하지 않는다 `[현행 2026-07-11 → 15.178/15.201/15.202]`
+- 입력: clustering vector는 retrieval과 같은 active `memories_0_1_2.embedding` 저장값을 사용한다. `archivedAt`이 있거나 `weight <= 0`인 memory는 현재 graph/clustering 입력에서 제외한다. 저장값이 없거나 `embeddingSource`가 현재 sourceType 계약과 맞지 않으면 keyword/episodic/semantic/link(before-session은 source.sourceText 포함) 텍스트로 재생성해 문서에 write-back한다. 원문 interaction input/output은 clustering embedding에 포함하지 않고, 입력 variant 비교는 제공하지 않는다 `[현행 2026-07-13 → 15.178/15.201/15.202/15.211]`
 - 1단계: 저장된 `text-embedding-3-large` memory embedding으로 cosine similarity graph를 만든다. Clustering 자체가 별도 embedding API 호출을 반복하지 않으며, 누락·stale 항목만 공용 helper로 보정한다.
 - 2단계: cosine similarity graph 생성. 강한 유사도 edge와 node별 KNN edge를 함께 사용
 - 3단계: similarity graph에서 label propagation으로 community를 찾고, community가 너무 많으면 centroid similarity 기준으로 최대 16개까지 merge
@@ -305,7 +305,7 @@ type Idea = {
 | `POST /api/admin/missions`                        | 미션 생성 (관리자 전용)                                                 |
 | `GET /api/admin/users/[uid]/memory`               | admin memory/cluster view용 메모리 조회                                 |
 | `GET/POST /api/admin/users/[uid]/memory/clusters` | admin memory cluster 캐시 조회/생성                                     |
-| `GET /api/admin/users/[uid]/memory/forgetting`    | archive 후보 산출                                                       |
+| `GET /api/admin/users/[uid]/memory/forgetting`    | legacy forgetting 후보와 archived 기록 조회                             |
 | `PATCH /api/admin/users/[uid]/memory/forgetting`  | semantic item soft archive                                              |
 
 ---
@@ -4193,6 +4193,14 @@ type ChatPlan = {
 
 - 배경(Notion `좋아 싫어요 weight 반영`): assistant 답변에 좋아요/싫어요를 남길 때, 평가 memory draft만 만들고 끝내면 실제로 그 답변에 사용된 retrieved memory의 점수가 변하지 않았다. 스펙은 좋아요 `+0.08`, 싫어요 `-0.04`를 해당 답변에 호출된 memory들에 반영하라는 내용이었다.
 - 수정: `src/lib/server/memoryFeedbackWeights.ts`를 추가해 feedback 대상 assistant message의 `reviewTurns/{messageId}.retrieved`를 우선 읽고, 없으면 같은 mission의 `memoryRetrievalLogs`에서 `interactionId` 또는 `userMessageId`로 fallback해 target memory id를 찾는다.
-- 수정: `/api/memory/drafts`는 `assistantFeedback` payload가 있는 draft 저장 시 target memory weight를 clamp 0..1 범위에서 조정한다. `archivedAt`이 있는 memory는 건드리지 않는다.
+- 수정: `/api/memory/drafts`는 `assistantFeedback` payload가 있는 draft 저장 시 target memory weight를 clamp 0..1 범위에서 조정한다. `archivedAt`이 있거나 `weight <= 0`인 inactive memory는 건드리지 않는다.
 - 재투표/재저장: 같은 `feedback-{messageId}` draft를 다시 저장할 때 기존 `assistantFeedbackWeightAdjustment`를 읽어 이전 적용분과 새 적용분의 차이만 반영한다. 같은 vote에서 reason만 바꾼 경우 weight는 재적용되지 않는다.
 - 관측성: draft document에 `assistantFeedbackWeightAdjustment`를 저장해 적용된 vote, deltaPerMemory, target memory ids, per-memory before/after delta, skippedReason을 확인할 수 있게 했다.
+
+### 15.211 Weight 0 기반 forgetting 자동화 `[implemented 2026-07-13]`
+
+- 배경(Notion `forgetting 자동화`): 기존 forgetting은 admin forgetting 탭을 열면 low-weight/duplicate 후보를 `archivedAt` 기반으로 soft archive하는 레거시 흐름이었다. 새 계약은 별도 admin archive 액션보다 memory `weight`가 0이 되면 비활성화되고, 그 상태 자체로 검색/클러스터에서 제외되는 방식이다.
+- 수정: `memoryActivity.ts`를 추가해 active memory 기준을 `archivedAt` 없음 + `weight > 0`으로 공통화했다. `loadUserMemoryItems`, `/api/memory/retrieve`, `memoryForgetting` 후보 산출, assistant feedback weight 조정이 이 기준을 사용한다.
+- 수정: weight 0 memory는 retrieval 후보에서 제외되어 prompt에 들어가지 않고, retrieval weight/retrievedCount도 더 이상 바뀌지 않는다. Self/admin current graph와 clustering 입력도 `loadUserMemoryItems` 기본 필터를 통해 weight 0 memory를 제외한다.
+- 수정: `/api/memory/archive-status`가 `inactive`, `inactiveReason`, `weight`를 반환한다. Review turn에 이미 저장된 retrieved memory는 데이터로 남아 있으므로, main review side panel에서 inactive memory를 회색 카드와 `inactive` badge로 표시한다.
+- 수정: `GET /api/admin/users/[uid]/memory/forgetting`은 더 이상 후보를 자동 archive하지 않고 후보/archived 기록만 조회한다. Admin forgetting view 문구도 자동 archive 완료가 아니라 후보 조회로 바꿨다. PATCH 기반 manual archive route는 legacy/debug API로 유지한다.

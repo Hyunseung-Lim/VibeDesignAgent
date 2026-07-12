@@ -3,11 +3,16 @@ import {
   listFirestoreDocumentIds,
 } from "@/lib/server/firebaseAdminRest";
 import type { ClusterInputItem } from "@/lib/server/memoryClustering";
+import {
+  isInactiveMemoryWeight,
+  memoryArchivedAt,
+} from "@/lib/server/memoryActivity";
 
 export const MEMORY_COLLECTION = "memories_0_1_2";
 
 type LoadMemoryItemsOptions = {
   includeArchived?: boolean;
+  includeInactive?: boolean;
 };
 
 function stringValue(value: unknown): string | null {
@@ -70,8 +75,9 @@ export async function loadUserMemoryItems(
         embedding: numberArray(data.embedding),
         embeddingSource: stringValue(data.embeddingSource),
         timestamp: numberValue(data.timestamp ?? data.createdAt),
-        archivedAt: numberValue(data.archivedAt),
+        archivedAt: memoryArchivedAt(data.archivedAt),
         archiveReason: stringValue(data.archiveReason),
+        inactive: isInactiveMemoryWeight(data.weight),
         source:
           data.source && typeof data.source === "object" ? data.source : null,
       };
@@ -82,6 +88,7 @@ export async function loadUserMemoryItems(
     .filter(
       (item) =>
         (options.includeArchived || !item.archivedAt) &&
+        (options.includeInactive || !item.inactive) &&
         Boolean(
           item.episodic ||
             item.semantic ||

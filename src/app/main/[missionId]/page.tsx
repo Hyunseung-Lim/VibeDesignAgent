@@ -268,6 +268,9 @@ type ReviewMemoryArchiveStatus = {
   archivedAt: number | null;
   archiveReason: string | null;
   duplicateOf: string | null;
+  inactive?: boolean;
+  inactiveReason?: string | null;
+  weight?: number | null;
   duplicate?: {
     memoryId?: string;
     semanticItemId?: string | null;
@@ -8513,6 +8516,8 @@ export default function MainScreenPage() {
                     const archiveStatus =
                       reviewMemoryArchiveById[memory.memoryId];
                     const isArchived = Boolean(archiveStatus?.archivedAt);
+                    const isInactive = Boolean(archiveStatus?.inactive);
+                    const isUnavailable = isArchived || isInactive;
                     const memoryFields = [
                       { label: "Semantic", value: memory.semantic },
                       { label: "Episodic", value: memory.episodic },
@@ -8535,7 +8540,13 @@ export default function MainScreenPage() {
                     return (
                       <div
                         key={memory.memoryId}
-                        className="rounded-xl border border-slate-200 bg-white px-3 py-2.5"
+                        className={`rounded-xl border px-3 py-2.5 ${
+                          isInactive
+                            ? "border-slate-200 bg-slate-50 opacity-75"
+                            : isArchived
+                              ? "border-rose-100 bg-rose-50/40"
+                              : "border-slate-200 bg-white"
+                        }`}
                       >
                         <div className="flex items-start justify-between gap-2">
                           <div className="min-w-0 flex-1 space-y-1.5">
@@ -8559,9 +8570,15 @@ export default function MainScreenPage() {
                               ))
                             )}
                           </div>
-                          {isArchived && (
-                            <span className="shrink-0 rounded-full bg-rose-50 px-1.5 py-0.5 text-[10px] font-semibold text-rose-500">
-                              archived
+                          {isUnavailable && (
+                            <span
+                              className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${
+                                isInactive
+                                  ? "bg-slate-200 text-slate-500"
+                                  : "bg-rose-50 text-rose-500"
+                              }`}
+                            >
+                              {isInactive ? "inactive" : "archived"}
                             </span>
                           )}
                         </div>
@@ -8587,12 +8604,20 @@ export default function MainScreenPage() {
                             sim {formatReviewScore(memory.similarity)}
                           </span>
                         </div>
-                        {isArchived && archiveStatus && (
-                          <div className="mt-2 rounded-lg border border-rose-100 bg-rose-50 px-2.5 py-1.5 text-[10px] leading-relaxed text-rose-700">
+                        {isUnavailable && archiveStatus && (
+                          <div
+                            className={`mt-2 rounded-lg border px-2.5 py-1.5 text-[10px] leading-relaxed ${
+                              isInactive
+                                ? "border-slate-200 bg-slate-100 text-slate-600"
+                                : "border-rose-100 bg-rose-50 text-rose-700"
+                            }`}
+                          >
                             <span className="font-semibold">
-                              {archiveStatus.archiveReason ?? "archived"}
+                              {isInactive
+                                ? "weight 0 inactive"
+                                : archiveStatus.archiveReason ?? "archived"}
                             </span>
-                            {archiveStatus.duplicate && (
+                            {!isInactive && archiveStatus.duplicate && (
                               <p className="mt-1 wrap-break-word text-rose-500">
                                 similarTo {archiveStatus.duplicate.memoryId}
                               </p>

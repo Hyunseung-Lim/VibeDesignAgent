@@ -389,12 +389,12 @@ export function MemoryForgettingView({
           <ListErrorNotice message={error} />
           {isLoading ? (
             <ListStatusText>
-              Forgetting 후보를 자동 archive하는 중입니다.
+              Forgetting 후보를 불러오는 중입니다.
             </ListStatusText>
           ) : candidates.length === 0 ? (
             <ListStatusText>
-              새로 자동 archive된 후보가 없습니다. 전체 archive 기록은 Archived
-              탭에서 확인할 수 있습니다.
+              현재 forgetting 후보가 없습니다. 전체 archive 기록은 Archived 탭에서
+              확인할 수 있습니다.
             </ListStatusText>
           ) : (
             <div className="space-y-2">
@@ -437,23 +437,21 @@ export function MemoryForgettingView({
       detail={
         isLoading ? (
           <DetailPlaceholder>
-            Forgetting 후보를 자동 archive하는 중입니다.
+            Forgetting 후보를 불러오는 중입니다.
           </DetailPlaceholder>
         ) : !selected ? (
-          <DetailPlaceholder>
-            새로 자동 archive된 후보가 없습니다.
-          </DetailPlaceholder>
+          <DetailPlaceholder>현재 forgetting 후보가 없습니다.</DetailPlaceholder>
         ) : (
           <div className="space-y-5">
             <section className="space-y-3">
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
                   <h3 className="text-lg font-semibold text-foreground">
-                    Auto archived memory
+                    Forgetting candidate
                   </h3>
                   <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
-                    Forgetting 기준에 걸린 semantic item을 자동 soft
-                    archive했습니다.
+                    Forgetting 기준에 걸린 semantic item입니다. Weight 0
+                    memory는 자동 archive하지 않고 inactive로 취급합니다.
                   </p>
                 </div>
               </div>

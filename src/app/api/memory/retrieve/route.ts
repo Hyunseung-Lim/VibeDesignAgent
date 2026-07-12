@@ -15,6 +15,7 @@ import {
   ensureFreshMemoryEmbeddings,
   MEMORY_EMBEDDING_MODEL,
 } from "@/lib/server/memoryEmbedding";
+import { isActiveMemoryDocument } from "@/lib/server/memoryActivity";
 
 export const runtime = "nodejs";
 
@@ -211,7 +212,7 @@ function v2Candidate(uid: string, doc: MemoryDoc): Candidate | null {
       ? doc.semantic.trim()
       : null;
   const embedding = numberArray(doc.embedding);
-  if (!episodic || timestampValue(doc.archivedAt)) return null;
+  if (!episodic || !isActiveMemoryDocument(doc)) return null;
   return {
     id: doc.id,
     memoryId: doc.id,
