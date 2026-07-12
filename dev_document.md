@@ -167,7 +167,7 @@
 ### 4.7 메모리 (Memory)
 
 - **생성 단위**: 세션 중 interaction turn마다 `/api/memory/drafts`에서 keyword, factual episode, semantic을 생성한다. semantic은 사용자 성향/선호/작업 방식에 대한 근거 기반 한 문장 insight이며, `interpretationConfidence`는 생성·저장하지 않는다. `semantic`이 canonical 필드이고 `semanticJson`은 배열 호환용으로 함께 저장한다. before-session profile에서 사용자가 직접 제공한 durable 정보와 기존 memory의 semantic도 계속 읽는다 `[현행 2026-06-28 → 15.135]`
-- **Assistant response feedback**: assistant bubble의 좋아요/싫어요는 optional reason dialog를 열고, 제출 시 기존 `/api/memory/drafts` 경로로 `feedback-{messageId}` draft를 만든다. input은 vote, reason, 평가된 답변의 원래 질문(최대 1000자), output은 평가된 assistant answer(최대 6000자)이며 재투표는 같은 draft id를 덮어쓴다. Feedback turn은 `MEMORY_ENCODE_PROMPT`에 전용 addendum을 붙여 답변 요약이 아니라 평가 신호 기반 episode/semantic을 생성하고, `agentActionCategory`는 `assistant_feedback`으로 저장한다 `[현행 2026-07-13 → 15.207]`
+- **Assistant response feedback**: assistant bubble의 좋아요/싫어요는 optional reason dialog를 열고, 제출 시 기존 `/api/memory/drafts` 경로로 `feedback-{messageId}` draft를 만든다. input은 vote, reason, 평가된 답변의 원래 질문(최대 1000자), output은 평가된 assistant answer(최대 6000자)이며 재투표는 같은 draft id를 덮어쓴다. Feedback turn은 `MEMORY_ENCODE_PROMPT`에 전용 addendum을 붙여 답변 요약이 아니라 평가 신호 기반 episode/semantic을 생성하고, `agentActionCategory`는 `assistant_feedback`으로 저장한다. 또한 해당 assistant 답변의 `reviewTurns/{messageId}.retrieved` 또는 retrieval log에서 실제 prompt/retrieval에 쓰인 memory id를 찾아 좋아요는 memory weight `+0.08`, 싫어요는 `-0.04`를 적용한다. 같은 feedback draft를 재저장할 때는 이전 적용분과 새 적용분의 차이만 반영해 중복 누적을 막고, 결과 metadata는 draft의 `assistantFeedbackWeightAdjustment`에 남긴다 `[현행 2026-07-13 → 15.207/15.210]`
 - **Source normalization**: 채팅 turn의 인용 text, link, 선택 UI result, 첨부 image를 structured source로 draft API에 전달한다. link는 메모리 turn 해석 전에 source 유형별로 lazy 분석해 별도 cache artifact로 저장한다. article/case study와 live product는 실제 URL의 case·기능·포지셔닝·UX 근거를 분리하고, visual curation/style source는 선택 이미지 자체를 vision 분석한다. 이후 user input·agent output과 source evidence를 함께 해석해 이번 interaction의 참고 측면과 적용 범위를 정한다. 세부 구현은 `src/lib/server/referenceSourceAnalysis.ts`와 `src/lib/server/memorySourceNormalization.ts`를 직접 확인한다 `[현행 2026-06-23 → 15.110]`
 - **첨부 이미지 시각 선호**: image normalizer는 의도적으로 선호를 추론하지 않으므로, 첨부 이미지가 주도한 목업 생성이 성공해 derivedDesignStyle가 나오면 그 스타일을 `style-image-preference-{turnId}` interactionId(category `style_image_preference`)로 별도 draft에 기록한다. 이번 미션/시안 맥락의 session-scoped evidence로 담고 전역 취향으로 단정하지 않는다 `[현행 2026-06-21 → 15.101]`
 - **확정 시점**: 사용자가 `세션 종료` 버튼을 누르면 `/api/memory/complete-session`에서 draft를 통합해 장기 메모리로 저장
@@ -4188,3 +4188,11 @@ type ChatPlan = {
 - 수정: `/main/[missionId]`의 memory retrieve 호출이 명시적으로 `limit: 10`을 보내도록 변경했다. 클라이언트가 값을 보내지 않는 다른 호출도 서버 기본값 10을 따른다.
 - 수정: `/api/chat`의 retrieved memory prompt compact cap을 episodic/semantic 각각 8에서 10으로 올려, top 10 retrieved memory가 prompt 단계에서 임의로 8개로 잘리지 않게 했다.
 - 유지: planner input의 `semanticMemories`는 의도 판단용 compact signal이라 기존 최대 5개를 유지했다. 실제 답변 prompt에는 `chatRetrievedMemoryPrompt`를 통해 top 10 retrieval context가 들어간다.
+
+### 15.210 Assistant feedback 기반 memory weight 조정 `[implemented 2026-07-13]`
+
+- 배경(Notion `좋아 싫어요 weight 반영`): assistant 답변에 좋아요/싫어요를 남길 때, 평가 memory draft만 만들고 끝내면 실제로 그 답변에 사용된 retrieved memory의 점수가 변하지 않았다. 스펙은 좋아요 `+0.08`, 싫어요 `-0.04`를 해당 답변에 호출된 memory들에 반영하라는 내용이었다.
+- 수정: `src/lib/server/memoryFeedbackWeights.ts`를 추가해 feedback 대상 assistant message의 `reviewTurns/{messageId}.retrieved`를 우선 읽고, 없으면 같은 mission의 `memoryRetrievalLogs`에서 `interactionId` 또는 `userMessageId`로 fallback해 target memory id를 찾는다.
+- 수정: `/api/memory/drafts`는 `assistantFeedback` payload가 있는 draft 저장 시 target memory weight를 clamp 0..1 범위에서 조정한다. `archivedAt`이 있는 memory는 건드리지 않는다.
+- 재투표/재저장: 같은 `feedback-{messageId}` draft를 다시 저장할 때 기존 `assistantFeedbackWeightAdjustment`를 읽어 이전 적용분과 새 적용분의 차이만 반영한다. 같은 vote에서 reason만 바꾼 경우 weight는 재적용되지 않는다.
+- 관측성: draft document에 `assistantFeedbackWeightAdjustment`를 저장해 적용된 vote, deltaPerMemory, target memory ids, per-memory before/after delta, skippedReason을 확인할 수 있게 했다.

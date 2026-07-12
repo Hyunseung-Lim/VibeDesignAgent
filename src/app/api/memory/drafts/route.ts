@@ -23,6 +23,10 @@ import {
   analyzeReferenceSource,
   referenceSourceAnalysisFingerprint,
 } from "@/lib/server/referenceSourceAnalysis";
+import {
+  applyAssistantFeedbackWeightAdjustment,
+  type AssistantFeedbackWeightAdjustment,
+} from "@/lib/server/memoryFeedbackWeights";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -373,6 +377,30 @@ export async function POST(request: Request) {
     ],
   });
   const encoded = parseMemory(completion.choices[0]?.message?.content ?? "{}");
+  const previousAssistantFeedbackWeightAdjustment =
+    existingDraft?.assistantFeedbackWeightAdjustment &&
+    typeof existingDraft.assistantFeedbackWeightAdjustment === "object" &&
+    !Array.isArray(existingDraft.assistantFeedbackWeightAdjustment)
+      ? (existingDraft.assistantFeedbackWeightAdjustment as AssistantFeedbackWeightAdjustment)
+      : null;
+  const assistantFeedbackWeightAdjustment = assistantFeedback
+    ? await applyAssistantFeedbackWeightAdjustment({
+        uid: user.localId,
+        missionId,
+        vote: assistantFeedback.vote,
+        targetMessageId: assistantFeedback.targetMessageId || null,
+        targetUserMessageId: assistantFeedback.targetUserMessageId || null,
+        previousAdjustment: previousAssistantFeedbackWeightAdjustment,
+        token,
+        now: createdAt,
+      }).catch((error) => {
+        console.warn(
+          "[memory/drafts] assistant feedback weight adjustment failed",
+          error,
+        );
+        return previousAssistantFeedbackWeightAdjustment;
+      })
+    : null;
   await patchFirestoreDocument(
     draftPath,
     {
@@ -411,6 +439,7 @@ export async function POST(request: Request) {
             targetUserMessageId: assistantFeedback.targetUserMessageId,
           }
         : null,
+      assistantFeedbackWeightAdjustment,
       status: "draft",
       createdAt,
     },
