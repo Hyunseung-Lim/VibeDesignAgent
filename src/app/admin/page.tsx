@@ -59,11 +59,8 @@ import {
 } from "@/components/admin/admin-user-card";
 import { missionProgressFromSession } from "@/lib/mission-progress";
 import {
-  MemoryArchivedView,
-  MemoryForgettingView,
   MemoryRetrievalsView,
   formatScore,
-  type MemoryForgettingCandidate,
   type MemoryRetrievalLog,
 } from "@/components/admin/memory-log-views";
 import { MemoryClusterList } from "@/components/memory/memory-cluster-list";
@@ -129,9 +126,7 @@ type SemanticFilter = "all" | "with" | "without";
 type MemoryViewTab =
   | "table"
   | "clusters"
-  | "retrievals"
-  | "forgetting"
-  | "archived";
+  | "retrievals";
 type DestructiveAdminAction =
   | { type: "mission"; missionId: string; title: string }
   | {
@@ -481,23 +476,6 @@ export default function AdminPage() {
   const [isLoadingMemoryRetrievals, setIsLoadingMemoryRetrievals] =
     useState(false);
   const [memoryRetrievalError, setMemoryRetrievalError] = useState<
-    string | null
-  >(null);
-  const [memoryForgettingCandidates, setMemoryForgettingCandidates] = useState<
-    MemoryForgettingCandidate[]
-  >([]);
-  const [memoryArchivedItems, setMemoryArchivedItems] = useState<
-    MemoryForgettingCandidate[]
-  >([]);
-  const [selectedMemoryForgettingId, setSelectedMemoryForgettingId] = useState<
-    string | null
-  >(null);
-  const [selectedMemoryArchivedId, setSelectedMemoryArchivedId] = useState<
-    string | null
-  >(null);
-  const [isLoadingMemoryForgetting, setIsLoadingMemoryForgetting] =
-    useState(false);
-  const [memoryForgettingError, setMemoryForgettingError] = useState<
     string | null
   >(null);
   const [isDeletingMemory, setIsDeletingMemory] = useState(false);
@@ -1379,16 +1357,6 @@ export default function AdminPage() {
     memoryRetrievalLogs.find((log) => log.id === selectedMemoryRetrievalId) ??
     memoryRetrievalLogs[0] ??
     null;
-  const selectedMemoryForgetting =
-    memoryForgettingCandidates.find(
-      (candidate) => candidate.id === selectedMemoryForgettingId,
-    ) ??
-    memoryForgettingCandidates[0] ??
-    null;
-  const selectedMemoryArchived =
-    memoryArchivedItems.find((item) => item.id === selectedMemoryArchivedId) ??
-    memoryArchivedItems[0] ??
-    null;
   const clusterInputSignature = useMemo(() => {
     const rawSignature = [...clusterableMemoryItems]
       .sort((a, b) => a.id.localeCompare(b.id))
@@ -1517,64 +1485,6 @@ export default function AdminPage() {
     };
   }, [memoryModal, memoryViewTab]);
 
-  useEffect(() => {
-    setMemoryForgettingError(null);
-    if (
-      !memoryModal ||
-      (memoryViewTab !== "forgetting" && memoryViewTab !== "archived")
-    )
-      return;
-    let cancelled = false;
-    const loadForgettingCandidates = async () => {
-      const token = await getAdminToken();
-      if (!token) return;
-      setIsLoadingMemoryForgetting(true);
-      try {
-        const res = await fetch(
-          `/api/admin/users/${encodeURIComponent(
-            memoryModal.userId,
-          )}/memory/forgetting`,
-          { headers: { Authorization: `Bearer ${token}` } },
-        );
-        const data = await res.json().catch(() => null);
-        if (!res.ok) {
-          throw new Error(data?.error ?? "forgetting candidates load failed");
-        }
-        if (cancelled) return;
-        const candidates = Array.isArray(data?.candidates)
-          ? (data.candidates as MemoryForgettingCandidate[])
-          : [];
-        const archived = Array.isArray(data?.archived)
-          ? (data.archived as MemoryForgettingCandidate[])
-          : [];
-        setMemoryForgettingCandidates(candidates);
-        setMemoryArchivedItems(archived);
-        setSelectedMemoryForgettingId((current) =>
-          current && candidates.some((candidate) => candidate.id === current)
-            ? current
-            : (candidates[0]?.id ?? null),
-        );
-        setSelectedMemoryArchivedId((current) =>
-          current && archived.some((item) => item.id === current)
-            ? current
-            : (archived[0]?.id ?? null),
-        );
-      } catch (error) {
-        if (cancelled) return;
-        console.error(
-          "[admin] memory forgetting candidates load failed",
-          error,
-        );
-        setMemoryForgettingError("Forgetting 후보를 불러오지 못했습니다.");
-      } finally {
-        if (!cancelled) setIsLoadingMemoryForgetting(false);
-      }
-    };
-    loadForgettingCandidates();
-    return () => {
-      cancelled = true;
-    };
-  }, [memoryModal, memoryViewTab]);
   const resetMemoryFilters = () => {
     setMemoryActionFilter("all");
     setMemorySemanticFilter("all");
@@ -1951,16 +1861,6 @@ export default function AdminPage() {
                     {memoryRetrievalLogs.length} retrieval logs
                   </span>
                 )}
-                {memoryViewTab === "forgetting" && (
-                  <span className="ml-auto text-xs text-muted-foreground">
-                    {memoryForgettingCandidates.length} auto archived
-                  </span>
-                )}
-                {memoryViewTab === "archived" && (
-                  <span className="ml-auto text-xs text-muted-foreground">
-                    {memoryArchivedItems.length} archived memories
-                  </span>
-                )}
               </div>
             </div>
             <div className="h-[calc(100vh-14rem)] min-h-80">
@@ -2101,22 +2001,6 @@ export default function AdminPage() {
                   isLoading={isLoadingMemoryRetrievals}
                   error={memoryRetrievalError}
                   onSelect={setSelectedMemoryRetrievalId}
-                />
-              ) : memoryViewTab === "forgetting" ? (
-                <MemoryForgettingView
-                  candidates={memoryForgettingCandidates}
-                  selected={selectedMemoryForgetting}
-                  isLoading={isLoadingMemoryForgetting}
-                  error={memoryForgettingError}
-                  onSelect={setSelectedMemoryForgettingId}
-                />
-              ) : memoryViewTab === "archived" ? (
-                <MemoryArchivedView
-                  items={memoryArchivedItems}
-                  selected={selectedMemoryArchived}
-                  isLoading={isLoadingMemoryForgetting}
-                  error={memoryForgettingError}
-                  onSelect={setSelectedMemoryArchivedId}
                 />
               ) : (
                 <div className="flex h-full min-h-0 overflow-hidden">

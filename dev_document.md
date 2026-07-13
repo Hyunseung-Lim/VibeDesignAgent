@@ -179,7 +179,7 @@
 - **Retrieval 쿼리 구성**: `[user text] + Mission: [parentMissionTitle] + Active idea: [description]` — 선택된 옵션 이름(페르소나 등)은 제외해 임베딩 노이즈 방지
 - **Admin 관측**: researcher가 `/admin/users/[uid]/memory`에서 `/agent`와 동일한 user별 memory cluster graph/list/detail을 확인 가능. detail panel은 그래프 왼쪽에 있고 cluster list는 요약 없이 색상·제목·개수만 표시한다 `[현행 2026-06-27 → 15.130]` `[stale 2026-06-30 → 15.169: cluster list가 main 세션리뷰와 동일한 review presentation(rounded card + 색상 count rail + 접기 rail)로 통일됨]` Before-session memory의 detail card 제목은 분리된 `source.sourceText`를 우선 표시하고, `Original input`은 별도 강조 없이 전체 `input` rawMarkdown을 표시한다 `[현행 2026-07-07 → 15.195/15.196]`
 - **Retrieval MVP**: v0.1.2 memory document에 embedding과 `weight` metadata를 저장하고, retrieve된 memory의 weight를 천천히 올림. retrieval과 clustering은 `memories_0_1_2.embedding`에 저장된 같은 vector를 사용하며, 누락·stale embedding은 공용 `memoryEmbedding` helper가 같은 텍스트 계약으로 재생성해 원본 memory document에 write-back한다. During-session embedding 입력은 keyword + episodic + semantic + link이고, before-session embedding 입력은 source.sourceText + keyword + episodic + semantic + link다. 원문 interaction input/output은 embedding에서 제외한다. 계약이 바뀌면 `embeddingSource` 태그를 올려(`during_session_record_text_v2`, `before_session_unit_text`) 기존 embedding을 stale 처리해 재생성한다 `[현행 2026-07-10 → 15.194/15.201]`
-- **Forgetting / inactive memory**: active memory의 기준은 `archivedAt`이 없고 `weight > 0`인 문서다. `archivedAt`이 있거나 `weight <= 0`인 memory는 Firestore에는 남지만 retrieval, current `/agent`/admin graph, clustering 입력에서 기본 제외된다. `weight <= 0`은 별도 archive write 없이 inactive로 취급한다. Review turn에 이미 저장된 retrieved memory는 리뷰 패널에서 회색 inactive 상태로 표시되고, 세션 리뷰 graph에서는 해당 세션에서 생성·참조·duplicate 관계로 사라진 archived memory를 cluster snapshot과 별개로 unclustered node에 포함해 클릭 시 detail panel에서 내용을 확인할 수 있게 한다. Archived/inactive node와 detail card는 더 옅은 회색 톤으로 렌더한다. Admin forgetting 탭은 legacy 후보 조회용으로 남고 GET 호출이 자동 archive를 수행하지 않는다 `[현행 2026-07-13 → 15.202/15.211/15.235]`
+- **Forgetting / inactive memory**: active memory의 기준은 `archivedAt`이 없고 `weight > 0`인 문서다. `archivedAt`이 있거나 `weight <= 0`인 memory는 Firestore에는 남지만 retrieval, current `/agent`/admin graph, clustering 입력에서 기본 제외된다. `weight <= 0`은 별도 archive write 없이 inactive로 취급한다. Idle decay는 retrieve되지 않은 memory를 0까지 낮출 수 있으며 기본 loss는 `0.006`, memory 수 multiplier 적용 후 상한은 `0.012`다. Review turn에 이미 저장된 retrieved memory는 리뷰 패널에서 회색 inactive 상태로 표시되고, 세션 리뷰 graph에서는 해당 세션에서 생성·참조·duplicate 관계로 사라진 archived memory를 cluster snapshot과 별개로 unclustered node에 포함해 클릭 시 detail panel에서 내용을 확인할 수 있게 한다. Archived/inactive node와 detail card는 더 옅은 회색 톤으로 렌더한다. Admin forgetting 후보/수동 archive route와 탭은 제거되었고, admin은 current graph/table/retrieval log 중심으로 관측한다 `[현행 2026-07-13 → 15.202/15.211/15.235/15.241]`
 
 #### 메모리 클러스터링
 
@@ -306,8 +306,6 @@ type Idea = {
 | `POST /api/admin/missions`                        | 미션 생성 (관리자 전용)                                                 |
 | `GET /api/admin/users/[uid]/memory`               | admin memory/cluster view용 메모리 조회                                 |
 | `GET/POST /api/admin/users/[uid]/memory/clusters` | admin memory cluster 캐시 조회/생성                                     |
-| `GET /api/admin/users/[uid]/memory/forgetting`    | legacy forgetting 후보와 archived 기록 조회                             |
-| `PATCH /api/admin/users/[uid]/memory/forgetting`  | semantic item soft archive                                              |
 
 ---
 
@@ -435,9 +433,9 @@ FIREBASE_MEASUREMENT_ID
 - retrieval 쿼리에서 `effectiveMissionTitle`(`parentTitle - optionName` 형태) 대신 `parentMissionTitle`만 사용
 - 페르소나 이름("🎬 Daniel Park" 등) 같은 옵션 타이틀이 임베딩 벡터에 노이즈를 추가하는 문제 제거
 
-### 10.8 Memory forgetting/archive MVP
+### 10.8 Memory forgetting/archive MVP `[stale 2026-07-13 → 15.211/15.241: admin forgetting 후보/수동 archive route와 탭 제거, weight 0 inactive 방식으로 전환]`
 
-- `GET /api/admin/users/[uid]/memory/forgetting`에서 archive candidate를 산출하고 자동 soft archive
+- `GET /api/admin/users/[uid]/memory/forgetting`에서 archive candidate를 산출하고 자동 soft archive `[stale 2026-07-13 → 15.241: route 제거]`
 - 후보 기준:
   - v0.1.2 memory `weight < 0.28`
   - memory embedding cosine similarity가 `0.92` 이상인 duplicate pair
@@ -551,11 +549,11 @@ lastRetrievedAt = now;
 - 그 턴에 retrieve되지 않은 memory:
 
 ```typescript
-weight = max(0.1, weight - idleDecayWeightLoss(memoryCount))
+weight = max(0, weight - idleDecayWeightLoss(memoryCount))
 ```
 
 - weight가 너무 빠르게 커지지 않도록 sublinear growth 사용
-- idle decay 기본값은 턴당 `0.005`, memory 수가 많으면 multiplier를 적용하되 상한 `0.006`을 넘기지 않음
+- idle decay 기본값은 턴당 `0.005`, memory 수가 많으면 multiplier를 적용하되 상한 `0.006`을 넘기지 않음 `[stale 2026-07-13 → 15.241: 기본값 0.006, 상한 0.012, floor 0]`
 - 벽시계 시간이 아니라 retrieval 턴 기준으로만 감소시켜 3일 formative 실험의 시간 기반 archive 금지 원칙과 분리
 
 #### 6단계: 망각 후보 산출
@@ -918,7 +916,7 @@ archiveReason = "low-weight" | "duplicate" | "manual";
 
 - [x] 메모리 전체 크기를 weight decay 계산에 반영
   - 목표: memory 수가 많을수록 idle decay 폭을 아주 조금 증가시켜 전체 memory 크기가 무한히 커지지 않게 함
-  - 현재 기준: retrieve되지 않은 memory는 retrieval 턴마다 `weight - 0.005`, floor `0.1`
+  - 현재 기준: retrieve되지 않은 memory는 retrieval 턴마다 `weight - 0.006`, multiplier 적용 시 최대 `0.012`, floor `0`
   - 구현: candidate memory count별 idle decay multiplier 적용
     - `< 60`: `1.0x`
     - `60~119`: `1.15x`
@@ -2622,7 +2620,7 @@ type ChatPlan = {
 
 - #1 weight 사용 기반 decay (`memory/retrieve/route.ts`):
   - 실측(`scripts/analyze_memory_weights.py`): 5명/132개 중 weight 0.5 미만 0개, 60%가 0.5 동결, delta 이벤트 증가 +835 vs 감소 −61. 기존 near-miss decay(rank 6~20 & sim≥0.55)가 현실에선 거의 안 걸려 단조 증가만 함.
-  - 수정: near-miss decay 제거 → **idle decay** 도입. retrieve마다 그 턴에 retrieve 안 된 모든 메모리에 −0.005(메모리 많을수록 최대 −0.006), 하한 0.1. 벽시계 무관(사용 기반)이라 3일 formative 실험의 "시간 기반 archive 금지" 원칙과 충돌 없음. 로그 필드 `idleDecayDeltas`/`idleDecayCount`로 교체(외부 consumer 없음). 튜닝 상수 `IDLE_DECAY_WEIGHT_LOSS`.
+  - 수정: near-miss decay 제거 → **idle decay** 도입. retrieve마다 그 턴에 retrieve 안 된 모든 메모리에 −0.005(메모리 많을수록 최대 −0.006), 하한 0.1. 벽시계 무관(사용 기반)이라 3일 formative 실험의 "시간 기반 archive 금지" 원칙과 충돌 없음. 로그 필드 `idleDecayDeltas`/`idleDecayCount`로 교체(외부 consumer 없음). 튜닝 상수 `IDLE_DECAY_WEIGHT_LOSS`. `[stale 2026-07-13 → 15.241: idle decay 기본값 0.006, 상한 0.012, 하한 0으로 조정해 사용되지 않는 memory가 결국 inactive가 되게 함]`
   - 2026-07-01 Notion Weight 코멘트 반영: 요청이 한 번도 없는 memory가 세션당 평균 10~20 retrieval 턴에서 약 5~10% 낮아지도록 기본 idle decay를 0.003에서 0.005로 조정.
   - read-only 분석 스크립트 `scripts/analyze_memory_weights.py` 추가(weight 분포/증감 이벤트 집계).
 
@@ -4205,7 +4203,13 @@ type ChatPlan = {
 - 수정: `memoryActivity.ts`를 추가해 active memory 기준을 `archivedAt` 없음 + `weight > 0`으로 공통화했다. `loadUserMemoryItems`, `/api/memory/retrieve`, `memoryForgetting` 후보 산출, assistant feedback weight 조정이 이 기준을 사용한다.
 - 수정: weight 0 memory는 retrieval 후보에서 제외되어 prompt에 들어가지 않고, retrieval weight/retrievedCount도 더 이상 바뀌지 않는다. Self/admin current graph와 clustering 입력도 `loadUserMemoryItems` 기본 필터를 통해 weight 0 memory를 제외한다.
 - 수정: `/api/memory/archive-status`가 `inactive`, `inactiveReason`, `weight`를 반환한다. Review turn에 이미 저장된 retrieved memory는 데이터로 남아 있으므로, main review side panel에서 inactive memory를 회색 카드와 `inactive` badge로 표시한다.
-- 수정: `GET /api/admin/users/[uid]/memory/forgetting`은 더 이상 후보를 자동 archive하지 않고 후보/archived 기록만 조회한다. Admin forgetting view 문구도 자동 archive 완료가 아니라 후보 조회로 바꿨다. PATCH 기반 manual archive route는 legacy/debug API로 유지한다.
+- 수정: `GET /api/admin/users/[uid]/memory/forgetting`은 더 이상 후보를 자동 archive하지 않고 후보/archived 기록만 조회한다. Admin forgetting view 문구도 자동 archive 완료가 아니라 후보 조회로 바꿨다. PATCH 기반 manual archive route는 legacy/debug API로 유지한다. `[stale 2026-07-13 → 15.241: route와 admin forgetting/archived tab 제거]`
+
+### 15.241 Forgetting idle decay floor 0 and legacy admin removal `[implemented 2026-07-13]`
+
+- 배경(Notion `RE forgetting` 0713): weight 0이면 inactive가 되는 계약은 있었지만 idle decay가 floor 0.1에서 멈춰 사용되지 않는 memory가 0까지 내려가지 않았다. 또한 `IDLE_DECAY_WEIGHT_LOSS = 0.01`과 `IDLE_DECAY_MAX_WEIGHT_LOSS = 0.006` 조합 때문에 memory count multiplier가 항상 max cap에 막혀 dead code가 됐다. Admin forgetting 후보/수동 archive route와 탭도 레거시로 남아 있었다.
+- 수정: `/api/memory/retrieve`의 idle decay 파라미터를 `IDLE_DECAY_WEIGHT_LOSS = 0.006`, `IDLE_DECAY_MAX_WEIGHT_LOSS = 0.012`, `MIN_MEMORY_WEIGHT = 0`으로 조정했다. 이제 retrieve되지 않은 memory는 idle decay만으로도 0까지 내려가 inactive가 될 수 있고, 60/120/200개 이상 multiplier가 실제 loss에 반영된다.
+- 제거: `/api/admin/users/[uid]/memory/forgetting` route와 admin memory modal의 forgetting/archived tab, 후보 load state/effect를 제거했다. Low-weight 후보를 수동 archive하는 레거시 경로 대신 `weight <= 0` inactive 계약을 source of truth로 둔다.
 
 ### 15.212 Planner intent 이름 정리 `[implemented 2026-07-13]`
 
