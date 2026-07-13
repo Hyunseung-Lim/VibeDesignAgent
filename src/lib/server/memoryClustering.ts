@@ -21,10 +21,15 @@ export const GRAPH_MIN_SIMILARITY = 0.58;
 export const GRAPH_STRONG_SIMILARITY = 0.74;
 export const GRAPH_KNN_EDGES = 3;
 export const GRAPH_COMMUNITY_ITERATIONS = 30;
+export const GRAPH_GIANT_COMMUNITY_RATIO = 0.34;
+export const GRAPH_GIANT_COMMUNITY_MIN_SIZE = 8;
+export const GRAPH_GIANT_SPLIT_MIN_SIMILARITY = 0.62;
+export const GRAPH_GIANT_SPLIT_STRONG_SIMILARITY = 0.78;
+export const GRAPH_GIANT_SPLIT_KNN_EDGES = 1;
 export const CLUSTER_COLLECTION = "memoryClusters";
 export const CLUSTER_SNAPSHOT_COLLECTION = "memoryClusterSnapshots";
 export const CLUSTERING_METHOD_VERSION =
-  "similarity-graph-v4-stored-memory-embedding";
+  "similarity-graph-v5-centered-embedding";
 export const MEMORY_VERSION = "0.1.2";
 export const ONBOARDING_MISSION_ID = "onboarding";
 
@@ -116,7 +121,12 @@ export type GraphCommunityDiagnostics = {
     averageDegree: number;
     singletonCount: number;
     rawCommunityCount: number;
+    splitCommunityCount: number;
     cappedCommunityCount: number;
+    meanCentered: boolean;
+    giantCommunityRatio: number;
+    giantCommunityLimit: number;
+    oversizedCommunityCount: number;
   };
 };
 
@@ -346,6 +356,23 @@ function cosineSimilarity(a: number[], b: number[]) {
   return sum;
 }
 
+function meanCenteredVectors(vectors: number[][]) {
+  const dimension = vectors[0]?.length ?? 0;
+  if (dimension === 0 || vectors.length <= 1) return vectors.map((vector) => [...vector]);
+
+  const mean = Array.from({ length: dimension }, () => 0);
+  vectors.forEach((vector) => {
+    for (let i = 0; i < dimension; i += 1) mean[i] += vector[i] ?? 0;
+  });
+  for (let i = 0; i < dimension; i += 1) mean[i] /= vectors.length;
+
+  return vectors.map((vector) =>
+    l2Normalize(
+      Array.from({ length: dimension }, (_, i) => (vector[i] ?? 0) - mean[i]),
+    ),
+  );
+}
+
 function meanVector(vectors: number[][], dimension: number) {
   const mean = Array.from({ length: dimension }, () => 0);
   vectors.forEach((vector) => {
@@ -507,7 +534,17 @@ async function generateClusterGraph(
   };
 }
 
-function similarityEdges(vectors: number[][]) {
+function similarityEdges(
+  vectors: number[][],
+  options: {
+    minSimilarity?: number;
+    strongSimilarity?: number;
+    knnEdges?: number;
+  } = {},
+) {
+  const minSimilarity = options.minSimilarity ?? GRAPH_MIN_SIMILARITY;
+  const strongSimilarity = options.strongSimilarity ?? GRAPH_STRONG_SIMILARITY;
+  const knnEdges = options.knnEdges ?? GRAPH_KNN_EDGES;
   const pairEdges: SimilarityEdge[] = [];
   const edgesByKey = new Map<string, SimilarityEdge>();
   const neighborCandidates = vectors.map(() => [] as SimilarityEdge[]);
@@ -528,12 +565,12 @@ function similarityEdges(vectors: number[][]) {
     if (!existing || edge.weight > existing.weight) edgesByKey.set(key, edge);
   };
 
-  pairEdges.filter((e) => e.weight >= GRAPH_STRONG_SIMILARITY).forEach(addEdge);
+  pairEdges.filter((e) => e.weight >= strongSimilarity).forEach(addEdge);
   neighborCandidates.forEach((edges) =>
     edges
-      .filter((e) => e.weight >= GRAPH_MIN_SIMILARITY)
+      .filter((e) => e.weight >= minSimilarity)
       .sort((a, b) => b.weight - a.weight)
-      .slice(0, GRAPH_KNN_EDGES)
+      .slice(0, knnEdges)
       .forEach(addEdge),
   );
 
@@ -578,11 +615,105 @@ function labelPropagationCommunities(nodeCount: number, edges: SimilarityEdge[])
   return labels;
 }
 
+function groupsFromLabels(labels: number[]) {
+  const byLabel = new Map<number, number[]>();
+  labels.forEach((label, itemIndex) => {
+    const current = byLabel.get(label) ?? [];
+    current.push(itemIndex);
+    byLabel.set(label, current);
+  });
+  return Array.from(byLabel.values()).sort((a, b) => b.length - a.length);
+}
+
+function giantCommunityLimit(nodeCount: number) {
+  return Math.max(
+    GRAPH_GIANT_COMMUNITY_MIN_SIZE,
+    Math.ceil(nodeCount * GRAPH_GIANT_COMMUNITY_RATIO),
+  );
+}
+
+function splitByFarthestAnchors(group: number[], vectors: number[][]) {
+  if (group.length <= 2) return [group];
+
+  let anchorA = 0;
+  let anchorB = 1;
+  let lowestSimilarity = Infinity;
+  for (let a = 0; a < vectors.length; a += 1) {
+    for (let b = a + 1; b < vectors.length; b += 1) {
+      const similarity = cosineSimilarity(vectors[a], vectors[b]);
+      if (similarity < lowestSimilarity) {
+        lowestSimilarity = similarity;
+        anchorA = a;
+        anchorB = b;
+      }
+    }
+  }
+
+  const left: number[] = [];
+  const right: number[] = [];
+  group.forEach((itemIndex, localIndex) => {
+    const leftSimilarity = cosineSimilarity(vectors[localIndex], vectors[anchorA]);
+    const rightSimilarity = cosineSimilarity(vectors[localIndex], vectors[anchorB]);
+    if (leftSimilarity >= rightSimilarity) left.push(itemIndex);
+    else right.push(itemIndex);
+  });
+
+  if (left.length === 0 || right.length === 0) {
+    const midpoint = Math.ceil(group.length / 2);
+    return [group.slice(0, midpoint), group.slice(midpoint)];
+  }
+
+  return [left, right].sort((a, b) => b.length - a.length);
+}
+
+function splitOversizedCommunity(
+  group: number[],
+  vectors: number[][],
+  maxGroupSize: number,
+  depth = 0,
+): number[][] {
+  if (group.length <= maxGroupSize || group.length <= 2 || depth >= 4) {
+    return [group];
+  }
+
+  const localVectors = meanCenteredVectors(group.map((itemIndex) => vectors[itemIndex]));
+  const localEdges = similarityEdges(localVectors, {
+    minSimilarity: GRAPH_GIANT_SPLIT_MIN_SIMILARITY,
+    strongSimilarity: GRAPH_GIANT_SPLIT_STRONG_SIMILARITY,
+    knnEdges: GRAPH_GIANT_SPLIT_KNN_EDGES,
+  });
+  const localLabels = labelPropagationCommunities(group.length, localEdges);
+  let localGroups = groupsFromLabels(localLabels).map((localGroup) =>
+    localGroup.map((localIndex) => group[localIndex]),
+  );
+
+  if (localGroups.length <= 1) {
+    localGroups = splitByFarthestAnchors(group, localVectors);
+  }
+
+  return localGroups.flatMap((localGroup) =>
+    splitOversizedCommunity(localGroup, vectors, maxGroupSize, depth + 1),
+  );
+}
+
+function splitOversizedCommunities(groups: number[][], vectors: number[][], nodeCount: number) {
+  const maxGroupSize = giantCommunityLimit(nodeCount);
+  return groups
+    .flatMap((group) => splitOversizedCommunity(group, vectors, maxGroupSize))
+    .filter((group) => group.length > 0)
+    .sort((a, b) => b.length - a.length);
+}
+
 function communityCentroid(group: number[], vectors: number[][], dimension: number) {
   return meanVector(group.map((i) => vectors[i]), dimension);
 }
 
-function mergeCommunities(groups: number[][], vectors: number[][], maxCount: number) {
+function mergeCommunities(
+  groups: number[][],
+  vectors: number[][],
+  maxCount: number,
+  maxMergedSize?: number,
+) {
   const dimension = vectors[0]?.length ?? 0;
   const merged = groups.map((g) => [...g]);
   while (merged.length > maxCount) {
@@ -590,8 +721,17 @@ function mergeCommunities(groups: number[][], vectors: number[][], maxCount: num
     const centroids = merged.map((g) => communityCentroid(g, vectors, dimension));
     for (let a = 0; a < merged.length; a += 1) {
       for (let b = a + 1; b < merged.length; b += 1) {
+        if (maxMergedSize && merged[a].length + merged[b].length > maxMergedSize) continue;
         const similarity = cosineSimilarity(centroids[a], centroids[b]);
         if (similarity > bestSimilarity) { bestSimilarity = similarity; bestA = a; bestB = b; }
+      }
+    }
+    if (bestSimilarity === -Infinity) {
+      for (let a = 0; a < merged.length; a += 1) {
+        for (let b = a + 1; b < merged.length; b += 1) {
+          const similarity = cosineSimilarity(centroids[a], centroids[b]);
+          if (similarity > bestSimilarity) { bestSimilarity = similarity; bestA = a; bestB = b; }
+        }
       }
     }
     merged[bestA] = [...merged[bestA], ...merged[bestB]];
@@ -601,22 +741,25 @@ function mergeCommunities(groups: number[][], vectors: number[][], maxCount: num
 }
 
 export function buildGraphCommunityClusters(items: ClusterInputItem[], vectors: number[][]) {
-  const edges = similarityEdges(vectors);
+  const clusteringVectors = meanCenteredVectors(vectors);
+  const edges = similarityEdges(clusteringVectors);
   const graphEdges: ClusterGraphEdge[] = edges.map((edge) => ({
     sourceId: items[edge.source]?.id ?? "",
     targetId: items[edge.target]?.id ?? "",
     weight: Number(edge.weight.toFixed(6)),
   })).filter((edge) => edge.sourceId && edge.targetId);
   const labels = labelPropagationCommunities(items.length, edges);
-  const byLabel = new Map<number, number[]>();
-  labels.forEach((label, itemIndex) => {
-    const current = byLabel.get(label) ?? [];
-    current.push(itemIndex);
-    byLabel.set(label, current);
-  });
-
-  const rawGroups = Array.from(byLabel.values()).sort((a, b) => b.length - a.length);
-  const groups = mergeCommunities(rawGroups, vectors, MAX_GRAPH_CLUSTER_COUNT);
+  const rawGroups = groupsFromLabels(labels);
+  const giantLimit = giantCommunityLimit(items.length);
+  const oversizedCommunityCount = rawGroups.filter((group) => group.length > giantLimit).length;
+  const splitGroups = splitOversizedCommunities(rawGroups, clusteringVectors, items.length);
+  const mergedGroups = mergeCommunities(
+    splitGroups,
+    clusteringVectors,
+    MAX_GRAPH_CLUSTER_COUNT,
+    giantLimit,
+  );
+  const groups = splitOversizedCommunities(mergedGroups, clusteringVectors, items.length);
   const singletonCount = rawGroups.filter((g) => g.length === 1).length;
 
   return {
@@ -625,7 +768,7 @@ export function buildGraphCommunityClusters(items: ClusterInputItem[], vectors: 
       .sort((a, b) => b.length - a.length)
       .map((itemIndexes, index) => {
         const clusterItems = itemIndexes.map((i) => items[i]);
-        const clusterVectors = itemIndexes.map((i) => vectors[i]);
+        const clusterVectors = itemIndexes.map((i) => clusteringVectors[i]);
         return {
           id: `graph-${clusterId(index)}`,
           label: "Memory Pattern",
@@ -654,7 +797,12 @@ export function buildGraphCommunityClusters(items: ClusterInputItem[], vectors: 
         averageDegree: Number(((edges.length * 2) / Math.max(items.length, 1)).toFixed(3)),
         singletonCount,
         rawCommunityCount: rawGroups.length,
+        splitCommunityCount: splitGroups.length,
         cappedCommunityCount: groups.length,
+        meanCentered: true,
+        giantCommunityRatio: GRAPH_GIANT_COMMUNITY_RATIO,
+        giantCommunityLimit: giantLimit,
+        oversizedCommunityCount,
       },
     } satisfies GraphCommunityDiagnostics,
   };

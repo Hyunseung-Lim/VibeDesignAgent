@@ -3758,7 +3758,9 @@ export default function MainScreenPage() {
           ...a,
           ideaId: a.ideaId ?? firstIdeaId,
           htmlStatus:
-            !a.html && a.stitchScreenId ? "pending" : a.htmlStatus,
+            !a.html && a.stitchScreenId && !isSyntheticStitchScreenId(a.stitchScreenId)
+              ? "pending"
+              : a.htmlStatus,
         }));
         const normalizedLoaded = normalizeArtboardPositionsByIdea(loaded);
         setArtboards(normalizedLoaded);
@@ -3775,7 +3777,12 @@ export default function MainScreenPage() {
         const pid = session.stitchProjectId;
         if (pid) {
           normalizedLoaded.forEach((a: Artboard) => {
-            if (!a.stitchScreenId || a.html) return;
+            if (
+              !a.stitchScreenId ||
+              a.html ||
+              isSyntheticStitchScreenId(a.stitchScreenId)
+            )
+              return;
             fetchStitchScreenHtml(pid, a.stitchScreenId)
               .then((html) =>
                 setArtboards((prev) =>
@@ -4230,9 +4237,7 @@ export default function MainScreenPage() {
         Boolean(selectedOptionId) ||
         Boolean(effectiveTimerStartedAt);
       if (!hasSnapshotContent) return;
-      const artboardsToSave = artboards.map((a) =>
-        a.stitchScreenId ? { ...a, html: "" } : a,
-      );
+      const artboardsToSave = artboards;
       await setDoc(
         sessionRefFor(userId),
         cleanForFirestore({

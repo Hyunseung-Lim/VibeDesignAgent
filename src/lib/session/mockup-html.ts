@@ -52,7 +52,7 @@ export function injectHeightReporter(
     Object.defineProperty(window, 'innerWidth',  { get: function(){ return initialVw; }, configurable: true });
   } catch(e) {}
   function replaceVh(s) {
-    var unitRe = /(\d*\.?\d+)(svh|dvh|lvh|vh)/g;
+    var unitRe = /(\\d*\\.?\\d+)(svh|dvh|lvh|vh)/g;
     return s.replace(unitRe, function(_, n) { return (parseFloat(n) * initialVh / 100).toFixed(1) + 'px'; });
   }
   /* Rewrite vh in already-parsed stylesheet rules. Runtime CSS frameworks (e.g.
@@ -110,6 +110,7 @@ export function injectHeightReporter(
   function setBox(el, w, h) {
     if (w != null) el.style.setProperty('width', w + 'px', 'important');
     el.style.setProperty('height', h + 'px', 'important');
+    el.style.setProperty('min-height', h + 'px', 'important');
     if (pinned) pinned.add(el); else el.setAttribute('data-vda-pinned', '');
   }
   /* Pin every image that already has a laid-out box at the device viewport. */
