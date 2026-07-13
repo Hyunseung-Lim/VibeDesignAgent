@@ -2308,6 +2308,202 @@ function stringifyDebugJson(value: unknown) {
   }
 }
 
+type MemoryReviewIntroPanelProps = {
+  initialAnswers?: MemoryReviewAnswers | null;
+  saveStatus: "idle" | "saving" | "saved" | "error";
+  onContinue: (answers: MemoryReviewAnswers) => Promise<boolean> | boolean;
+};
+
+const MEMORY_REVIEW_INTRO_KEYS = {
+  sessionUnderstanding: "session_understanding",
+  memoryHelpfulness: "memory_helpfulness",
+  futureMemory: "future_memory_freeform",
+} as const;
+
+function initialReviewRating(
+  answers: MemoryReviewAnswers | null | undefined,
+  key: string,
+) {
+  const value = Number(answers?.[key]?.text ?? 0);
+  return value >= 1 && value <= 7 ? value : null;
+}
+
+function initialReviewText(
+  answers: MemoryReviewAnswers | null | undefined,
+  key: string,
+) {
+  return answers?.[key]?.text ?? "";
+}
+
+function MemoryReviewIntroPanel({
+  initialAnswers,
+  saveStatus,
+  onContinue,
+}: MemoryReviewIntroPanelProps) {
+  const [understandingRating, setUnderstandingRating] = useState<number | null>(
+    () =>
+      initialReviewRating(
+        initialAnswers,
+        MEMORY_REVIEW_INTRO_KEYS.sessionUnderstanding,
+      ),
+  );
+  const [helpfulnessRating, setHelpfulnessRating] = useState<number | null>(
+    () =>
+      initialReviewRating(
+        initialAnswers,
+        MEMORY_REVIEW_INTRO_KEYS.memoryHelpfulness,
+      ),
+  );
+  const [futureMemoryText, setFutureMemoryText] = useState(() =>
+    initialReviewText(initialAnswers, MEMORY_REVIEW_INTRO_KEYS.futureMemory),
+  );
+  const [isSaving, setIsSaving] = useState(false);
+
+  const selectUnderstandingRating = useCallback((value: number) => {
+    setUnderstandingRating(value);
+  }, []);
+
+  const selectHelpfulnessRating = useCallback((value: number) => {
+    setHelpfulnessRating(value);
+  }, []);
+
+  const ratingButtonClass = (selected: boolean) =>
+    `h-7 w-7 rounded-full border text-[11px] font-semibold transition ${
+      selected
+        ? "border-slate-900 bg-slate-900 text-white"
+        : "border-slate-200 bg-white text-slate-500 hover:border-slate-400 hover:text-slate-900"
+    }`;
+
+  const canContinue =
+    understandingRating !== null &&
+    helpfulnessRating !== null &&
+    futureMemoryText.trim().length > 0;
+
+  const submitIntro = async () => {
+    if (!canContinue || isSaving) return;
+    const answers: MemoryReviewAnswers = {
+      [MEMORY_REVIEW_INTRO_KEYS.sessionUnderstanding]: {
+        text: String(understandingRating),
+        mentions: [],
+      },
+      [MEMORY_REVIEW_INTRO_KEYS.memoryHelpfulness]: {
+        text: String(helpfulnessRating),
+        mentions: [],
+      },
+      [MEMORY_REVIEW_INTRO_KEYS.futureMemory]: {
+        text: futureMemoryText.trim(),
+        mentions: [],
+      },
+    };
+    setIsSaving(true);
+    try {
+      const saved = await onContinue(answers);
+      if (!saved) setIsSaving(false);
+    } catch {
+      setIsSaving(false);
+    }
+  };
+
+  const renderRatingRow = (
+    value: number | null,
+    onSelect: (value: number) => void,
+  ) => (
+    <div className="space-y-1">
+      <div className="flex items-center justify-between gap-1.5">
+        {Array.from({ length: 7 }, (_, index) => index + 1).map((score) => (
+          <button
+            key={score}
+            type="button"
+            aria-pressed={value === score}
+            aria-label={`${score}점`}
+            onClick={() => onSelect(score)}
+            className={ratingButtonClass(value === score)}
+          >
+            {score}
+          </button>
+        ))}
+      </div>
+      <div className="grid grid-cols-3 text-[9px] font-medium leading-tight text-slate-400">
+        <span>1 전혀 아니다</span>
+        <span className="text-center">4 보통</span>
+        <span className="text-right">7 매우 그렇다</span>
+      </div>
+    </div>
+  );
+
+  return (
+    <section className="shrink-0 border-b border-slate-300 bg-slate-100 px-4 py-2 lg:px-6">
+      <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-[0_8px_18px_rgba(15,23,42,0.08)]">
+      <div className="flex items-center gap-3 border-b border-slate-200 px-4 py-2">
+        <div className="min-w-0">
+          <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+            Review Part 1
+          </p>
+          <h2 className="text-sm font-semibold tracking-normal text-slate-950">
+            오늘 세션 돌아보기
+          </h2>
+          <p className="mt-0.5 text-[11px] leading-snug text-slate-500">
+            채팅을 보면서 오늘 세션에서 무엇을 기억하면 좋을지 먼저 정리해 주세요.
+          </p>
+        </div>
+      </div>
+      <div className="grid gap-3 px-4 py-2.5 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(18rem,1.1fr)]">
+        <section className="space-y-1.5 rounded-lg border border-slate-200 bg-slate-50/70 p-3">
+          <p className="text-[11px] font-medium leading-snug text-slate-700">
+            1. 오늘 세션에서, 에이전트가 내 취향과 작업 방식을 잘 이해하고 있다고 느꼈습니다.
+          </p>
+          {renderRatingRow(
+            understandingRating,
+            selectUnderstandingRating,
+          )}
+        </section>
+        <section className="space-y-1.5 rounded-lg border border-slate-200 bg-slate-50/70 p-3">
+          <p className="text-[11px] font-medium leading-snug text-slate-700">
+            2. 오늘 세션에서, 에이전트의 메모리 덕분에 작업이 더 수월했습니다.
+          </p>
+          {renderRatingRow(
+            helpfulnessRating,
+            selectHelpfulnessRating,
+          )}
+        </section>
+        <section className="space-y-1.5 rounded-lg border border-slate-200 bg-slate-50/70 p-3">
+          <p className="text-[11px] font-medium leading-snug text-slate-700">
+            3. 오늘 세션 내용 중, 에이전트가 앞으로 기억해 주었으면 하는 것들을 자유롭게 적어주세요.
+          </p>
+          <Textarea
+            value={futureMemoryText}
+            onChange={(event) => {
+              setFutureMemoryText(event.target.value);
+            }}
+            placeholder="예: 내가 반복해서 요청한 방식, 좋았던 결과, 다음 작업에도 이어졌으면 하는 기준"
+            className="min-h-16 resize-none text-xs leading-relaxed"
+          />
+        </section>
+      </div>
+      <div className="flex items-center justify-between gap-3 border-t border-slate-200 px-4 py-2">
+        <p className="min-w-0 text-[11px] text-slate-400">
+          {saveStatus === "error"
+            ? "저장 실패"
+            : saveStatus === "saving" || isSaving
+              ? "저장 중..."
+              : saveStatus === "saved"
+                ? "저장됨"
+                : "Draft"}
+        </p>
+        <button
+          type="button"
+          onClick={submitIntro}
+          disabled={!canContinue || isSaving || saveStatus === "saving"}
+          className="rounded-full bg-slate-900 px-4 py-1.5 text-xs font-semibold text-white transition hover:bg-slate-700 disabled:cursor-not-allowed disabled:bg-slate-300"
+        >
+          {isSaving ? "저장 중..." : "다음 →"}
+        </button>
+      </div>
+      </div>
+    </section>
+  );
+}
+
 function RetrievalLogViewer({
   turnId,
   retrievalLog,
@@ -2850,6 +3046,7 @@ export default function MainScreenPage() {
   const [memoryGraphFilter, setMemoryGraphFilter] =
     useState<MemoryGraphFilter>("all");
   const [isMemoryDiffOpen, setIsMemoryDiffOpen] = useState(false);
+  const [isMemoryReviewIntroOpen, setIsMemoryReviewIntroOpen] = useState(false);
   const [selectedGraphMemoryId, setSelectedGraphMemoryId] = useState<
     string | null
   >(null);
@@ -3169,14 +3366,32 @@ export default function MainScreenPage() {
   }, [isViewingAsAdmin, missionId]);
   const handleMemoryReviewAnswersChange = useCallback(
     (answers: MemoryReviewAnswers) => {
-      memoryReviewAnswersRef.current = answers;
+      const nextAnswers = {
+        ...memoryReviewAnswersRef.current,
+        ...answers,
+      };
+      memoryReviewAnswersRef.current = nextAnswers;
       memoryReviewDirtyRef.current = true;
-      setMemoryReviewAnswers(answers);
+      setMemoryReviewAnswers(nextAnswers);
       if (memoryReviewSaveStatus !== "saving") {
         setMemoryReviewSaveStatus("idle");
       }
     },
     [memoryReviewSaveStatus],
+  );
+  const continueMemoryReviewFromIntro = useCallback(
+    async (introAnswers: MemoryReviewAnswers) => {
+      const nextAnswers = {
+        ...memoryReviewAnswersRef.current,
+        ...introAnswers,
+      };
+      const saved = await saveMemoryReviewFeedback(false, nextAnswers);
+      if (!saved) return false;
+      setIsMemoryReviewIntroOpen(false);
+      setIsMemoryDiffOpen(true);
+      return true;
+    },
+    [saveMemoryReviewFeedback],
   );
   const activeOption =
     missionOptions.find((option) => option.id === selectedOptionId) ??
@@ -6875,8 +7090,16 @@ export default function MainScreenPage() {
   const openSessionReview = useCallback(() => {
     setIsCompletingSession(false);
     setSessionCompletionReady(false);
-    router.push(`/main/${missionId}?review=1`);
-  }, [missionId, router]);
+    if (isViewingAsAdmin) {
+      setIsMemoryDiffOpen(true);
+      return;
+    }
+    setIsMemoryReviewIntroOpen(true);
+    setRightPanelTab("chat");
+    if (!isReviewMode) {
+      router.push(`/main/${missionId}?review=1`);
+    }
+  }, [isReviewMode, isViewingAsAdmin, missionId, router]);
   const completeSession = async () => {
     if (isReadOnly || isCompletingSession || sessionCompleted || !missionId)
       return;
@@ -7922,6 +8145,7 @@ export default function MainScreenPage() {
               onMentionModeChange={setMemoryReviewMentionMode}
               onMentionFocus={focusReviewMention}
               initialAnswers={memoryReviewAnswers ?? undefined}
+              startNumber={4}
               saveStatus={memoryReviewSaveStatus}
               submittedAt={memoryReviewSubmittedAt}
               readOnly={isViewingAsAdmin}
@@ -7929,7 +8153,11 @@ export default function MainScreenPage() {
               onSubmitFeedback={
                 isViewingAsAdmin
                   ? undefined
-                  : (answers) => saveMemoryReviewFeedback(true, answers)
+                  : (answers) =>
+                      saveMemoryReviewFeedback(true, {
+                        ...memoryReviewAnswersRef.current,
+                        ...answers,
+                      })
               }
               onSubmitted={() => router.push("/lobby")}
             />
@@ -8300,7 +8528,7 @@ export default function MainScreenPage() {
           {showReviewAnnotations && (
             <button
               type="button"
-              onClick={() => setIsMemoryDiffOpen(true)}
+              onClick={openSessionReview}
               className="inline-flex cursor-pointer items-center gap-2 rounded-full bg-slate-900 px-3 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-700"
             >
               <BrainIcon size={15} />
@@ -8419,11 +8647,7 @@ export default function MainScreenPage() {
               <div className="mt-6 flex gap-2">
                 <button
                   type="button"
-                  onClick={() => {
-                    setIsCompletingSession(false);
-                    setSessionCompletionReady(false);
-                    setIsMemoryDiffOpen(true);
-                  }}
+                  onClick={openSessionReview}
                   className="flex-1 rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-slate-700"
                 >
                   리뷰 보기
@@ -8439,6 +8663,14 @@ export default function MainScreenPage() {
             )}
           </div>
         </div>
+      )}
+
+      {isMemoryReviewIntroOpen && !isViewingAsAdmin && (
+        <MemoryReviewIntroPanel
+          initialAnswers={memoryReviewAnswers}
+          saveStatus={memoryReviewSaveStatus}
+          onContinue={continueMemoryReviewFromIntro}
+        />
       )}
 
       {isInitialSessionContextPending ? (

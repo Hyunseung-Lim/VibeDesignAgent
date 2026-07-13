@@ -13,38 +13,34 @@ type ReviewQuestion = {
 
 const REVIEW_QUESTIONS: ReviewQuestion[] = [
   {
-    id: "stored_correctly",
+    id: "expected_memory_present",
     label:
-      "이번 세션에서 에이전트가 기억했으면 하는 걸 먼저 떠올려보세요. 그게 실제로 저장돼 있나요?",
+      "어떤 내용이 기대했던 대로 기억되어 있었나요?",
   },
   {
-    id: "unnecessary_memory",
+    id: "wrong_or_unnecessary_memory",
     label:
-      "기억된 내용 중 저장되지 말았어야 하는 정보 또는 수정이 필요한 내용이 있나요? 어떻게 수정(제외)되어야 할까요?",
+      "메모리를 둘러보며, 틀렸거나, 필요 없거나, 바란 것과 다르게 기억된 정보가 있나요? 없으면 없음이라고 적어주세요.",
   },
   {
     id: "missing_memory",
-    label: "에이전트가 기억했어야 하는데 빠진 정보가 있나요? (있으면 무엇)",
+    label:
+      "반대로, 있어야 하는데 없는 정보가 있나요? 없으면 없음이라고 적어주세요.",
   },
   {
-    id: "missing_signal",
+    id: "correction_preference",
     label:
-      "빠진 정보가 있다면, 에이전트가 해당 정보를 어떻게 습득하기를 바라나요? (ⓐ 내가 말해줬어야 / ⓑ 작업 보고 알아챘어야 / ⓒ 물어봤어야)",
+      "위 내용이 있다면, 어떻게 바로 잡히기를 원하시나요? 예: 직접 고치고 싶다, 말해서 고치게 하고 싶다, 이후 작업을 보며 스스로 반영했으면 한다.",
   },
   {
-    id: "cluster_grouping",
+    id: "overall_memory_accuracy",
     label:
-      "메모리 클러스터가 묶인 단위가 적절한가요? (너무 뭉뚱그려졌다 / 너무 잘게 / 기준이 달랐으면) 그 이유는 무엇인가요?",
+      "저장된 메모리가 전반적으로 나를 정확하게 반영하고 있습니다. 1에서 7 사이로 답하고, 이유가 있으면 함께 적어주세요.",
   },
   {
-    id: "agent_understanding_progress",
+    id: "new_self_insight",
     label:
-      "지난번보다 에이전트가 나를 더 잘 이해한다고 느꼈나요? 그 이유는 무엇인가요?",
-  },
-  {
-    id: "implicit_insight",
-    label:
-      "에이전트의 메모리를 통해 평소 몰랐던 내 취향·작업 습관 중 새로 알게 된 게 있나요?",
+      "메모리를 보면서, 평소 미처 몰랐던 나의 취향이나 작업 습관을 새로 알게 된 것이 있나요? 없으면 없음이라고 적어주세요.",
   },
 ];
 
@@ -65,6 +61,7 @@ type MemoryReviewPanelProps = {
   onMentionModeChange: (active: boolean) => void;
   onMentionFocus: (target: Omit<MemoryReviewMentionTarget, "eventId">) => void;
   initialAnswers?: MemoryReviewAnswers;
+  startNumber?: number;
   saveStatus?: "idle" | "saving" | "saved" | "error";
   submittedAt?: number | null;
   readOnly?: boolean;
@@ -173,6 +170,7 @@ export function MemoryReviewPanel({
   onMentionModeChange,
   onMentionFocus,
   initialAnswers,
+  startNumber = 1,
   saveStatus = "idle",
   submittedAt = null,
   readOnly = false,
@@ -413,7 +411,7 @@ export function MemoryReviewPanel({
   const renderReadOnlyQuestion = (question: ReviewQuestion, index: number) => (
     <div key={question.id} className="space-y-1.5">
       <span className="block text-xs font-medium leading-relaxed text-slate-700">
-        {index + 1}. {question.label}
+        {startNumber + index}. {question.label}
       </span>
       <div
         ref={(element) => {
@@ -442,7 +440,7 @@ export function MemoryReviewPanel({
     ) : (
     <div key={question.id} className="space-y-1.5">
       <span className="block text-xs font-medium leading-relaxed text-slate-700">
-        {index + 1}. {question.label}
+        {startNumber + index}. {question.label}
         <span className="ml-0.5 text-rose-500">*</span>
       </span>
       <div
@@ -538,11 +536,14 @@ export function MemoryReviewPanel({
     <aside className="relative m-3 ml-0 flex w-92 shrink-0 flex-col overflow-hidden rounded-lg border border-slate-200 bg-white shadow-xl xl:w-96">
       <div className="border-b border-slate-200 px-4 py-4">
         <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">
-          Review
+          Review Part 2
         </p>
         <h2 className="mt-1 text-xl font-semibold tracking-normal text-slate-950">
           메모리 리뷰하기
         </h2>
+        <p className="mt-2 text-xs leading-relaxed text-slate-500">
+          방금 적어주신 내용과 관련해, 에이전트는 지금 이렇게 기억하고 있어요.
+        </p>
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-4">
