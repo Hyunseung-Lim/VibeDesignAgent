@@ -1314,6 +1314,10 @@ export default function AdminPage() {
           weight: row.weight ?? null,
           embedding: row.embedding,
           timestamp: row.timestamp ?? 0,
+          archivedAt:
+            row.semanticItems?.find((item) => item.archivedAt)?.archivedAt ??
+            null,
+          archiveReason: null,
           keyword: row.keyword ?? row.keywords ?? [],
           keywords: row.keyword ?? row.keywords ?? [],
           row,

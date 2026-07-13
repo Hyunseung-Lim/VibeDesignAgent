@@ -135,6 +135,42 @@ function missionIdFor(item: ClusterGraphItem, memory: MemoryItem | null) {
   );
 }
 
+function isInactiveMemoryItem(
+  item: ClusterGraphItem,
+  memory: MemoryItem | null,
+) {
+  if (memory?.archivedAt || item.archivedAt) return true;
+  if ((memory?.weight ?? item.weight) != null && (memory?.weight ?? item.weight)! <= 0) {
+    return true;
+  }
+  return item.action?.split(" / ").includes("archived") ?? false;
+}
+
+function clusterGraphItemFromMemory(memory: MemoryItem): ClusterGraphItem {
+  return {
+    id: memory.id,
+    memoryId: memory.id,
+    semantic: memory.semantic ?? "",
+    episodic: memory.episodic ?? "",
+    input: memory.input ?? "",
+    output: memory.output ?? "",
+    originalInteractionContent: memory.originalInteractionContent ?? "",
+    action: memory.action ?? "",
+    preferenceSignal: memory.preferenceSignal,
+    sourceType: memory.sourceType,
+    weight: memory.weight,
+    embedding: memory.embedding,
+    timestamp: memory.timestamp ?? 0,
+    archivedAt: memory.archivedAt,
+    archiveReason: memory.archiveReason,
+    keyword: memory.keywords,
+    keywords: memory.keywords,
+    row: {
+      source: memory.source ?? undefined,
+    },
+  };
+}
+
 export function MemoryClusterSidePanel({
   cluster,
   items,
@@ -153,6 +189,17 @@ export function MemoryClusterSidePanel({
   const hasRelatedPreferenceSignal = hasPreferenceSignalAction(
     cluster?.relatedActions.join(" / "),
   );
+  const selectedMemory =
+    selectedMemoryId != null
+      ? memories.find((candidate) => candidate.id === selectedMemoryId) ?? null
+      : null;
+  const selectedFallbackItem =
+    selectedMemory && !items.some((item) => item.id === selectedMemory.id)
+      ? clusterGraphItemFromMemory(selectedMemory)
+      : null;
+  const displayItems = selectedFallbackItem
+    ? [selectedFallbackItem, ...items]
+    : items;
   // Scroll the detail list to the item selected from the graph/node click.
   const selectedItemRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
@@ -170,17 +217,21 @@ export function MemoryClusterSidePanel({
         </p>
         <div className="mt-2 flex flex-wrap items-center gap-2">
           <h2 className="min-w-0 flex-1 truncate text-base font-semibold text-foreground">
-            {cluster?.label ?? "클러스터를 선택하세요"}
+            {cluster?.label ?? (selectedFallbackItem ? "선택된 메모리" : "클러스터를 선택하세요")}
           </h2>
-          {cluster ? (
+          {cluster || selectedFallbackItem ? (
             <Badge variant="secondary" className="rounded-full">
-              {items.length}
+              {displayItems.length}
             </Badge>
           ) : null}
         </div>
         {cluster ? (
           <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
             {cluster.summary}
+          </p>
+        ) : selectedFallbackItem ? (
+          <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
+            이 메모리는 현재 클러스터 cache에 포함되지 않았지만 상세 정보는 확인할 수 있습니다.
           </p>
         ) : (
           <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
@@ -200,9 +251,9 @@ export function MemoryClusterSidePanel({
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-5">
-        {cluster ? (
+        {cluster || displayItems.length > 0 ? (
           <div className="space-y-5">
-            {relatedActionLabels.length > 0 || hasRelatedPreferenceSignal ? (
+            {cluster && (relatedActionLabels.length > 0 || hasRelatedPreferenceSignal) ? (
               <section>
                 <p className="mb-2 text-xs font-semibold uppercase text-muted-foreground">
                   관련 작업
@@ -228,14 +279,15 @@ export function MemoryClusterSidePanel({
 
             <section>
               <p className="mb-2 text-xs font-semibold uppercase text-muted-foreground">
-                Included memory items
+                {cluster ? "Included memory items" : "Selected memory"}
               </p>
               <div className="space-y-2">
-                {items.map((item) => {
+                {displayItems.map((item) => {
                   const selected = item.id === selectedMemoryId;
                   const memory =
                     memories.find((candidate) => candidate.id === item.id) ??
                     null;
+                  const inactive = isInactiveMemoryItem(item, memory);
                   const weightLabel = formatWeight(item.weight);
                   const isNewThisSession =
                     item.action?.split(" / ").includes("promoted") ?? false;
@@ -278,10 +330,14 @@ export function MemoryClusterSidePanel({
                           selected
                             ? mentionMode
                               ? "border-amber-300 bg-amber-50 shadow-sm ring-2 ring-amber-100"
-                              : "border-slate-400 bg-slate-100 shadow-sm ring-2 ring-slate-200"
+                              : inactive
+                                ? "border-slate-200 bg-slate-50/70 shadow-sm ring-2 ring-slate-100"
+                                : "border-slate-400 bg-slate-100 shadow-sm ring-2 ring-slate-200"
                             : mentionMode
                               ? "cursor-pointer border-amber-100 bg-amber-50/50 hover:border-amber-300 hover:bg-amber-50"
-                              : "cursor-pointer border-border bg-background hover:border-slate-300 hover:bg-muted/30"
+                              : inactive
+                                ? "cursor-pointer border-slate-100 bg-slate-50/40 text-slate-400 hover:border-slate-200 hover:bg-slate-50/70"
+                                : "cursor-pointer border-border bg-background hover:border-slate-300 hover:bg-muted/30"
                         }`}
                       >
                       <div className="mb-2 flex items-center justify-between gap-3 text-[11px] text-muted-foreground">
@@ -324,9 +380,22 @@ export function MemoryClusterSidePanel({
                             {preferenceSignalLabel}
                           </Badge>
                         ) : null}
-                        {memory?.archivedAt ? (
-                          <Badge variant="secondary" className="rounded-full">
-                            보관됨
+                        {memory?.archivedAt || item.archivedAt ? (
+                          <Badge
+                            variant="secondary"
+                            className="rounded-full border-slate-200 bg-slate-50 text-slate-400"
+                          >
+                            삭제됨
+                          </Badge>
+                        ) : null}
+                        {!(memory?.archivedAt || item.archivedAt) &&
+                        (memory?.weight ?? item.weight) != null &&
+                        (memory?.weight ?? item.weight)! <= 0 ? (
+                          <Badge
+                            variant="secondary"
+                            className="rounded-full border-slate-200 bg-slate-50 text-slate-400"
+                          >
+                            비활성
                           </Badge>
                         ) : null}
                       </div>
@@ -348,7 +417,9 @@ export function MemoryClusterSidePanel({
                                 className={`min-w-0 whitespace-pre-line leading-relaxed ${
                                   selected
                                     ? "wrap-anywhere select-text font-semibold text-slate-950"
-                                    : "line-clamp-2 text-foreground"
+                                    : inactive
+                                      ? "line-clamp-2 text-slate-400"
+                                      : "line-clamp-2 text-foreground"
                                 }`}
                               >
                                 {memoryHeadlineText(item)}

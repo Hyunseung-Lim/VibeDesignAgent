@@ -3044,6 +3044,7 @@ export default function MainScreenPage() {
     );
     return cumulativeGraphMemories.filter((item) => {
       if (!item.archivedAt) return false;
+      if (item.source?.missionId === missionId) return true;
       if (referencedIds.has(item.id) || promotedIds.has(item.id)) return true;
       const duplicateOf = item.duplicateOf ?? item.duplicate?.memoryId ?? null;
       return Boolean(
@@ -3051,7 +3052,7 @@ export default function MainScreenPage() {
           (referencedIds.has(duplicateOf) || promotedIds.has(duplicateOf)),
       );
     });
-  }, [sessionMemorySummary, cumulativeGraphMemories]);
+  }, [sessionMemorySummary, cumulativeGraphMemories, missionId]);
   const beforeSessionMemoryImpact = useMemo(() => {
     const referencedByMemoryId = new Map(
       sessionMemorySummary.referenced.map((item) => [item.memoryId, item] as const),
@@ -7624,12 +7625,16 @@ export default function MainScreenPage() {
     const shouldUseSnapshotItems = !activeClusterSnapshot.isFallback;
     const visibleMemoryItems = cumulativeGraphMemories.filter(
       (memory) => {
-        if (shouldUseSnapshotItems && !snapshotItemIds.has(memory.id)) {
-          return false;
-        }
         const referenced = referencedByMemoryId.get(memory.id);
         const isPromoted = promotedIds.has(memory.id);
         const isArchived = sessionArchivedIds.has(memory.id);
+        if (
+          shouldUseSnapshotItems &&
+          !snapshotItemIds.has(memory.id) &&
+          !(isArchived && memoryGraphPhase === "after")
+        ) {
+          return false;
+        }
         if (memoryGraphPhase === "before" && isPromoted) return false;
         if (memoryGraphPhase === "before" && isArchived && !referenced) {
           return false;
@@ -7679,6 +7684,8 @@ export default function MainScreenPage() {
           .join(" / "),
         preferenceSignal: memory.preferenceSignal ?? null,
         timestamp: memory.timestamp ?? 0,
+        archivedAt: memory.archivedAt ?? null,
+        archiveReason: memory.archiveReason ?? null,
         weight: phaseWeight ?? null,
         embedding: memory.embedding,
         keyword: memoryKeywords,
@@ -7814,11 +7821,17 @@ export default function MainScreenPage() {
         }
       };
       const addedCountByClusterId: Record<string, number> = {};
+      const removedCountByClusterId: Record<string, number> = {};
       for (const cluster of graphClusters) {
         const added = cluster.itemIds.filter((id) =>
           promotedIds.has(id),
         ).length;
         if (added > 0) addedCountByClusterId[cluster.id] = added;
+        const removed =
+          memoryGraphPhase === "after"
+            ? cluster.itemIds.filter((id) => sessionArchivedIds.has(id)).length
+            : 0;
+        if (removed > 0) removedCountByClusterId[cluster.id] = removed;
       }
       return (
         <div className="flex h-full w-full min-h-0 gap-4 overflow-hidden">
@@ -7829,6 +7842,7 @@ export default function MainScreenPage() {
             hasStaleCache={false}
             isRegenerating={false}
             addedCountByClusterId={addedCountByClusterId}
+            removedCountByClusterId={removedCountByClusterId}
             onSelectCluster={(clusterId) => {
               setSelectedSessionGraphClusterId(clusterId);
               setSelectedGraphMemoryId(null);

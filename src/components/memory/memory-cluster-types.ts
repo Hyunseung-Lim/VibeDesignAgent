@@ -54,6 +54,8 @@ export type ClusterGraphItem = {
   weight?: number | null;
   embedding?: number[];
   timestamp: number;
+  archivedAt?: number | null;
+  archiveReason?: string | null;
   keyword: string[];
   keywords: string[];
   row: {

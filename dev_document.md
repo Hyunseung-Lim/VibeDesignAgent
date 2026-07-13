@@ -179,7 +179,7 @@
 - **Retrieval 쿼리 구성**: `[user text] + Mission: [parentMissionTitle] + Active idea: [description]` — 선택된 옵션 이름(페르소나 등)은 제외해 임베딩 노이즈 방지
 - **Admin 관측**: researcher가 `/admin/users/[uid]/memory`에서 `/agent`와 동일한 user별 memory cluster graph/list/detail을 확인 가능. detail panel은 그래프 왼쪽에 있고 cluster list는 요약 없이 색상·제목·개수만 표시한다 `[현행 2026-06-27 → 15.130]` `[stale 2026-06-30 → 15.169: cluster list가 main 세션리뷰와 동일한 review presentation(rounded card + 색상 count rail + 접기 rail)로 통일됨]` Before-session memory의 detail card 제목은 분리된 `source.sourceText`를 우선 표시하고, `Original input`은 별도 강조 없이 전체 `input` rawMarkdown을 표시한다 `[현행 2026-07-07 → 15.195/15.196]`
 - **Retrieval MVP**: v0.1.2 memory document에 embedding과 `weight` metadata를 저장하고, retrieve된 memory의 weight를 천천히 올림. retrieval과 clustering은 `memories_0_1_2.embedding`에 저장된 같은 vector를 사용하며, 누락·stale embedding은 공용 `memoryEmbedding` helper가 같은 텍스트 계약으로 재생성해 원본 memory document에 write-back한다. During-session embedding 입력은 keyword + episodic + semantic + link이고, before-session embedding 입력은 source.sourceText + keyword + episodic + semantic + link다. 원문 interaction input/output은 embedding에서 제외한다. 계약이 바뀌면 `embeddingSource` 태그를 올려(`during_session_record_text_v2`, `before_session_unit_text`) 기존 embedding을 stale 처리해 재생성한다 `[현행 2026-07-10 → 15.194/15.201]`
-- **Forgetting / inactive memory**: active memory의 기준은 `archivedAt`이 없고 `weight > 0`인 문서다. `archivedAt`이 있거나 `weight <= 0`인 memory는 Firestore에는 남지만 retrieval, current `/agent`/admin graph, clustering 입력에서 기본 제외된다. `weight <= 0`은 별도 archive write 없이 inactive로 취급하며, review turn에 이미 저장된 retrieved memory는 리뷰 패널에서 회색 inactive 상태로 표시된다. Admin forgetting 탭은 legacy 후보 조회용으로 남고 GET 호출이 자동 archive를 수행하지 않는다 `[현행 2026-07-13 → 15.202/15.211]`
+- **Forgetting / inactive memory**: active memory의 기준은 `archivedAt`이 없고 `weight > 0`인 문서다. `archivedAt`이 있거나 `weight <= 0`인 memory는 Firestore에는 남지만 retrieval, current `/agent`/admin graph, clustering 입력에서 기본 제외된다. `weight <= 0`은 별도 archive write 없이 inactive로 취급한다. Review turn에 이미 저장된 retrieved memory는 리뷰 패널에서 회색 inactive 상태로 표시되고, 세션 리뷰 graph에서는 해당 세션에서 생성·참조·duplicate 관계로 사라진 archived memory를 cluster snapshot과 별개로 unclustered node에 포함해 클릭 시 detail panel에서 내용을 확인할 수 있게 한다. Archived/inactive node와 detail card는 더 옅은 회색 톤으로 렌더한다. Admin forgetting 탭은 legacy 후보 조회용으로 남고 GET 호출이 자동 archive를 수행하지 않는다 `[현행 2026-07-13 → 15.202/15.211/15.235]`
 
 #### 메모리 클러스터링
 
@@ -4373,3 +4373,10 @@ type ChatPlan = {
 - 유지: label propagation, KNN 3개 edge, strong/min similarity threshold, 최대 16개 centroid merge 구조는 그대로 둔다. 34% community 재분할과 farthest-anchor 강제 split은 의미 품질에 부작용이 있을 수 있어 이번 1차 적용에서는 넣지 않는다.
 - 캐시: clustering method version을 `similarity-graph-v5-centered-embedding`으로 올리고, latest cache fallback도 current method version만 읽게 해 기존 v4 cache와 섞이지 않게 했다. 저장 memory 삭제나 re-embedding 없이 cluster 재생성만으로 새 로직을 확인할 수 있다.
 - 진단: `graphDiagnostics.graph.meanCentered`를 남겨 재생성 결과가 centered vector 기반인지 확인할 수 있게 했다.
+
+### 15.235 Archived memory graph detail 보강 `[implemented 2026-07-13]`
+
+- 배경(Notion `39cd5dc81f6680109d69d9500b1265b3`): archived memory는 current clustering 입력에서 제외되므로 cluster cache의 `itemIds`에 없을 수 있다. 이 상태에서 graph node를 눌러도 side panel은 선택 cluster의 item만 렌더해 삭제된 memory의 상세가 비어 보였다. 또한 세션 리뷰에서는 전체 memory 보기와 달리 archived memory가 session snapshot filter에 막혀 보이지 않는 경우가 있었다.
+- 수정: `MemoryClusterSidePanel`이 선택된 memory id를 cluster item 목록에서 찾지 못하면 `memories` 목록에서 fallback item을 만들어 단독 detail card로 보여준다. 따라서 cluster cache에 포함되지 않은 archived/inactive memory도 클릭하면 semantic, episodic, original input, keyword, weight를 확인할 수 있다.
+- 수정: 세션 리뷰 graph의 after phase에서는 해당 세션에서 생성된 archived memory와 referenced/promoted/duplicate 관계로 사라진 archived memory를 snapshot `itemIds` 밖에 있어도 visible node 후보에 포함한다. 이런 node는 기존처럼 임시 unclustered cluster에 묶이고, cluster list에는 이번 세션에서 추가된 node `+n`과 삭제된 node `-n`을 함께 표시한다.
+- 표시: archived/inactive graph node는 옅은 회색과 낮은 alpha로 렌더하고, side panel card도 더 흐린 배경/텍스트와 `삭제됨` 또는 `비활성` badge를 사용한다.

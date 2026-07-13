@@ -249,6 +249,8 @@ export function MemoryClusterPage({
     weight: m.weight,
     embedding: m.embedding,
     timestamp: m.timestamp ?? 0,
+    archivedAt: m.archivedAt ?? null,
+    archiveReason: m.archiveReason ?? null,
     keyword: m.keywords,
     keywords: m.keywords,
     row: {

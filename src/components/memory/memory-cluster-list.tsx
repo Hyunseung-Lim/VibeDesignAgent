@@ -53,6 +53,8 @@ type MemoryClusterListProps = {
   // Per-cluster count of nodes newly added in this session. Rendered as "+n"
   // next to the cluster; omitted when 0/undefined.
   addedCountByClusterId?: Record<string, number>;
+  // Per-cluster count of nodes removed/archived in this session. Rendered as "-n".
+  removedCountByClusterId?: Record<string, number>;
 };
 
 export function MemoryClusterList({
@@ -69,6 +71,7 @@ export function MemoryClusterList({
   nodeCount,
   edgeCount,
   addedCountByClusterId,
+  removedCountByClusterId,
 }: MemoryClusterListProps) {
   const reviewPresentation = presentation === "review";
   const [collapsed, setCollapsed] = useState(() =>
@@ -200,6 +203,7 @@ export function MemoryClusterList({
           const selected = selectedClusterId === cluster.id;
           const color = memoryClusterColor(index);
           const addedCount = addedCountByClusterId?.[cluster.id] ?? 0;
+          const removedCount = removedCountByClusterId?.[cluster.id] ?? 0;
           if (reviewPresentation) {
             return (
               <button
@@ -247,6 +251,14 @@ export function MemoryClusterList({
                       title={`이번 세션에 ${addedCount}개 노드 추가됨`}
                     >
                       +{addedCount}
+                    </span>
+                  ) : null}
+                  {removedCount > 0 ? (
+                    <span
+                      className="shrink-0 rounded-full bg-slate-100 px-1.5 py-0.5 text-[10px] font-bold text-slate-500"
+                      title={`이번 세션에서 ${removedCount}개 노드 삭제됨`}
+                    >
+                      -{removedCount}
                     </span>
                   ) : null}
                 </span>

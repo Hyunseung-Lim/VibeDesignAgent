@@ -47,6 +47,8 @@ type ClusterableMemoryItem = {
   weight?: number | null;
   embedding?: number[];
   timestamp: number;
+  archivedAt?: number | null;
+  archiveReason?: string | null;
   keyword: string[];
   keywords: string[];
   row?: {
@@ -136,6 +138,12 @@ function userInputText(item: ClusterableMemoryItem) {
   if (sourceText) return sourceText;
   const raw = (item.input || "").trim().replace(/^user input:\s*/i, "").trim();
   return raw || item.episodic || item.episode || item.semantic || item.id;
+}
+
+function isInactiveGraphItem(item: ClusterableMemoryItem) {
+  if (item.archivedAt) return true;
+  if (item.weight != null && item.weight <= 0) return true;
+  return item.action?.split(" / ").includes("archived") ?? false;
 }
 
 function originalInputText(item: ClusterableMemoryItem) {
@@ -748,6 +756,7 @@ export default function MemoryClusterGraph({
       const selected = selectedPointId === point.id;
       const hovered = hoveredPointId === point.id;
       const dimmed = selectedClusterId && !selectedCluster && !selected;
+      const inactive = isInactiveGraphItem(point.item);
       const radius = point.radius * Math.sqrt(view.zoom);
       const nodeRadius = Math.max(3.2, radius + (selected || hovered ? 2.5 : 0));
       // Memories newly created in the selected mission/session are drawn as a
@@ -757,7 +766,7 @@ export default function MemoryClusterGraph({
       const isNewNode =
         point.item.action?.split(" / ").includes("promoted") ?? false;
       ctx.save();
-      ctx.globalAlpha = dimmed ? 0.3 : 1;
+      ctx.globalAlpha = selected || hovered ? 1 : inactive ? 0.34 : dimmed ? 0.3 : 1;
       ctx.beginPath();
       if (isNewNode) {
         const half = nodeRadius * 1.25;
@@ -769,7 +778,7 @@ export default function MemoryClusterGraph({
       } else {
         ctx.arc(screenPoint.x, screenPoint.y, nodeRadius, 0, Math.PI * 2);
       }
-      ctx.fillStyle = point.color;
+      ctx.fillStyle = inactive ? "#cbd5e1" : point.color;
       ctx.fill();
       if (isNewNode) {
         // Thin light edge so the diamond stays crisp over cluster fill areas.
