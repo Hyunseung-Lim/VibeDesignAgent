@@ -16,3 +16,14 @@ export const MEMORY_CLUSTER_COLORS = [
 export function memoryClusterColor(index: number) {
   return MEMORY_CLUSTER_COLORS[index % MEMORY_CLUSTER_COLORS.length];
 }
+
+export function memoryClusterStableColor(
+  cluster: { colorIndex?: number | null },
+  fallbackIndex: number,
+) {
+  const colorIndex =
+    typeof cluster.colorIndex === "number" && Number.isFinite(cluster.colorIndex)
+      ? Math.max(0, Math.floor(cluster.colorIndex))
+      : fallbackIndex;
+  return memoryClusterColor(colorIndex);
+}

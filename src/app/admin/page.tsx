@@ -150,6 +150,7 @@ type MemoryCluster = {
   relatedActions: string[];
   itemIds: string[];
   representativeItems: string[];
+  colorIndex?: number;
 };
 
 type ClusterGraphEdge = {

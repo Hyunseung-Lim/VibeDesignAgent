@@ -11,7 +11,7 @@ import {
 import { ZoomOutIcon, ZoomInIcon, MaximizeIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { memoryClusterColor } from "@/components/memory/memory-cluster-colors";
+import { memoryClusterStableColor } from "@/components/memory/memory-cluster-colors";
 import type {
   ClusterGraphEdge,
   MemorySource,
@@ -30,6 +30,7 @@ type MemoryCluster = {
   relatedActions: string[];
   itemIds: string[];
   representativeItems: string[];
+  colorIndex?: number;
 };
 
 type ClusterableMemoryItem = {
@@ -640,7 +641,10 @@ export default function MemoryClusterGraph({
       const clusterId = cluster?.id ?? "unclustered";
       const color =
         cluster && clusterIndexById.has(cluster.id)
-          ? memoryClusterColor(clusterIndexById.get(cluster.id) ?? 0)
+          ? memoryClusterStableColor(
+              cluster,
+              clusterIndexById.get(cluster.id) ?? 0,
+            )
           : "#94a3b8";
       const projected = projection.get(item.id) ?? { x: 0, y: 0, hasEmbedding: false };
       return {

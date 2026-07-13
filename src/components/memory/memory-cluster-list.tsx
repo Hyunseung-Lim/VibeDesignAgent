@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import type { MemoryCluster } from "./memory-cluster-types";
-import { memoryClusterColor } from "./memory-cluster-colors";
+import { memoryClusterStableColor } from "./memory-cluster-colors";
 
 const COLLAPSE_STORAGE_KEY = "memoryClusterList:review:collapsed";
 
@@ -107,7 +107,7 @@ export function MemoryClusterList({
         <div className="min-h-0 flex-1 space-y-1.5 overflow-y-auto py-1">
           {clusters.map((cluster, index) => {
             const selected = selectedClusterId === cluster.id;
-            const color = memoryClusterColor(index);
+            const color = memoryClusterStableColor(cluster, index);
             return (
               <button
                 key={cluster.id}
@@ -201,7 +201,7 @@ export function MemoryClusterList({
       <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
         {clusters.map((cluster, index) => {
           const selected = selectedClusterId === cluster.id;
-          const color = memoryClusterColor(index);
+          const color = memoryClusterStableColor(cluster, index);
           const addedCount = addedCountByClusterId?.[cluster.id] ?? 0;
           const removedCount = removedCountByClusterId?.[cluster.id] ?? 0;
           if (reviewPresentation) {

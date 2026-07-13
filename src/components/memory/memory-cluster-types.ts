@@ -32,6 +32,7 @@ export type MemoryCluster = {
   relatedActions: string[];
   itemIds: string[];
   representativeItems: string[];
+  colorIndex?: number;
 };
 
 export type ClusterGraphEdge = {

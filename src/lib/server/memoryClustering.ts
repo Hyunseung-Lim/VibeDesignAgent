@@ -17,6 +17,7 @@ export const EMBEDDING_MODEL = MEMORY_EMBEDDING_MODEL;
 export const LABEL_MODEL = "gpt-5.4-mini";
 export const MAX_GRAPH_CLUSTER_COUNT = 16;
 export const MAX_ITEMS = 160;
+export const CLUSTER_COLOR_PALETTE_SIZE = 12;
 export const GRAPH_MIN_SIMILARITY_QUANTILE = 0.85;
 export const GRAPH_STRONG_SIMILARITY_QUANTILE = 0.97;
 export const GRAPH_KNN_EDGES = 3;
@@ -72,6 +73,7 @@ export type MemoryCluster = {
   relatedActions: string[];
   itemIds: string[];
   representativeItems: string[];
+  colorIndex?: number;
 };
 
 export type SimilarityEdge = {
@@ -217,6 +219,7 @@ export async function loadLatestStoredClusterDoc(
   uid: string,
   token: string,
   variant: ClusteringInputVariant = CLUSTERING_INPUT_VARIANT,
+  options: { currentMethodOnly?: boolean } = {},
 ): Promise<{
   graphClusters: MemoryCluster[];
   graphEdges: ClusterGraphEdge[];
@@ -224,6 +227,7 @@ export async function loadLatestStoredClusterDoc(
   itemSignature: string | null;
   clusteringMethodVersion: string | null;
 } | null> {
+  const { currentMethodOnly = true } = options;
   const ids = await listFirestoreDocumentIds(
     `users/${uid}/${CLUSTER_COLLECTION}`,
     token,
@@ -247,7 +251,9 @@ export async function loadLatestStoredClusterDoc(
         typeof data.clusteringMethodVersion === "string"
           ? data.clusteringMethodVersion
           : "";
-      if (docMethodVersion !== clusteringMethodVersion(variant)) return null;
+      if (currentMethodOnly && docMethodVersion !== clusteringMethodVersion(variant)) {
+        return null;
+      }
       const graphClusters = parseStoredClusters(data.graphClusters);
       if (graphClusters.length === 0) return null;
       return {
@@ -405,6 +411,94 @@ function representativeItems(clusterItems: ClusterInputItem[], clusterVectors: n
 
 function clusterId(index: number) {
   return `cluster-${String(index + 1).padStart(2, "0")}`;
+}
+
+function clusterColorIndex(cluster: MemoryCluster, fallbackIndex: number) {
+  return typeof cluster.colorIndex === "number" &&
+    Number.isFinite(cluster.colorIndex)
+    ? Math.max(0, Math.floor(cluster.colorIndex))
+    : fallbackIndex;
+}
+
+function nextUnusedColorIndex(usedColorIndexes: Set<number>) {
+  const usedSlots = new Set(
+    Array.from(usedColorIndexes).map((index) => index % CLUSTER_COLOR_PALETTE_SIZE),
+  );
+  for (let index = 0; index < CLUSTER_COLOR_PALETTE_SIZE; index += 1) {
+    if (!usedSlots.has(index)) return index;
+  }
+  return Math.max(-1, ...Array.from(usedColorIndexes)) + 1;
+}
+
+function assignStableClusterColors(
+  clusters: MemoryCluster[],
+  previousClusters: MemoryCluster[],
+) {
+  if (clusters.length === 0) return clusters;
+  const previousItemSets = previousClusters.map(
+    (cluster) => new Set(cluster.itemIds),
+  );
+  const candidates: Array<{
+    clusterIndex: number;
+    previousIndex: number;
+    overlap: number;
+    jaccard: number;
+  }> = [];
+
+  clusters.forEach((cluster, clusterIndex) => {
+    const itemIds = new Set(cluster.itemIds);
+    previousItemSets.forEach((previousItemIds, previousIndex) => {
+      let overlap = 0;
+      itemIds.forEach((itemId) => {
+        if (previousItemIds.has(itemId)) overlap += 1;
+      });
+      if (overlap === 0) return;
+      const unionSize = itemIds.size + previousItemIds.size - overlap;
+      candidates.push({
+        clusterIndex,
+        previousIndex,
+        overlap,
+        jaccard: unionSize > 0 ? overlap / unionSize : 0,
+      });
+    });
+  });
+
+  candidates.sort(
+    (a, b) =>
+      b.overlap - a.overlap ||
+      b.jaccard - a.jaccard ||
+      clusters[b.clusterIndex].count - clusters[a.clusterIndex].count ||
+      a.clusterIndex - b.clusterIndex,
+  );
+
+  const assignedClusters = new Set<number>();
+  const assignedPrevious = new Set<number>();
+  const assignedColorIndexes = new Map<number, number>();
+  candidates.forEach((candidate) => {
+    if (
+      assignedClusters.has(candidate.clusterIndex) ||
+      assignedPrevious.has(candidate.previousIndex)
+    ) {
+      return;
+    }
+    assignedClusters.add(candidate.clusterIndex);
+    assignedPrevious.add(candidate.previousIndex);
+    assignedColorIndexes.set(
+      candidate.clusterIndex,
+      clusterColorIndex(
+        previousClusters[candidate.previousIndex],
+        candidate.previousIndex,
+      ),
+    );
+  });
+
+  const usedColorIndexes = new Set(assignedColorIndexes.values());
+  return clusters.map((cluster, index) => {
+    const colorIndex =
+      assignedColorIndexes.get(index) ?? nextUnusedColorIndex(usedColorIndexes);
+    usedColorIndexes.add(colorIndex);
+    return { ...cluster, colorIndex };
+  });
 }
 
 function fallbackLabel(cluster: MemoryCluster) {
@@ -730,8 +824,18 @@ export async function generateAndStoreClusters(
   subjectName?: string,
   variant: ClusteringInputVariant = CLUSTERING_INPUT_VARIANT,
 ) {
-  const { graphClusters, graphEdges, graphDiagnostics } =
+  const previousClusterDoc = await loadLatestStoredClusterDoc(
+    uid,
+    token,
+    variant,
+    { currentMethodOnly: false },
+  );
+  const { graphClusters: generatedGraphClusters, graphEdges, graphDiagnostics } =
     await generateClusterGraph(items, token, subjectName);
+  const graphClusters = assignStableClusterColors(
+    generatedGraphClusters,
+    previousClusterDoc?.graphClusters ?? [],
+  );
   const completedAt = Date.now();
 
   const itemSignature = memoryClusterItemSignature(items);
@@ -828,45 +932,60 @@ export async function generateAndStoreSessionClusterSnapshots(
   variant: ClusteringInputVariant = CLUSTERING_INPUT_VARIANT,
 ) {
   const memories = await loadUserMemoryItems(uid, token);
-  const phases: ClusterSnapshotPhase[] = ["before", "after"];
-  const snapshots = await Promise.all(
-    phases.map(async (phase) => {
-      const items = snapshotItems(memories, missionId, missionOrder, phase);
-      const itemSignature =
-        items.length > 0 ? memoryClusterItemSignature(items) : null;
-      const { graphClusters, graphEdges, graphDiagnostics } =
-        await generateClusterGraph(items, token, subjectName);
-      const generatedAt = Date.now();
-      await patchFirestoreDocument(
-        clusterSnapshotDocumentPath(uid, missionId, phase),
-        {
-          missionId,
-          phase,
-          itemIds: items.map((item) => item.id),
-          itemSignature,
-          memoryVersion: MEMORY_VERSION,
-          clusteringMethodVersion: clusteringMethodVersion(variant),
-          clusteringInputVariant: variant,
-          sourceItemCount: items.length,
-          graphClusters,
-          graphEdges,
-          graphDiagnostics,
-          generatedAt,
-          generatedBy,
-        },
-        token,
-      );
-      return {
-        phase,
+  const previousClusterDoc = await loadLatestStoredClusterDoc(
+    uid,
+    token,
+    variant,
+    { currentMethodOnly: false },
+  );
+  const snapshots: StoredClusterSnapshot[] = [];
+  let previousPhaseClusters = previousClusterDoc?.graphClusters ?? [];
+  for (const phase of ["before", "after"] as const) {
+    const items = snapshotItems(memories, missionId, missionOrder, phase);
+    const itemSignature =
+      items.length > 0 ? memoryClusterItemSignature(items) : null;
+    const {
+      graphClusters: generatedGraphClusters,
+      graphEdges,
+      graphDiagnostics,
+    } = await generateClusterGraph(items, token, subjectName);
+    const graphClusters = assignStableClusterColors(
+      generatedGraphClusters,
+      previousPhaseClusters,
+    );
+    const generatedAt = Date.now();
+    await patchFirestoreDocument(
+      clusterSnapshotDocumentPath(uid, missionId, phase),
+      {
         missionId,
+        phase,
         itemIds: items.map((item) => item.id),
         itemSignature,
+        memoryVersion: MEMORY_VERSION,
+        clusteringMethodVersion: clusteringMethodVersion(variant),
+        clusteringInputVariant: variant,
+        sourceItemCount: items.length,
         graphClusters,
         graphEdges,
+        graphDiagnostics,
         generatedAt,
-      } satisfies StoredClusterSnapshot;
-    }),
-  );
+        generatedBy,
+      },
+      token,
+    );
+    snapshots.push({
+      phase,
+      missionId,
+      itemIds: items.map((item) => item.id),
+      itemSignature,
+      graphClusters,
+      graphEdges,
+      generatedAt,
+    });
+    if (graphClusters.length > 0) {
+      previousPhaseClusters = graphClusters;
+    }
+  }
   return {
     before: snapshots.find((snapshot) => snapshot.phase === "before") ?? null,
     after: snapshots.find((snapshot) => snapshot.phase === "after") ?? null,

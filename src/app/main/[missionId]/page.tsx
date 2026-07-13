@@ -380,6 +380,7 @@ type SessionGraphCluster = {
   relatedActions: string[];
   itemIds: string[];
   representativeItems: string[];
+  colorIndex?: number;
 };
 
 type SessionGraphEdge = {
