@@ -144,6 +144,12 @@ function stripTrailingActionStatusLabel(
     .trim();
 }
 
+function stripActionDelimiterResidue(text: string) {
+  const trimmed = text.trim();
+  if (/^[\]}]+$/.test(trimmed)) return "";
+  return trimmed.replace(/^[\]}]+\s*/, "");
+}
+
 const BLOCK_RULES = [
   {
     complete: /\[GENERATE_MOCKUP(?::[^\]]*)?\]/,
@@ -248,8 +254,9 @@ export function processMessageContent(content: string): ContentPart[] {
     }
 
     if (!earliest) {
-      if (remaining.trim())
-        parts.push({ type: "text", content: remaining.trim() });
+      const visibleRemaining = stripActionDelimiterResidue(remaining.trim());
+      if (visibleRemaining)
+        parts.push({ type: "text", content: visibleRemaining });
       break;
     }
 
@@ -257,7 +264,8 @@ export function processMessageContent(content: string): ContentPart[] {
       remaining.slice(0, earliest.index).trim(),
       [earliest.label, earliest.failedLabel],
     );
-    if (before) parts.push({ type: "text", content: before });
+    const visibleBefore = stripActionDelimiterResidue(before);
+    if (visibleBefore) parts.push({ type: "text", content: visibleBefore });
 
     const afterChip = remaining.slice(earliest.index + earliest.matchStr.length);
     const failed = !!(

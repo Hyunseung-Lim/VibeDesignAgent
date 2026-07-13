@@ -1611,9 +1611,19 @@ function parseCreateDesignSpecBlock(
 }
 
 function stripDesignSpecActionBlocks(content: string) {
-  return content
-    .replace(/\[CREATE_DESIGN_SPEC:[\s\S]*?(?:\](?=\s|$)|$)/g, "")
-    .replace(/\[EDIT_DESIGN_SPEC:[\s\S]*?(?:\](?=\s|$)|$)/g, "")
+  let result = content;
+  for (;;) {
+    const starts = [
+      { tag: "CREATE_DESIGN_SPEC", index: result.indexOf("[CREATE_DESIGN_SPEC:") },
+      { tag: "EDIT_DESIGN_SPEC", index: result.indexOf("[EDIT_DESIGN_SPEC:") },
+    ].filter((entry) => entry.index !== -1);
+    const next = starts.sort((a, b) => a.index - b.index)[0];
+    if (!next) break;
+    const end = actionBlockEnd(result, next.index, next.tag);
+    result = `${result.slice(0, next.index)}${result.slice(end)}`;
+  }
+  return result
+    .replace(/^\s*[\]}]+\s*/g, "")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
 }
