@@ -17,14 +17,14 @@ export const EMBEDDING_MODEL = MEMORY_EMBEDDING_MODEL;
 export const LABEL_MODEL = "gpt-5.4-mini";
 export const MAX_GRAPH_CLUSTER_COUNT = 16;
 export const MAX_ITEMS = 160;
-export const GRAPH_MIN_SIMILARITY = 0.58;
-export const GRAPH_STRONG_SIMILARITY = 0.74;
+export const GRAPH_MIN_SIMILARITY_QUANTILE = 0.85;
+export const GRAPH_STRONG_SIMILARITY_QUANTILE = 0.97;
 export const GRAPH_KNN_EDGES = 3;
 export const GRAPH_COMMUNITY_ITERATIONS = 30;
 export const CLUSTER_COLLECTION = "memoryClusters";
 export const CLUSTER_SNAPSHOT_COLLECTION = "memoryClusterSnapshots";
 export const CLUSTERING_METHOD_VERSION =
-  "similarity-graph-v5-centered-embedding";
+  "similarity-graph-v6-centered-adaptive-threshold";
 export const MEMORY_VERSION = "0.1.2";
 export const ONBOARDING_MISSION_ID = "onboarding";
 
@@ -118,6 +118,9 @@ export type GraphCommunityDiagnostics = {
     rawCommunityCount: number;
     cappedCommunityCount: number;
     meanCentered: boolean;
+    thresholdMode: "pairwise-quantile";
+    minSimilarityQuantile: number;
+    strongSimilarityQuantile: number;
   };
 };
 
@@ -533,6 +536,15 @@ async function generateClusterGraph(
   };
 }
 
+function similarityQuantile(sortedWeights: number[], quantile: number) {
+  if (sortedWeights.length === 0) return 0;
+  const index = Math.min(
+    sortedWeights.length - 1,
+    Math.floor(quantile * sortedWeights.length),
+  );
+  return sortedWeights[index] ?? 0;
+}
+
 function similarityEdges(vectors: number[][]) {
   const pairEdges: SimilarityEdge[] = [];
   const edgesByKey = new Map<string, SimilarityEdge>();
@@ -548,22 +560,38 @@ function similarityEdges(vectors: number[][]) {
     }
   }
 
+  const sortedWeights = pairEdges.map((edge) => edge.weight).sort((a, b) => a - b);
+  const minSimilarity = similarityQuantile(
+    sortedWeights,
+    GRAPH_MIN_SIMILARITY_QUANTILE,
+  );
+  const strongSimilarity = similarityQuantile(
+    sortedWeights,
+    GRAPH_STRONG_SIMILARITY_QUANTILE,
+  );
+
   const addEdge = (edge: SimilarityEdge) => {
     const key = `${edge.source}:${edge.target}`;
     const existing = edgesByKey.get(key);
     if (!existing || edge.weight > existing.weight) edgesByKey.set(key, edge);
   };
 
-  pairEdges.filter((e) => e.weight >= GRAPH_STRONG_SIMILARITY).forEach(addEdge);
+  pairEdges.filter((e) => e.weight >= strongSimilarity).forEach(addEdge);
   neighborCandidates.forEach((edges) =>
     edges
-      .filter((e) => e.weight >= GRAPH_MIN_SIMILARITY)
+      .filter((e) => e.weight >= minSimilarity)
       .sort((a, b) => b.weight - a.weight)
       .slice(0, GRAPH_KNN_EDGES)
       .forEach(addEdge),
   );
 
-  return Array.from(edgesByKey.values()).sort((a, b) => b.weight - a.weight);
+  return {
+    edges: Array.from(edgesByKey.values()).sort((a, b) => b.weight - a.weight),
+    thresholds: {
+      minSimilarity,
+      strongSimilarity,
+    },
+  };
 }
 
 function labelPropagationCommunities(nodeCount: number, edges: SimilarityEdge[]) {
@@ -638,7 +666,7 @@ function mergeCommunities(groups: number[][], vectors: number[][], maxCount: num
 
 export function buildGraphCommunityClusters(items: ClusterInputItem[], vectors: number[][]) {
   const clusteringVectors = meanCenteredVectors(vectors);
-  const edges = similarityEdges(clusteringVectors);
+  const { edges, thresholds } = similarityEdges(clusteringVectors);
   const graphEdges: ClusterGraphEdge[] = edges.map((edge) => ({
     sourceId: items[edge.source]?.id ?? "",
     targetId: items[edge.target]?.id ?? "",
@@ -676,8 +704,8 @@ export function buildGraphCommunityClusters(items: ClusterInputItem[], vectors: 
       requestedClusterCount: null,
       actualClusterCount: groups.length,
       graph: {
-        minSimilarity: GRAPH_MIN_SIMILARITY,
-        strongSimilarity: GRAPH_STRONG_SIMILARITY,
+        minSimilarity: Number(thresholds.minSimilarity.toFixed(6)),
+        strongSimilarity: Number(thresholds.strongSimilarity.toFixed(6)),
         knnEdges: GRAPH_KNN_EDGES,
         nodeCount: items.length,
         edgeCount: edges.length,
@@ -686,6 +714,9 @@ export function buildGraphCommunityClusters(items: ClusterInputItem[], vectors: 
         rawCommunityCount: rawGroups.length,
         cappedCommunityCount: groups.length,
         meanCentered: true,
+        thresholdMode: "pairwise-quantile",
+        minSimilarityQuantile: GRAPH_MIN_SIMILARITY_QUANTILE,
+        strongSimilarityQuantile: GRAPH_STRONG_SIMILARITY_QUANTILE,
       },
     } satisfies GraphCommunityDiagnostics,
   };

@@ -96,6 +96,27 @@ function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
 }
 
+function weightQuantile(sortedWeights: number[], quantile: number) {
+  if (sortedWeights.length === 0) return 0;
+  const index = Math.min(
+    sortedWeights.length - 1,
+    Math.floor(quantile * sortedWeights.length),
+  );
+  return sortedWeights[index] ?? 0;
+}
+
+function edgeWeightNormalizer(weights: number[]) {
+  const sortedWeights = weights
+    .filter((weight) => Number.isFinite(weight))
+    .sort((a, b) => a - b);
+  if (sortedWeights.length === 0) return () => 0.5;
+  const lower = weightQuantile(sortedWeights, 0.05);
+  const upper = weightQuantile(sortedWeights, 0.95);
+  const range = upper - lower;
+  if (Math.abs(range) < 0.000001) return () => 0.65;
+  return (weight: number) => clamp((weight - lower) / range, 0, 1);
+}
+
 function itemDate(timestamp: number) {
   return timestamp
     ? new Date(timestamp).toLocaleString("ko-KR", {
@@ -334,12 +355,15 @@ function projectSimilarityGraph(
     .map((edge) => ({
       source: indexById.get(edge.sourceId),
       target: indexById.get(edge.targetId),
-      weight: clamp(edge.weight, 0, 1),
+      weight: edge.weight,
     }))
     .filter(
       (edge): edge is { source: number; target: number; weight: number } =>
         edge.source != null && edge.target != null,
     );
+  const normalizeWeight = edgeWeightNormalizer(
+    layoutEdges.map((edge) => edge.weight),
+  );
 
   for (let iteration = 0; iteration < GRAPH_LAYOUT_ITERATIONS; iteration += 1) {
     const progress = iteration / GRAPH_LAYOUT_ITERATIONS;
@@ -367,9 +391,9 @@ function projectSimilarityGraph(
       const dx = target.x - source.x;
       const dy = target.y - source.y;
       const distance = Math.max(Math.sqrt(dx * dx + dy * dy), 0.001);
-      const normalizedWeight = clamp((edge.weight - 0.58) / 0.28, 0, 1);
-      const targetDistance = 0.22 + (1 - normalizedWeight) * 0.58;
-      const force = (distance - targetDistance) * (0.026 + normalizedWeight * 0.028) * cooling;
+      const normalizedWeight = normalizeWeight(edge.weight);
+      const targetDistance = 0.2 + (1 - normalizedWeight) * 0.48;
+      const force = (distance - targetDistance) * (0.03 + normalizedWeight * 0.032) * cooling;
       const fx = (dx / distance) * force;
       const fy = (dy / distance) * force;
       source.vx += fx;
@@ -394,8 +418,13 @@ function projectSimilarityGraph(
       }
       node.vx += -node.x * 0.0012 * cooling;
       node.vy += -node.y * 0.0012 * cooling;
-      node.x = clamp(node.x + node.vx, -2.2, 2.2);
-      node.y = clamp(node.y + node.vy, -2.2, 2.2);
+      const softBound = 2.15;
+      const overflowX = Math.max(0, Math.abs(node.x) - softBound);
+      const overflowY = Math.max(0, Math.abs(node.y) - softBound);
+      if (overflowX > 0) node.vx -= Math.sign(node.x) * overflowX * 0.04 * cooling;
+      if (overflowY > 0) node.vy -= Math.sign(node.y) * overflowY * 0.04 * cooling;
+      node.x += clamp(node.vx, -0.075, 0.075);
+      node.y += clamp(node.vy, -0.075, 0.075);
       node.vx *= 0.82;
       node.vy *= 0.82;
     });
@@ -510,6 +539,9 @@ function drawGraphEdges(
 ) {
   if (edges.length === 0) return;
   const sortedEdges = [...edges].sort((a, b) => a.weight - b.weight);
+  const normalizeWeight = edgeWeightNormalizer(
+    sortedEdges.map((edge) => edge.weight),
+  );
   ctx.save();
   ctx.lineCap = "round";
 
@@ -527,7 +559,7 @@ function drawGraphEdges(
       Boolean(selectedPointId) &&
       (source.id === selectedPointId || target.id === selectedPointId);
     const crossCluster = source.clusterId !== target.clusterId;
-    const normalized = clamp((edge.weight - 0.58) / 0.28, 0, 1);
+    const normalized = normalizeWeight(edge.weight);
     const alpha = touchesSelectedPoint
       ? 0.48
       : sameSelectedCluster
