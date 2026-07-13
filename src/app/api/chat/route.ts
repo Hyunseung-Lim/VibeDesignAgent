@@ -191,7 +191,7 @@ function compactPlannerSemanticMemories(memoryItems: unknown[]) {
       similarity: number | null;
       signal: string;
     } => Boolean(item))
-    .slice(0, 5);
+    .slice(0, 10);
 }
 
 function createPromptSanitization(): PromptSanitization {

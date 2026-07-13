@@ -402,9 +402,9 @@ FIREBASE_MEASUREMENT_ID
 
 - `/api/memory/complete-session`에서 semantic item별 embedding과 score metadata를 저장
 - 기존 v0.1.1 memory 중 metadata가 없는 문서는 `/api/memory/retrieve` 호출 시 lazy backfill
-- `/api/memory/retrieve`는 LLM 없이 query embedding과 semantic item embedding의 cosine similarity로 top 5를 선택
+- `/api/memory/retrieve`는 LLM 없이 query embedding과 semantic item embedding의 cosine similarity로 top 5를 선택 `[stale 2026-07-13 → 15.209: retrieval top-k는 10으로 조정됨]`
 - retrieve된 memory는 `weight`, `retrievedCount`, `lastRetrievedAt`를 업데이트
-- top 5에는 들지 못했지만 충분히 가까운 top 6~20 후보에는 작은 weight 감소를 적용해 forgetting 압력을 누적
+- top 5에는 들지 못했지만 충분히 가까운 top 6~20 후보에는 작은 weight 감소를 적용해 forgetting 압력을 누적 `[stale 2026-07-13 → 15.209: retrieval top-k 10 이후에는 top 11~20 후보에 forgetting 압력을 누적]`
 - retrieval log는 `users/{uid}/memoryRetrievalLogs/{logId}`에 저장
 - 메인 채팅 요청 전 현재 user input + mission/idea context를 query로 사용해 retrieve하고, 결과를 해당 turn의 memory context에 주입
 - Admin memory modal의 Retrievals 탭에서 query, retrieved memory, similarity, weight delta를 확인 가능
@@ -511,11 +511,11 @@ archiveReason?: string | null
 {
   query: string
   missionId?: string
-  limit?: 5
+  limit?: 5 // [stale 2026-07-13 → 15.209: current default/max is 10]
 }
 ```
 
-- LLM 없이 query embedding과 memory embedding의 cosine similarity로 top 5 검색
+- LLM 없이 query embedding과 memory embedding의 cosine similarity로 top 5 검색 `[stale 2026-07-13 → 15.209: retrieval top-k는 10으로 조정됨]`
 - `archivedAt`이 있는 memory는 기본 제외
 - 반환값은 채팅 context에 사용할 compact memory와 admin/debug용 metadata를 분리
 
@@ -940,7 +940,7 @@ archiveReason = "low-weight" | "duplicate" | "manual";
     - latest user input
     - 최근 message 3개 compact
     - 현재 UI 상태 boolean/count: hasActiveIdea, hasMockupHtml, hasSelectedElement, hasDesignSpec, citedReferenceCount, citedTextCount, retrievedMemoryCount
-    - retrieved/filter를 통과한 memoryContext 중 semantic memory 최대 5개. 각 항목은 semantic, similarity, signal(high/mid/low)을 포함한다. signal은 현재 실험값 기준 similarity 0.48 이상 high, 0.39 이하 low, 그 사이는 mid다 `[현행 2026-07-11 → 15.206]`
+    - retrieved/filter를 통과한 memoryContext 중 semantic memory 최대 10개. 각 항목은 semantic, similarity, signal(high/mid/low)을 포함한다. signal은 현재 실험값 기준 similarity 0.48 이상 high, 0.39 이하 low, 그 사이는 mid다 `[현행 2026-07-13 → 15.206/15.230]`
     - `[stale 2026-07-11 → 15.206: planner 입력의 userClusterSummaries는 제거하고 retrieved semantic memory 직접 입력으로 대체]`
     - mission title + 짧은 mission summary
   - Planner 출력 schema 초안:
@@ -3491,7 +3491,7 @@ type ChatPlan = {
 
 - 배경(QA Note `답변 실행 전에 어떤 행동할지 결정하는 단계에서도 메모리가 들어가는지`): planner(행동 결정) 입력에는 메모리 개수(`profileMemoryCount`, `interactionMemoryCount`)만 들어가고 실제 내용은 답변 실행 단계에서만 주입돼, planner가 유저 특화 액션(intent/needs)을 고를 근거가 없었다. `[13.4의 Planner 입력 목록 stale 2026-06-23 → 15.114]`
 - 결정: 풀 컨텐츠를 또 넣어 요약 LLM을 돌리는 대신, 세션 종료 시 이미 생성·캐시된 persona cluster summary를 재사용한다. planner엔 짧은 요약, 답변 단계엔 기존 풀 컨텐츠로 역할을 분리한다.
-- 데이터 흐름: `/api/memory/retrieve`가 매 턴 검색 결과의 각 메모리에 소속 cluster의 `clusterId`/`clusterLabel`/`clusterSummary`를 부착한다. 이 필드는 `memoryContext`를 타고 `/api/chat`까지 전달되고, planner 입력에 distinct summary 최대 3개(`userClusterSummaries`)로 들어간다. chat 핫패스에는 새 Firestore 읽기를 추가하지 않는다. `[stale 2026-07-11 → 15.206: planner는 userClusterSummaries 대신 retrieved semantic memory 최대 5개를 직접 받음]`
+- 데이터 흐름: `/api/memory/retrieve`가 매 턴 검색 결과의 각 메모리에 소속 cluster의 `clusterId`/`clusterLabel`/`clusterSummary`를 부착한다. 이 필드는 `memoryContext`를 타고 `/api/chat`까지 전달되고, planner 입력에 distinct summary 최대 3개(`userClusterSummaries`)로 들어간다. chat 핫패스에는 새 Firestore 읽기를 추가하지 않는다. `[stale 2026-07-11 → 15.206/15.230: planner는 userClusterSummaries 대신 retrieved semantic memory 최대 10개를 직접 받음]`
 - 매핑/폴백: retrieve의 memory doc id와 cluster `itemIds`는 둘 다 `memories_0_1_2` 문서 id라 직접 매칭된다. cluster를 `loadLatestStoredClusters`로 best-effort 로드하며(LLM 재생성 없음), 캐시가 없거나 매칭 실패 시 `userClusterSummaries`는 빈 배열이 되어 기존 카운트 기반 동작으로 자연 폴백한다. `[stale 2026-07-11 → 15.206: planner 입력에서 userClusterSummaries fallback 제거]`
 - 적용 범위: planner 규칙은 cluster summary를 요청이 애매할 때 intent/needs를 가르는 데만 쓰고, 콘텐츠·스타일·레퍼런스 선택(답변 실행 단계의 역할)에는 쓰지 않도록 제한한다. 요청이 이미 명확하면 무시한다.
 - 변경 파일: `src/lib/server/memoryClustering.ts`(`loadLatestStoredClusters`, `clusterSummaryByItemId` 추가), `src/app/api/memory/retrieve/route.ts`(요약 부착), `src/app/api/chat/route.ts`(`userClusterSummaries` 추출·주입), `src/lib/prompts.ts`(planner 규칙), `src/app/main/[missionId]/page.tsx`(`MemoryRecord` 타입). `[stale 2026-07-11 → 15.206: /api/chat의 userClusterSummaries 추출·주입은 제거]`
@@ -4163,7 +4163,7 @@ type ChatPlan = {
 
 - 배경(Notion `Planner`): planner가 gpt-5.4 non-reasoning 호출인데 output에서 `reason`이 맨 뒤에 있어 intent/needs 결정 전 사고를 유도하기 어려웠다. 또한 planner input의 `userClusterSummaries`보다 retrieved semantic memory 자체가 짧고 유의미했고, `interactionMemory` bool은 memory를 넣을지 말지만 결정해 반영 강도를 조절하지 못했다.
 - 수정: `chatPlannerPrompt` output shape를 `analysis → intent → confidence → memoryRelevance → needs` 순서로 바꿨다. 내부 `ChatPlan.reason` 필드는 review/debug 호환을 위해 유지하되 parser는 `analysis`를 우선 읽고 legacy `reason`으로 fallback한다.
-- 수정: planner input의 `recentMessages`를 6개에서 3개로 줄이고 `userClusterSummaries`를 제거했다. 대신 이미 retrieved/filter를 통과한 `memoryContext`에서 semantic memory 최대 5개를 `semantic`, `similarity`, `signal`로 넣는다. signal 실험값은 similarity 0.48 이상 high, 0.39 이하 low, 그 사이는 mid다.
+- 수정: planner input의 `recentMessages`를 6개에서 3개로 줄이고 `userClusterSummaries`를 제거했다. 대신 이미 retrieved/filter를 통과한 `memoryContext`에서 semantic memory를 `semantic`, `similarity`, `signal`로 넣는다. signal 실험값은 similarity 0.48 이상 high, 0.39 이하 low, 그 사이는 mid다. `[stale 2026-07-13 → 15.230: planner semantic memory cap은 retrieval top-k와 맞춰 최대 10개로 조정됨]`
 - 수정: planner output에서 `needs.interactionMemory`를 제거하고 `memoryRelevance`를 `light | medium | strong`으로 추가했다. Memory context는 retrieved/filter를 통과해 있으면 prompt에 주입하고, `chatProfileMemoryPrompt`와 `chatInteractionMemoryPrompt`가 memoryRelevance별 instruction을 붙인다.
 - 유지: 15.199의 before-session retrieval/filter 계약은 유지한다. Planner semantic memory input은 retrieval/filter 우회가 아니라 `/main`이 넘긴 `memoryContext`의 compact view다.
 
@@ -4179,7 +4179,7 @@ type ChatPlan = {
 
 - 배경(Notion `[updated] retrieval 메모리 prompt에 들어가는지 확인`): 15.199에서 current before-session always-on 주입은 제거했지만, `/api/chat`은 retrieved memory를 다시 before-session/profile과 during-session/interaction으로 분리해 `chatProfileMemoryPrompt`와 `chatInteractionMemoryPrompt`를 따로 붙이고 있었다. 이 때문에 retrieval은 단일 top-k 경쟁인데 chat prompt 단계에서 다시 source별 특권처럼 보일 여지가 남았다.
 - 수정: `chatProfileMemoryPrompt`와 `chatInteractionMemoryPrompt`를 제거하고 `chatRetrievedMemoryPrompt` 단일 helper로 통합했다. `/api/chat`은 `memoryContext` 전체를 `compactMemoryContext`로 한 번만 변환하고, `selectedContextKeys`에도 `retrievedMemory` 하나만 기록한다.
-- 수정: planner compact input의 UI count도 `profileMemoryCount`/`interactionMemoryCount` 대신 `retrievedMemoryCount` 하나로 바꿨다. Planner가 보는 semantic memory 목록은 기존처럼 retrieval/filter를 통과한 항목 최대 5개다.
+- 수정: planner compact input의 UI count도 `profileMemoryCount`/`interactionMemoryCount` 대신 `retrievedMemoryCount` 하나로 바꿨다. Planner가 보는 semantic memory 목록은 retrieval/filter를 통과한 항목이다. `[stale 2026-07-13 → 15.230: 최대 5개 cap은 retrieval top-k 10과 맞춰 최대 10개로 조정됨]`
 - 유지: before-session 항목의 `beforeSessionScope`와 `sourceMissionId`는 compact JSON에 계속 남겨 모델이 출처를 참고할 수 있게 했다. 단, prompt 문구는 이 metadata를 자동 미션 요구사항이나 검색 query term으로 쓰지 말고 retrieval-selected evidence로만 다루도록 설명한다.
 - 유지: `/api/memory/retrieve`의 호환 응답 필드 `currentBeforeSessionSetup: []`와 retrieval log의 profile count/debug fields는 이번 변경에서 건드리지 않았다. Top-k limit 조정은 15.209에서 별도 처리했다.
 
@@ -4189,7 +4189,7 @@ type ChatPlan = {
 - 수정: `/api/memory/retrieve`의 `DEFAULT_LIMIT`을 5에서 10으로 올렸다. route는 기존처럼 body `limit`을 1~10으로 clamp하므로 최대 retrieval budget은 그대로 10이다.
 - 수정: `/main/[missionId]`의 memory retrieve 호출이 명시적으로 `limit: 10`을 보내도록 변경했다. 클라이언트가 값을 보내지 않는 다른 호출도 서버 기본값 10을 따른다.
 - 수정: `/api/chat`의 retrieved memory prompt compact cap을 episodic/semantic 각각 8에서 10으로 올려, top 10 retrieved memory가 prompt 단계에서 임의로 8개로 잘리지 않게 했다.
-- 유지: planner input의 `semanticMemories`는 의도 판단용 compact signal이라 기존 최대 5개를 유지했다. 실제 답변 prompt에는 `chatRetrievedMemoryPrompt`를 통해 top 10 retrieval context가 들어간다.
+- 수정: planner input의 `semanticMemories`도 retrieval top-k와 맞춰 최대 10개를 본다. 실제 답변 prompt에도 `chatRetrievedMemoryPrompt`를 통해 top 10 retrieval context가 들어간다.
 
 ### 15.210 Assistant feedback 기반 memory weight 조정 `[implemented 2026-07-13]`
 
@@ -4336,3 +4336,9 @@ type ChatPlan = {
 - 배경: Notion `39bd5dc81f66802ea0b4f06e3b4301b8`의 0713 피드백. 답변 생성 전에 `/api/memory/retrieve`가 사용된 memory weight를 기본적으로 올리기 때문에, feedback에서 좋아요 `+0.08`, 싫어요 `-0.04`를 그대로 더하면 최종 효과가 좋아요는 과하게 커지고 싫어요는 거의 상쇄된다.
 - 수정: `memoryFeedbackWeights.ts`의 feedback delta를 좋아요 `+0.04`, 싫어요 `-0.08`로 조정했다.
 - 의도: retrieval reward를 포함한 최종 효과가 대략 좋아요 `+0.08`, 싫어요 `-0.04`가 되게 한다. 재투표/재저장은 기존 `assistantFeedbackWeightAdjustment.deltaPerMemory`와 새 desired delta의 차이만 적용하므로 중복 누적은 기존처럼 막는다.
+
+### 15.230 Planner semantic memory cap 10 정렬 `[implemented 2026-07-13]`
+
+- 배경: Notion `39cd5dc81f66808e9b70f56e1367da48` 지적. 15.209에서 retrieval top-k와 answer prompt cap은 10으로 올렸지만, `/api/chat` planner compact input의 `semanticMemories`는 `.slice(0, 5)`로 남아 있어 planner는 검색된 10개 중 5개만 봤다.
+- 수정: `compactPlannerSemanticMemories()`의 cap을 5에서 10으로 올렸다.
+- 의도: planner intent/needs/memoryRelevance 판단이 answer prompt에 들어갈 top 10 retrieved memory와 같은 후보 범위를 보게 한다. 이 cap은 retrieval/filter 우회가 아니라 이미 선택된 `memoryContext`의 compact view에만 적용된다.
