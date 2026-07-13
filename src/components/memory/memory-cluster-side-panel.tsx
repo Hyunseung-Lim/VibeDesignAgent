@@ -6,7 +6,12 @@ import type {
   MemoryCluster,
   MemoryItem,
 } from "./memory-cluster-types";
-import { visibleMemoryActionLabels } from "./memory-action-labels";
+import {
+  hasPreferenceSignal,
+  hasPreferenceSignalAction,
+  preferenceSignalLabel,
+  visibleMemoryActionLabels,
+} from "./memory-action-labels";
 
 type MemoryClusterSidePanelProps = {
   cluster: MemoryCluster | null;
@@ -145,6 +150,9 @@ export function MemoryClusterSidePanel({
   const relatedActionLabels = visibleMemoryActionLabels(
     cluster?.relatedActions.join(" / "),
   );
+  const hasRelatedPreferenceSignal = hasPreferenceSignalAction(
+    cluster?.relatedActions.join(" / "),
+  );
   // Scroll the detail list to the item selected from the graph/node click.
   const selectedItemRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
@@ -194,7 +202,7 @@ export function MemoryClusterSidePanel({
       <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-5">
         {cluster ? (
           <div className="space-y-5">
-            {relatedActionLabels.length > 0 ? (
+            {relatedActionLabels.length > 0 || hasRelatedPreferenceSignal ? (
               <section>
                 <p className="mb-2 text-xs font-semibold uppercase text-muted-foreground">
                   관련 작업
@@ -209,6 +217,11 @@ export function MemoryClusterSidePanel({
                       {label}
                     </Badge>
                   ))}
+                  {hasRelatedPreferenceSignal ? (
+                    <Badge className="rounded-full border border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-50">
+                      {preferenceSignalLabel}
+                    </Badge>
+                  ) : null}
                 </div>
               </section>
             ) : null}
@@ -231,6 +244,10 @@ export function MemoryClusterSidePanel({
                     ? getMissionLabel(missionId)
                     : "미션 출처 없음";
                   const actionLabels = visibleMemoryActionLabels(item.action);
+                  const hasPreferenceSignalBadge = hasPreferenceSignal(
+                    item.action,
+                    memory?.preferenceSignal ?? item.preferenceSignal,
+                  );
                   const originalInput = originalInputText(item);
                   return (
                     <div
@@ -302,6 +319,11 @@ export function MemoryClusterSidePanel({
                             {label}
                           </Badge>
                         ))}
+                        {hasPreferenceSignalBadge ? (
+                          <Badge className="rounded-full border border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-50">
+                            {preferenceSignalLabel}
+                          </Badge>
+                        ) : null}
                         {memory?.archivedAt ? (
                           <Badge variant="secondary" className="rounded-full">
                             보관됨

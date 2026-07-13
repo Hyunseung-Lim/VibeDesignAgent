@@ -4,7 +4,12 @@ import type {
   MemoryCluster,
   MemoryItem,
 } from "./memory-cluster-types";
-import { visibleMemoryActionLabels } from "./memory-action-labels";
+import {
+  hasPreferenceSignal,
+  hasPreferenceSignalAction,
+  preferenceSignalLabel,
+  visibleMemoryActionLabels,
+} from "./memory-action-labels";
 
 type MemoryClusterDetailProps = {
   cluster: MemoryCluster;
@@ -18,6 +23,9 @@ export function MemoryClusterDetail({
   memories,
 }: MemoryClusterDetailProps) {
   const relatedActionLabels = visibleMemoryActionLabels(
+    cluster.relatedActions.join(" / "),
+  );
+  const hasRelatedPreferenceSignal = hasPreferenceSignalAction(
     cluster.relatedActions.join(" / "),
   );
   return (
@@ -35,7 +43,7 @@ export function MemoryClusterDetail({
           <p className="mt-2 max-w-3xl text-sm leading-relaxed text-muted-foreground">
             {cluster.summary}
           </p>
-          {relatedActionLabels.length > 0 ? (
+          {relatedActionLabels.length > 0 || hasRelatedPreferenceSignal ? (
             <div className="mt-3 flex flex-wrap gap-1.5">
               {relatedActionLabels.map((label) => (
                 <Badge
@@ -46,6 +54,11 @@ export function MemoryClusterDetail({
                   {label}
                 </Badge>
               ))}
+              {hasRelatedPreferenceSignal ? (
+                <Badge className="rounded-full border border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-50">
+                  {preferenceSignalLabel}
+                </Badge>
+              ) : null}
             </div>
           ) : null}
         </div>
@@ -76,6 +89,10 @@ export function MemoryClusterDetail({
             {items.map((item) => {
               const mem = memories.find((memory) => memory.id === item.id);
               const actionLabels = visibleMemoryActionLabels(item.action);
+              const hasPreferenceSignalBadge = hasPreferenceSignal(
+                item.action,
+                mem?.preferenceSignal ?? item.preferenceSignal,
+              );
               return (
                 <div
                   key={item.id}
@@ -104,6 +121,11 @@ export function MemoryClusterDetail({
                         {label}
                       </Badge>
                     ))}
+                    {hasPreferenceSignalBadge ? (
+                      <Badge className="rounded-full border border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-50">
+                        {preferenceSignalLabel}
+                      </Badge>
+                    ) : null}
                     {item.keyword.slice(0, 3).map((kw) => (
                       <Badge
                         key={kw}

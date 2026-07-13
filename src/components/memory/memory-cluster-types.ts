@@ -13,6 +13,7 @@ export type MemoryItem = {
   output: string | null;
   originalInteractionContent?: string | null;
   action: string | null;
+  preferenceSignal?: unknown;
   sourceType: string | null;
   keywords: string[];
   weight: number | null;
@@ -48,6 +49,7 @@ export type ClusterGraphItem = {
   output: string;
   originalInteractionContent?: string;
   action: string;
+  preferenceSignal?: unknown;
   sourceType?: string | null;
   weight?: number | null;
   embedding?: number[];

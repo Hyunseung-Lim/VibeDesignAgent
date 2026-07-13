@@ -51,6 +51,7 @@ type Candidate = {
   input: string;
   output: string;
   originalInteractionContent: string;
+  preferenceSignal: unknown;
   link: string | null;
   sourceType: string | null;
   embedding: number[];
@@ -184,6 +185,7 @@ function responseMemory(
     input: candidate.input,
     output: candidate.output,
     originalInteractionContent: candidate.originalInteractionContent,
+    preferenceSignal: candidate.doc.preferenceSignal ?? null,
     link: candidate.link,
     embeddingSource: candidate.embeddingSource,
     source: candidate.source,
@@ -228,6 +230,7 @@ function v2Candidate(uid: string, doc: MemoryDoc): Candidate | null {
     input: String(doc.input ?? ""),
     output: String(doc.output ?? ""),
     originalInteractionContent: String(doc.originalInteractionContent ?? ""),
+    preferenceSignal: doc.preferenceSignal ?? null,
     link: doc.link ? String(doc.link) : null,
     sourceType,
     embedding,

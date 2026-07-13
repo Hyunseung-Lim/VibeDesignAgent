@@ -158,6 +158,8 @@ export async function POST(request: Request) {
               timestamp,
               previousEpisode: draft.previousEpisode ?? "",
               agentActionCategory: draft.agentActionCategory ?? "agent_response",
+              preferenceSignal: draft.preferenceSignal ?? null,
+              assistantFeedback: draft.assistantFeedback ?? null,
               source: {
                 missionId,
                 draftId: draft.id,

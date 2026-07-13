@@ -165,6 +165,7 @@ function compactMemory(id: string, doc: Record<string, unknown>) {
     output: stringOrNull(doc.output),
     originalInteractionContent: stringOrNull(doc.originalInteractionContent),
     agentActionCategory: stringOrNull(doc.agentActionCategory ?? doc.action),
+    preferenceSignal: doc.preferenceSignal ?? null,
     keyword,
     keywords: keyword,
     weight: memoryWeight(doc),
@@ -190,6 +191,7 @@ function compactGraphMemory(item: ReturnType<typeof compactMemory>) {
     input: item.input,
     output: item.output,
     agentActionCategory: item.agentActionCategory,
+    preferenceSignal: item.preferenceSignal,
     keyword: item.keyword,
     keywords: item.keywords,
     weight: item.weight,
@@ -305,6 +307,7 @@ export async function POST(request: Request) {
           agentActionCategory: stringOrNull(
             doc.agentActionCategory ?? doc.action,
           ),
+          preferenceSignal: doc.preferenceSignal ?? null,
           status: stringOrNull(doc.status),
           promotedAt: numberOrNull(doc.promotedAt),
           timestamp: numberOrNull(doc.timestamp ?? doc.createdAt),

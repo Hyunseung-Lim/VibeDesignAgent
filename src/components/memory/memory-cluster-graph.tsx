@@ -16,7 +16,11 @@ import type {
   ClusterGraphEdge,
   MemorySource,
 } from "@/components/memory/memory-cluster-types";
-import { visibleMemoryActionLabels } from "@/components/memory/memory-action-labels";
+import {
+  hasPreferenceSignal,
+  preferenceSignalLabel,
+  visibleMemoryActionLabels,
+} from "@/components/memory/memory-action-labels";
 
 type MemoryCluster = {
   id: string;
@@ -38,6 +42,7 @@ type ClusterableMemoryItem = {
   output?: string;
   link?: string;
   action: string;
+  preferenceSignal?: unknown;
   sourceType?: string | null;
   weight?: number | null;
   embedding?: number[];
@@ -809,6 +814,10 @@ export default function MemoryClusterGraph({
   const selectedPointActionLabels = visibleMemoryActionLabels(
     selectedPoint?.item.action,
   );
+  const selectedPointHasPreferenceSignal = hasPreferenceSignal(
+    selectedPoint?.item.action,
+    selectedPoint?.item.preferenceSignal,
+  );
   const selectedPointInput = selectedPoint
     ? originalInputText(selectedPoint.item)
     : "";
@@ -989,6 +998,14 @@ export default function MemoryClusterGraph({
                 {label}
               </Badge>
             ))}
+            {hasPreferenceSignal(
+              hoveredPoint.item.action,
+              hoveredPoint.item.preferenceSignal,
+            ) ? (
+              <Badge className="rounded-full border border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-50">
+                {preferenceSignalLabel}
+              </Badge>
+            ) : null}
           </div>
           <div className="flex gap-2">
             <span
@@ -1066,6 +1083,11 @@ export default function MemoryClusterGraph({
                   {label}
                 </span>
               ))}
+              {selectedPointHasPreferenceSignal ? (
+                <span className="rounded-full bg-rose-50 px-2 py-0.5 font-medium text-rose-700 ring-1 ring-rose-200">
+                  {preferenceSignalLabel}
+                </span>
+              ) : null}
               <span>
                 {selectedPoint.hasEmbedding ? "embedding" : "fallback"}
               </span>

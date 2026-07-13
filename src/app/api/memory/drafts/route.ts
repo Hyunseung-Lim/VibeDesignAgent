@@ -40,6 +40,7 @@ type AssistantFeedbackMemoryPayload = {
   reason?: string | null;
   targetMessageId?: string | null;
   targetUserMessageId?: string | null;
+  targetActionCategory?: string | null;
 };
 
 type EncodedMemory = {
@@ -135,7 +136,6 @@ function extractAgentActions(output: string): AgentAction[] {
 }
 
 function inferAgentActionCategory(output: string, interactionId: string) {
-  if (interactionId.startsWith("feedback-")) return "assistant_feedback";
   if (/\[CREATE_NOTE:/i.test(output)) return "note_create";
   if (/\[UPDATE_NOTE:/i.test(output)) return "note_update";
   if (/\[GENERATE_MOCKUP:/i.test(output)) return "mockup_generate";
@@ -301,6 +301,10 @@ export async function POST(request: Request) {
             typeof body.assistantFeedback.targetUserMessageId === "string"
               ? body.assistantFeedback.targetUserMessageId
               : "",
+          targetActionCategory:
+            typeof body.assistantFeedback.targetActionCategory === "string"
+              ? body.assistantFeedback.targetActionCategory
+              : "",
         }
       : null;
 
@@ -336,7 +340,12 @@ export async function POST(request: Request) {
     timestamp,
     token,
   );
-  const agentActionCategory = inferAgentActionCategory(output, interactionId);
+  const inferredAgentActionCategory = inferAgentActionCategory(
+    output,
+    interactionId,
+  );
+  const agentActionCategory =
+    assistantFeedback?.targetActionCategory || inferredAgentActionCategory;
   const agentActions = assistantFeedback ? [] : extractAgentActions(output);
   const originalInteractionContent = [
     `User input:\n${input}`,
@@ -439,6 +448,17 @@ export async function POST(request: Request) {
             reason: assistantFeedback.reason,
             targetMessageId: assistantFeedback.targetMessageId,
             targetUserMessageId: assistantFeedback.targetUserMessageId,
+            targetActionCategory: assistantFeedback.targetActionCategory,
+          }
+        : null,
+      preferenceSignal: assistantFeedback
+        ? {
+            kind: "assistant_feedback",
+            vote: assistantFeedback.vote,
+            reason: assistantFeedback.reason,
+            targetMessageId: assistantFeedback.targetMessageId,
+            targetUserMessageId: assistantFeedback.targetUserMessageId,
+            targetActionCategory: agentActionCategory,
           }
         : null,
       assistantFeedbackWeightAdjustment,

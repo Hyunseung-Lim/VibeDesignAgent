@@ -200,6 +200,7 @@ type AssistantFeedbackMemoryPayload = {
   reason?: string;
   targetMessageId: string;
   targetUserMessageId?: string | null;
+  targetActionCategory?: string | null;
 };
 
 type ReviewTurnMemory = {
@@ -288,6 +289,7 @@ type SessionMemoryItem = {
   output?: string | null;
   originalInteractionContent?: string | null;
   agentActionCategory?: string | null;
+  preferenceSignal?: unknown;
   keyword?: string[];
   keywords?: string[];
   status?: string | null;
@@ -2139,6 +2141,19 @@ function cleanForFirestore<T>(value: T): T {
   );
 }
 
+function assistantMessageActionCategory(content: string) {
+  if (/\[CREATE_NOTE:/i.test(content)) return "note_create";
+  if (/\[UPDATE_NOTE:/i.test(content)) return "note_update";
+  if (/\[GENERATE_MOCKUP:/i.test(content)) return "mockup_generate";
+  if (/\[EDIT_MOCKUP:/i.test(content)) return "mockup_edit";
+  if (/\[CREATE_DESIGN_SPEC:/i.test(content)) return "design_spec_create";
+  if (/\[EDIT_DESIGN_SPEC:/i.test(content)) return "design_spec_edit";
+  if (/\[FETCH_REFERENCES:/i.test(content)) return "references_fetch";
+  if (/```(?:json)?\s*\{[\s\S]*?"slides"/i.test(content))
+    return "presentation_create";
+  return "agent_response";
+}
+
 function memoryActionCategory(item: SessionMemoryItem) {
   const id = item.source?.draftId ?? item.id;
   if (id.startsWith("delete-reference-")) return "reference_delete";
@@ -2147,7 +2162,11 @@ function memoryActionCategory(item: SessionMemoryItem) {
   if (id.startsWith("delete-idea-")) return "note_delete";
   if (id.startsWith("delete-design-")) return "mockup_delete";
   if (id.startsWith("final-design-")) return "final_design_select";
-  if (id.startsWith("feedback-")) return "assistant_feedback";
+  if (id.startsWith("feedback-") && item.agentActionCategory)
+    return item.agentActionCategory;
+  if (id.startsWith("feedback-")) return "agent_response";
+  if (item.agentActionCategory === "assistant_feedback")
+    return "preference_signal";
   if (item.agentActionCategory) return item.agentActionCategory;
   return "memory_event";
 }
@@ -2174,6 +2193,7 @@ function finalDesignEventSummary(item: SessionMemoryItem | ReviewTurnMemory) {
 }
 
 function memoryEventLabel(item: SessionMemoryItem) {
+  if (item.preferenceSignal) return "선호 표시";
   switch (memoryActionCategory(item)) {
     case "reference_delete":
       return "레퍼런스 삭제";
@@ -2185,8 +2205,8 @@ function memoryEventLabel(item: SessionMemoryItem) {
       return "시안 삭제";
     case "mockup_delete":
       return "목업 삭제";
-    case "assistant_feedback":
-      return "답변 평가";
+    case "preference_signal":
+      return "선호 표시";
     default:
       return "세션 이벤트";
   }
@@ -2194,6 +2214,7 @@ function memoryEventLabel(item: SessionMemoryItem) {
 
 function memoryEventDetail(item: SessionMemoryItem) {
   const target = compactEventTarget(item);
+  if (item.preferenceSignal) return `선호 표시한 답변: ${target}`;
   switch (memoryActionCategory(item)) {
     case "reference_delete":
       return `삭제한 레퍼런스: ${target}`;
@@ -2207,8 +2228,8 @@ function memoryEventDetail(item: SessionMemoryItem) {
       return `삭제한 목업: ${target}`;
     case "final_design_select":
       return finalDesignEventSummary(item);
-    case "assistant_feedback":
-      return `평가한 답변: ${target}`;
+    case "preference_signal":
+      return `선호 표시한 답변: ${target}`;
     default:
       return target || "내용 없는 메모리";
   }
@@ -2224,7 +2245,7 @@ function memorySummaryText(item: SessionMemoryItem | ReviewTurnMemory) {
       action === "note_delete" ||
       action === "mockup_delete" ||
       action === "final_design_select" ||
-      action === "assistant_feedback"
+      action === "preference_signal"
     ) {
       return memoryEventDetail(item);
     }
@@ -2462,13 +2483,14 @@ function isMemoryLinkedToMessage(
 }
 
 function shouldShowMemoryEventCard(item: SessionMemoryItem) {
+  if (item.preferenceSignal) return true;
   const category = memoryActionCategory(item);
   return [
     "reference_delete",
     "note_delete",
     "mockup_delete",
     "final_design_select",
-    "assistant_feedback",
+    "preference_signal",
   ].includes(category);
 }
 
@@ -2479,7 +2501,7 @@ function activityEventCategory(event: ActivityLogEvent) {
   if (event.section === "mockup" && event.action === "delete")
     return "mockup_delete";
   if (event.section === "feedback" && event.action === "submit")
-    return "assistant_feedback";
+    return "preference_signal";
   return "activity_event";
 }
 
@@ -2488,7 +2510,7 @@ function shouldShowActivityEventCard(event: ActivityLogEvent) {
     "reference_delete",
     "note_delete",
     "mockup_delete",
-    "assistant_feedback",
+    "preference_signal",
   ].includes(activityEventCategory(event));
 }
 
@@ -2500,15 +2522,15 @@ function activityEventLabel(event: ActivityLogEvent) {
       return "시안 삭제";
     case "mockup_delete":
       return "목업 삭제";
-    case "assistant_feedback":
-      return "답변 평가";
+    case "preference_signal":
+      return "선호 표시";
     default:
       return "세션 이벤트";
   }
 }
 
 function activityEventDetail(event: ActivityLogEvent) {
-  if (activityEventCategory(event) === "assistant_feedback") {
+  if (activityEventCategory(event) === "preference_signal") {
     return [event.input, event.output].filter(Boolean).join(" · ");
   }
   return event.outputTitle || event.output || event.input || event.link || event.id;
@@ -3256,7 +3278,7 @@ export default function MainScreenPage() {
       return;
     }
     const input = [
-      `답변 평가: ${voteLabel}`,
+      `선호 표시: ${voteLabel}`,
       reason ? `이유: ${reason}` : "이유: 없음",
       originalQuestion
         ? `평가된 답변의 원래 질문:\n${originalQuestion}`
@@ -3276,11 +3298,14 @@ export default function MainScreenPage() {
         reason: reason || undefined,
         targetMessageId: assistantMessage.id,
         targetUserMessageId: userMessage?.id ?? null,
+        targetActionCategory: assistantMessageActionCategory(
+          assistantMessage.content,
+        ),
       },
     );
     setIsSubmittingAssistantFeedback(false);
     if (!ok) {
-      toast.error("답변 평가를 저장하지 못했어요.");
+      toast.error("선호 표시를 저장하지 못했어요.");
       return;
     }
     setMessages((prev) =>
@@ -3302,11 +3327,11 @@ export default function MainScreenPage() {
       action: "submit",
       input: voteLabel,
       output: reason || "이유 없음",
-      outputTitle: "답변 평가",
+      outputTitle: "선호 표시",
     });
     setAssistantFeedbackDraft(null);
     setAssistantFeedbackReason("");
-    toast.success("답변 평가를 저장했어요.");
+    toast.success("선호 표시를 저장했어요.");
   }, [
     appendActivityLog,
     assistantFeedbackDraft,
@@ -7647,6 +7672,7 @@ export default function MainScreenPage() {
         ]
           .filter(Boolean)
           .join(" / "),
+        preferenceSignal: memory.preferenceSignal ?? null,
         timestamp: memory.timestamp ?? 0,
         weight: phaseWeight ?? null,
         embedding: memory.embedding,
@@ -7724,6 +7750,7 @@ export default function MainScreenPage() {
           output: memory.output ?? null,
           originalInteractionContent: memory.originalInteractionContent ?? null,
           action: memory.agentActionCategory ?? null,
+          preferenceSignal: memory.preferenceSignal ?? null,
           sourceType: memory.sourceType ?? null,
           keywords: Array.from(
             new Set([...(memory.keyword ?? []), ...(memory.keywords ?? [])]),
@@ -8019,7 +8046,7 @@ export default function MainScreenPage() {
       >
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>답변 평가</DialogTitle>
+            <DialogTitle>선호 표시</DialogTitle>
             <DialogDescription>
               {assistantFeedbackDialogVoteLabel}로 기록하고, 필요하면 이유를
               남겨주세요.
