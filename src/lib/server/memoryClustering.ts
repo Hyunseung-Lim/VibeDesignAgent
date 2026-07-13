@@ -29,6 +29,15 @@ export const CLUSTERING_METHOD_VERSION =
 export const MEMORY_VERSION = "0.1.2";
 export const ONBOARDING_MISSION_ID = "onboarding";
 
+export function dynamicMaxClusterCount(nodeCount: number) {
+  const linear = Math.floor(nodeCount / 5);
+  const earlyLift = Math.floor(1.5 * Math.sqrt(nodeCount));
+  return Math.max(
+    1,
+    Math.min(MAX_GRAPH_CLUSTER_COUNT, Math.max(linear, earlyLift)),
+  );
+}
+
 // Fixed clustering vector source: the stored memory embedding contract.
 export const CLUSTERING_INPUT_VARIANTS = [
   "keyword-episodic-semantic-link",
@@ -118,6 +127,7 @@ export type GraphCommunityDiagnostics = {
     averageDegree: number;
     singletonCount: number;
     rawCommunityCount: number;
+    maxClusterCount: number;
     cappedCommunityCount: number;
     meanCentered: boolean;
     thresholdMode: "pairwise-quantile";
@@ -768,7 +778,8 @@ export function buildGraphCommunityClusters(items: ClusterInputItem[], vectors: 
   })).filter((edge) => edge.sourceId && edge.targetId);
   const labels = labelPropagationCommunities(items.length, edges);
   const rawGroups = groupsFromLabels(labels);
-  const groups = mergeCommunities(rawGroups, clusteringVectors, MAX_GRAPH_CLUSTER_COUNT);
+  const maxClusterCount = dynamicMaxClusterCount(items.length);
+  const groups = mergeCommunities(rawGroups, clusteringVectors, maxClusterCount);
   const singletonCount = rawGroups.filter((g) => g.length === 1).length;
 
   return {
@@ -806,6 +817,7 @@ export function buildGraphCommunityClusters(items: ClusterInputItem[], vectors: 
         averageDegree: Number(((edges.length * 2) / Math.max(items.length, 1)).toFixed(3)),
         singletonCount,
         rawCommunityCount: rawGroups.length,
+        maxClusterCount,
         cappedCommunityCount: groups.length,
         meanCentered: true,
         thresholdMode: "pairwise-quantile",

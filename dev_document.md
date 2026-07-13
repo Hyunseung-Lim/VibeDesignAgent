@@ -187,7 +187,7 @@
 - 입력: clustering vector는 retrieval과 같은 active `memories_0_1_2.embedding` 저장값을 사용한다. `archivedAt`이 있거나 `weight <= 0`인 memory는 현재 graph/clustering 입력에서 제외한다. 저장값이 없거나 `embeddingSource`가 현재 sourceType 계약과 맞지 않으면 keyword/episodic/semantic/link(before-session은 source.sourceText 포함) 텍스트로 재생성해 문서에 write-back한다. 원문 interaction input/output은 clustering embedding에 포함하지 않고, 입력 variant 비교는 제공하지 않는다 `[현행 2026-07-13 → 15.178/15.201/15.202/15.211]`
 - 1단계: 저장된 `text-embedding-3-large` memory embedding을 읽고, clustering-time에만 전체 평균 벡터를 뺀 뒤 L2 normalize한 centered vector를 만든다. 저장 embedding 자체는 바꾸지 않고, retrieval과 clustering은 여전히 같은 Firestore embedding source를 공유한다.
 - 2단계: centered vector로 cosine similarity graph를 만든다. 강한 유사도 edge와 node별 KNN edge를 함께 쓰되, threshold는 raw embedding 시절의 고정값이 아니라 현재 corpus의 pairwise similarity 분위수에서 계산한다. 기본값은 min p85, strong p97이다.
-- 3단계: similarity graph에서 label propagation으로 community를 찾고, community가 너무 많으면 centered vector의 centroid similarity 기준으로 최대 16개까지 merge한다. 34% giant community 재분할은 아직 적용하지 않고, mean-centering 결과를 먼저 확인한 뒤 필요하면 후속 안전장치로 추가한다.
+- 3단계: similarity graph에서 label propagation으로 community를 찾고, community가 너무 많으면 centered vector의 centroid similarity 기준으로 merge한다. merge cap은 node 수에 따라 `max(floor(nodeCount / 5), floor(1.5 * sqrt(nodeCount)))`로 점진 증가하고, 점근 상한은 16개다. 34% giant community 재분할은 아직 적용하지 않고, mean-centering/adaptive-threshold 결과를 먼저 확인한 뒤 필요하면 후속 안전장치로 추가한다.
 - 4단계: LLM은 cluster membership을 바꾸지 않고 최종 cluster label/summary만 생성한다. Labeler는 비교 안정성을 위해 `temperature: 0`으로 고정한다. Summary는 작업 목록을 일반적으로 요약하지 않고 Firestore profile의 실제 displayName을 사용해 그 사람의 반복되는 성격, 습관, 작업 방식, 의사결정 패턴과 디자인 취향을 근거와 함께 서술한다. 단일·약한 근거에는 consistently/always 같은 반복 표현을 쓰지 않는다 `[현행 2026-07-10 → 15.99/15.198]`
 - `/agent`(self·admin 공용) UI 헤더에는 고정 입력 구성(keyword · episodic · semantic · link)만 표시하고, 입력 variant 토글은 렌더하지 않는다 `[현행 2026-07-03 → 15.178]`
 - `/agent` cluster UI는 좌측에서 cluster list → detail panel → graph 순서로 배치한다. cluster list는 main 세션 리뷰와 동일한 `MemoryClusterList` review presentation을 사용한다 — 색상 count rail이 달린 rounded card, cluster label만 표시, 좌측 접기 rail 제공. cluster summary와 선택됨 badge는 숨긴다. Cluster color는 배열 index가 아니라 저장된 `colorIndex`를 우선 사용하며, cluster 재생성 시 이전 cluster와 item overlap이 가장 큰 successor 하나가 기존 색을 계승한다. Graph layout은 현재 edge weight 분포의 p05~p95 범위로 spring strength를 정규화하고, hard boundary clamp 대신 soft boundary force를 사용해 node가 viewport 가장자리에 일렬로 붙는 현상을 줄인다 `[현행 2026-07-13 → 15.169/15.238/15.239]`
@@ -4370,7 +4370,7 @@ type ChatPlan = {
 
 - 배경(Notion `거대 클러스터 없애기 - 클러스터링 로직 수정`): 기존 similarity graph는 저장 embedding을 그대로 사용하고, node별 KNN 3개 edge와 label propagation을 결합했다. 디자인 작업 memory는 portfolio/mockup/design style 같은 공통어와 embedding 입력 boilerplate가 많아 baseline similarity가 높고, A-B-C-D chaining이 커지면 label propagation이 dense graph를 하나의 giant community로 합치는 문제가 있었다.
 - 수정: clustering graph를 만들기 전에 저장 embedding 전체 평균 벡터를 빼고 다시 L2 normalize한다. 이 mean-centering은 clustering-time transform일 뿐 Firestore의 `memories_0_1_2.embedding` 값은 바꾸지 않는다.
-- 유지: label propagation, KNN 3개 edge, 최대 16개 centroid merge 구조는 그대로 둔다. raw embedding 시절의 strong/min 고정 threshold는 15.237에서 centered vector 분포 기반 adaptive threshold로 대체한다. 34% community 재분할과 farthest-anchor 강제 split은 의미 품질에 부작용이 있을 수 있어 이번 1차 적용에서는 넣지 않는다.
+- 유지: label propagation, KNN 3개 edge, 최대 16개 centroid merge 상한은 그대로 둔다. raw embedding 시절의 strong/min 고정 threshold는 15.237에서 centered vector 분포 기반 adaptive threshold로 대체하고, 고정 16개 merge cap은 15.240에서 node 수 기반 dynamic cap으로 대체한다. 34% community 재분할과 farthest-anchor 강제 split은 의미 품질에 부작용이 있을 수 있어 이번 1차 적용에서는 넣지 않는다.
 - 캐시: clustering method version을 `similarity-graph-v5-centered-embedding`으로 올리고, latest cache fallback도 current method version만 읽게 해 기존 v4 cache와 섞이지 않게 했다. 저장 memory 삭제나 re-embedding 없이 cluster 재생성만으로 새 로직을 확인할 수 있다.
 - 진단: `graphDiagnostics.graph.meanCentered`를 남겨 재생성 결과가 centered vector 기반인지 확인할 수 있게 했다.
 
@@ -4400,3 +4400,9 @@ type ChatPlan = {
 - 수정: `MemoryCluster`에 `colorIndex`를 추가하고 cluster 저장 직전 이전 cluster doc과 새 cluster의 `itemIds` overlap을 비교한다. 가장 큰 overlap을 가진 이전 cluster의 colorIndex를 새 cluster가 계승하며, 같은 이전 cluster가 여러 새 cluster로 split되면 overlap이 가장 큰 successor 하나만 기존 색을 가져간다. 나머지 신규/split cluster는 현재 사용 중이지 않은 palette slot을 우선 배정한다.
 - 적용: 일반 `/api/memory/clusters` 및 admin cluster cache 생성은 latest cluster doc을 color source로 사용한다. 세션 리뷰 snapshot은 before snapshot이 latest cluster doc 색을, after snapshot이 before snapshot 색을 이어받아 phase 전환 시 같은 cluster가 가능한 한 같은 색으로 보인다.
 - 표시: `MemoryClusterList`와 `MemoryClusterGraph`는 배열 index 대신 `cluster.colorIndex`를 우선 사용하고, 값이 없는 legacy cluster는 기존처럼 index fallback을 사용한다.
+
+### 15.240 Dynamic memory cluster merge cap `[implemented 2026-07-13]`
+
+- 배경: `MAX_GRAPH_CLUSTER_COUNT = 16`을 모든 node count에 그대로 적용하면 작은 memory set에서도 최대 16개까지 cluster가 유지되어 과분할처럼 보일 수 있고, 반대로 diagnostics에서 16개가 나오면 cap이 binding 중인지 해석하기 어려웠다.
+- 수정: `MAX_GRAPH_CLUSTER_COUNT`는 점근 상한으로 유지하고, 실제 merge target은 `dynamicMaxClusterCount(nodeCount) = max(1, min(16, max(floor(nodeCount / 5), floor(1.5 * sqrt(nodeCount)))))`로 계산한다. 작은 node set에서는 `1.5 * sqrt(nodeCount)`가 early lift를 제공하고, 큰 node set에서는 `nodeCount / 5`가 지배해 70 nodes → 14, 100 nodes → 상한 16에 가까워진다.
+- 진단: `graphDiagnostics.graph.maxClusterCount`에 이번 실행에서 적용된 dynamic cap을 저장해, `rawCommunityCount`, `cappedCommunityCount`와 함께 merge cap 개입 여부를 확인할 수 있게 했다.
