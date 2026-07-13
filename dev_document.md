@@ -185,14 +185,14 @@
 
 - 경로: 일반 사용자 본인 memory는 `GET/POST /api/memory/clusters`, admin의 타인 memory 진단은 `GET/POST /api/admin/users/[uid]/memory/clusters`
 - 입력: clustering vector는 retrieval과 같은 active `memories_0_1_2.embedding` 저장값을 사용한다. `archivedAt`이 있거나 `weight <= 0`인 memory는 현재 graph/clustering 입력에서 제외한다. 저장값이 없거나 `embeddingSource`가 현재 sourceType 계약과 맞지 않으면 keyword/episodic/semantic/link(before-session은 source.sourceText 포함) 텍스트로 재생성해 문서에 write-back한다. 원문 interaction input/output은 clustering embedding에 포함하지 않고, 입력 variant 비교는 제공하지 않는다 `[현행 2026-07-13 → 15.178/15.201/15.202/15.211]`
-- 1단계: 저장된 `text-embedding-3-large` memory embedding으로 cosine similarity graph를 만든다. Clustering 자체가 별도 embedding API 호출을 반복하지 않으며, 누락·stale 항목만 공용 helper로 보정한다.
-- 2단계: cosine similarity graph 생성. 강한 유사도 edge와 node별 KNN edge를 함께 사용
-- 3단계: similarity graph에서 label propagation으로 community를 찾고, community가 너무 많으면 centroid similarity 기준으로 최대 16개까지 merge
+- 1단계: 저장된 `text-embedding-3-large` memory embedding을 읽고, clustering-time에만 전체 평균 벡터를 뺀 뒤 L2 normalize한 centered vector를 만든다. 저장 embedding 자체는 바꾸지 않고, retrieval과 clustering은 여전히 같은 Firestore embedding source를 공유한다.
+- 2단계: centered vector로 cosine similarity graph를 만든다. 강한 유사도 edge와 node별 KNN edge를 함께 쓰되, 공통 boilerplate/디자인 일반어 때문에 생기는 배경 유사도는 mean-centering으로 낮춘다.
+- 3단계: similarity graph에서 label propagation으로 community를 찾고, community가 너무 많으면 centered vector의 centroid similarity 기준으로 최대 16개까지 merge한다. 34% giant community 재분할은 아직 적용하지 않고, mean-centering 결과를 먼저 확인한 뒤 필요하면 후속 안전장치로 추가한다.
 - 4단계: LLM은 cluster membership을 바꾸지 않고 최종 cluster label/summary만 생성한다. Labeler는 비교 안정성을 위해 `temperature: 0`으로 고정한다. Summary는 작업 목록을 일반적으로 요약하지 않고 Firestore profile의 실제 displayName을 사용해 그 사람의 반복되는 성격, 습관, 작업 방식, 의사결정 패턴과 디자인 취향을 근거와 함께 서술한다. 단일·약한 근거에는 consistently/always 같은 반복 표현을 쓰지 않는다 `[현행 2026-07-10 → 15.99/15.198]`
 - `/agent`(self·admin 공용) UI 헤더에는 고정 입력 구성(keyword · episodic · semantic · link)만 표시하고, 입력 variant 토글은 렌더하지 않는다 `[현행 2026-07-03 → 15.178]`
 - `/agent` cluster UI는 좌측에서 cluster list → detail panel → graph 순서로 배치한다. cluster list는 main 세션 리뷰와 동일한 `MemoryClusterList` review presentation을 사용한다 — 색상 count rail이 달린 rounded card, cluster label만 표시, 좌측 접기 rail 제공. cluster summary와 선택됨 badge는 숨긴다 `[현행 2026-06-30 → 15.169]`
 - `/agent`의 세션 필터는 유저별 `missionOrder` 기준의 누적 메모리 집합을 사용한다. 예를 들어 세션 2를 선택하면 세션 2까지의 누적 메모리를 보여주고, 세션 2에서 새로 생성된 메모리만 다이아몬드로 표시한다. 세션 리뷰 overlay는 세션 완료 시 생성된 before/after cluster snapshot을 사용해 phase별 cluster label/summary/membership/edge를 분리 표시한다. 기본 그래프 필터는 전체 메모리다 `[현행 2026-07-10 → 15.178/15.197]`
-- 캐시 키는 memory version + item signature + clustering method version으로 관리하고, method version에는 고정 입력 이름 `keyword-episodic-semantic-link`가 포함된다. 저장 embedding 공유 전환 후 method version은 `similarity-graph-v4-stored-memory-embedding`이며, 과거 compact-context/full-context/v3 cache와 섞지 않는다 `[현행 2026-07-10 → 15.178/15.201]`
+- 캐시 키는 memory version + item signature + clustering method version으로 관리하고, method version에는 고정 입력 이름 `keyword-episodic-semantic-link`가 포함된다. mean-centered graph 전환 후 method version은 `similarity-graph-v5-centered-embedding`이며, latest fallback 조회도 같은 current method version만 읽어 과거 compact-context/full-context/v3/v4 cache와 섞지 않는다 `[현행 2026-07-13 → 15.178/15.201/15.234]`
 - Self/admin API는 `loadUserMemoryItems`와 `loadClusterInputItems`를 공유하며, admin 전용 cluster route도 `generateAndStoreClusters`를 호출한다. 별도 admin clustering 알고리즘은 두지 않는다 `[현행 2026-06-22 → 15.107]`
 
 ---
@@ -243,7 +243,7 @@ diagnostics: {
   labelModel
   requestedClusterCount
   actualClusterCount
-  graph: { minSimilarity, strongSimilarity, knnEdges, nodeCount, edgeCount, ... }
+  graph: { minSimilarity, strongSimilarity, knnEdges, nodeCount, edgeCount, meanCentered, ... }
 }
 generatedAt, generatedBy
 ```
@@ -4365,3 +4365,11 @@ type ChatPlan = {
 - 수정: `openai-asset-fallback-*`/`local-edit-fallback-*` synthetic screen id는 Stitch 재조회 대상으로 보지 않는다.
 - 수정: `/api/stitch/html`은 `getScreen`/`getHtml`/HTML URL fetch 실패를 내부 retry하고, 일시 실패나 빈 HTML은 500 대신 `{ htmlPending: true }` 202로 반환한다. 영구적인 screen id 오류로 보이는 경우는 404, `The caller does not have permission` 같은 권한 실패는 403으로 즉시 반환한다.
 - 한계: 이미 예전 snapshot에서 `html`이 빈 문자열로 저장된 artboard는 Stitch 재조회가 계속 실패하면 앱 쪽에 복구할 HTML 원본이 없다. 이 경우 새로 생성/편집해 HTML이 다시 저장되어야 한다.
+
+### 15.234 메모리 클러스터 mean-centering 1차 적용 `[implemented 2026-07-13]`
+
+- 배경(Notion `거대 클러스터 없애기 - 클러스터링 로직 수정`): 기존 similarity graph는 저장 embedding을 그대로 사용하고, node별 KNN 3개 edge와 label propagation을 결합했다. 디자인 작업 memory는 portfolio/mockup/design style 같은 공통어와 embedding 입력 boilerplate가 많아 baseline similarity가 높고, A-B-C-D chaining이 커지면 label propagation이 dense graph를 하나의 giant community로 합치는 문제가 있었다.
+- 수정: clustering graph를 만들기 전에 저장 embedding 전체 평균 벡터를 빼고 다시 L2 normalize한다. 이 mean-centering은 clustering-time transform일 뿐 Firestore의 `memories_0_1_2.embedding` 값은 바꾸지 않는다.
+- 유지: label propagation, KNN 3개 edge, strong/min similarity threshold, 최대 16개 centroid merge 구조는 그대로 둔다. 34% community 재분할과 farthest-anchor 강제 split은 의미 품질에 부작용이 있을 수 있어 이번 1차 적용에서는 넣지 않는다.
+- 캐시: clustering method version을 `similarity-graph-v5-centered-embedding`으로 올리고, latest cache fallback도 current method version만 읽게 해 기존 v4 cache와 섞이지 않게 했다. 저장 memory 삭제나 re-embedding 없이 cluster 재생성만으로 새 로직을 확인할 수 있다.
+- 진단: `graphDiagnostics.graph.meanCentered`를 남겨 재생성 결과가 centered vector 기반인지 확인할 수 있게 했다.

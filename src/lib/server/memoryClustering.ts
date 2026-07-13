@@ -21,11 +21,6 @@ export const GRAPH_MIN_SIMILARITY = 0.58;
 export const GRAPH_STRONG_SIMILARITY = 0.74;
 export const GRAPH_KNN_EDGES = 3;
 export const GRAPH_COMMUNITY_ITERATIONS = 30;
-export const GRAPH_GIANT_COMMUNITY_RATIO = 0.34;
-export const GRAPH_GIANT_COMMUNITY_MIN_SIZE = 8;
-export const GRAPH_GIANT_SPLIT_MIN_SIMILARITY = 0.62;
-export const GRAPH_GIANT_SPLIT_STRONG_SIMILARITY = 0.78;
-export const GRAPH_GIANT_SPLIT_KNN_EDGES = 1;
 export const CLUSTER_COLLECTION = "memoryClusters";
 export const CLUSTER_SNAPSHOT_COLLECTION = "memoryClusterSnapshots";
 export const CLUSTERING_METHOD_VERSION =
@@ -121,12 +116,8 @@ export type GraphCommunityDiagnostics = {
     averageDegree: number;
     singletonCount: number;
     rawCommunityCount: number;
-    splitCommunityCount: number;
     cappedCommunityCount: number;
     meanCentered: boolean;
-    giantCommunityRatio: number;
-    giantCommunityLimit: number;
-    oversizedCommunityCount: number;
   };
 };
 
@@ -215,8 +206,9 @@ export function parseStoredClusters(value: unknown) {
 
 // Best-effort load of the most recently generated cluster cache *document* for a
 // user. Cluster docs are keyed by item signature and accumulate over time; we
-// pick the newest by generatedAt for the requested variant, ignoring whether the
-// signature still matches the current memory set. Returns null when none exists.
+// pick the newest by generatedAt for the requested variant and current method,
+// ignoring whether the signature still matches the current memory set.
+// Returns null when none exists.
 // This never regenerates clusters (no LLM) — safe for the chat/retrieve hot path.
 export async function loadLatestStoredClusterDoc(
   uid: string,
@@ -227,6 +219,7 @@ export async function loadLatestStoredClusterDoc(
   graphEdges: ClusterGraphEdge[];
   generatedAt: number;
   itemSignature: string | null;
+  clusteringMethodVersion: string | null;
 } | null> {
   const ids = await listFirestoreDocumentIds(
     `users/${uid}/${CLUSTER_COLLECTION}`,
@@ -247,6 +240,11 @@ export async function loadLatestStoredClusterDoc(
           ? data.clusteringInputVariant
           : "";
       if (docVariant !== variant) return null;
+      const docMethodVersion =
+        typeof data.clusteringMethodVersion === "string"
+          ? data.clusteringMethodVersion
+          : "";
+      if (docMethodVersion !== clusteringMethodVersion(variant)) return null;
       const graphClusters = parseStoredClusters(data.graphClusters);
       if (graphClusters.length === 0) return null;
       return {
@@ -256,6 +254,7 @@ export async function loadLatestStoredClusterDoc(
           typeof data.generatedAt === "number" ? data.generatedAt : 0,
         itemSignature:
           typeof data.itemSignature === "string" ? data.itemSignature : null,
+        clusteringMethodVersion: docMethodVersion,
       };
     }),
   );
@@ -534,17 +533,7 @@ async function generateClusterGraph(
   };
 }
 
-function similarityEdges(
-  vectors: number[][],
-  options: {
-    minSimilarity?: number;
-    strongSimilarity?: number;
-    knnEdges?: number;
-  } = {},
-) {
-  const minSimilarity = options.minSimilarity ?? GRAPH_MIN_SIMILARITY;
-  const strongSimilarity = options.strongSimilarity ?? GRAPH_STRONG_SIMILARITY;
-  const knnEdges = options.knnEdges ?? GRAPH_KNN_EDGES;
+function similarityEdges(vectors: number[][]) {
   const pairEdges: SimilarityEdge[] = [];
   const edgesByKey = new Map<string, SimilarityEdge>();
   const neighborCandidates = vectors.map(() => [] as SimilarityEdge[]);
@@ -565,12 +554,12 @@ function similarityEdges(
     if (!existing || edge.weight > existing.weight) edgesByKey.set(key, edge);
   };
 
-  pairEdges.filter((e) => e.weight >= strongSimilarity).forEach(addEdge);
+  pairEdges.filter((e) => e.weight >= GRAPH_STRONG_SIMILARITY).forEach(addEdge);
   neighborCandidates.forEach((edges) =>
     edges
-      .filter((e) => e.weight >= minSimilarity)
+      .filter((e) => e.weight >= GRAPH_MIN_SIMILARITY)
       .sort((a, b) => b.weight - a.weight)
-      .slice(0, knnEdges)
+      .slice(0, GRAPH_KNN_EDGES)
       .forEach(addEdge),
   );
 
@@ -625,95 +614,11 @@ function groupsFromLabels(labels: number[]) {
   return Array.from(byLabel.values()).sort((a, b) => b.length - a.length);
 }
 
-function giantCommunityLimit(nodeCount: number) {
-  return Math.max(
-    GRAPH_GIANT_COMMUNITY_MIN_SIZE,
-    Math.ceil(nodeCount * GRAPH_GIANT_COMMUNITY_RATIO),
-  );
-}
-
-function splitByFarthestAnchors(group: number[], vectors: number[][]) {
-  if (group.length <= 2) return [group];
-
-  let anchorA = 0;
-  let anchorB = 1;
-  let lowestSimilarity = Infinity;
-  for (let a = 0; a < vectors.length; a += 1) {
-    for (let b = a + 1; b < vectors.length; b += 1) {
-      const similarity = cosineSimilarity(vectors[a], vectors[b]);
-      if (similarity < lowestSimilarity) {
-        lowestSimilarity = similarity;
-        anchorA = a;
-        anchorB = b;
-      }
-    }
-  }
-
-  const left: number[] = [];
-  const right: number[] = [];
-  group.forEach((itemIndex, localIndex) => {
-    const leftSimilarity = cosineSimilarity(vectors[localIndex], vectors[anchorA]);
-    const rightSimilarity = cosineSimilarity(vectors[localIndex], vectors[anchorB]);
-    if (leftSimilarity >= rightSimilarity) left.push(itemIndex);
-    else right.push(itemIndex);
-  });
-
-  if (left.length === 0 || right.length === 0) {
-    const midpoint = Math.ceil(group.length / 2);
-    return [group.slice(0, midpoint), group.slice(midpoint)];
-  }
-
-  return [left, right].sort((a, b) => b.length - a.length);
-}
-
-function splitOversizedCommunity(
-  group: number[],
-  vectors: number[][],
-  maxGroupSize: number,
-  depth = 0,
-): number[][] {
-  if (group.length <= maxGroupSize || group.length <= 2 || depth >= 4) {
-    return [group];
-  }
-
-  const localVectors = meanCenteredVectors(group.map((itemIndex) => vectors[itemIndex]));
-  const localEdges = similarityEdges(localVectors, {
-    minSimilarity: GRAPH_GIANT_SPLIT_MIN_SIMILARITY,
-    strongSimilarity: GRAPH_GIANT_SPLIT_STRONG_SIMILARITY,
-    knnEdges: GRAPH_GIANT_SPLIT_KNN_EDGES,
-  });
-  const localLabels = labelPropagationCommunities(group.length, localEdges);
-  let localGroups = groupsFromLabels(localLabels).map((localGroup) =>
-    localGroup.map((localIndex) => group[localIndex]),
-  );
-
-  if (localGroups.length <= 1) {
-    localGroups = splitByFarthestAnchors(group, localVectors);
-  }
-
-  return localGroups.flatMap((localGroup) =>
-    splitOversizedCommunity(localGroup, vectors, maxGroupSize, depth + 1),
-  );
-}
-
-function splitOversizedCommunities(groups: number[][], vectors: number[][], nodeCount: number) {
-  const maxGroupSize = giantCommunityLimit(nodeCount);
-  return groups
-    .flatMap((group) => splitOversizedCommunity(group, vectors, maxGroupSize))
-    .filter((group) => group.length > 0)
-    .sort((a, b) => b.length - a.length);
-}
-
 function communityCentroid(group: number[], vectors: number[][], dimension: number) {
   return meanVector(group.map((i) => vectors[i]), dimension);
 }
 
-function mergeCommunities(
-  groups: number[][],
-  vectors: number[][],
-  maxCount: number,
-  maxMergedSize?: number,
-) {
+function mergeCommunities(groups: number[][], vectors: number[][], maxCount: number) {
   const dimension = vectors[0]?.length ?? 0;
   const merged = groups.map((g) => [...g]);
   while (merged.length > maxCount) {
@@ -721,17 +626,8 @@ function mergeCommunities(
     const centroids = merged.map((g) => communityCentroid(g, vectors, dimension));
     for (let a = 0; a < merged.length; a += 1) {
       for (let b = a + 1; b < merged.length; b += 1) {
-        if (maxMergedSize && merged[a].length + merged[b].length > maxMergedSize) continue;
         const similarity = cosineSimilarity(centroids[a], centroids[b]);
         if (similarity > bestSimilarity) { bestSimilarity = similarity; bestA = a; bestB = b; }
-      }
-    }
-    if (bestSimilarity === -Infinity) {
-      for (let a = 0; a < merged.length; a += 1) {
-        for (let b = a + 1; b < merged.length; b += 1) {
-          const similarity = cosineSimilarity(centroids[a], centroids[b]);
-          if (similarity > bestSimilarity) { bestSimilarity = similarity; bestA = a; bestB = b; }
-        }
       }
     }
     merged[bestA] = [...merged[bestA], ...merged[bestB]];
@@ -750,16 +646,7 @@ export function buildGraphCommunityClusters(items: ClusterInputItem[], vectors: 
   })).filter((edge) => edge.sourceId && edge.targetId);
   const labels = labelPropagationCommunities(items.length, edges);
   const rawGroups = groupsFromLabels(labels);
-  const giantLimit = giantCommunityLimit(items.length);
-  const oversizedCommunityCount = rawGroups.filter((group) => group.length > giantLimit).length;
-  const splitGroups = splitOversizedCommunities(rawGroups, clusteringVectors, items.length);
-  const mergedGroups = mergeCommunities(
-    splitGroups,
-    clusteringVectors,
-    MAX_GRAPH_CLUSTER_COUNT,
-    giantLimit,
-  );
-  const groups = splitOversizedCommunities(mergedGroups, clusteringVectors, items.length);
+  const groups = mergeCommunities(rawGroups, clusteringVectors, MAX_GRAPH_CLUSTER_COUNT);
   const singletonCount = rawGroups.filter((g) => g.length === 1).length;
 
   return {
@@ -797,12 +684,8 @@ export function buildGraphCommunityClusters(items: ClusterInputItem[], vectors: 
         averageDegree: Number(((edges.length * 2) / Math.max(items.length, 1)).toFixed(3)),
         singletonCount,
         rawCommunityCount: rawGroups.length,
-        splitCommunityCount: splitGroups.length,
         cappedCommunityCount: groups.length,
         meanCentered: true,
-        giantCommunityRatio: GRAPH_GIANT_COMMUNITY_RATIO,
-        giantCommunityLimit: giantLimit,
-        oversizedCommunityCount,
       },
     } satisfies GraphCommunityDiagnostics,
   };
