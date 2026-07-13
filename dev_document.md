@@ -168,7 +168,7 @@
 ### 4.7 메모리 (Memory)
 
 - **생성 단위**: 세션 중 interaction turn마다 `/api/memory/drafts`에서 keyword, factual episode, semantic을 생성한다. semantic은 사용자 성향/선호/작업 방식에 대한 근거 기반 한 문장 insight이며, `interpretationConfidence`는 생성·저장하지 않는다. `semantic`이 canonical 필드이고 `semanticJson`은 배열 호환용으로 함께 저장한다. before-session profile에서 사용자가 직접 제공한 durable 정보와 기존 memory의 semantic도 계속 읽는다 `[현행 2026-06-28 → 15.135]`
-- **Assistant response feedback**: assistant bubble의 좋아요/싫어요는 optional reason dialog를 열고, 제출 시 기존 `/api/memory/drafts` 경로로 `feedback-{messageId}` draft를 만든다. input은 vote, reason, 평가된 답변의 원래 질문(최대 1000자), output은 평가된 assistant answer(최대 6000자)이며 재투표는 같은 draft id를 덮어쓴다. Feedback turn은 `MEMORY_ENCODE_PROMPT`에 전용 addendum을 붙여 답변 요약이 아니라 평가 신호 기반 episode/semantic을 생성하고, `agentActionCategory`는 `assistant_feedback`으로 저장한다. 또한 해당 assistant 답변의 `reviewTurns/{messageId}.retrieved` 또는 retrieval log에서 실제 prompt/retrieval에 쓰인 memory id를 찾아 좋아요는 memory weight `+0.08`, 싫어요는 `-0.04`를 적용한다. 같은 feedback draft를 재저장할 때는 이전 적용분과 새 적용분의 차이만 반영해 중복 누적을 막고, 결과 metadata는 draft의 `assistantFeedbackWeightAdjustment`에 남긴다 `[현행 2026-07-13 → 15.207/15.210]`
+- **Assistant response feedback**: assistant bubble의 좋아요/싫어요는 optional reason dialog를 열고, 제출 시 기존 `/api/memory/drafts` 경로로 `feedback-{messageId}` draft를 만든다. Toast는 우측 채팅 패널/입력창과 겹치지 않도록 viewport 좌측 하단에 배치한다. input은 vote, reason, 평가된 답변의 원래 질문(최대 1000자), output은 평가된 assistant answer(최대 6000자)이며 재투표는 같은 draft id를 덮어쓴다. Feedback turn은 `MEMORY_ENCODE_PROMPT`에 전용 addendum을 붙여 답변 요약이 아니라 평가 신호 기반 episode/semantic을 생성하고, `agentActionCategory`는 `assistant_feedback`으로 저장한다. 또한 해당 assistant 답변의 `reviewTurns/{messageId}.retrieved` 또는 retrieval log에서 실제 prompt/retrieval에 쓰인 memory id를 찾아 좋아요는 memory weight `+0.08`, 싫어요는 `-0.04`를 적용한다. 같은 feedback draft를 재저장할 때는 이전 적용분과 새 적용분의 차이만 반영해 중복 누적을 막고, 결과 metadata는 draft의 `assistantFeedbackWeightAdjustment`에 남긴다 `[현행 2026-07-13 → 15.207/15.210/15.228]`
 - **Source normalization**: 채팅 turn의 인용 text, link, 선택 UI result, 첨부 image를 structured source로 draft API에 전달한다. link는 메모리 turn 해석 전에 source 유형별로 lazy 분석해 별도 cache artifact로 저장한다. article/case study와 live product는 실제 URL의 case·기능·포지셔닝·UX 근거를 분리하고, visual curation/style source는 선택 이미지 자체를 vision 분석한다. 이후 user input·agent output과 source evidence를 함께 해석해 이번 interaction의 참고 측면과 적용 범위를 정한다. 세부 구현은 `src/lib/server/referenceSourceAnalysis.ts`와 `src/lib/server/memorySourceNormalization.ts`를 직접 확인한다 `[현행 2026-06-23 → 15.110]`
 - **첨부 이미지 시각 선호**: image normalizer는 의도적으로 선호를 추론하지 않으므로, 첨부 이미지가 주도한 목업 생성이 성공해 derivedDesignStyle가 나오면 그 스타일을 `style-image-preference-{turnId}` interactionId(category `style_image_preference`)로 별도 draft에 기록한다. 이번 미션/시안 맥락의 session-scoped evidence로 담고 전역 취향으로 단정하지 않는다 `[현행 2026-06-21 → 15.101]`
 - **확정 시점**: 사용자가 `세션 종료` 버튼을 누르면 `/api/memory/complete-session`에서 draft를 통합해 장기 메모리로 저장
@@ -4324,3 +4324,9 @@ type ChatPlan = {
 - 수정: `/api/stitch`가 `stitch-edit-unchanged` 409를 반환했고, 원 요청이 선택 요소 삭제/제거 계열이면 클라이언트가 현재 artboard HTML을 `DOMParser`로 파싱해 선택 요소 XPath를 우선 제거한다. XPath가 실패하면 selector와 선택 HTML 매칭으로 fallback한다.
 - 보호: 로컬 fallback이 적용된 artboard는 `stitchScreenId`를 `local-edit-fallback-*` synthetic id로 바꾼다. 클라이언트는 synthetic id를 이후 `/api/stitch`의 `screenId`로 보내지 않으므로, 앱 HTML과 공식 Stitch 원본 screen이 갈라진 상태에서 원본 screen을 다시 편집 대상으로 삼지 않는다.
 - 범위: 현재 fallback은 단순 선택 요소 삭제/제거 요청에만 적용한다. 크기/색/이미지 fit 같은 수정은 Stitch no-op이면 여전히 실패로 드러내고, 필요 시 별도 deterministic patch 또는 OpenAI HTML edit fallback을 설계한다.
+
+### 15.228 Toast 좌측 하단 배치 `[implemented 2026-07-13]`
+
+- 배경: Notion `39cd5dc81f6680efbbf3e8f456d336bb`에서 답변 평가 저장 toast가 채팅 영역과 겹치지 않도록 `우측하단→좌측하단`으로 옮기는 요청이 있었다.
+- 수정: 전역 Sonner `Toaster` 기본 position을 `bottom-left`로 설정했다. Assistant feedback reason dialog 위치는 기본 중앙 배치를 유지한다.
+- 의도: 우측 고정 채팅 패널과 채팅 입력창을 toast가 가리지 않게 한다.

@@ -7,6 +7,7 @@ const Toaster = ({ ...props }: ToasterProps) => {
   return (
     <Sonner
       theme="light"
+      position="bottom-left"
       className="toaster group"
       icons={{
         success: (
