@@ -890,12 +890,91 @@ type SelectedElementViewport = {
   height: number;
 };
 
-function selectedElementTargetPrompt(element: SelectedElement) {
+function selectedElementLooksLikeImage(element: SelectedElement) {
+  const signature = `${element.selector}\n${element.outerHTML}`;
+  return /(^|[\s.#>])img([.\s#:[>]|$)|<img\b/i.test(signature);
+}
+
+function isSelectedElementRemovalRequest(text: string) {
+  return /(remove|delete|hide|drop|take\s+out|없애|삭제|제거|빼|지워|걷어|날려)/i.test(
+    text,
+  );
+}
+
+function stripSelectionMarkers(html: string) {
+  return html
+    .replace(/\sdata-vda-selected=(?:"true"|'true')/g, "")
+    .replace(/\sdata-vda-hovered=(?:"true"|'true')/g, "");
+}
+
+function removeSelectedElementFromHtml(
+  html: string,
+  element: SelectedElement,
+) {
+  if (typeof window === "undefined" || !html.trim()) return null;
+  const doc = new DOMParser().parseFromString(html, "text/html");
+  let target: Element | null = null;
+
+  if (element.xpath) {
+    try {
+      const result = doc.evaluate(
+        element.xpath,
+        doc,
+        null,
+        XPathResult.FIRST_ORDERED_NODE_TYPE,
+        null,
+      );
+      target =
+        result.singleNodeValue instanceof Element
+          ? result.singleNodeValue
+          : null;
+    } catch {
+      target = null;
+    }
+  }
+
+  if (!target && element.selector) {
+    try {
+      const candidates = Array.from(doc.querySelectorAll(element.selector));
+      const selectedHtml = stripSelectionMarkers(element.outerHTML).trim();
+      target =
+        candidates.find(
+          (candidate) =>
+            stripSelectionMarkers(candidate.outerHTML).trim() === selectedHtml,
+        ) ??
+        (candidates.length === 1 ? candidates[0] : null);
+    } catch {
+      target = null;
+    }
+  }
+
+  if (!target) return null;
+  target.remove();
+  const serialized = doc.documentElement.outerHTML;
+  return /^<!doctype/i.test(html) ? `<!DOCTYPE html>\n${serialized}` : serialized;
+}
+
+function selectedElementTargetPrompt(
+  element: SelectedElement,
+  originalRequest?: string,
+) {
   const rect = element.boundingRect;
   const viewport = element.viewport;
+  const removalRequest = originalRequest
+    ? isSelectedElementRemovalRequest(originalRequest)
+    : false;
   return [
     "Selected element target:",
+    originalRequest
+      ? `Original user request for this edit: ${originalRequest.slice(0, 1000)}`
+      : "",
     "Apply the requested edit to this selected element/region first. Do not change similar elements elsewhere unless explicitly requested.",
+    removalRequest
+      ? "The original request is a removal/deletion request. Remove the selected HTML element itself, including its container if that is the selected node. Do not reinterpret this as removing only a decorative child unless the selected HTML shows that child is the selected node."
+      : "",
+    selectedElementLooksLikeImage(element)
+      ? "This target is or contains an image. Preserve every existing img src exactly unless the user explicitly asks to replace the image. For fill, crop, fit, sizing, or alignment requests, change only layout/CSS such as object-fit, width, height, aspect ratio, and container overflow."
+      : "",
     `Selector: ${element.selector}`,
     element.xpath ? `XPath: ${element.xpath}` : "",
     rect
@@ -917,6 +996,13 @@ function quickHash(value: string) {
     hash = (hash * 31 + value.charCodeAt(index)) | 0;
   }
   return hash.toString(16);
+}
+
+function isSyntheticStitchScreenId(screenId?: string | null) {
+  return Boolean(
+    screenId?.startsWith("openai-asset-fallback-") ||
+      screenId?.startsWith("local-edit-fallback-"),
+  );
 }
 
 type CreateNoteData = {
@@ -2212,7 +2298,7 @@ function RetrievalLogViewer({
   const retrievedMemories = retrievalLog.retrievedMemories ?? [];
   const setupMemories = retrievalLog.includedCurrentSetupMemories ?? [];
   return (
-    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/35 px-4 py-6">
+    <div className="fixed inset-0 z-70 flex items-center justify-center bg-slate-950/35 px-4 py-6">
       <div className="flex max-h-[86vh] w-full max-w-4xl flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl">
         <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4">
           <div>
@@ -5661,6 +5747,19 @@ export default function MainScreenPage() {
         !generateMatch &&
         !editMatch &&
         isExplicitNewMockupRequest(text);
+      const selectedElementBoard = selectedElement
+        ? artboards.find((artboard) => artboard.id === selectedElement.artboardId)
+        : null;
+      const shouldForceSelectedElementEdit =
+        Boolean(generateMatch) &&
+        Boolean(selectedElementBoard) &&
+        !isExplicitNewMockupRequest(text);
+      const effectiveGenerateMatch = shouldForceSelectedElementEdit
+        ? null
+        : generateMatch;
+      const effectiveEditMatch = shouldForceSelectedElementEdit
+        ? generateMatch
+        : editMatch;
 
       if (shouldAutoGenerateForkedStyleMockup) {
         setMessages((prev) =>
@@ -5692,7 +5791,9 @@ export default function MainScreenPage() {
       }
 
       const shouldSuppressMockupAction =
-        (generateMatch || editMatch || shouldAutoGenerateForkedStyleMockup) &&
+        (effectiveGenerateMatch ||
+          effectiveEditMatch ||
+          shouldAutoGenerateForkedStyleMockup) &&
         isMockupReadinessQuestion(text);
       if (shouldSuppressMockupAction) {
         setMessages((prev) =>
@@ -5710,7 +5811,11 @@ export default function MainScreenPage() {
               : m,
           ),
         );
-      } else if (generateMatch || editMatch || shouldAutoGenerateForkedStyleMockup) {
+      } else if (
+        effectiveGenerateMatch ||
+        effectiveEditMatch ||
+        shouldAutoGenerateForkedStyleMockup
+      ) {
         const effectiveIdeas = turnIdeaOverride
           ? ideas.some((idea) => idea.id === turnIdeaOverride?.id)
             ? ideas.map((idea) =>
@@ -5724,28 +5829,30 @@ export default function MainScreenPage() {
           ideas.find((i) => i.id === effectiveActiveIdeaId) ??
           null;
         const parsedPrompt = normalizeMockupActionPrompt(
-            (generateMatch ?? editMatch)?.[1] ??
+            (effectiveGenerateMatch ?? effectiveEditMatch)?.[1] ??
             (shouldAutoGenerateForkedStyleMockup
               ? FORKED_STYLE_MOCKUP_PROMPT
               : ""),
         );
         const prompt =
           parsedPrompt ||
-          (generateMatch
+          (effectiveGenerateMatch
             ? defaultMockupPromptForIdea(activeIdea, device)
             : CURRENT_MOCKUP_REFINEMENT_PROMPT);
         const mockupIdeaId = effectiveActiveIdeaId;
-        const isNew = Boolean(generateMatch || shouldAutoGenerateForkedStyleMockup);
+        const isNew = Boolean(
+          effectiveGenerateMatch || shouldAutoGenerateForkedStyleMockup,
+        );
         let stitchPrompt = buildMockupPrompt(
           prompt,
-          activeIdea,
+          isNew ? activeIdea : null,
           // Only inject mission brief for new mockups — edits don't need the full product context
           isNew ? missionBrief : undefined,
         );
         if (!isNew && selectedElement) {
           stitchPrompt = [
             stitchPrompt,
-            selectedElementTargetPrompt(selectedElement),
+            selectedElementTargetPrompt(selectedElement, text),
           ].join("\n\n");
         }
         appendActivityLog({
@@ -5845,12 +5952,17 @@ export default function MainScreenPage() {
             );
           }, 1000);
           const editTargetBoard = !isNew
-            ? (activeArtboardId
-                ? artboards.find((a) => a.id === activeArtboardId)
-                : currentIdeaBoards.at(-1)) ?? null
+            ? (selectedElementBoard ??
+                (activeArtboardId
+                  ? artboards.find((a) => a.id === activeArtboardId)
+                  : currentIdeaBoards.at(-1))) ?? null
             : null;
           const editTargetId = editTargetBoard?.id;
-          const editScreenId = editTargetBoard?.stitchScreenId || undefined;
+          const editScreenId = isSyntheticStitchScreenId(
+            editTargetBoard?.stitchScreenId,
+          )
+            ? undefined
+            : editTargetBoard?.stitchScreenId || undefined;
           let res: Response;
           try {
             res = await fetch("/api/stitch", {
@@ -5902,6 +6014,67 @@ export default function MainScreenPage() {
             }
           }
           if (!res.ok) {
+            const errorData = await res
+              .clone()
+              .json()
+              .catch(() => null);
+            if (
+              errorData?.code === "stitch-edit-unchanged" &&
+              !isNew &&
+              editTargetBoard?.html &&
+              selectedElement &&
+              isSelectedElementRemovalRequest(text)
+            ) {
+              const patchedHtml = removeSelectedElementFromHtml(
+                editTargetBoard.html,
+                selectedElement,
+              );
+              if (patchedHtml && patchedHtml !== editTargetBoard.html) {
+                const syntheticScreenId = `local-edit-fallback-${crypto.randomUUID()}`;
+                console.warn("[mockup] applied local selected-element removal fallback", {
+                  artboardId: editTargetBoard.id,
+                  previousScreenId: editTargetBoard.stitchScreenId ?? null,
+                  syntheticScreenId,
+                  previousHtmlHash: quickHash(editTargetBoard.html),
+                  nextHtmlHash: quickHash(patchedHtml),
+                });
+                appendActivityLog({
+                  section: "mockup",
+                  action: "update",
+                  input: text,
+                  output:
+                    "Stitch returned unchanged HTML, so the selected element was removed from the local artboard HTML.",
+                  outputTitle: "로컬 선택 요소 삭제 fallback",
+                });
+                setArtboards((prev) =>
+                  prev.map((artboard) =>
+                    artboard.id === editTargetBoard.id
+                      ? {
+                          ...artboard,
+                          html: patchedHtml,
+                          stitchScreenId: syntheticScreenId,
+                          htmlStatus: undefined,
+                          htmlUpdatedAt: Date.now(),
+                        }
+                      : artboard,
+                  ),
+                );
+                setMockupProgress({ percent: 100, label: "완료" });
+                setActiveIdeaTab("mockup");
+                setSelectedElement(null);
+                setMessages((prev) =>
+                  prev.map((m) =>
+                    m.id === assistantId
+                      ? {
+                          ...m,
+                          content: `${m.content}\n\nStitch가 동일 HTML을 반환해 선택 요소 삭제를 로컬 HTML에 직접 반영했습니다.`,
+                        }
+                      : m,
+                  ),
+                );
+                return;
+              }
+            }
             const errText = await stitchResponseError(res);
             throw new Error(errText);
           }
@@ -9181,7 +9354,7 @@ export default function MainScreenPage() {
       {/* Mockup expanded canvas: keep the chat panel visible */}
       {isMockupExpanded && (
         <div
-          className="fixed inset-y-0 left-0 right-0 z-40 flex flex-col bg-[#1a1a1a] md:right-[var(--chat-w,28rem)]"
+          className="fixed inset-y-0 left-0 right-0 z-40 flex flex-col bg-[#1a1a1a] md:right-(--chat-w,28rem)"
           style={{
             backgroundImage:
               "radial-gradient(circle, #383838 1px, transparent 1px)",

@@ -14,16 +14,11 @@ import {
   STITCH_OAUTH_REQUIRED_ERROR_MESSAGE,
 } from "@/lib/server/stitch-auth";
 import {
-  downloadStorageObject,
-  getFirebaseStorageAccessToken,
-} from "@/lib/server/firebaseAdminRest";
-import {
   DESIGN_SYSTEM_EXTRACT_PROMPT,
   DERIVE_DESIGN_MD_FROM_HTML_PROMPT,
   STITCH_DESIGN_FONTS,
   STITCH_DESIGN_ROUNDNESS,
   styleImageReconstructPrompt,
-  assetImageEmbedPrompt,
 } from "@/lib/prompts";
 
 export const maxDuration = 180;
@@ -186,6 +181,10 @@ function isIncompleteResponseError(error: unknown) {
   return errorMessage(error).includes(INCOMPLETE_RESPONSE_ERROR);
 }
 
+function isStitchInvalidArgumentError(error: unknown) {
+  return errorMessage(error).toLowerCase().includes("invalid argument");
+}
+
 function isTransientStitchError(error: unknown) {
   const message = errorMessage(error).toLowerCase();
   return /service is currently unavailable|temporarily unavailable|try again|timeout|timed out|rate limit|429|500|502|503|504|econnreset|fetch failed/.test(
@@ -332,6 +331,44 @@ function screenIdFromCandidate(candidate: Record<string, unknown>) {
   return null;
 }
 
+function summarizeToolOutput(raw: unknown) {
+  const record =
+    raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
+  const components = Array.isArray(record.outputComponents)
+    ? record.outputComponents
+    : [];
+  return {
+    projectId: typeof record.projectId === "string" ? record.projectId : null,
+    sessionId: typeof record.sessionId === "string" ? record.sessionId : null,
+    componentCount: components.length,
+    components: components.slice(0, 6).map((component) => {
+      const item =
+        component && typeof component === "object"
+          ? (component as Record<string, unknown>)
+          : {};
+      const design = item.design as { screens?: unknown[] } | undefined;
+      const screens = Array.isArray(design?.screens) ? design.screens : [];
+      const screenIds = screens
+        .map((screen) =>
+          screen && typeof screen === "object"
+            ? screenIdFromCandidate(screen as Record<string, unknown>)
+            : null,
+        )
+        .filter(Boolean);
+      return {
+        keys: Object.keys(item),
+        text:
+          typeof item.text === "string" ? item.text.slice(0, 500) : undefined,
+        suggestion:
+          typeof item.suggestion === "string"
+            ? item.suggestion.slice(0, 500)
+            : undefined,
+        screenIds,
+      };
+    }),
+  };
+}
+
 async function screenFromRawResponse(project: StitchProject, raw: unknown): Promise<StitchScreenHandle | null> {
   const candidates = getNestedScreenCandidates(raw);
   const candidate = candidates[0];
@@ -386,6 +423,10 @@ async function editScreen(
       prompt,
       deviceType,
     }),
+  );
+  console.log(
+    "[stitch] edit_screens raw response summary:",
+    JSON.stringify(summarizeToolOutput(raw)),
   );
   const screenFromRaw = await screenFromRawResponse(project, raw);
   if (screenFromRaw) return screenFromRaw;
@@ -694,6 +735,68 @@ function assetImageUrlFallbackPrompt(
     .join("\n\n");
 }
 
+function assetImageRepairPrompt(
+  productPrompt: string,
+  deviceLabel: string,
+  assets: AssetImageRequest[],
+  coverage: { matchedCount: number; totalCount: number },
+) {
+  const manifest = assets
+    .map((asset, index) => {
+      const url = asset.url || `/api/mission-assets?path=${encodeURIComponent(asset.path)}`;
+      return [
+        `Asset ${index + 1}`,
+        `Required img src: ${url}`,
+        `Meaning: ${asset.note || "No admin description provided."}`,
+      ].join("\n");
+    })
+    .join("\n\n");
+
+  return [
+    `Edit this existing ${deviceLabel} UI mockup. Keep the current visual direction and layout quality, but replace every placeholder, stock, generated, or broken product/content image with the exact mission asset URLs below.`,
+    `The previous HTML only preserved ${coverage.matchedCount}/${coverage.totalCount} required mission assets. The edited HTML must include every listed URL directly in img src attributes. Do not crop critical product content; prefer object-fit: contain when the asset aspect ratio does not match a card slot.`,
+    `Required mission asset URLs:\n${manifest}`,
+    productPrompt ? `Original brief:\n${productPrompt}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+}
+
+function htmlEntityEscaped(value: string) {
+  return value.replace(/&/g, "&amp;");
+}
+
+function assetReferenceNeedles(asset: AssetImageRequest) {
+  const needles = new Set<string>();
+  const add = (value: string) => {
+    const trimmed = value.trim();
+    if (trimmed) {
+      needles.add(trimmed);
+      needles.add(htmlEntityEscaped(trimmed));
+    }
+  };
+
+  add(asset.url);
+  add(asset.path);
+  if (asset.path) {
+    add(encodeURIComponent(asset.path));
+    add(`/api/mission-assets?path=${encodeURIComponent(asset.path)}`);
+  }
+
+  return Array.from(needles);
+}
+
+function assetHtmlCoverage(html: string, assets: AssetImageRequest[]) {
+  const matched = assets.filter((asset) =>
+    assetReferenceNeedles(asset).some((needle) => html.includes(needle)),
+  );
+  return {
+    matchedCount: matched.length,
+    totalCount: assets.length,
+    allMatched: matched.length === assets.length,
+  };
+}
+
 function stripMarkdownHtmlFence(content: string) {
   return content
     .trim()
@@ -753,141 +856,16 @@ async function generateOpenAiAssetFallbackScreen(
   if (!/<(main|section|article|div|body)\b/i.test(html)) {
     throw new Error("OpenAI HTML fallback returned no usable mockup markup.");
   }
-  return {
-    id: "",
-    getHtml: async () => html,
-  };
-}
-
-function storageObjectNameForAsset(image: Pick<AssetImageRequest, "url" | "path">) {
-  const explicitPath = image.path.trim();
-  if (explicitPath.startsWith("mission-assets/")) return explicitPath;
-
-  if (!image.url) return "";
-  try {
-    const url = new URL(image.url);
-    const proxyPath = url.searchParams.get("path") ?? "";
-    if (proxyPath.startsWith("mission-assets/")) return proxyPath;
-
-    const objectPath = url.pathname.match(/\/o\/([^/?]+)/)?.[1];
-    if (objectPath) {
-      const decoded = decodeURIComponent(objectPath);
-      if (decoded.startsWith("mission-assets/")) return decoded;
-    }
-  } catch {
-    return "";
-  }
-
-  return "";
-}
-
-async function responseToDataUrl(res: Response) {
-  const buf = Buffer.from(await res.arrayBuffer());
-  const mime = res.headers.get("content-type")?.split(";")[0] || "image/png";
-  return `data:${mime};base64,${buf.toString("base64")}`;
-}
-
-async function fetchStorageImageAsDataUrl(objectName: string) {
-  return withTransientRetry(`download mission asset ${objectName}`, async () => {
-    const token = await getFirebaseStorageAccessToken();
-    const res = await downloadStorageObject(objectName, token);
-    return responseToDataUrl(res);
-  });
-}
-
-// Download a mission image into a base64 data URL so it can flow through the
-// same temp-file + upload path as attached images. Prefer the Storage object
-// path over fetching our own /api/mission-assets proxy; the proxy is for
-// browsers, while this route can read Storage directly.
-async function fetchImageAsDataUrl(image: AssetImageRequest): Promise<string> {
-  const objectName = storageObjectNameForAsset(image);
-  if (objectName) {
-    try {
-      return await fetchStorageImageAsDataUrl(objectName);
-    } catch (err) {
-      if (!image.url) throw err;
-      console.warn(
-        "[stitch] direct mission asset download failed; falling back to URL:",
-        errorMessage(err),
-      );
-    }
-  }
-
-  const rawUrl = image.url;
-  let url: URL;
-  try {
-    url = new URL(rawUrl);
-  } catch {
-    throw new Error(`Invalid asset image URL: ${rawUrl}`);
-  }
-  if (!["http:", "https:"].includes(url.protocol)) {
-    throw new Error("Asset image URL must be http(s).");
-  }
-  const res = await fetch(url.toString(), { signal: AbortSignal.timeout(20_000) });
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
+  const coverage = assetHtmlCoverage(html, assets);
+  if (!coverage.allMatched) {
     throw new Error(
-      `Failed to fetch asset image: ${res.status}${text ? ` ${text.slice(0, 200)}` : ""}`,
+      `OpenAI HTML fallback did not preserve every mission asset (${coverage.matchedCount}/${coverage.totalCount}).`,
     );
   }
-  return responseToDataUrl(res);
-}
-
-// Content-led generation: the mission supplies real content images (product
-// photos, UI captures) that must appear in the mockup as-is. We upload them to
-// the project and edit the first into a working UI, instructing the model to
-// embed the uploaded images verbatim (see assetImageEmbedPrompt). Distinct from
-// the style-image path, which treats an image as a look to reconstruct.
-async function generateScreenFromAssetImages(
-  client: StitchToolClient,
-  project: StitchProject,
-  assetImageDataUrls: string[],
-  assetImageNotes: string[],
-  productPrompt: string,
-  deviceType: DeviceType,
-  previousScreenIds: Set<string>,
-): Promise<StitchScreenHandle> {
-  let baseRefScreen:
-    | { id: string; edit: (p: string, d?: DeviceType) => Promise<StitchScreenHandle> }
-    | undefined;
-  const uploadedScreenIds = new Set<string>();
-  for (const dataUrl of assetImageDataUrls) {
-    const tmpPath = await writeStyleImageTmp(dataUrl);
-    try {
-      const uploaded = await withTransientRetry("upload mission asset to Stitch", () =>
-        project.upload(tmpPath, { title: "Mission asset" }),
-      );
-      const screen = Array.isArray(uploaded) ? uploaded[0] : undefined;
-      if (screen?.id) uploadedScreenIds.add(screen.id);
-      if (screen && !baseRefScreen) baseRefScreen = screen;
-    } finally {
-      await unlink(tmpPath).catch(() => {});
-    }
-  }
-  if (!baseRefScreen) {
-    throw new Error("Stitch did not return a screen for the uploaded asset images.");
-  }
-  const deviceLabel =
-    deviceType === "MOBILE" ? "mobile app screen" : "desktop website";
-  const assetManifest = assetImageNotes
-    .map((note, index) =>
-      `Asset ${index + 1}: ${note || "No admin description provided."}`,
-    )
-    .join("\n");
-  const embedPrompt = assetImageEmbedPrompt(
-    productPrompt,
-    deviceLabel,
-    assetImageDataUrls.length,
-    assetManifest,
-  );
-  return editScreen(
-    client,
-    project,
-    baseRefScreen.id,
-    embedPrompt,
-    deviceType,
-    new Set([...previousScreenIds, ...uploadedScreenIds]),
-  );
+  return {
+    id: `openai-asset-fallback-${randomUUID()}`,
+    getHtml: async () => html,
+  };
 }
 
 // Reverse-extract a 디자인 스타일 note from the reconstructed (correct) HTML so
@@ -1042,41 +1020,58 @@ export async function POST(request: Request) {
         return stitchErrorResponse(imgErr, "Style image mockup generation failed");
       }
     } else if (isAssetLed) {
+      console.log(
+        "[stitch] asset-led URL text generation from",
+        assetImageInputs.length,
+        "mission image(s)...",
+      );
+      const deviceLabel =
+        deviceType === "MOBILE" ? "mobile app screen" : "desktop website";
+      const fallbackPrompt = assetImageUrlFallbackPrompt(
+        prompt,
+        deviceLabel,
+        assetImageInputs,
+      );
       try {
-        console.log(
-          "[stitch] asset-led generation from",
-          assetImageInputs.length,
-          "mission image(s)...",
-        );
-        const assetDataUrls: string[] = [];
-        for (const image of assetImageInputs) {
-          assetDataUrls.push(await fetchImageAsDataUrl(image));
-        }
-        screen = await generateScreenFromAssetImages(
+        screen = await generateScreen(
           client,
           project,
-          assetDataUrls,
-          assetImageInputs.map((image) => image.note),
-          prompt,
+          fallbackPrompt,
           deviceType,
           beforeScreenIds,
         );
       } catch (assetErr) {
-        console.warn(
-          "[stitch] asset-led generation failed:",
-          errorMessage(assetErr),
-        );
-        if (isStitchAuthError(assetErr)) {
+        if (isStitchInvalidArgumentError(assetErr)) {
           console.warn(
-            "[stitch] falling back to text generation with exact asset URLs after asset upload/edit auth failure",
+            "[stitch] asset-led URL text generation rejected; generating direct HTML fallback:",
+            errorMessage(assetErr),
           );
-          const deviceLabel =
-            deviceType === "MOBILE" ? "mobile app screen" : "desktop website";
-          const fallbackPrompt = assetImageUrlFallbackPrompt(
+          screen = await generateOpenAiAssetFallbackScreen(
             prompt,
-            deviceLabel,
+            deviceType,
             assetImageInputs,
           );
+          if (screen.id.startsWith("openai-asset-fallback-")) {
+            actualProjectId = projectId ?? "";
+            resolvedDesignSystemId = null;
+            resolvedStyleHash = null;
+          }
+        } else if (!isStitchAuthError(assetErr)) {
+          throw assetErr;
+        } else {
+          console.warn(
+            "[stitch] asset-led URL text generation failed auth; retrying with API key",
+          );
+          const apiKeyStitch = await createStitchClient({ forceApiKey: true });
+          client = apiKeyStitch.client;
+          sdk = apiKeyStitch.sdk;
+          console.log("[stitch] creating API-key fallback project...");
+          project = await sdk.createProject("VibeDesign");
+          actualProjectId = project.id;
+          resolvedDesignSystemId = null;
+          resolvedStyleHash = null;
+          beforeScreenIds = new Set();
+          console.log("[stitch] API-key fallback project created:", actualProjectId);
           try {
             screen = await generateScreen(
               client,
@@ -1085,53 +1080,39 @@ export async function POST(request: Request) {
               deviceType,
               beforeScreenIds,
             );
-          } catch (fallbackErr) {
-            if (!isStitchAuthError(fallbackErr)) throw fallbackErr;
+          } catch (apiKeyFallbackErr) {
+            if (
+              !isStitchAuthError(apiKeyFallbackErr) &&
+              !isStitchInvalidArgumentError(apiKeyFallbackErr)
+            ) {
+              throw apiKeyFallbackErr;
+            }
             console.warn(
-              "[stitch] Stitch text fallback failed auth; retrying URL text generation with API key",
+              "[stitch] API-key text fallback failed; generating direct HTML fallback:",
+              errorMessage(apiKeyFallbackErr),
             );
-            const apiKeyStitch = await createStitchClient({ forceApiKey: true });
-            client = apiKeyStitch.client;
-            sdk = apiKeyStitch.sdk;
-            console.log("[stitch] creating API-key fallback project...");
-            project = await sdk.createProject("VibeDesign");
-            actualProjectId = project.id;
-            resolvedDesignSystemId = null;
-            resolvedStyleHash = null;
-            beforeScreenIds = new Set();
-            console.log("[stitch] API-key fallback project created:", actualProjectId);
-            try {
-              screen = await generateScreen(
-                client,
-                project,
-                fallbackPrompt,
-                deviceType,
-                beforeScreenIds,
-              );
-            } catch (apiKeyFallbackErr) {
-              if (!isStitchAuthError(apiKeyFallbackErr)) throw apiKeyFallbackErr;
-              console.warn(
-                "[stitch] API-key text fallback failed auth; generating direct HTML fallback",
-              );
-              screen = await generateOpenAiAssetFallbackScreen(
-                prompt,
-                deviceType,
-                assetImageInputs,
-              );
+            screen = await generateOpenAiAssetFallbackScreen(
+              prompt,
+              deviceType,
+              assetImageInputs,
+            );
+            if (screen.id.startsWith("openai-asset-fallback-")) {
               actualProjectId = projectId ?? "";
               resolvedDesignSystemId = null;
               resolvedStyleHash = null;
             }
           }
-        } else {
-          return stitchErrorResponse(
-            assetErr,
-            "Mission asset image mockup generation failed",
-          );
         }
       }
     } else if (screenId) {
       console.log("[stitch] editing screen:", screenId);
+      console.log(
+        "[stitch] edit prompt:",
+        JSON.stringify({
+          length: prompt.length,
+          sample: prompt.slice(0, 2000),
+        }),
+      );
       try {
         screen = await editScreen(client, project, screenId, prompt, deviceType, beforeScreenIds);
       } catch (editErr) {
@@ -1161,7 +1142,7 @@ export async function POST(request: Request) {
     const freshScreens = allScreens.filter(
       (candidate) => candidate.id && !beforeScreenIds.has(candidate.id),
     );
-    const { selected, allScreenIds } =
+    const selectionResult =
       screenId || isImageLed || isAssetLed
         ? {
             selected: {
@@ -1179,8 +1160,31 @@ export async function POST(request: Request) {
             allScreenIds: [screen.id],
           }
         : await choosePrimaryScreen(project, freshScreens, screen, prompt);
+    let { selected, allScreenIds } = selectionResult;
     screen = selected.screen;
     console.log("[stitch] selected primary screen id:", screen.id);
+
+    if (
+      screenId &&
+      previousHtmlHash &&
+      selected.html &&
+      contentHash(selected.html) === previousHtmlHash
+    ) {
+      console.warn(
+        "[stitch] edit returned unchanged HTML after retries; treating as failed no-op:",
+        screen.id,
+      );
+      return Response.json(
+        {
+          error:
+            "Stitch가 기존 screen을 수정하지 않고 동일한 HTML을 반환했습니다. 선택 요소 수정은 실패로 처리했습니다.",
+          code: "stitch-edit-unchanged",
+          projectId: actualProjectId,
+          screenId: screen.id,
+        },
+        { status: 409 },
+      );
+    }
 
     if (!selected.html) {
       console.warn("[stitch] HTML still pending; returning screen metadata for lazy recovery:", screen.id);
@@ -1198,7 +1202,81 @@ export async function POST(request: Request) {
       );
     }
 
-    const html = selected.html;
+    let html = selected.html;
+    if (isAssetLed && html) {
+      const coverage = assetHtmlCoverage(html, assetImageInputs);
+      console.log(
+        "[stitch] asset-led HTML asset coverage:",
+        `${coverage.matchedCount}/${coverage.totalCount}`,
+      );
+      if (!coverage.allMatched) {
+        console.warn(
+          "[stitch] asset-led first design missed mission assets; editing generated screen",
+        );
+        const previousScreenId = screen.id;
+        const deviceLabel =
+          deviceType === "MOBILE" ? "mobile app screen" : "desktop website";
+        const repairPrompt = assetImageRepairPrompt(
+          prompt,
+          deviceLabel,
+          assetImageInputs,
+          coverage,
+        );
+        try {
+          screen = await editScreen(
+            client,
+            project,
+            screen.id,
+            repairPrompt,
+            deviceType,
+            new Set([...beforeScreenIds, previousScreenId]),
+          );
+          html = await materializeHtml(await waitForScreenHtml(project, screen));
+          const repairedCoverage = assetHtmlCoverage(html, assetImageInputs);
+          console.log(
+            "[stitch] asset-led repaired HTML asset coverage:",
+            `${repairedCoverage.matchedCount}/${repairedCoverage.totalCount}`,
+          );
+          if (!repairedCoverage.allMatched) {
+            throw new Error(
+              `Stitch repaired HTML did not preserve every mission asset (${repairedCoverage.matchedCount}/${repairedCoverage.totalCount}).`,
+            );
+          }
+          selected = {
+            screen,
+            html,
+            htmlPending: false,
+            score: 0,
+          };
+          allScreenIds = Array.from(new Set([...allScreenIds, previousScreenId, screen.id]));
+          console.log("[stitch] asset-led repaired screen id:", screen.id);
+        } catch (repairErr) {
+          console.warn(
+            "[stitch] asset-led generated-screen edit failed; generating direct HTML fallback:",
+            errorMessage(repairErr),
+          );
+          screen = await generateOpenAiAssetFallbackScreen(
+            prompt,
+            deviceType,
+            assetImageInputs,
+          );
+          html = await screen.getHtml();
+          selected = {
+            screen,
+            html,
+            htmlPending: false,
+            score: 0,
+          };
+          allScreenIds = [screen.id];
+          if (screen.id.startsWith("openai-asset-fallback-")) {
+            actualProjectId = projectId ?? "";
+            resolvedDesignSystemId = null;
+            resolvedStyleHash = null;
+          }
+          console.log("[stitch] asset-led fallback screen id:", screen.id);
+        }
+      }
+    }
     console.log("[stitch] selected html length:", html.length);
     console.log("[stitch] new screens this generation:", allScreenIds.length);
 

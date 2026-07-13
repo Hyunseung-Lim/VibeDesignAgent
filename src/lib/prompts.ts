@@ -61,7 +61,9 @@ const CHAT_MOCKUP_EDIT_ACTION_PROMPT = `Mockup edit rules:
 - The edit instruction must be English and specific.
 - Preserve existing structure, visual style, and unrelated sections.
 - If the user asks for a new layout, fresh canvas, different concept, or another version, use [GENERATE_MOCKUP] instead.
-- If an element is selected, target that selected element in the edit instruction.`;
+- If an element is selected, target that selected element in the edit instruction.
+- For selected-element edits, preserve the selector or XPath and the user's concrete operation in the [EDIT_MOCKUP] instruction. Do not replace a direct selector request such as div.col-span-2 이거 없애줘 with a looser semantic guess.
+- If the selected-element request says remove, delete, 없애줘, 삭제, 제거, 빼, or 지워, instruct the downstream editor to remove the selected element itself, including its selected container, unless the user explicitly targets only a child element.`;
 
 const COMMON_DESIGN_SPEC_RULES = `디자인 스타일 must contain ONLY constraints that map directly to CSS or concrete UI styling: colors, typography, spacing/sizing, border radius, shadows, layout density, component styling rules, and explicit style "avoid" lists.
 - Do not put high-level concept, product positioning, target user, or abstract mood narration in 디자인 스타일. Those belong in the design brief (시안). Express mood only as concrete visual constraints (e.g. specific palette, contrast, type weight), not as adjectives alone.
@@ -227,6 +229,7 @@ export function chatSelectedElementPrompt(
   return [
     "The user has selected this exact element/region for editing.",
     "Treat the selected element as the primary edit target. Do not apply the requested change globally unless the user explicitly asks.",
+    "When producing [EDIT_MOCKUP], carry this selector/XPath into the edit instruction and preserve the user's concrete operation. If the user asks to remove/delete this selection, say to remove the selected element itself, not just a guessed decorative child.",
     `Selector: ${selector}`,
     options?.xpath ? `XPath: ${options.xpath}` : "",
     rect

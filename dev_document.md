@@ -122,12 +122,12 @@
 - **채팅 컨텍스트**: 미션 제목/브리핑, 현재 아이디어 내용, 기존 목업 HTML, 선택된 UI 요소, 인용 레퍼런스, 대화 히스토리. 텍스트 인용은 client가 state/ref를 동기화해 선택 직후 전송한 turn에도 포함시키고, `/api/chat`이 raw excerpt를 truncate해 넘기며 `chatCitedTextsPrompt`가 `[인용 N]` 라벨을 한 번만 붙인다. 사용자가 명시적으로 붙인 `citedTexts`는 planner pruning보다 우선해 presence 기반으로 raw prompt에 포함한다. `/레퍼런스검색` memory는 15.199 결정대로 별도 before-session 우회 없이 기존 reference relevance filter를 탄다 `[현행 2026-07-11 → 15.199/15.203/15.205]`
 - **missionBrief 보완 주입**: 신규 목업 생성 시 아이디어 내용이 300자 미만으로 빈약하면 `missionBrief`를 `buildMockupPrompt`에 직접 주입해 제품 데이터가 Stitch에 전달되도록 보장 (수정 시에는 주입 안 함)
 - **이미지 주도 생성**: 사용자가 참고 이미지를 첨부/붙여넣거나(Phase 1) 신규 목업 요청에 URL을 주면(Phase 2 — 채팅 메시지 내 URL 또는 인용 레퍼런스의 URL), 텍스트 design.md 단계 없이 그 화면을 Stitch에 `upload`→`edit`로 재구성해 목업을 만들고 결과에서 design.md를 역추출·저장한다. URL은 서버가 스크린샷(Microlink 무키, `captureScreenshot` 추상화)으로 캡처하며 첨부 이미지가 우선. 모바일 목업이면 URL 캡처도 390×844 모바일 viewport, 데스크톱이면 1280×900 viewport로 찍는다. 이미지/URL이 있으면 "디자인 스타일 필수" 게이트를 우회한다. `src/app/api/stitch/route.ts`의 `isImageLed` 분기 참고 `[현행 2026-06-15 → 15.81/15.83]`
-- **콘텐츠 자산 주도 생성(asset-led)**: 미션 옵션에 어드민이 등록한 콘텐츠 이미지(`assetImages`, 실제 상품 사진·UI 캡쳐)가 있으면 신규 목업 생성 시 그 Storage `path`/URL과 설명(`note`)을 `/api/stitch`로 넘긴다. 서버는 브라우저용 `/api/mission-assets` 프록시를 다시 fetch하지 않고 `mission-assets/` Storage object를 직접 다운로드한 뒤 `upload`→`edit`하면서 asset manifest와 함께 "이 이미지들을 그대로 콘텐츠로 박아 넣어라"(`assetImageEmbedPrompt`)로 생성한다. 만약 Stitch `upload`/`edit_screens`가 인증 경계에서 실패하면 목업 전체를 실패시키지 않고, asset URL을 `img src`에 직접 쓰라는 텍스트 생성 fallback으로 전환한다. 이 fallback도 현재 credential로 실패하면 API key 클라이언트로 새 Stitch project를 만들어 URL 텍스트 생성만 재시도한다. API key 텍스트 생성까지 인증 실패하면 OpenAI가 asset URL을 그대로 쓰는 standalone HTML을 생성해 반환하고, 이 결과는 실제 Stitch screen이 아니므로 `screenId`/`projectId` 연결 없이 저장된다. fallback project에는 기존 design system이 적용되지 않았으므로 응답의 designSystemId/style hash는 비운다. 이미지 주도 생성과 달리 이미지를 스타일로 재구성하지 않고 콘텐츠 자산으로 보존하며, 레이아웃·스타일은 brief와 디자인 시스템을 따른다. 그래서 디자인 스타일을 미리 적용하고 결과 기반 design.md 역추출은 하지 않는다. 사용자가 그 턴에 스타일 이미지/URL을 첨부하면 그쪽(isImageLed)이 우선. `src/app/api/stitch/route.ts`의 `isAssetLed` 분기 참고 `[현행 2026-07-09 → 15.89/15.93]`
+- **콘텐츠 자산 주도 생성(asset-led)**: 미션 옵션에 어드민이 등록한 콘텐츠 이미지(`assetImages`, 실제 상품 사진·UI 캡쳐)가 있으면 신규 목업 생성 시 그 Storage `path`/URL과 설명(`note`)을 `/api/stitch`로 넘긴다. 서버는 Stitch `upload`→`edit_screens`를 신규 목업 생성의 기본 경로로 쓰지 않고, asset URL과 note manifest를 `generate_screen_from_text` prompt에 직접 넣어 first DESIGN screen을 만든다. 이는 Stitch SDK의 `upload(filePath)`가 이미지를 UI 생성 입력으로 전달하는 API가 아니라 이미지 파일 자체를 `IMAGE` screen canvas로 만드는 API이고, 그 IMAGE screen을 첫 design 없이 `edit_screens` 대상으로 넘기면 `invalid argument`가 반복되기 때문이다. URL text generation이 인증 실패하면 API key 클라이언트로 새 Stitch project를 만들어 한 번 더 재시도한다. URL text generation 자체가 `invalid argument`로 거부되거나 API key 텍스트 생성까지 인증/invalid-argument 실패하면 OpenAI가 asset URL을 그대로 쓰는 standalone HTML을 생성한다. Stitch URL text generation이 성공해도 반환 HTML에 모든 mission asset의 URL/path가 포함되지 않으면, 생성된 DESIGN screen을 `edit_screens` 대상으로 한 번 더 보정한다. 보정 HTML도 coverage를 통과하지 못하거나 edit이 실패할 때만 OpenAI HTML fallback으로 내려간다. OpenAI HTML fallback도 동일한 asset coverage 검사를 통과해야 한다. 이 direct HTML 결과는 공식 Stitch screen이 아니므로 `projectId` 연결 없이 저장하고, `screenId`는 로그/클라이언트 식별용 `openai-asset-fallback-*` synthetic id를 쓴다. 클라이언트는 synthetic id를 이후 Stitch edit 대상으로 보내지 않는다. 이미지 주도 생성과 달리 이미지를 스타일로 재구성하지 않고 콘텐츠 자산으로 보존하며, 레이아웃·스타일은 brief와 디자인 시스템을 따른다. 그래서 디자인 스타일을 미리 적용하고 결과 기반 design.md 역추출은 하지 않는다. 사용자가 그 턴에 스타일 이미지/URL을 첨부하면 그쪽(isImageLed)이 우선. `src/app/api/stitch/route.ts`의 `isAssetLed` 분기 참고 `[현행 2026-07-13 → 15.89/15.93/15.216/15.217/15.218/15.219/15.220]`
 - **Stitch 인증 계약**: 배포 앱에서 사용자의 Google 로그인 계정은 Stitch credential로 쓰지 않는다. `/api/stitch`는 서버 소유 랩 계정 credential 하나로 모든 Stitch 호출을 통일한다. 공식 `@google/stitch-sdk` 계약 기준으로 `STITCH_API_KEY`가 1순위 인증이고, OAuth는 `STITCH_ACCESS_TOKEN` + `GOOGLE_CLOUD_PROJECT` 조합의 대안이다. 여기서 `STITCH_API_KEY`는 Google Cloud Console API key가 아니라 Stitch Settings/API key 화면에서 생성한 Stitch API key다. 서버 helper는 API key가 있으면 먼저 `X-Goog-Api-Key` 경로를 쓰고, API key가 없을 때만 refresh-token OAuth/ADC/static access token을 시도한다. Stitch quota/project id는 Firebase와 분리해 `STITCH_GOOGLE_CLOUD_PROJECT`(없으면 `GOOGLE_CLOUD_PROJECT`, 로컬 ADC는 ADC `quota_project_id`)를 사용한다. 로컬 임시 테스트는 `STITCH_ACCESS_TOKEN` + Stitch project id도 가능하지만 배포 기본값은 Stitch API key다. 서비스 계정 OAuth는 MCP 연결/프로젝트 조회에는 성공해도 `update_design_system`/`edit_screens` 내부 호출에서 인증 누락으로 실패하는 것이 확인되어 Stitch edit 계열 인증 후보로 쓰지 않는다 `[현행 2026-07-09]`
 - **액션/화면 완료 보장**: `CREATE_DESIGN_SPEC`/`EDIT_DESIGN_SPEC`는 JSON 뒤 닫는 대괄호가 빠지거나 일반 마크다운 payload로 와도 균형 스캔과 loose parser로 복구하며, 복구 불가능하면 영구적인 작성 중 상태 대신 명시적 실패로 표시한다. 단, assistant가 `원하시면...` 같은 조건부 제안 문맥에서 design spec action을 예시/미리보기처럼 출력한 경우에는 실행 명령으로 저장하지 않고 화면에서도 제거한다. Stitch가 screen metadata만 먼저 반환하면 HTML을 재조회한 뒤 아트보드를 확정하고, 저장된 screen의 HTML 복원 중에는 빈 iframe 대신 로딩/실패 상태를 표시한다. `src/lib/session/chat-content.ts`와 `src/app/main/[missionId]/page.tsx`를 직접 확인 `[현행 2026-07-13 → 15.97/15.192/15.213]`
-- **Stitch 일시 실패 복구**: `edit_screens`, Stitch 이미지 업로드(`screens:batchCreate`), mission asset Storage 다운로드가 `service unavailable`, timeout, 429/5xx 등 일시 오류를 반환하면 `/api/stitch`가 짧은 backoff로 재시도한다. 업로드 기반 이미지 주도/asset-led 생성도 SDK의 `screen.edit()` 대신 동일한 `editScreen` 복구 경로를 타며, 업로드된 reference screen을 최종 결과 후보로 오인하지 않도록 업로드 screen id를 recovery 기준에 포함한다 `[현행 2026-07-09]`
+- **Stitch 일시 실패 복구**: `edit_screens`, Stitch 이미지 업로드(`screens:batchCreate`), style source URL 캡처가 `service unavailable`, timeout, 429/5xx 등 일시 오류를 반환하면 `/api/stitch`가 짧은 backoff로 재시도한다. 업로드 기반 이미지 주도 생성은 SDK의 `screen.edit()` 대신 동일한 `editScreen` 복구 경로를 타며, 업로드된 reference screen을 최종 결과 후보로 오인하지 않도록 업로드 screen id를 recovery 기준에 포함한다. asset-led는 더 이상 Storage 다운로드나 Stitch 이미지 업로드를 기본 경로로 쓰지 않는다 `[현행 2026-07-13 → 15.216/15.217]`
 - **캔버스**: 드래그 패닝, 휠 줌, Fit 버튼, 확대(fullscreen) 모드. 선택 스크립트는 iframe HTML에 항상 주입하고, 편집 모드 토글은 pointer event와 선택 해제 메시지로 제어해 iframe `srcDoc` reload를 피한다. 동적 문서 높이를 측정할 때 원본 `html/body` height를 덮어쓰지 않고, viewport 단위와 `h-screen` 계열만 artboard device 크기에 고정해 원본/Final Design과 같은 첫 화면 레이아웃을 보존한다. 또한 iframe이 아직 device 높이일 때(= 첫 높이 보고 전에) vh를 쓰는 요소(예: 컨테이너 h-[80vh])와 모든 이미지의 box를 인라인 px(!important)로 고정한다. 인라인 선언이 클래스 규칙을 specificity로 이기므로 Tailwind Play CDN의 스타일시트 재생성과 무관하게 유지되고, iframe이 전체 문서 높이로 커져도 full-bleed 이미지가 늘어나거나 vh 컨테이너가 부풀어 높이가 발산하는 피드백 루프가 생기지 않는다(box와 iframe 높이를 분리). `src/lib/session/mockup-html.ts`의 `injectHeightReporter` 참고 `[현행 2026-06-24 → 15.78/15.113/15.121]`
-- **편집 모드**: 특정 UI 요소 클릭 선택 → `[EDIT_MOCKUP: {prompt}]`로 수정. 선택 요소가 있는 상태에서 "크게/색/문구/삭제" 등 짧은 타깃 편집 요청이 오면 planner 판단과 무관하게 현재 목업 HTML과 선택 요소 컨텍스트를 함께 주입한다 `[현행 2026-06-15 → 15.77]`
+- **편집 모드**: 특정 UI 요소 클릭 선택 → `[EDIT_MOCKUP: {prompt}]`로 수정. 선택 요소가 있는 상태에서 "크게/색/문구/삭제/꽉 차게" 등 짧은 타깃 편집 요청이 오면 planner 판단과 무관하게 현재 목업 HTML과 선택 요소 컨텍스트를 함께 주입한다. assistant가 실수로 `[GENERATE_MOCKUP]`을 내도 사용자가 새 시안/새 화면을 명시하지 않았고 선택된 artboard가 있으면 클라이언트가 edit으로 강제해 기존 screenId를 보낸다. 선택 대상이 `img`이거나 이미지를 포함하면 이미지 교체 요청이 없는 한 기존 `img src`를 보존하고 object-fit/크기/overflow 같은 레이아웃 CSS만 바꾸도록 Stitch prompt에 명시한다. 선택 요소 편집은 모델이 재작성한 영어 action뿐 아니라 사용자 원문 요청, selector, XPath, 선택 HTML을 Stitch prompt에 함께 넣는다. 원문이 삭제/제거/없애기 계열이면 선택된 HTML element 자체를 제거하라는 지시를 추가해 의미 추론으로 decorative child만 제거하는 식의 약화를 막는다. edit 호출에는 active design brief 본문을 다시 붙이지 않아 기존 brief가 국소 수정 지시를 희석하지 않게 한다. Stitch edit 후 재조회 HTML hash가 기존 artboard HTML hash와 끝까지 같으면 성공으로 저장하지 않고 `stitch-edit-unchanged` 실패로 처리하며, no-op 추적을 위해 서버 로그에 edit prompt sample과 `edit_screens` raw response summary를 남긴다. 단순 선택 요소 삭제/제거 요청에서 Stitch가 text-only no-op을 반환하면 클라이언트가 XPath/selector로 현재 artboard HTML의 선택 node를 직접 제거하고 `local-edit-fallback-*` synthetic screen id로 바꿔 이후 Stitch 원본 screen을 다시 edit 대상으로 보내지 않는다 `[현행 2026-07-13 → 15.77/15.223/15.224/15.225/15.226/15.227]`
 - Stitch edit가 기존 screen을 mutate하지 않고 새 screen을 만들면 기존 artboard를 덮어쓰지 않고 새 artboard로 추가한 뒤 active로 전환한다 `[현행 2026-06-15 → 15.79]`
 - 선택 요소를 인용해 chat에 전송하면 해당 turn의 `citedElement`에는 포함하되, 입력 UI와 iframe outline에서는 즉시 선택 해제한다 `[현행 2026-06-15 → 15.80]`
 - 현재 시안에 디자인 스타일이 이미 있을 때 사용자가 다른 스타일/무드/레퍼런스 방향으로 다시 만들라고 요청하면 기존 디자인 스타일을 덮어쓰지 않고 새 시안으로 fork한다. 새 시안은 기존 brief에서 제품/UX 요구사항만 유지하고 기존 시각 스타일·레이아웃·무드 제약은 제거하며, 인용 레퍼런스/URL/첨부 이미지를 새 디자인 스타일 근거로 기록한다. Stitch 이미지 주도 생성에서는 제품 brief와 스크린샷이 충돌할 때 스크린샷의 레이아웃·밀도·배경·타입·무드가 우선한다 `[현행 2026-06-15 → 15.82/15.85]`
@@ -3145,7 +3145,7 @@ type ChatPlan = {
 - 결정(사용자): 어드민이 미션별로 이미지를 등록한다. Stitch `upload`로 올린 뒤 생성 프롬프트에 "이 이미지를 그대로 넣어달라"고 명시한다(스타일 재구성이 아니라 콘텐츠 보존).
 - 구현:
   - 스키마: 미션 옵션에 `assetImages[{url, path, note}]` 추가. 어드민 `/admin/new`에서 Firebase Storage `mission-assets/`로 업로드 → URL/path 저장(썸네일·삭제 UI, 최대 12장). `POST /api/admin/missions`가 http(s) URL만 검증해 저장.
-  - 생성: 세션에서 신규 목업(`isNew`)이고 그 턴에 스타일 이미지/URL 첨부가 없을 때 활성 옵션의 `assetImages` URL들을 `/api/stitch`로 전달. 서버 `isAssetLed` 분기가 각 URL을 `fetchImageAsDataUrl`로 받아 `writeStyleImageTmp`(다운스케일) → `project.upload` → 첫 스크린을 `assetImageEmbedPrompt`로 `edit`. 업로드 IMAGE 스크린은 artboard에서 제외(`allScreenIds` len 1), 결과 기반 design.md 역추출은 하지 않음(콘텐츠 사진이 스타일을 오염시키지 않도록).
+  - 생성: 세션에서 신규 목업(`isNew`)이고 그 턴에 스타일 이미지/URL 첨부가 없을 때 활성 옵션의 `assetImages` URL들을 `/api/stitch`로 전달. 서버 `isAssetLed` 분기가 각 asset URL과 note manifest를 `generate_screen_from_text` prompt에 넣고, Stitch가 해당 URL을 `img src`로 직접 쓰도록 지시한다. `[stale 2026-07-13 → 15.216: 이전 `fetchImageAsDataUrl` → `project.upload` → `edit_screens` 경로는 업로드된 IMAGE screen 편집이 `invalid argument`를 반환해 기본 경로에서 제거됨]`
   - 우선순위: 사용자가 그 턴에 스타일 이미지/URL을 붙이면 `isImageLed`가 우선, asset-led는 비활성.
 - 한계: SDK가 generate 프롬프트에 이미지를 직접 첨부하는 API가 없어, 여러 장을 한 화면에 그대로 박는 신뢰도는 미검증(첫 이미지를 edit하는 경로). 다중 이미지 임베드 충실도는 라이브에서 튜닝 필요. Firebase Storage `mission-assets/` 쓰기 규칙이 어드민에 열려 있어야 업로드 동작. `[stale 2026-06-18 → 15.92: 클라이언트 직접 Storage 업로드 대신 admin 서버 API가 service account로 업로드/삭제]`
 
@@ -4240,3 +4240,87 @@ type ChatPlan = {
 - 수정: 빈 새 시안 추가는 LLM 호출 없이 클라이언트에서 처리해 Design Brief 또는 Design Style 중 원하는 것부터 작성할 수 있게 한다.
 - 수정: 디자인 스타일만 있고 Design Brief와 artboard가 없는 활성 시안에서는 명시적 `create_idea` command로 온 `[CREATE_NOTE]`도 새 시안을 만들지 않고 해당 style shell의 Design Brief를 채운다.
 - 문서: 4.6 Current Snapshot과 15.157 decision log의 `/시안생성` 설명을 stale 처리하고 새 label/동작 계약을 기록했다.
+
+### 15.216 Stitch asset-led URL text generation 기본화 `[implemented 2026-07-13]`
+
+- 배경: Stitch SDK 생성 API는 복구됐지만, mission asset-led 경로에서 `project.upload`로 만든 IMAGE screen을 `edit_screens` 대상으로 넘기면 `Request contains an invalid argument`가 반복됐다. 이 실패는 2분 이상 걸린 뒤 같은 URL text fallback으로 내려가므로 사용자 대기 시간이 과도했다.
+- 수정: `/api/stitch`의 `isAssetLed` 분기는 더 이상 mission asset을 다운로드해 Stitch에 업로드한 뒤 `edit_screens`를 호출하지 않는다. 대신 asset URL과 note manifest를 `generate_screen_from_text` prompt에 직접 넣고, 각 URL을 `img src`로 그대로 쓰라고 지시한다.
+- 유지: URL text generation이 인증 실패하면 API key 클라이언트로 새 Stitch project를 만들어 재시도하고, API key 경로도 인증 실패하면 OpenAI direct HTML fallback을 사용한다. 이 direct HTML 결과는 실제 Stitch screen이 아니므로 `screenId`/`projectId` 없이 저장한다.
+- 문서: 4.4 Current Snapshot의 콘텐츠 자산 주도 생성 계약과 15.89 구현 로그를 URL text generation 기준으로 갱신했다.
+
+### 15.217 Stitch asset-led invalid-argument direct fallback `[implemented 2026-07-13]`
+
+- 배경: Stitch 공식 upload-image 문서/SDK 구현을 확인한 결과 `project.upload(filePath)`는 이미지 파일을 UI 생성 입력으로 넘기는 API가 아니라 `screens:batchCreate`로 `IMAGE` screen canvas를 만드는 API다. 그래서 mission asset을 업로드한 뒤 그 IMAGE screen을 `edit_screens` 대상으로 쓰는 방식은 asset-led 생성 계약과 맞지 않는다.
+- 관찰: asset URL manifest를 `generate_screen_from_text` prompt에 넣는 경로도 일부 요청에서 `Request contains an invalid argument`로 거부된다. 이 경우에는 Stitch 안에서 asset URL을 보존한 screen을 만들 수 없으므로 500을 반환하지 않고 OpenAI direct HTML fallback으로 내려간다.
+- 수정: `/api/stitch`의 asset-led 분기는 URL text generation이 `invalid argument`로 실패하면 즉시 OpenAI direct HTML fallback을 사용한다. 인증 실패로 API key fallback project를 만든 뒤에도 인증 오류 또는 `invalid argument`가 나면 동일하게 direct HTML fallback으로 내려간다.
+- 문서: 4.4 Current Snapshot에서 asset-led의 upload/edit 제외 사유와 direct fallback 조건을 갱신했고, Stitch 일시 실패 복구 설명에서 asset-led upload 전제를 제거했다.
+
+### 15.218 Stitch asset-led HTML coverage guard `[implemented 2026-07-13]`
+
+- 배경: Stitch `generate_screen_from_text`가 200으로 성공하고 screen HTML을 반환해도 mission asset URL을 실제 `img src`로 쓰지 않고 다른 이미지를 넣는 사례가 확인됐다. 이 상태를 성공으로 저장하면 asset-led의 핵심 계약인 실제 콘텐츠 이미지 보존이 깨진다.
+- 수정: `/api/stitch`는 asset-led Stitch 결과 HTML을 받은 뒤 각 mission asset의 URL, Storage path, URL-encoded path가 HTML에 포함되는지 검사한다. 모든 asset이 매칭되지 않으면 Stitch 결과를 버리고 OpenAI direct HTML fallback을 생성해 반환한다.
+- 로그: 정상 보존 여부는 `[stitch] asset-led HTML asset coverage: N/M`으로 남긴다. `N/M`이 전체 매칭이 아니면 `[stitch] asset-led Stitch result did not preserve every mission asset; generating direct HTML fallback` 이후 `openai-asset-fallback-*` screen id가 반환된다.
+- 문서: 4.4 Current Snapshot의 asset-led 계약에 Stitch 성공 후 HTML coverage guard를 추가했다.
+
+### 15.219 OpenAI asset fallback synthetic id 정리 `[implemented 2026-07-13]`
+
+- 배경: asset-led coverage guard가 OpenAI direct HTML fallback으로 내려갔을 때 fallback screen id가 빈 문자열로 로그에 찍혔다. 이는 실제 Stitch screen이 아니라는 의미였지만, 클라이언트 상태/로그에서는 추적이 어렵고 빈 `stitchScreenId`가 저장될 수 있다.
+- 수정: OpenAI asset fallback은 자체 HTML에도 모든 asset URL/path가 포함되는지 검사한 뒤 `openai-asset-fallback-*` synthetic id를 반환한다. 이 id는 앱 내부 식별용이며 Stitch project 안에 존재하는 screen이 아니다.
+- 보호: 클라이언트가 기존 아트보드를 수정할 때 `openai-asset-fallback-*` id는 `/api/stitch`의 `screenId`로 보내지 않는다. 따라서 fallback HTML을 이후 수정해도 fake id를 Stitch `edit_screens` 대상으로 오인하지 않는다.
+- 문서: 4.4 Current Snapshot에 synthetic id와 edit 제외 계약을 반영했다.
+
+### 15.220 Asset-led first-design-then-edit probe `[implemented 2026-07-13]`
+
+- 배경: Stitch 공식 SDK 예제의 edit 흐름은 `project.generate(...)`로 만든 기존 DESIGN screen을 `screen.edit(...)`로 수정하는 구조다. 기존 asset-led upload/edit 경로는 first DESIGN screen 없이 `project.upload(image)`로 만든 IMAGE screen을 바로 `edit_screens` 대상으로 써서 `invalid argument`가 날 가능성이 높았다.
+- 수정: asset-led 신규 목업은 먼저 `generate_screen_from_text`로 asset URL manifest가 포함된 first DESIGN screen을 만든다. 이 결과 HTML이 asset coverage를 통과하면 그대로 Stitch screen을 반환한다.
+- 수정: first DESIGN screen의 coverage가 부족하면 즉시 OpenAI fallback으로 가지 않고, 방금 생성된 DESIGN screen을 `edit_screens` 대상으로 한 번 더 보정한다. 보정 prompt는 누락된 mission asset URL을 `img src`에 직접 넣고, 중요한 상품 이미지는 자르지 말고 필요 시 `object-fit: contain`을 쓰라고 지시한다.
+- 실패 처리: 보정 edit이 실패하거나 보정 HTML도 coverage를 통과하지 못하면 기존 OpenAI direct HTML fallback으로 내려간다. 이 fallback은 synthetic id를 쓰므로 공식 Stitch screen은 아니며, first DESIGN/edited DESIGN이 성공한 경우에만 공식 Stitch project에 남는다.
+- 문서: 4.4 Current Snapshot의 asset-led 계약을 generate-first, edit-repair 순서로 갱신했다.
+
+### 15.221 Asset fallback HTML upload to Stitch `[superseded 2026-07-13 → 15.222]`
+
+- 배경: 실제 로그에서 asset-led first DESIGN screen coverage가 `0/6`, generated DESIGN screen edit 보정 후 coverage도 `0/6`으로 확인됐다. 이 경우 OpenAI direct HTML fallback은 asset URL을 보존하지만 synthetic id라 공식 Stitch 웹에 남지 않았다.
+- 수정: OpenAI asset fallback HTML이 coverage 검사를 통과하면, 서버가 HTML을 임시 `.html` 파일로 저장하고 `project.upload(..., { title: "Asset fallback mockup" })`로 현재 Stitch project에 업로드한다. HTML upload는 SDK 구현상 `DOCUMENT` screen이므로 이미지 upload의 `IMAGE` screen edit 문제를 피한다.
+- 반환: HTML upload가 screen id를 반환하면 해당 Stitch screen id와 현재 project id를 그대로 반환한다. 따라서 fallback 결과도 공식 Stitch project/web에 남을 수 있다.
+- 안전장치: HTML upload가 실패하거나 screen id를 반환하지 않는 마지막 경우에만 기존 `openai-asset-fallback-*` synthetic id로 돌아간다. synthetic id는 클라이언트에서 Stitch edit 대상에서 제외된다.
+- 문서: 4.4 Current Snapshot의 asset-led fallback 계약을 synthetic-only에서 HTML upload 우선으로 갱신했다.
+
+### 15.222 Asset fallback HTML upload 제거 `[implemented 2026-07-13]`
+
+- 배경: HTML upload fallback은 SDK의 `project.upload(.html)`가 지원하는 DOCUMENT screen import를 이용한 우회였지만, Stitch가 공식적으로 제공하는 생성/수정 루트는 `generate_screen_from_text`와 `edit_screens`이며 HTML import를 생성 결과 대체 경로로 쓰는 것은 목표와 어긋났다.
+- 수정: OpenAI asset fallback HTML을 Stitch project에 `.html`로 업로드하는 경로를 제거했다. fallback은 다시 앱 표시용 standalone HTML과 `openai-asset-fallback-*` synthetic id만 반환한다.
+- 유지: asset-led는 먼저 `generate_screen_from_text`로 first DESIGN screen을 만들고, coverage가 부족하면 그 DESIGN screen을 `edit_screens`로 한 번 보정한다. 이 두 Stitch 경로가 coverage를 통과할 때만 실제 Stitch screen을 최종 결과로 반환한다.
+- 문서: 4.4 Current Snapshot을 HTML upload 우선 설명에서 direct HTML fallback 설명으로 되돌렸다.
+
+### 15.223 선택 요소 수정 요청의 generate 오분류 방어 `[implemented 2026-07-13]`
+
+- 배경: 사용자가 목업 iframe에서 `img.product-img`를 인용한 뒤 "여기 안에 들어가는 이미지를 꽉 차게 만들어줘"처럼 선택 요소 편집을 요청했는데, assistant action이 `[GENERATE_MOCKUP]`으로 나오면 클라이언트가 새 목업 생성으로 처리했다. 이 경우 `/api/stitch` 로그가 `generating screen for prompt`로 찍히고 기존 screenId 없이 `generate_screen_from_text`를 호출하므로 Stitch가 이미지까지 새로 생성할 수 있었다.
+- 수정: 선택 요소가 있고 해당 artboard가 존재하며 사용자가 새 시안/새 화면을 명시하지 않았으면 `[GENERATE_MOCKUP]`도 edit action처럼 처리한다. 이때 선택 요소가 속한 artboard를 edit target으로 우선 사용해 기존 screenId를 `/api/stitch`에 전달한다.
+- 이미지 보존: 선택 요소가 `img`이거나 이미지를 포함하면 Stitch prompt에 기존 `img src`를 그대로 보존하라고 명시한다. "꽉 차게/fit/crop/align" 계열 요청은 이미지 교체가 아니라 object-fit, width, height, aspect ratio, overflow 같은 CSS 수정으로 제한한다.
+
+### 15.224 Stitch edit no-op 실패 처리 `[implemented 2026-07-13]`
+
+- 배경: 15.223 이후 선택 요소 수정 요청이 `editing screen` 경로로 들어가는 것은 확인됐지만, Stitch가 200 응답과 같은 screen id를 반환하면서 HTML은 기존 artboard와 동일한 사례가 있었다. 서버는 기존 HTML hash와 달라질 때까지 여러 번 재조회했지만 끝까지 동일했고, 클라이언트는 이를 성공처럼 처리해 화면이 바뀌지 않았다.
+- 수정: edit 요청에 `previousHtmlHash`가 있고 재조회 결과 HTML hash가 끝까지 동일하면 `/api/stitch`가 409와 `stitch-edit-unchanged`를 반환한다. 클라이언트는 기존 `stitchResponseError` 경로로 이 메시지를 표시하고 artboard를 동일 HTML로 덮어쓰지 않는다.
+- 의도: Stitch가 실제로 수정하지 않은 no-op 응답을 성공 결과로 저장하지 않는다. 이후 필요하면 이 실패 조건에서 OpenAI HTML edit fallback이나 CSS-only local patch를 별도 계약으로 추가한다.
+
+### 15.225 선택 요소 편집 원문/selector 보존 강화 `[implemented 2026-07-13]`
+
+- 배경: `div.col-span-2 이거 없애줘`처럼 사용자가 selector와 삭제 의도를 직접 준 요청이 planner를 거치며 `Remove the decorative icon and its container...`처럼 의미 기반 영어 action으로 바뀌었다. 이 action은 사용자 원문의 selector 삭제 의도를 약화시키고, Stitch가 선택된 container 자체가 아니라 장식 icon 정도로 해석할 여지를 만들었다.
+- 수정: chat action prompt에 선택 요소 편집 시 selector 또는 XPath와 사용자의 구체 operation을 `[EDIT_MOCKUP]` 안에 보존하라는 규칙을 추가했다. 삭제/제거 계열 요청은 선택된 element 자체를 제거하라고 명시한다.
+- 수정: 클라이언트가 Stitch에 넘기는 최종 edit prompt에도 사용자 원문 요청, selector, XPath, 선택 HTML을 함께 넣는다. 원문이 remove/delete/없애/삭제/제거/빼/지워 계열이면 "선택된 HTML element 자체와 그 selected container를 제거하라"는 지시를 추가한다.
+- 의도: assistant가 만든 user-visible action이 다소 추상화되더라도 downstream Stitch edit에는 원문과 정확한 target이 남아 no-op 또는 잘못된 부분 편집 가능성을 낮춘다.
+
+### 15.226 Stitch edit prompt 희석 제거와 no-op 추적 로그 `[implemented 2026-07-13]`
+
+- 배경: 15.225 이후에도 `div.col-span-2 이거 없애줘` 요청이 `editing screen`으로 들어갔지만, Stitch가 동일 HTML을 반환해 409 no-op으로 끝났다. 이 경우 원문/selector 보존 외에도, edit prompt에 active design brief가 다시 붙어 국소 삭제 지시가 전체 brief 유지 신호와 섞이는 문제가 있었다. 또한 `edit_screens` raw response를 보지 못해 Stitch가 텍스트/제안만 반환했는지, 기존 screen만 반환했는지, 새 screen 후보를 반환했는지 추적하기 어려웠다.
+- 수정: edit 호출에서는 `buildMockupPrompt`에 active idea를 넘기지 않는다. 신규 생성만 active design brief와 mission brief를 붙이고, 기존 screen edit은 사용자의 edit instruction과 선택 요소 target block 중심으로 보낸다.
+- 추적: `/api/stitch`의 edit 경로가 prompt 길이와 앞부분 sample을 서버 로그에 남긴다. `edit_screens` raw response는 projectId, sessionId, output component keys, text/suggestion 일부, 반환된 screen id 목록으로 요약 로그를 남긴다.
+- 의도: 다시 no-op이 발생했을 때 "프롬프트가 약했는지", "Stitch가 거절/제안 텍스트를 반환했는지", "새 screen을 반환했는데 복구하지 못했는지"를 로그만으로 구분할 수 있게 한다.
+
+### 15.227 선택 요소 삭제 no-op 로컬 fallback `[implemented 2026-07-13]`
+
+- 배경: `이거 없애줘` 요청에서 Stitch `edit_screens` raw response는 text-only로 "bg-brand-accent/5 tint layer를 삭제했다"고 설명했지만 design screen을 반환하지 않았고, 기존 screen HTML 재조회도 8회 모두 동일했다. 즉 프롬프트 이해 문제라기보다 Stitch가 텍스트 응답만 성공처럼 반환하고 실제 HTML persistence를 하지 않은 케이스다.
+- 수정: `/api/stitch`가 `stitch-edit-unchanged` 409를 반환했고, 원 요청이 선택 요소 삭제/제거 계열이면 클라이언트가 현재 artboard HTML을 `DOMParser`로 파싱해 선택 요소 XPath를 우선 제거한다. XPath가 실패하면 selector와 선택 HTML 매칭으로 fallback한다.
+- 보호: 로컬 fallback이 적용된 artboard는 `stitchScreenId`를 `local-edit-fallback-*` synthetic id로 바꾼다. 클라이언트는 synthetic id를 이후 `/api/stitch`의 `screenId`로 보내지 않으므로, 앱 HTML과 공식 Stitch 원본 screen이 갈라진 상태에서 원본 screen을 다시 편집 대상으로 삼지 않는다.
+- 범위: 현재 fallback은 단순 선택 요소 삭제/제거 요청에만 적용한다. 크기/색/이미지 fit 같은 수정은 Stitch no-op이면 여전히 실패로 드러내고, 필요 시 별도 deterministic patch 또는 OpenAI HTML edit fallback을 설계한다.
