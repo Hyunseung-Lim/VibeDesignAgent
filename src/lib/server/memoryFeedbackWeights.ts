@@ -8,8 +8,10 @@ import { isActiveMemoryDocument } from "@/lib/server/memoryActivity";
 const MEMORY_COLLECTION = "memories_0_1_2";
 const RETRIEVAL_LOG_COLLECTION = "memoryRetrievalLogs";
 const MAX_RETRIEVAL_LOGS = 100;
-const GOOD_FEEDBACK_WEIGHT_DELTA = 0.08;
-const BAD_FEEDBACK_WEIGHT_DELTA = -0.04;
+// Retrieval already rewards memories used in the answer. Feedback deltas are
+// calibrated so the net effect is approximately +0.08 for good and -0.04 for bad.
+const GOOD_FEEDBACK_WEIGHT_DELTA = 0.04;
+const BAD_FEEDBACK_WEIGHT_DELTA = -0.08;
 
 type AssistantFeedbackVote = "good" | "bad";
 
