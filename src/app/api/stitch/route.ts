@@ -1362,6 +1362,7 @@ export async function POST(request: Request) {
     // Set when image-led generation screenshots a URL, so the client can show
     // which page was actually captured (it may differ from the intended page).
     let capturedUrl: string | null = null;
+    let beforeScreenIds = new Set<string>();
     // For image-led generation we do NOT pre-apply the existing (possibly stale)
     // design style — it would fight the screenshot. We derive a fresh style from
     // the reconstructed result instead (see below).
@@ -1379,8 +1380,35 @@ export async function POST(request: Request) {
       }
     }
 
+    const createFreshGenerationProject = async (reason: string) => {
+      console.warn(
+        "[stitch] replacing generation project:",
+        JSON.stringify({
+          reason,
+          previousProjectId: actualProjectId || null,
+        }),
+      );
+      project = await sdk.createProject("VibeDesign");
+      actualProjectId = project.id;
+      beforeScreenIds = new Set();
+      resolvedDesignSystemId = null;
+      resolvedStyleHash = null;
+      console.log("[stitch] replacement project created:", actualProjectId);
+      if (styleContent) {
+        console.log("[stitch] applying design system (replacement project)...");
+        resolvedDesignSystemId = await applyDesignSystem(
+          project,
+          styleContent,
+          null,
+        );
+        resolvedStyleHash = styleHash(styleContent);
+      }
+    };
+
     const beforeScreens = await listScreens(project);
-    let beforeScreenIds = new Set(beforeScreens.map((candidate) => candidate.id).filter(Boolean));
+    beforeScreenIds = new Set(
+      beforeScreens.map((candidate) => candidate.id).filter(Boolean),
+    );
     let screen;
 
     if (isImageLed) {
@@ -1433,7 +1461,38 @@ export async function POST(request: Request) {
           beforeScreenIds,
         );
       } catch (assetErr) {
-        if (isStitchInvalidArgumentError(assetErr)) {
+        if (isStitchNotFoundError(assetErr)) {
+          await createFreshGenerationProject(
+            "asset-led generation target not found",
+          );
+          try {
+            screen = await generateScreen(
+              client,
+              project,
+              fallbackPrompt,
+              deviceType,
+              beforeScreenIds,
+            );
+          } catch (freshAssetErr) {
+            if (!isStitchInvalidArgumentError(freshAssetErr)) {
+              throw freshAssetErr;
+            }
+            console.warn(
+              "[stitch] replacement project asset-led generation rejected; generating direct HTML fallback:",
+              errorMessage(freshAssetErr),
+            );
+            screen = await generateOpenAiAssetFallbackScreen(
+              prompt,
+              deviceType,
+              assetImageInputs,
+            );
+            if (screen.id.startsWith("openai-asset-fallback-")) {
+              actualProjectId = "";
+              resolvedDesignSystemId = null;
+              resolvedStyleHash = null;
+            }
+          }
+        } else if (isStitchInvalidArgumentError(assetErr)) {
           console.warn(
             "[stitch] asset-led URL text generation rejected; generating direct HTML fallback:",
             errorMessage(assetErr),
@@ -1527,13 +1586,48 @@ export async function POST(request: Request) {
     } else {
       console.log("[stitch] generating screen for prompt:", prompt.slice(0, 80));
       try {
-        screen = await generateScreen(client, project, prompt, deviceType, beforeScreenIds);
+        screen = await generateScreen(
+          client,
+          project,
+          prompt,
+          deviceType,
+          beforeScreenIds,
+        );
       } catch (generateErr) {
-        if (!isIncompleteResponseError(generateErr)) throw generateErr;
-        console.warn("[stitch] generation returned incomplete response; checking project screens...");
-        const recovered = await recoverGeneratedScreen(project, beforeScreenIds);
-        if (!recovered) throw generateErr;
-        screen = recovered;
+        if (isStitchNotFoundError(generateErr)) {
+          await createFreshGenerationProject("text generation target not found");
+          try {
+            screen = await generateScreen(
+              client,
+              project,
+              prompt,
+              deviceType,
+              beforeScreenIds,
+            );
+          } catch (freshGenerateErr) {
+            if (!isIncompleteResponseError(freshGenerateErr)) {
+              throw freshGenerateErr;
+            }
+            console.warn(
+              "[stitch] replacement generation returned incomplete response; checking project screens...",
+            );
+            const recovered = await recoverGeneratedScreen(
+              project,
+              beforeScreenIds,
+            );
+            if (!recovered) throw freshGenerateErr;
+            screen = recovered;
+          }
+        } else if (!isIncompleteResponseError(generateErr)) {
+          throw generateErr;
+        } else {
+          console.warn(
+            "[stitch] generation returned incomplete response; checking project screens...",
+          );
+          const recovered = await recoverGeneratedScreen(project, beforeScreenIds);
+          if (!recovered) throw generateErr;
+          screen = recovered;
+        }
       }
     }
     if (!screen) throw new Error("No screen was generated or edited.");
