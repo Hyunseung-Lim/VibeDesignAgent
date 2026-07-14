@@ -61,6 +61,7 @@ type MemoryReviewPanelProps = {
   onMentionModeChange: (active: boolean) => void;
   onMentionFocus: (target: Omit<MemoryReviewMentionTarget, "eventId">) => void;
   initialAnswers?: MemoryReviewAnswers;
+  introMemoryText?: string;
   startNumber?: number;
   saveStatus?: "idle" | "saving" | "saved" | "error";
   submittedAt?: number | null;
@@ -170,6 +171,7 @@ export function MemoryReviewPanel({
   onMentionModeChange,
   onMentionFocus,
   initialAnswers,
+  introMemoryText = "",
   startNumber = 1,
   saveStatus = "idle",
   submittedAt = null,
@@ -196,6 +198,7 @@ export function MemoryReviewPanel({
   const caretByQuestionRef = useRef<Record<string, number>>({});
   const hydratedAnswersKeyRef = useRef("");
   const renderedAnswersRef = useRef<Record<string, string>>({});
+  const trimmedIntroMemoryText = introMemoryText.trim();
 
   useEffect(() => {
     onMentionModeChange(Boolean(mentionRequest));
@@ -541,8 +544,17 @@ export function MemoryReviewPanel({
         <h2 className="mt-1 text-xl font-semibold tracking-normal text-slate-950">
           메모리 리뷰하기
         </h2>
-        <p className="mt-2 text-xs leading-relaxed text-slate-500">
-          방금 적어주신 내용과 관련해, 에이전트는 지금 이렇게 기억하고 있어요.
+        <p className="mt-2 text-sm font-medium leading-relaxed text-slate-600">
+          {trimmedIntroMemoryText ? (
+            <>
+              <span className="font-bold text-slate-800">
+                ‘{trimmedIntroMemoryText}’
+              </span>
+              와 관련해, 에이전트는 지금 이렇게 기억하고 있어요.
+            </>
+          ) : (
+            "3번에서 적은 답변과 관련해, 에이전트는 지금 이렇게 기억하고 있어요."
+          )}
         </p>
       </div>
 

@@ -2522,10 +2522,10 @@ function MemoryReviewIntroPanel({
   }, []);
 
   const ratingButtonClass = (selected: boolean) =>
-    `h-7 w-7 rounded-full border text-[11px] font-semibold transition ${
+    `h-9 w-9 rounded-full border text-sm font-semibold transition ${
       selected
         ? "border-slate-900 bg-slate-900 text-white"
-        : "border-slate-200 bg-white text-slate-500 hover:border-slate-400 hover:text-slate-900"
+        : "border-slate-200 bg-white text-slate-600 hover:border-slate-400 hover:bg-white hover:text-slate-950"
     }`;
 
   const canContinue =
@@ -2562,8 +2562,8 @@ function MemoryReviewIntroPanel({
     value: number | null,
     onSelect: (value: number) => void,
   ) => (
-    <div className="space-y-1">
-      <div className="flex items-center justify-between gap-1.5">
+    <div className="space-y-2.5">
+      <div className="grid grid-cols-7 gap-2">
         {Array.from({ length: 7 }, (_, index) => index + 1).map((score) => (
           <button
             key={score}
@@ -2577,7 +2577,7 @@ function MemoryReviewIntroPanel({
           </button>
         ))}
       </div>
-      <div className="grid grid-cols-3 text-[9px] font-medium leading-tight text-slate-400">
+      <div className="grid grid-cols-3 text-[11px] font-medium leading-tight text-slate-500">
         <span>1 전혀 아니다</span>
         <span className="text-center">4 보통</span>
         <span className="text-right">7 매우 그렇다</span>
@@ -2587,41 +2587,43 @@ function MemoryReviewIntroPanel({
 
   return (
     <section className="shrink-0 border-b border-slate-300 bg-slate-100 px-4 py-2 lg:px-6">
-      <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-[0_8px_18px_rgba(15,23,42,0.08)]">
-      <div className="flex items-center gap-3 border-b border-slate-200 px-4 py-2">
+      <div className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-[0_8px_18px_rgba(15,23,42,0.08)]">
+      <div className="flex items-center gap-3 border-b border-slate-200 px-5 py-2.5">
         <div className="min-w-0">
           <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">
             Review Part 1
           </p>
-          <h2 className="text-sm font-semibold tracking-normal text-slate-950">
+          <h2 className="text-base font-semibold tracking-normal text-slate-950">
             오늘 세션 돌아보기
           </h2>
-          <p className="mt-0.5 text-[11px] leading-snug text-slate-500">
+          <p className="mt-1 text-xs leading-snug text-slate-500">
             채팅을 보면서 오늘 세션에서 무엇을 기억하면 좋을지 먼저 정리해 주세요.
           </p>
         </div>
       </div>
-      <div className="grid gap-3 px-4 py-2.5 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(18rem,1.1fr)]">
-        <section className="space-y-1.5 rounded-lg border border-slate-200 bg-slate-50/70 p-3">
-          <p className="text-[11px] font-medium leading-snug text-slate-700">
-            1. 오늘 세션에서, 에이전트가 내 취향과 작업 방식을 잘 이해하고 있다고 느꼈습니다.
-          </p>
-          {renderRatingRow(
-            understandingRating,
-            selectUnderstandingRating,
-          )}
-        </section>
-        <section className="space-y-1.5 rounded-lg border border-slate-200 bg-slate-50/70 p-3">
-          <p className="text-[11px] font-medium leading-snug text-slate-700">
-            2. 오늘 세션에서, 에이전트의 메모리 덕분에 작업이 더 수월했습니다.
-          </p>
-          {renderRatingRow(
-            helpfulnessRating,
-            selectHelpfulnessRating,
-          )}
-        </section>
-        <section className="space-y-1.5 rounded-lg border border-slate-200 bg-slate-50/70 p-3">
-          <p className="text-[11px] font-medium leading-snug text-slate-700">
+      <div className="grid gap-3 px-5 py-3 lg:grid-cols-[minmax(0,0.95fr)_minmax(20rem,1.05fr)]">
+        <div className="grid gap-3">
+          <section className="space-y-2.5 rounded-lg border border-slate-200 bg-slate-50/70 p-3">
+            <p className="text-sm font-semibold leading-snug text-slate-800">
+              1. 오늘 세션에서, 에이전트가 내 취향과 작업 방식을 잘 이해하고 있다고 느꼈습니다.
+            </p>
+            {renderRatingRow(
+              understandingRating,
+              selectUnderstandingRating,
+            )}
+          </section>
+          <section className="space-y-2.5 rounded-lg border border-slate-200 bg-slate-50/70 p-3">
+            <p className="text-sm font-semibold leading-snug text-slate-800">
+              2. 오늘 세션에서, 에이전트의 메모리 덕분에 작업이 더 수월했습니다.
+            </p>
+            {renderRatingRow(
+              helpfulnessRating,
+              selectHelpfulnessRating,
+            )}
+          </section>
+        </div>
+        <section className="flex min-h-0 flex-col space-y-2.5 rounded-lg border border-slate-200 bg-slate-50/70 p-3">
+          <p className="text-sm font-semibold leading-snug text-slate-800">
             3. 오늘 세션 내용 중, 에이전트가 앞으로 기억해 주었으면 하는 것들을 자유롭게 적어주세요.
           </p>
           <Textarea
@@ -2630,7 +2632,7 @@ function MemoryReviewIntroPanel({
               setFutureMemoryText(event.target.value);
             }}
             placeholder="예: 내가 반복해서 요청한 방식, 좋았던 결과, 다음 작업에도 이어졌으면 하는 기준"
-            className="min-h-16 resize-none text-xs leading-relaxed"
+            className="min-h-32 flex-1 resize-none text-sm leading-relaxed"
           />
         </section>
       </div>
@@ -8672,6 +8674,10 @@ export default function MainScreenPage() {
               onMentionModeChange={setMemoryReviewMentionMode}
               onMentionFocus={focusReviewMention}
               initialAnswers={memoryReviewAnswers ?? undefined}
+              introMemoryText={
+                memoryReviewAnswers?.[MEMORY_REVIEW_INTRO_KEYS.futureMemory]
+                  ?.text ?? ""
+              }
               startNumber={4}
               saveStatus={memoryReviewSaveStatus}
               submittedAt={memoryReviewSubmittedAt}
