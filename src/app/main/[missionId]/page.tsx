@@ -104,6 +104,7 @@ import {
   splitPendingMockupCompletionText,
   stripBracketActionBlocks,
 } from "@/lib/session/chat-content";
+import { trimActivityLogHtmlForSave } from "@/lib/session/activity-log";
 import {
   injectHeightReporter,
   injectNoNavigation,
@@ -483,6 +484,13 @@ type ActivityLogEvent = {
   link?: string;
   imageUrl?: string;
   html?: string;
+  // Mockup edit history: HTML the artboard had before this edit was applied.
+  // The post-edit HTML is the next edit event's previousHtml (or the
+  // artboard's current html for the latest edit). May be dropped on save by
+  // trimActivityLogHtmlForSave when the session document nears the Firestore
+  // size limit — previousHtmlTrimmed marks that case for analysis.
+  previousHtml?: string;
+  previousHtmlTrimmed?: boolean;
   stitchPrompt?: string;
 };
 
@@ -4614,7 +4622,7 @@ export default function MainScreenPage() {
           missionId,
           artboards: artboardsToSave,
           references,
-          activityLog: activityLog.slice(-500),
+          activityLog: trimActivityLogHtmlForSave(activityLog.slice(-500)),
           ideas,
           missionTitle,
           missionBrief,
@@ -6365,6 +6373,7 @@ export default function MainScreenPage() {
                 input: text,
                 output: `A deterministic selected-element patch was applied locally before calling Stitch (${localPatch.patchType}).`,
                 outputTitle: localPatch.title,
+                previousHtml: editTargetBoard.html,
               });
               setArtboards((prev) =>
                 prev.map((artboard) =>
@@ -6450,6 +6459,7 @@ export default function MainScreenPage() {
                     output:
                       "The selected element was rewritten by the local element edit model and applied to the artboard HTML without Stitch.",
                     outputTitle: "로컬 선택 요소 편집",
+                    previousHtml: editTargetBoard.html,
                   });
                   setArtboards((prev) =>
                     prev.map((artboard) =>
@@ -6605,6 +6615,7 @@ export default function MainScreenPage() {
                 output:
                   "The synthetic artboard was rewritten by the local document edit model and applied without Stitch.",
                 outputTitle: "로컬 목업 편집",
+                previousHtml: editTargetBoard.html,
               });
               setArtboards((prev) =>
                 prev.map((artboard) =>
@@ -6755,6 +6766,7 @@ export default function MainScreenPage() {
                   input: text,
                   output: localPatch.output,
                   outputTitle: localPatch.title,
+                  previousHtml: editTargetBoard.html,
                 });
                 setArtboards((prev) =>
                   prev.map((artboard) =>
@@ -7144,6 +7156,20 @@ export default function MainScreenPage() {
               });
               return [...prev, board];
             });
+
+            // Edit history for analysis: pre-edit HTML of the targeted board.
+            // Local edit paths log the same shape before their early returns.
+            if (typeof data.html === "string" && data.html) {
+              appendActivityLog({
+                section: "mockup",
+                action: "update",
+                input: text,
+                output:
+                  "Stitch edit result HTML was applied to the artboard.",
+                outputTitle: "Stitch 목업 편집",
+                previousHtml: editTargetBoard?.html ?? "",
+              });
+            }
 
             const htmlTargetId =
               existingEditBoard?.id ??
@@ -7841,6 +7867,7 @@ export default function MainScreenPage() {
         referenceLinks: event.section === "reference" ? (event.link ?? "") : "",
         content: event.output ?? "",
         html: event.html ?? "",
+        previousHtml: event.previousHtml ?? "",
         imageUrl: event.imageUrl ?? "",
         createdAt: new Date(event.createdAt).toISOString(),
         stitchScreenId: "",
@@ -7865,6 +7892,7 @@ export default function MainScreenPage() {
           .join("; "),
         content: message.content,
         html: "",
+        previousHtml: "",
         imageUrl: "",
         createdAt: message.createdAt
           ? new Date(message.createdAt).toISOString()
@@ -7884,6 +7912,7 @@ export default function MainScreenPage() {
       })),
       ...outputRows.map((row) => ({
         ...row,
+        previousHtml: "",
         messageIndex: "",
         citedElement: "",
         citedReferences: "",
@@ -7905,6 +7934,7 @@ export default function MainScreenPage() {
         "reference_links",
         "content",
         "html",
+        "previous_html",
         "image_url",
         "created_at",
         "cited_element",
@@ -7938,6 +7968,7 @@ export default function MainScreenPage() {
         row.referenceLinks,
         row.content,
         row.html,
+        row.previousHtml,
         row.imageUrl,
         row.createdAt,
         row.citedElement,
