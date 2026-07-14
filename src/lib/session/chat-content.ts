@@ -430,35 +430,85 @@ export function splitPendingMockupCompletionText(content: string) {
   };
 }
 
+// Alias payloads have the same failure mode as canonical action blocks: they
+// can carry XPath/CSS fragments such as `/main[1]/section[1]`, so a first-`]`
+// regex truncates the payload mid-XPath and leaves action residue in chat.
+// Find the opener (through the `:`) with a regex, then bracket-depth scan to
+// the balanced closing `]`. Incomplete (still-streaming) blocks stay untouched.
+function replaceBalancedAliasBlocks(
+  text: string,
+  opener: RegExp,
+  render: (payload: string) => string,
+) {
+  const pattern = new RegExp(
+    opener.source,
+    opener.flags.includes("g") ? opener.flags : `${opener.flags}g`,
+  );
+  let result = "";
+  let cursor = 0;
+  for (;;) {
+    pattern.lastIndex = cursor;
+    const match = pattern.exec(text);
+    if (!match) break;
+    const payloadStart = match.index + match[0].length;
+    let depth = 1;
+    let end = -1;
+    for (let i = payloadStart; i < text.length; i += 1) {
+      if (text[i] === "[") depth += 1;
+      else if (text[i] === "]") {
+        depth -= 1;
+        if (depth === 0) {
+          end = i;
+          break;
+        }
+      }
+    }
+    if (end === -1) break;
+    result +=
+      text.slice(cursor, match.index) +
+      render(text.slice(payloadStart, end).trim());
+    cursor = end + 1;
+  }
+  return result + text.slice(cursor);
+}
+
 export function normalizeActionBlockAliases(content: string) {
   const referenceActionLabel =
     String.raw`(?:FETCH[\s_-]*REFERENCES?|REFERENCES?[\s_-]*(?:FETCH|SEARCH)|REFERENCE[\s_-]*SEARCH|레퍼런스\s*검색)`;
-  const bracketedReferenceAction = new RegExp(
-    String.raw`\[\s*(?!FETCH_REFERENCES\b)${referenceActionLabel}\s*(?::\s*([\s\S]*?))?\]`,
+  const bareBracketedReferenceAction = new RegExp(
+    String.raw`\[\s*(?!FETCH_REFERENCES\b)${referenceActionLabel}\s*\]`,
     "gi",
+  );
+  const payloadReferenceActionOpener = new RegExp(
+    String.raw`\[\s*(?!FETCH_REFERENCES\b)${referenceActionLabel}\s*:`,
+    "i",
   );
   const bareLineReferenceAction = new RegExp(
     String.raw`(^|\n)\s*${referenceActionLabel}\s*:\s*([^\n\[]+)`,
     "gi",
   );
 
-  return content
+  let result = content
     .replace(/\[(?:목업\s*)?생성\s*요청\s*\]/g, "[GENERATE_MOCKUP: ]")
-    .replace(
-      /\[(?:목업\s*)?생성\s*요청\s*:\s*([\s\S]*?)\]/g,
-      "[GENERATE_MOCKUP: $1]",
-    )
-    .replace(/\[목업\s*생성\s*:\s*([\s\S]*?)\]/g, "[GENERATE_MOCKUP: $1]")
-    .replace(/\[(?:목업\s*)?수정\s*요청\s*\]/g, "[EDIT_MOCKUP: ]")
-    .replace(
-      /\[(?:목업\s*)?수정\s*요청\s*:\s*([\s\S]*?)\]/g,
-      "[EDIT_MOCKUP: $1]",
-    )
-    .replace(/\[목업\s*수정\s*:\s*([\s\S]*?)\]/g, "[EDIT_MOCKUP: $1]")
-    .replace(bracketedReferenceAction, (_match, query: string | undefined) => {
-      const trimmed = query?.trim();
-      return trimmed ? `[FETCH_REFERENCES: ${trimmed}]` : "[FETCH_REFERENCES]";
-    })
+    .replace(/\[(?:목업\s*)?수정\s*요청\s*\]/g, "[EDIT_MOCKUP: ]");
+  for (const alias of [
+    { opener: /\[(?:목업\s*)?생성\s*요청\s*:/, tag: "GENERATE_MOCKUP" },
+    { opener: /\[목업\s*생성\s*:/, tag: "GENERATE_MOCKUP" },
+    { opener: /\[(?:목업\s*)?수정\s*요청\s*:/, tag: "EDIT_MOCKUP" },
+    { opener: /\[목업\s*수정\s*:/, tag: "EDIT_MOCKUP" },
+  ] as const) {
+    result = replaceBalancedAliasBlocks(
+      result,
+      alias.opener,
+      (payload) => `[${alias.tag}: ${payload}]`,
+    );
+  }
+  return replaceBalancedAliasBlocks(
+    result,
+    payloadReferenceActionOpener,
+    (query) => (query ? `[FETCH_REFERENCES: ${query}]` : "[FETCH_REFERENCES]"),
+  )
+    .replace(bareBracketedReferenceAction, "[FETCH_REFERENCES]")
     .replace(
       bareLineReferenceAction,
       (_match, prefix: string, query: string) =>

@@ -975,6 +975,26 @@ function removeSelectedElementFromHtml(
   return serializePatchedDocument(html, match.doc);
 }
 
+// Swap the selected element for LLM-rewritten outerHTML (local element edit).
+// Rejects script-bearing replacements; the outerHTML setter parses the markup
+// in document context so the replacement inherits the artboard's stylesheets.
+function replaceSelectedElementInHtml(
+  html: string,
+  element: SelectedElement,
+  replacementHtml: string,
+) {
+  const cleaned = replacementHtml.trim();
+  if (!cleaned.startsWith("<") || /<script\b/i.test(cleaned)) return null;
+  const match = findSelectedElementTarget(html, element);
+  if (!match) return null;
+  try {
+    match.target.outerHTML = cleaned;
+  } catch {
+    return null;
+  }
+  return serializePatchedDocument(html, match.doc);
+}
+
 function patchTextColor(target: Element, color: string) {
   const apply = (element: Element) => {
     if (element instanceof HTMLElement) {
@@ -6305,27 +6325,6 @@ export default function MainScreenPage() {
           const stitchController = new AbortController();
           stitchAbortControllerRef.current = stitchController;
           stitchCancelRequestedRef.current = false;
-          const progressStartedAt = Date.now();
-          const progressTimer = window.setInterval(() => {
-            const elapsed = Date.now() - progressStartedAt;
-            const estimated = Math.min(
-              88,
-              18 + Math.floor((elapsed / 170_000) * 70),
-            );
-            setMockupProgress((prev) =>
-              prev
-                ? {
-                    percent: Math.max(prev.percent, estimated),
-                    label:
-                      elapsed > 70_000
-                        ? "Stitch가 화면을 다듬는 중"
-                        : elapsed > 30_000
-                          ? "레이아웃과 비주얼 생성 중"
-                          : "Stitch에 요청 전달 중",
-                  }
-                : prev,
-            );
-          }, 1000);
           const editTargetBoard = !isNew
             ? (selectedElementBoard ??
                 (activeArtboardId
@@ -6348,7 +6347,6 @@ export default function MainScreenPage() {
               text,
             );
             if (localPatch && localPatch.html !== editTargetBoard.html) {
-              window.clearInterval(progressTimer);
               if (stitchAbortControllerRef.current === stitchController) {
                 stitchAbortControllerRef.current = null;
               }
@@ -6398,6 +6396,282 @@ export default function MainScreenPage() {
               return;
             }
           }
+          // LLM element-scoped local edit is the primary path for the
+          // remaining selected-element edits. It behaves identically for
+          // synthetic artboards (no Stitch screen to edit) and real Stitch
+          // screens (where edit_screens can no-op with a text-only response),
+          // so targeted edits stop depending on Stitch edit persistence.
+          if (!isNew && editTargetBoard?.html && selectedElement) {
+            setMockupProgress({ percent: 32, label: "선택 요소 수정 적용 중" });
+            let localEditFailure = "";
+            try {
+              const localEditRes = await fetch("/api/mockup/local-edit", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                signal: stitchController.signal,
+                body: JSON.stringify({
+                  userRequest: text,
+                  editInstruction: prompt,
+                  device,
+                  designStyleContent:
+                    activeDesignStyle(activeIdea)?.content ?? undefined,
+                  element: {
+                    selector: selectedElement.selector,
+                    outerHTML: stripSelectionMarkers(selectedElement.outerHTML),
+                  },
+                }),
+              });
+              const localEditData = await localEditRes.json().catch(() => null);
+              if (
+                localEditRes.ok &&
+                typeof localEditData?.replacementHtml === "string"
+              ) {
+                const patchedHtml = replaceSelectedElementInHtml(
+                  editTargetBoard.html,
+                  selectedElement,
+                  localEditData.replacementHtml,
+                );
+                if (patchedHtml && patchedHtml !== editTargetBoard.html) {
+                  if (stitchAbortControllerRef.current === stitchController) {
+                    stitchAbortControllerRef.current = null;
+                  }
+                  const syntheticScreenId = `local-edit-fallback-${crypto.randomUUID()}`;
+                  console.warn("[mockup] applied LLM selected-element local edit", {
+                    artboardId: editTargetBoard.id,
+                    previousScreenId: editTargetBoard.stitchScreenId ?? null,
+                    syntheticScreenId,
+                    previousHtmlHash: quickHash(editTargetBoard.html),
+                    nextHtmlHash: quickHash(patchedHtml),
+                  });
+                  appendActivityLog({
+                    section: "mockup",
+                    action: "update",
+                    input: text,
+                    output:
+                      "The selected element was rewritten by the local element edit model and applied to the artboard HTML without Stitch.",
+                    outputTitle: "로컬 선택 요소 편집",
+                  });
+                  setArtboards((prev) =>
+                    prev.map((artboard) =>
+                      artboard.id === editTargetBoard.id
+                        ? {
+                            ...artboard,
+                            html: patchedHtml,
+                            stitchScreenId: syntheticScreenId,
+                            stitchProjectId: artboard.stitchProjectId,
+                            htmlStatus: undefined,
+                            htmlUpdatedAt: Date.now(),
+                          }
+                        : artboard,
+                    ),
+                  );
+                  setMockupProgress({ percent: 100, label: "완료" });
+                  setActiveIdeaTab("mockup");
+                  setSelectedElement(null);
+                  setMessages((prev) =>
+                    prev.map((m) =>
+                      m.id === assistantId
+                        ? {
+                            ...m,
+                            content: `${m.content}\n\n선택 요소 수정을 로컬 HTML에 직접 반영했습니다.`,
+                          }
+                        : m,
+                    ),
+                  );
+                  return;
+                }
+                localEditFailure =
+                  "replacement HTML did not apply to the artboard";
+              } else {
+                localEditFailure =
+                  localEditData?.error ||
+                  `local edit request failed (${localEditRes.status})`;
+              }
+            } catch (localEditErr) {
+              // Cancellation aborts the whole turn, same as the Stitch path.
+              if (
+                localEditErr instanceof DOMException &&
+                localEditErr.name === "AbortError"
+              ) {
+                throw localEditErr;
+              }
+              localEditFailure =
+                localEditErr instanceof Error
+                  ? localEditErr.message
+                  : String(localEditErr);
+            }
+            console.warn(
+              "[mockup] LLM selected-element local edit failed:",
+              localEditFailure,
+            );
+            if (isSyntheticStitchScreenId(editTargetBoard.stitchScreenId)) {
+              // No Stitch screen to fall back to — sending this artboard to
+              // /api/stitch would regenerate a brand-new screen, not edit it.
+              if (stitchAbortControllerRef.current === stitchController) {
+                stitchAbortControllerRef.current = null;
+              }
+              setMessages((prev) =>
+                prev.map((m) =>
+                  m.id === assistantId
+                    ? {
+                        ...m,
+                        content: `${m.content}\n\n⚠️ 선택 요소 수정을 반영하지 못했습니다. 요청을 조금 더 구체적으로 다시 시도해 주세요.`,
+                      }
+                    : m,
+                ),
+              );
+              return;
+            }
+            // Real Stitch screen: fall through to the Stitch edit path below.
+          }
+          // Synthetic artboards have no Stitch screen: a whole-artboard edit
+          // sent to /api/stitch would silently become a brand-new generation
+          // (fresh project + generate path), replacing the mockup instead of
+          // editing it. Route it through the local document edit and never
+          // fall back to Stitch here. (Selected-element edits on synthetic
+          // artboards already returned above.)
+          if (
+            !isNew &&
+            editTargetBoard &&
+            isSyntheticStitchScreenId(editTargetBoard.stitchScreenId)
+          ) {
+            const failLocalDocumentEdit = (reason: string) => {
+              console.warn("[mockup] local document edit failed:", reason);
+              if (stitchAbortControllerRef.current === stitchController) {
+                stitchAbortControllerRef.current = null;
+              }
+              setMessages((prev) =>
+                prev.map((m) =>
+                  m.id === assistantId
+                    ? {
+                        ...m,
+                        content: `${m.content}\n\n⚠️ 이 목업 수정을 반영하지 못했습니다. 수정할 부분을 화면에서 직접 선택하거나, 요청을 조금 더 구체적으로 다시 시도해 주세요.`,
+                      }
+                    : m,
+                ),
+              );
+            };
+            if (!editTargetBoard.html) {
+              failLocalDocumentEdit("artboard has no HTML to edit");
+              return;
+            }
+            setMockupProgress({ percent: 30, label: "목업 수정 반영 중" });
+            try {
+              const localEditRes = await fetch("/api/mockup/local-edit", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                signal: stitchController.signal,
+                body: JSON.stringify({
+                  userRequest: text,
+                  editInstruction: prompt,
+                  device,
+                  designStyleContent:
+                    activeDesignStyle(activeIdea)?.content ?? undefined,
+                  html: editTargetBoard.html,
+                }),
+              });
+              const localEditData = await localEditRes.json().catch(() => null);
+              const patchedHtml =
+                localEditRes.ok &&
+                typeof localEditData?.documentHtml === "string"
+                  ? localEditData.documentHtml.trim()
+                  : "";
+              if (!patchedHtml) {
+                failLocalDocumentEdit(
+                  localEditData?.error ||
+                    `local edit request failed (${localEditRes.status})`,
+                );
+                return;
+              }
+              if (patchedHtml === editTargetBoard.html) {
+                failLocalDocumentEdit("document edit returned unchanged HTML");
+                return;
+              }
+              if (stitchAbortControllerRef.current === stitchController) {
+                stitchAbortControllerRef.current = null;
+              }
+              const syntheticScreenId = `local-edit-fallback-${crypto.randomUUID()}`;
+              console.warn("[mockup] applied LLM local document edit", {
+                artboardId: editTargetBoard.id,
+                previousScreenId: editTargetBoard.stitchScreenId ?? null,
+                syntheticScreenId,
+                previousHtmlHash: quickHash(editTargetBoard.html),
+                nextHtmlHash: quickHash(patchedHtml),
+              });
+              appendActivityLog({
+                section: "mockup",
+                action: "update",
+                input: text,
+                output:
+                  "The synthetic artboard was rewritten by the local document edit model and applied without Stitch.",
+                outputTitle: "로컬 목업 편집",
+              });
+              setArtboards((prev) =>
+                prev.map((artboard) =>
+                  artboard.id === editTargetBoard.id
+                    ? {
+                        ...artboard,
+                        html: patchedHtml,
+                        stitchScreenId: syntheticScreenId,
+                        stitchProjectId: artboard.stitchProjectId,
+                        htmlStatus: undefined,
+                        htmlUpdatedAt: Date.now(),
+                      }
+                    : artboard,
+                ),
+              );
+              setMockupProgress({ percent: 100, label: "완료" });
+              setActiveIdeaTab("mockup");
+              setMessages((prev) =>
+                prev.map((m) =>
+                  m.id === assistantId
+                    ? {
+                        ...m,
+                        content: `${m.content}\n\n목업 수정을 로컬 HTML에 직접 반영했습니다.`,
+                      }
+                    : m,
+                ),
+              );
+              return;
+            } catch (localEditErr) {
+              // Cancellation aborts the whole turn, same as the Stitch path.
+              if (
+                localEditErr instanceof DOMException &&
+                localEditErr.name === "AbortError"
+              ) {
+                throw localEditErr;
+              }
+              failLocalDocumentEdit(
+                localEditErr instanceof Error
+                  ? localEditErr.message
+                  : String(localEditErr),
+              );
+              return;
+            }
+          }
+          // Stitch progress estimation only runs while an actual Stitch call
+          // is in flight — local edit paths above finish before this point.
+          const progressStartedAt = Date.now();
+          const progressTimer = window.setInterval(() => {
+            const elapsed = Date.now() - progressStartedAt;
+            const estimated = Math.min(
+              88,
+              18 + Math.floor((elapsed / 170_000) * 70),
+            );
+            setMockupProgress((prev) =>
+              prev
+                ? {
+                    percent: Math.max(prev.percent, estimated),
+                    label:
+                      elapsed > 70_000
+                        ? "Stitch가 화면을 다듬는 중"
+                        : elapsed > 30_000
+                          ? "레이아웃과 비주얼 생성 중"
+                          : "Stitch에 요청 전달 중",
+                  }
+                : prev,
+            );
+          }, 1000);
           let res: Response;
           try {
             res = await fetch("/api/stitch", {

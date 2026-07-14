@@ -14,6 +14,10 @@ import {
   STITCH_OAUTH_REQUIRED_ERROR_MESSAGE,
 } from "@/lib/server/stitch-auth";
 import {
+  applyStitchDomOperations,
+  extractStitchDomOperations,
+} from "@/lib/server/stitchDomOperations";
+import {
   DESIGN_SYSTEM_EXTRACT_PROMPT,
   DERIVE_DESIGN_MD_FROM_HTML_PROMPT,
   STITCH_DESIGN_FONTS,
@@ -151,7 +155,15 @@ async function applyDesignSystem(
 type StitchScreenHandle = {
   id: string;
   getHtml: () => Promise<string>;
+  // Set when getHtml() already returns final materialized HTML (e.g. a
+  // sessionEvent dom_operations harvest) — re-reading the screen resource
+  // would return the stale pre-edit HTML instead.
+  htmlMaterialized?: boolean;
 };
+
+function isMaterializedScreenHandle(screen: unknown) {
+  return Boolean((screen as StitchScreenHandle | null)?.htmlMaterialized);
+}
 
 type MaterializedScreen = {
   screen: StitchScreenHandle;
@@ -721,6 +733,42 @@ async function editScreen(
   const screenFromRaw = await screenFromRawResponse(project, raw);
   if (screenFromRaw) return screenFromRaw;
 
+  // The edit backend usually does not persist edited HTML back to the screen
+  // resource: the change arrives as sessionEvent dom_operations while
+  // get_screen keeps returning the pre-edit HTML (dev_document 15.257).
+  // Harvest those operations against the HTML we can read and return a
+  // materialized handle so callers skip the stale re-read entirely.
+  const domOperations = extractStitchDomOperations(raw);
+  if (domOperations.length > 0) {
+    const currentHtml = await materializeHtml(
+      await waitForScreenHtml(project, project.screen(screenId)),
+    ).catch(() => "");
+    if (currentHtml) {
+      const applied = applyStitchDomOperations(currentHtml, domOperations);
+      console.log(
+        "[stitch] sessionEvent dom_operations harvest:",
+        JSON.stringify({
+          total: domOperations.length,
+          applied: applied.appliedCount,
+          failed: applied.failedCount,
+          failures: applied.failures.slice(0, 4),
+        }),
+      );
+      if (applied.appliedCount > 0 && applied.html !== currentHtml) {
+        return {
+          id: screenId,
+          getHtml: async () => applied.html,
+          htmlMaterialized: true,
+        } satisfies StitchScreenHandle;
+      }
+    } else {
+      console.warn(
+        "[stitch] dom_operations present but current screen HTML unavailable:",
+        screenId,
+      );
+    }
+  }
+
   const recovered = await recoverGeneratedScreen(project, previousScreenIds);
   if (recovered) return recovered;
 
@@ -1118,8 +1166,14 @@ function assetImageTokenFallbackPrompt(
 
 function replaceAssetTokens(html: string, assets: AssetImageRequest[]) {
   return assets.reduce((current, asset, index) => {
-    const token = `{{ASSET_${index + 1}}}`;
-    return current.split(token).join(assetImageUrl(asset));
+    // Models mangle the literal token despite instructions: braces get
+    // URL-encoded inside src attributes (%7B%7BASSET_1%7D%7D) or padded with
+    // whitespace ({{ ASSET_1 }}). Accept those variants too.
+    const tokenPattern = new RegExp(
+      String.raw`(?:\{\{|%7B%7B)\s*ASSET_${index + 1}\s*(?:\}\}|%7D%7D)`,
+      "gi",
+    );
+    return current.replace(tokenPattern, assetImageUrl(asset));
   }, html);
 }
 
@@ -1182,6 +1236,29 @@ function assetHtmlCoverage(html: string, assets: AssetImageRequest[]) {
     totalCount: assets.length,
     allMatched: matched.length === assets.length,
   };
+}
+
+// When coverage fails we need to see what the HTML actually references to
+// tell "model ignored the assets" apart from "model mangled the URLs/tokens".
+function logAssetCoverageFailure(
+  context: string,
+  html: string,
+  assets: AssetImageRequest[],
+) {
+  const imgSrcs = Array.from(
+    html.matchAll(/<img[^>]*\ssrc=["']([^"']+)["']/gi),
+    (match) => match[1].slice(0, 160),
+  ).slice(0, 20);
+  console.warn(
+    `[stitch] asset coverage failure (${context}):`,
+    JSON.stringify({
+      imgSrcs,
+      expectedNeedles: assets.map(
+        (asset) => assetReferenceNeedles(asset)[0]?.slice(0, 160) ?? "",
+      ),
+      residualTokens: html.match(/(?:\{\{|%7B%7B)\s*ASSET_\d+/gi) ?? [],
+    }),
+  );
 }
 
 function stripMarkdownHtmlFence(content: string) {
@@ -1250,6 +1327,7 @@ async function generateOpenAiAssetFallbackScreen(
   }
   const coverage = assetHtmlCoverage(html, assets);
   if (!coverage.allMatched) {
+    logAssetCoverageFailure("openai-fallback", html, assets);
     throw new Error(
       `OpenAI HTML fallback did not preserve every mission asset (${coverage.matchedCount}/${coverage.totalCount}).`,
     );
@@ -1645,13 +1723,16 @@ export async function POST(request: Request) {
         ? {
             selected: {
               screen,
-              html: screenId
-                ? await waitForChangedScreenHtml(
-                    project,
-                    screen,
-                    previousHtmlHash || null,
-                  )
-                : await materializeHtml(await waitForScreenHtml(project, screen)),
+              html:
+                screenId && !isMaterializedScreenHandle(screen)
+                  ? await waitForChangedScreenHtml(
+                      project,
+                      screen,
+                      previousHtmlHash || null,
+                    )
+                  : await materializeHtml(
+                      await waitForScreenHtml(project, screen),
+                    ),
               htmlPending: false,
               score: 0,
             },
@@ -1709,6 +1790,7 @@ export async function POST(request: Request) {
         `${coverage.matchedCount}/${coverage.totalCount}`,
       );
       if (!coverage.allMatched) {
+        logAssetCoverageFailure("asset-led-first-design", html, assetImageInputs);
         console.warn(
           "[stitch] asset-led first design missed mission assets; editing generated screen",
         );
@@ -1737,6 +1819,11 @@ export async function POST(request: Request) {
             `${repairedCoverage.matchedCount}/${repairedCoverage.totalCount}`,
           );
           if (!repairedCoverage.allMatched) {
+            logAssetCoverageFailure(
+              "asset-led-repair",
+              html,
+              assetImageInputs,
+            );
             throw new Error(
               `Stitch repaired HTML did not preserve every mission asset (${repairedCoverage.matchedCount}/${repairedCoverage.totalCount}).`,
             );

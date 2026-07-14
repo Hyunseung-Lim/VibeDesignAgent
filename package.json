@@ -13,6 +13,7 @@
     "@lexical/react": "^0.46.0",
     "@phosphor-icons/react": "^2.1.10",
     "agentation": "^3.0.2",
+    "cheerio": "^1.2.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "firebase": "^12.11.0",

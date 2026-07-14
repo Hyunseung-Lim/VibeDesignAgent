@@ -768,6 +768,83 @@ export function buildMockupPrompt(
   return parts.join("\n");
 }
 
+// Element-scoped local edit: rewrite exactly one selected element of the
+// current artboard HTML without going through Stitch. Primary path for
+// selected-element edits — works identically for synthetic artboards (no
+// Stitch screen) and real Stitch screens, and bypasses the edit_screens
+// text-only no-op (dev_document 15.248/15.255).
+export const LOCAL_ELEMENT_EDIT_PROMPT = `# Task
+You rewrite exactly one selected HTML element from a standalone Tailwind-style HTML mockup.
+
+# Rules
+- Return ONLY the replacement outerHTML for the selected element. No markdown fences, no commentary, no surrounding document.
+- Apply the requested change and keep everything else — structure, text, classes, inline styles, attributes — as close to the original as possible.
+- Never change or remove existing img src values unless the request explicitly asks to replace the image.
+- Keep classes that position this element inside its parent layout (grid/col/row/flex placement) unless the request is about position or size.
+- Prefer inline style declarations for one-off visual changes so runtime utility CSS cannot override them; keep existing utility classes in place.
+- Do not add script tags, event handler attributes, or external resources.
+- Keep user-visible text in its original language unless the request asks to change the copy.`;
+
+export function localElementEditUserPrompt(params: {
+  userRequest: string;
+  editInstruction?: string;
+  deviceLabel: string;
+  designStyleContent?: string;
+  selector?: string;
+  elementHtml: string;
+}) {
+  return [
+    `User request: ${params.userRequest.slice(0, 1000)}`,
+    params.editInstruction?.trim()
+      ? `Edit instruction (rewritten in English): ${params.editInstruction.slice(0, 2000)}`
+      : "",
+    `Mockup device: ${params.deviceLabel}`,
+    params.selector ? `Selected element selector: ${params.selector}` : "",
+    params.designStyleContent?.trim()
+      ? `Design style context (keep the edited element consistent with it):\n${params.designStyleContent.slice(0, 2000)}`
+      : "",
+    `Selected element outerHTML:\n${params.elementHtml}`,
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+}
+
+// Whole-document variant of the local edit: used for synthetic artboards
+// (openai-asset-fallback-* / local-edit-fallback-*) that have no Stitch screen
+// to edit, when the user did not select a specific element.
+export const LOCAL_DOCUMENT_EDIT_PROMPT = `# Task
+You edit a complete standalone HTML mockup document according to a user request.
+
+# Rules
+- Return ONLY the full updated HTML document. No markdown fences, no commentary.
+- Apply the requested change; keep every unrelated part of the document identical — same structure, classes, copy, and inline styles.
+- Never change or remove existing img src values unless the request explicitly asks to replace images.
+- Keep all existing script and link tags (such as the Tailwind CDN script) exactly as they are. Do not add new external resources.
+- Prefer inline style declarations for one-off visual changes; keep existing utility classes in place.
+- Keep user-visible text in its original language unless the request asks to change the copy.`;
+
+export function localDocumentEditUserPrompt(params: {
+  userRequest: string;
+  editInstruction?: string;
+  deviceLabel: string;
+  designStyleContent?: string;
+  documentHtml: string;
+}) {
+  return [
+    `User request: ${params.userRequest.slice(0, 1000)}`,
+    params.editInstruction?.trim()
+      ? `Edit instruction (rewritten in English): ${params.editInstruction.slice(0, 2000)}`
+      : "",
+    `Mockup device: ${params.deviceLabel}`,
+    params.designStyleContent?.trim()
+      ? `Design style context (keep the edit consistent with it):\n${params.designStyleContent.slice(0, 2000)}`
+      : "",
+    `Current mockup HTML document:\n${params.documentHtml}`,
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+}
+
 // Allowed values mirror @google/stitch-sdk DesignTheme enums. Keep in sync if
 // the SDK changes. ROUND_TWO is deprecated, so the sharpest usable corner is
 // ROUND_FOUR.
