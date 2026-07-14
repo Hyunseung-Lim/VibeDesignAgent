@@ -214,6 +214,15 @@ function stitchErrorResponse(error: unknown, prefix?: string) {
       { status: 401 },
     );
   }
+  if (isStitchNotFoundError(error)) {
+    return Response.json(
+      {
+        error: prefix ? `${prefix}: ${message}` : message,
+        code: "stitch-screen-not-found",
+      },
+      { status: 404 },
+    );
+  }
   return Response.json(
     { error: prefix ? `${prefix}: ${message}` : message },
     { status: 500 },
@@ -226,6 +235,14 @@ function isIncompleteResponseError(error: unknown) {
 
 function isStitchInvalidArgumentError(error: unknown) {
   return errorMessage(error).toLowerCase().includes("invalid argument");
+}
+
+function isStitchNotFoundError(error: unknown) {
+  const message = errorMessage(error).toLowerCase();
+  return (
+    message.includes("requested entity was not found") ||
+    message.includes("not found")
+  );
 }
 
 function isTransientStitchError(error: unknown) {

@@ -855,6 +855,7 @@ type Artboard = {
   y: number;
   device: Device;
   stitchScreenId?: string;
+  stitchProjectId?: string;
   ideaId: string;
   htmlStatus?: "pending" | "failed";
 };
@@ -4099,6 +4100,11 @@ export default function MainScreenPage() {
         const loaded: Artboard[] = session.artboards.map((a: Artboard) => ({
           ...a,
           ideaId: a.ideaId ?? firstIdeaId,
+          stitchProjectId:
+            a.stitchProjectId ??
+            (a.stitchScreenId && !isSyntheticStitchScreenId(a.stitchScreenId)
+              ? session.stitchProjectId
+              : undefined),
           htmlStatus:
             !a.html && a.stitchScreenId && !isSyntheticStitchScreenId(a.stitchScreenId)
               ? "pending"
@@ -4119,13 +4125,14 @@ export default function MainScreenPage() {
         const pid = session.stitchProjectId;
         if (pid) {
           normalizedLoaded.forEach((a: Artboard) => {
+            const artboardProjectId = a.stitchProjectId ?? pid;
             if (
               !a.stitchScreenId ||
               a.html ||
               isSyntheticStitchScreenId(a.stitchScreenId)
             )
               return;
-            fetchStitchScreenHtml(pid, a.stitchScreenId)
+            fetchStitchScreenHtml(artboardProjectId, a.stitchScreenId)
               .then((html) =>
                 setArtboards((prev) =>
                   prev.map((p) =>
@@ -6331,6 +6338,9 @@ export default function MainScreenPage() {
           )
             ? undefined
             : editTargetBoard?.stitchScreenId || undefined;
+          const requestProjectId = isNew
+            ? stitchProjectId || undefined
+            : editTargetBoard?.stitchProjectId || stitchProjectId || undefined;
           if (!isNew && editTargetBoard?.html && selectedElement) {
             const localPatch = patchSelectedElementInHtml(
               editTargetBoard.html,
@@ -6365,6 +6375,7 @@ export default function MainScreenPage() {
                         ...artboard,
                         html: localPatch.html,
                         stitchScreenId: syntheticScreenId,
+                        stitchProjectId: artboard.stitchProjectId,
                         htmlStatus: undefined,
                         htmlUpdatedAt: Date.now(),
                       }
@@ -6396,7 +6407,7 @@ export default function MainScreenPage() {
               body: JSON.stringify({
                 prompt: stitchPrompt,
                 device,
-                projectId: stitchProjectId || undefined,
+                projectId: requestProjectId,
                 screenId: editScreenId,
                 previousHtmlHash:
                   !isNew && editTargetBoard?.html
@@ -6443,7 +6454,8 @@ export default function MainScreenPage() {
               .json()
               .catch(() => null);
             if (
-              errorData?.code === "stitch-edit-unchanged" &&
+              (errorData?.code === "stitch-edit-unchanged" ||
+                errorData?.code === "stitch-screen-not-found") &&
               !isNew &&
               editTargetBoard?.html &&
               selectedElement
@@ -6477,6 +6489,7 @@ export default function MainScreenPage() {
                           ...artboard,
                           html: localPatch.html,
                           stitchScreenId: syntheticScreenId,
+                          stitchProjectId: artboard.stitchProjectId,
                           htmlStatus: undefined,
                           htmlUpdatedAt: Date.now(),
                         }
@@ -6513,6 +6526,10 @@ export default function MainScreenPage() {
           }
           setMockupProgress({ percent: 96, label: "아트보드 배치 중" });
           if (data.projectId) setStitchProjectId(data.projectId);
+          const responseProjectId =
+            typeof data.projectId === "string" && data.projectId
+              ? data.projectId
+              : requestProjectId;
           if (data.designSystemId !== undefined)
             setStitchDesignSystemId(data.designSystemId);
           if (data.appliedDesignStyleHash !== undefined)
@@ -6586,6 +6603,7 @@ export default function MainScreenPage() {
                 y: 0,
                 device,
                 stitchScreenId: data.screenId,
+                stitchProjectId: responseProjectId,
                 ideaId,
                 htmlStatus: data.htmlPending ? "pending" : undefined,
               };
@@ -6601,6 +6619,7 @@ export default function MainScreenPage() {
                   y: 0,
                   device,
                   stitchScreenId: sid,
+                  stitchProjectId: responseProjectId,
                   ideaId,
                   htmlStatus: "pending",
                 }),
@@ -6627,7 +6646,17 @@ export default function MainScreenPage() {
                     ? "화면 HTML 준비 대기 중"
                     : "추가 화면 불러오는 중",
               });
-              fetchStitchScreenHtml(data.projectId, sid)
+              if (!responseProjectId) {
+                setArtboards((prev) =>
+                  prev.map((a) =>
+                    a.stitchScreenId === sid
+                      ? { ...a, htmlStatus: "failed" }
+                      : a,
+                  ),
+                );
+                return;
+              }
+              fetchStitchScreenHtml(responseProjectId, sid)
                 .then((html) =>
                   setArtboards((prev) =>
                     prev.map((a) =>
@@ -6635,6 +6664,7 @@ export default function MainScreenPage() {
                         ? {
                             ...a,
                             html,
+                            stitchProjectId: responseProjectId,
                             htmlStatus: undefined,
                             htmlUpdatedAt: Date.now(),
                           }
@@ -6739,6 +6769,7 @@ export default function MainScreenPage() {
                           ...a,
                           html: nextHtml || a.html,
                           stitchScreenId: data.screenId,
+                          stitchProjectId: responseProjectId,
                           htmlStatus: data.htmlPending ? "pending" : undefined,
                           htmlUpdatedAt: data.html ? Date.now() : a.htmlUpdatedAt,
                         }
@@ -6775,6 +6806,7 @@ export default function MainScreenPage() {
                     y: targetBoard?.y ?? 0,
                     device: targetBoard?.device ?? device,
                     stitchScreenId: data.screenId,
+                    stitchProjectId: responseProjectId,
                     ideaId,
                     htmlStatus: data.htmlPending ? "pending" : undefined,
                     htmlUpdatedAt: data.html ? Date.now() : undefined,
@@ -6796,6 +6828,7 @@ export default function MainScreenPage() {
                     ? {
                         ...a,
                         html: data.html || a.html,
+                        stitchProjectId: responseProjectId,
                         htmlUpdatedAt: data.html ? Date.now() : a.htmlUpdatedAt,
                       }
                     : a,
@@ -6822,6 +6855,7 @@ export default function MainScreenPage() {
                 y: targetBoard?.y ?? 0,
                 device: targetBoard?.device ?? device,
                 stitchScreenId: data.screenId,
+                stitchProjectId: responseProjectId,
                 ideaId,
                 htmlStatus: data.htmlPending ? "pending" : undefined,
                 htmlUpdatedAt: data.html ? Date.now() : undefined,
@@ -6872,11 +6906,20 @@ export default function MainScreenPage() {
             }
             if (data.htmlPending && htmlTargetId) {
               console.info("[mockup] polling pending edit HTML", {
-                projectId: data.projectId ?? null,
+                projectId: responseProjectId ?? null,
                 screenId: data.screenId ?? null,
                 htmlTargetId,
               });
-              fetchStitchScreenHtml(data.projectId, data.screenId)
+              if (!responseProjectId) {
+                setArtboards((prev) =>
+                  prev.map((a) =>
+                    a.id === htmlTargetId
+                      ? { ...a, htmlStatus: "failed" }
+                      : a,
+                  ),
+                );
+              } else {
+                fetchStitchScreenHtml(responseProjectId, data.screenId)
                 .then((html) =>
                   setArtboards((prev) => {
                     console.info("[mockup] pending edit HTML resolved", {
@@ -6889,6 +6932,7 @@ export default function MainScreenPage() {
                         ? {
                             ...a,
                             html,
+                            stitchProjectId: responseProjectId,
                             htmlStatus: undefined,
                             htmlUpdatedAt: Date.now(),
                           }
@@ -6910,6 +6954,7 @@ export default function MainScreenPage() {
                     );
                   }),
                 );
+              }
             }
           }
           setMockupProgress({ percent: 100, label: "완료" });
