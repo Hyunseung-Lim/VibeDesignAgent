@@ -28,6 +28,12 @@ const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 type DeviceType = "MOBILE" | "DESKTOP";
 type StitchClientBundle = Awaited<ReturnType<typeof createStitchClient>>;
 type StitchProject = ReturnType<StitchClientBundle["sdk"]["project"]>;
+type StitchEditModelId = "GEMINI_3_1_PRO";
+type StitchEditPromptMode = "legacy" | "compact";
+type StitchEditTargetMode = "screen-id" | "screen-instance";
+const STITCH_LOG_TOOL_SCHEMAS =
+  process.env.STITCH_LOG_TOOL_SCHEMAS?.trim() === "1";
+let stitchToolSchemasLogged = false;
 
 type StitchFont = (typeof STITCH_DESIGN_FONTS)[number];
 type StitchRoundness = (typeof STITCH_DESIGN_ROUNDNESS)[number];
@@ -160,6 +166,43 @@ function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error);
 }
 
+function errorDebug(error: unknown) {
+  if (error instanceof Error) {
+    const cause = (error as Error & { cause?: unknown }).cause;
+    return {
+      name: error.name,
+      message: error.message,
+      stack: error.stack?.slice(0, 2000),
+      cause: cause ? errorMessage(cause) : undefined,
+    };
+  }
+  if (error && typeof error === "object") {
+    try {
+      return JSON.stringify(error).slice(0, 2000);
+    } catch {
+      return String(error);
+    }
+  }
+  return String(error);
+}
+
+function safeJsonSnippet(value: unknown, maxLength = 4000) {
+  const seen = new WeakSet<object>();
+  try {
+    const json = JSON.stringify(value, (_key, nestedValue) => {
+      if (typeof nestedValue === "bigint") return nestedValue.toString();
+      if (nestedValue && typeof nestedValue === "object") {
+        if (seen.has(nestedValue)) return "[Circular]";
+        seen.add(nestedValue);
+      }
+      return nestedValue;
+    });
+    return json.length > maxLength ? `${json.slice(0, maxLength)}…` : json;
+  } catch {
+    return String(value).slice(0, maxLength);
+  }
+}
+
 function stitchErrorResponse(error: unknown, prefix?: string) {
   const message = errorMessage(error);
   if (isStitchAuthError(error)) {
@@ -217,6 +260,92 @@ async function withTransientRetry<T>(
     }
   }
   throw lastError;
+}
+
+function compactWhitespace(value: string) {
+  return value.replace(/\s+/g, " ").trim();
+}
+
+function truncatePromptField(value: string, maxLength: number) {
+  const compact = compactWhitespace(value);
+  if (compact.length <= maxLength) return compact;
+  return `${compact.slice(0, maxLength - 1)}…`;
+}
+
+function promptLineValue(prompt: string, label: string) {
+  const match = prompt.match(new RegExp(`${label}:\\s*([^\\n]+)`));
+  return match?.[1]?.trim() ?? "";
+}
+
+function promptSectionValue(prompt: string, label: string, untilLabels: string[]) {
+  const start = prompt.indexOf(`${label}:`);
+  if (start < 0) return "";
+  const contentStart = start + label.length + 1;
+  const contentEnd = untilLabels
+    .map((untilLabel) => prompt.indexOf(`\n${untilLabel}:`, contentStart))
+    .filter((index) => index >= 0)
+    .sort((a, b) => a - b)[0];
+  return prompt.slice(contentStart, contentEnd ?? prompt.length).trim();
+}
+
+function stitchEditPromptMode(): StitchEditPromptMode {
+  return process.env.STITCH_EDIT_PROMPT_MODE?.trim().toLowerCase() === "compact"
+    ? "compact"
+    : "legacy";
+}
+
+function stitchEditTargetMode(): StitchEditTargetMode {
+  return process.env.STITCH_EDIT_TARGET_MODE?.trim().toLowerCase() ===
+    "screen-instance"
+    ? "screen-instance"
+    : "screen-id";
+}
+
+function buildCompactEditPrompt(prompt: string) {
+  const originalRequest =
+    promptLineValue(prompt, "Original user request for this edit") ||
+    truncatePromptField(prompt, 240);
+  const selector = promptLineValue(prompt, "Selector");
+  const xpath = promptLineValue(prompt, "XPath");
+  const visibleText = promptSectionValue(prompt, "Visible text", [
+    "Selected HTML",
+  ]);
+  const selectedHtml = promptSectionValue(prompt, "Selected HTML", []);
+
+  return [
+    `Apply this edit to the selected element only: ${originalRequest}`,
+    selector ? `Target CSS selector: ${selector}` : "",
+    xpath ? `Target XPath: ${xpath}` : "",
+    visibleText
+      ? `The selected element contains this visible text: ${truncatePromptField(
+          visibleText,
+          500,
+        )}`
+      : "",
+    selectedHtml
+      ? `Selected element summary: ${truncatePromptField(selectedHtml, 700)}`
+      : "",
+    "Keep the existing layout, spacing, images, button behavior, and all other elements unchanged unless the requested edit directly requires a change.",
+    "Return an updated design screen. Do not respond with only a written explanation.",
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+function buildStitchEditCall(prompt: string): {
+  modelId?: StitchEditModelId;
+  prompt: string;
+  promptMode: StitchEditPromptMode;
+} {
+  const promptMode = stitchEditPromptMode();
+  if (promptMode !== "compact") {
+    return { prompt, promptMode };
+  }
+  return {
+    modelId: "GEMINI_3_1_PRO",
+    prompt: buildCompactEditPrompt(prompt),
+    promptMode,
+  };
 }
 
 async function withTimeout<T>(
@@ -289,7 +418,14 @@ function scoreGeneratedScreen(html: string, prompt: string) {
 
 async function listScreens(project: StitchProject) {
   return project.screens().catch((err: unknown) => {
-    console.warn("[stitch] list screens failed:", errorMessage(err));
+    console.warn(
+      "[stitch] list screens failed:",
+      JSON.stringify({
+        projectId: project.id,
+        message: errorMessage(err),
+        error: errorDebug(err),
+      }),
+    );
     return [];
   });
 }
@@ -363,10 +499,115 @@ function summarizeToolOutput(raw: unknown) {
           typeof item.suggestion === "string"
             ? item.suggestion.slice(0, 500)
             : undefined,
+        sessionEvent:
+          item.sessionEvent !== undefined
+            ? safeJsonSnippet(item.sessionEvent, 2500)
+            : undefined,
         screenIds,
       };
     }),
   };
+}
+
+async function logStitchToolSchemasIfEnabled(client: StitchToolClient) {
+  if (!STITCH_LOG_TOOL_SCHEMAS || stitchToolSchemasLogged) return;
+  stitchToolSchemasLogged = true;
+  try {
+    const maybeListTools = (
+      client as StitchToolClient & {
+        listTools?: () => Promise<unknown>;
+      }
+    ).listTools;
+    if (!maybeListTools) {
+      console.warn("[stitch] live tool schema dump skipped: listTools unavailable");
+      return;
+    }
+    const raw = await maybeListTools.call(client);
+    const tools = Array.isArray((raw as { tools?: unknown[] })?.tools)
+      ? ((raw as { tools?: unknown[] }).tools as Record<string, unknown>[])
+      : Array.isArray(raw)
+        ? (raw as Record<string, unknown>[])
+        : [];
+    const interesting = tools.filter((tool) =>
+      ["edit_screens", "list_screens", "generate_screen_from_text"].includes(
+        String(tool.name ?? ""),
+      ),
+    );
+    console.warn(
+      "[stitch] live tool schemas:",
+      safeJsonSnippet(interesting.length ? interesting : raw, 12000),
+    );
+  } catch (err) {
+    console.warn(
+      "[stitch] live tool schema dump failed:",
+      safeJsonSnippet(errorDebug(err), 3000),
+    );
+  }
+}
+
+type StitchScreenInstance = {
+  id?: string;
+  hidden?: boolean;
+  sourceScreen?: string;
+  type?: string;
+};
+
+function screenInstanceMatchesScreen(
+  instance: StitchScreenInstance,
+  projectId: string,
+  screenId: string,
+) {
+  const sourceScreen = instance.sourceScreen ?? "";
+  return (
+    sourceScreen === `projects/${projectId}/screens/${screenId}` ||
+    sourceScreen.endsWith(`/screens/${screenId}`) ||
+    sourceScreen === screenId
+  );
+}
+
+async function selectedScreenInstanceForScreen(
+  client: StitchToolClient,
+  project: StitchProject,
+  screenId: string,
+) {
+  try {
+    const raw = await client.callTool("get_project", {
+      name: `projects/${project.id}`,
+    });
+    const instances = Array.isArray(
+      (raw as { screenInstances?: unknown[] })?.screenInstances,
+    )
+      ? ((raw as { screenInstances?: unknown[] })
+          .screenInstances as StitchScreenInstance[])
+      : [];
+    const matches = instances.filter((instance) =>
+      screenInstanceMatchesScreen(instance, project.id, screenId),
+    );
+    const selected =
+      matches.find((instance) => !instance.hidden) ?? matches[0] ?? null;
+    console.log(
+      "[stitch] project screen instance lookup:",
+      JSON.stringify({
+        projectId: project.id,
+        screenId,
+        instanceCount: instances.length,
+        matchCount: matches.length,
+        selectedInstanceId: selected?.id ?? null,
+        selectedSourceScreen: selected?.sourceScreen ?? null,
+      }),
+    );
+    if (!selected?.id || !selected.sourceScreen) return null;
+    return {
+      id: selected.id,
+      sourceScreen: selected.sourceScreen,
+    };
+  } catch (err) {
+    console.warn(
+      "[stitch] project screen instance lookup failed:",
+      safeJsonSnippet(errorDebug(err), 3000),
+    );
+    return null;
+  }
 }
 
 async function screenFromRawResponse(project: StitchProject, raw: unknown): Promise<StitchScreenHandle | null> {
@@ -415,15 +656,47 @@ async function editScreen(
   prompt: string,
   deviceType: DeviceType,
   previousScreenIds: Set<string>,
+  modelId?: StitchEditModelId,
 ) {
-  const raw = await withTransientRetry("edit_screens", () =>
-    client.callTool("edit_screens", {
-      projectId: project.id,
-      selectedScreenIds: [screenId],
-      prompt,
-      deviceType,
-    }),
-  );
+  await logStitchToolSchemasIfEnabled(client);
+  const selectedScreenInstance =
+    stitchEditTargetMode() === "screen-instance"
+      ? await selectedScreenInstanceForScreen(client, project, screenId)
+      : null;
+  const legacyArgs = {
+    projectId: project.id,
+    selectedScreenIds: [screenId],
+    prompt,
+    deviceType,
+    ...(modelId ? { modelId } : {}),
+  };
+  const instanceArgs = selectedScreenInstance
+    ? {
+        ...legacyArgs,
+        selectedScreenInstances: [selectedScreenInstance],
+      }
+    : null;
+  const raw = await withTransientRetry("edit_screens", async () => {
+    if (!instanceArgs) return client.callTool("edit_screens", legacyArgs);
+    try {
+      console.log(
+        "[stitch] edit_screens target mode:",
+        JSON.stringify({
+          mode: "screen-instance",
+          screenId,
+          selectedScreenInstances: instanceArgs.selectedScreenInstances,
+        }),
+      );
+      return await client.callTool("edit_screens", instanceArgs);
+    } catch (err) {
+      if (!isStitchInvalidArgumentError(err)) throw err;
+      console.warn(
+        "[stitch] edit_screens screen-instance target rejected; retrying screen-id target:",
+        errorMessage(err),
+      );
+      return client.callTool("edit_screens", legacyArgs);
+    }
+  });
   console.log(
     "[stitch] edit_screens raw response summary:",
     JSON.stringify(summarizeToolOutput(raw)),
@@ -501,6 +774,68 @@ async function materializeHtml(htmlUrlOrContent: string) {
     throw new Error(`Failed to fetch HTML from Stitch URL: ${fetchRes.status}`);
   }
   return fetchRes.text();
+}
+
+const EDIT_DELAYED_RECHECK_DELAYS_MS = [120_000, 300_000] as const;
+
+async function runDelayedEditRecheck(
+  project: StitchProject,
+  screenId: string,
+  previousHtmlHash: string,
+  delayMs: number,
+) {
+  try {
+    const screen = await project.getScreen(screenId);
+    const htmlUrlOrContent = await screen.getHtml();
+    const html = await materializeHtml(htmlUrlOrContent);
+    const currentHtmlHash = html ? contentHash(html) : "";
+    console.warn(
+      "[stitch] delayed edit recheck:",
+      JSON.stringify({
+        projectId: project.id,
+        screenId,
+        delayMs,
+        previousHtmlHash,
+        currentHtmlHash,
+        htmlLength: html.length,
+        changed: Boolean(currentHtmlHash && currentHtmlHash !== previousHtmlHash),
+      }),
+    );
+  } catch (err) {
+    console.warn(
+      "[stitch] delayed edit recheck failed:",
+      JSON.stringify({
+        projectId: project.id,
+        screenId,
+        delayMs,
+        previousHtmlHash,
+        message: errorMessage(err),
+        error: errorDebug(err),
+      }),
+    );
+  }
+}
+
+function scheduleDelayedEditRecheck(
+  project: StitchProject,
+  screenId: string,
+  previousHtmlHash: string,
+) {
+  console.warn(
+    "[stitch] scheduling delayed edit recheck:",
+    JSON.stringify({
+      projectId: project.id,
+      screenId,
+      previousHtmlHash,
+      delaysMs: EDIT_DELAYED_RECHECK_DELAYS_MS,
+    }),
+  );
+  for (const delayMs of EDIT_DELAYED_RECHECK_DELAYS_MS) {
+    const timeout = setTimeout(() => {
+      void runDelayedEditRecheck(project, screenId, previousHtmlHash, delayMs);
+    }, delayMs);
+    (timeout as ReturnType<typeof setTimeout> & { unref?: () => void }).unref?.();
+  }
 }
 
 async function waitForChangedScreenHtml(
@@ -708,6 +1043,10 @@ type AssetImageRequest = {
   note: string;
 };
 
+function assetImageUrl(asset: AssetImageRequest) {
+  return asset.url || `/api/mission-assets?path=${encodeURIComponent(asset.path)}`;
+}
+
 function assetImageUrlFallbackPrompt(
   productPrompt: string,
   deviceLabel: string,
@@ -715,10 +1054,9 @@ function assetImageUrlFallbackPrompt(
 ) {
   const manifest = assets
     .map((asset, index) => {
-      const url = asset.url || `/api/mission-assets?path=${encodeURIComponent(asset.path)}`;
       return [
         `Asset ${index + 1}`,
-        `URL: ${url}`,
+        `URL: ${assetImageUrl(asset)}`,
         `Meaning: ${asset.note || "No admin description provided."}`,
       ].join("\n");
     })
@@ -735,6 +1073,39 @@ function assetImageUrlFallbackPrompt(
     .join("\n\n");
 }
 
+function assetImageTokenFallbackPrompt(
+  productPrompt: string,
+  deviceLabel: string,
+  assets: AssetImageRequest[],
+) {
+  const manifest = assets
+    .map((asset, index) =>
+      [
+        `Asset ${index + 1}`,
+        `Required img src token: {{ASSET_${index + 1}}}`,
+        `Meaning: ${asset.note || "No admin description provided."}`,
+      ].join("\n"),
+    )
+    .join("\n\n");
+
+  return [
+    `Create a high-fidelity ${deviceLabel} UI mockup for the brief below.`,
+    `Use the mission asset tokens below as exact image sources in the generated HTML. Put each token directly into img src attributes, for example <img src="{{ASSET_1}}" alt="...">. Do not invent, rewrite, encode, or replace these tokens. Preserve natural aspect ratio and use the notes to place each item in the correct product/content slot.`,
+    `Mission asset tokens:\n${manifest}`,
+    `Design the surrounding layout, navigation, typography, spacing, cards, filters, and copy from the brief and active design direction.`,
+    productPrompt ? `Brief:\n${productPrompt}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+}
+
+function replaceAssetTokens(html: string, assets: AssetImageRequest[]) {
+  return assets.reduce((current, asset, index) => {
+    const token = `{{ASSET_${index + 1}}}`;
+    return current.split(token).join(assetImageUrl(asset));
+  }, html);
+}
+
 function assetImageRepairPrompt(
   productPrompt: string,
   deviceLabel: string,
@@ -743,10 +1114,9 @@ function assetImageRepairPrompt(
 ) {
   const manifest = assets
     .map((asset, index) => {
-      const url = asset.url || `/api/mission-assets?path=${encodeURIComponent(asset.path)}`;
       return [
         `Asset ${index + 1}`,
-        `Required img src: ${url}`,
+        `Required img src: ${assetImageUrl(asset)}`,
         `Meaning: ${asset.note || "No admin description provided."}`,
       ].join("\n");
     })
@@ -830,7 +1200,11 @@ async function generateOpenAiAssetFallbackScreen(
 ): Promise<StitchScreenHandle> {
   const deviceLabel =
     deviceType === "MOBILE" ? "390px wide mobile app screen" : "responsive desktop website";
-  const fallbackPrompt = assetImageUrlFallbackPrompt(productPrompt, deviceLabel, assets);
+  const fallbackPrompt = assetImageTokenFallbackPrompt(
+    productPrompt,
+    deviceLabel,
+    assets,
+  );
   const completion = await openai.chat.completions.create({
     model: process.env.OPENAI_STITCH_FALLBACK_MODEL ?? "gpt-5.4-mini",
     messages: [
@@ -840,7 +1214,7 @@ async function generateOpenAiAssetFallbackScreen(
           "You generate production-ready standalone HTML mockups.",
           "Return only complete HTML. Do not wrap it in markdown.",
           "Use Tailwind Play CDN or plain CSS inside the document.",
-          "Use the provided asset URLs exactly as img src values.",
+          "Use the provided asset tokens exactly as img src values.",
           "Do not mention that this is a fallback.",
         ].join("\n"),
       },
@@ -850,8 +1224,9 @@ async function generateOpenAiAssetFallbackScreen(
       },
     ],
   });
-  const html = completeHtmlDocument(
-    completion.choices[0]?.message?.content ?? "",
+  const html = replaceAssetTokens(
+    completeHtmlDocument(completion.choices[0]?.message?.content ?? ""),
+    assets,
   );
   if (!/<(main|section|article|div|body)\b/i.test(html)) {
     throw new Error("OpenAI HTML fallback returned no usable mockup markup.");
@@ -1106,15 +1481,27 @@ export async function POST(request: Request) {
       }
     } else if (screenId) {
       console.log("[stitch] editing screen:", screenId);
+      const editCall = buildStitchEditCall(prompt);
       console.log(
         "[stitch] edit prompt:",
         JSON.stringify({
-          length: prompt.length,
-          sample: prompt.slice(0, 2000),
+          promptMode: editCall.promptMode,
+          modelId: editCall.modelId ?? null,
+          originalLength: prompt.length,
+          length: editCall.prompt.length,
+          sample: editCall.prompt.slice(0, 2000),
         }),
       );
       try {
-        screen = await editScreen(client, project, screenId, prompt, deviceType, beforeScreenIds);
+        screen = await editScreen(
+          client,
+          project,
+          screenId,
+          editCall.prompt,
+          deviceType,
+          beforeScreenIds,
+          editCall.modelId,
+        );
       } catch (editErr) {
         const message = errorMessage(editErr);
         console.warn("[stitch] edit failed:", message);
@@ -1174,6 +1561,7 @@ export async function POST(request: Request) {
         "[stitch] edit returned unchanged HTML after retries; treating as failed no-op:",
         screen.id,
       );
+      scheduleDelayedEditRecheck(project, screen.id, previousHtmlHash);
       return Response.json(
         {
           error:

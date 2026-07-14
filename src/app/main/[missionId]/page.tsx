@@ -98,9 +98,11 @@ import {
 import {
   cleanMessageContentForModel,
   extractChatPhases,
+  findBracketActionBlock,
   normalizeActionBlockAliases,
   processMessageContent,
   splitPendingMockupCompletionText,
+  stripBracketActionBlocks,
 } from "@/lib/session/chat-content";
 import {
   injectHeightReporter,
@@ -910,7 +912,14 @@ function stripSelectionMarkers(html: string) {
     .replace(/\sdata-vda-hovered=(?:"true"|'true')/g, "");
 }
 
-function removeSelectedElementFromHtml(
+function serializePatchedDocument(originalHtml: string, doc: Document) {
+  const serialized = doc.documentElement.outerHTML;
+  return /^<!doctype/i.test(originalHtml)
+    ? `<!DOCTYPE html>\n${serialized}`
+    : serialized;
+}
+
+function findSelectedElementTarget(
   html: string,
   element: SelectedElement,
 ) {
@@ -952,9 +961,116 @@ function removeSelectedElementFromHtml(
   }
 
   if (!target) return null;
-  target.remove();
-  const serialized = doc.documentElement.outerHTML;
-  return /^<!doctype/i.test(html) ? `<!DOCTYPE html>\n${serialized}` : serialized;
+  return { doc, target };
+}
+
+function removeSelectedElementFromHtml(
+  html: string,
+  element: SelectedElement,
+) {
+  const match = findSelectedElementTarget(html, element);
+  if (!match) return null;
+  match.target.remove();
+  return serializePatchedDocument(html, match.doc);
+}
+
+function patchTextColor(target: Element, color: string) {
+  const apply = (element: Element) => {
+    if (element instanceof HTMLElement) {
+      element.style.color = color;
+    }
+  };
+  apply(target);
+  target.querySelectorAll("h1,h2,h3,h4,h5,h6,p,span,a,button,li").forEach(apply);
+}
+
+function patchFontFamily(target: Element, fontFamily: string) {
+  if (target instanceof HTMLElement) {
+    target.style.fontFamily = fontFamily;
+  }
+}
+
+function patchImageFit(target: Element, fit: "cover" | "contain") {
+  const images =
+    target instanceof HTMLImageElement
+      ? [target]
+      : Array.from(target.querySelectorAll("img"));
+  if (!images.length) return false;
+  images.forEach((image) => {
+    image.style.objectFit = fit;
+    image.style.width = "100%";
+    image.style.height = "100%";
+    image.style.display = "block";
+  });
+  if (target instanceof HTMLElement) {
+    target.style.overflow = "hidden";
+  }
+  return true;
+}
+
+function patchSelectedElementInHtml(
+  html: string,
+  element: SelectedElement,
+  requestText: string,
+) {
+  if (isSelectedElementRemovalRequest(requestText)) {
+    const patchedHtml = removeSelectedElementFromHtml(html, element);
+    return patchedHtml
+      ? {
+          html: patchedHtml,
+          title: "로컬 선택 요소 삭제 fallback",
+          output:
+            "Stitch returned unchanged HTML, so the selected element was removed from the local artboard HTML.",
+          message:
+            "Stitch가 동일 HTML을 반환해 선택 요소 삭제를 로컬 HTML에 직접 반영했습니다.",
+          patchType: "remove",
+        }
+      : null;
+  }
+
+  const match = findSelectedElementTarget(html, element);
+  if (!match) return null;
+  const normalized = requestText.toLowerCase();
+  let patchType = "";
+
+  if (/(흰색|하얗|하양|white)/i.test(requestText)) {
+    patchTextColor(match.target, "#ffffff");
+    patchType = "text-color-white";
+  } else if (/(검정|검은|블랙|black)/i.test(requestText)) {
+    patchTextColor(match.target, "#111827");
+    patchType = "text-color-black";
+  } else if (/(sans|산세리프|고딕)/i.test(requestText)) {
+    patchFontFamily(
+      match.target,
+      'Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    );
+    patchType = "font-sans";
+  } else if (/(serif|세리프|명조)/i.test(requestText)) {
+    patchFontFamily(match.target, 'Georgia, "Times New Roman", serif');
+    patchType = "font-serif";
+  } else if (
+    selectedElementLooksLikeImage(element) &&
+    /(꽉|채워|가득|cover|fill)/i.test(requestText)
+  ) {
+    if (!patchImageFit(match.target, "cover")) return null;
+    patchType = "image-cover";
+  } else if (
+    selectedElementLooksLikeImage(element) &&
+    /(안\s*잘|잘리지|전체|contain)/i.test(normalized)
+  ) {
+    if (!patchImageFit(match.target, "contain")) return null;
+    patchType = "image-contain";
+  }
+
+  if (!patchType) return null;
+  return {
+    html: serializePatchedDocument(html, match.doc),
+    title: "로컬 선택 요소 스타일 fallback",
+    output: `Stitch returned unchanged HTML, so a deterministic selected-element patch was applied locally (${patchType}).`,
+    message:
+      "Stitch가 동일 HTML을 반환해 선택 요소 스타일 수정을 로컬 HTML에 직접 반영했습니다.",
+    patchType,
+  };
 }
 
 function selectedElementTargetPrompt(
@@ -1903,8 +2019,7 @@ function isMockupReadinessQuestion(text: string) {
 }
 
 function stripMockupActionBlocks(content: string) {
-  return content
-    .replace(/\[(?:GENERATE|EDIT)_MOCKUP(?::[\s\S]*?)?\]/g, "")
+  return stripBracketActionBlocks(content, ["GENERATE_MOCKUP", "EDIT_MOCKUP"])
     .replace(/\n{3,}/g, "\n\n")
     .trim();
 }
@@ -5889,9 +6004,7 @@ export default function MainScreenPage() {
         setIsDesignSpecOpen(true);
       }
 
-      const fetchRefMatch = fullText.match(
-        /\[FETCH_REFERENCES(?::\s*(.*?))?\]/i,
-      );
+      const fetchRefBlock = findBracketActionBlock(fullText, "FETCH_REFERENCES");
       const appendReferenceResult = (result: ReferenceFetchResult) => {
         const imageCueSummary = buildImageStyleSearchCueSummary(
           result.imageStyleSearchCues,
@@ -5943,10 +6056,10 @@ export default function MainScreenPage() {
           },
         );
       };
-      if (fetchRefMatch) {
+      if (fetchRefBlock) {
         const corrective = isCorrectiveReferenceTurn(text);
         const customQuery = buildReferenceSearchQuery(
-          fetchRefMatch[1]?.trim() || text,
+          fetchRefBlock.payload || text,
           effectiveMissionTitle,
           activeOption,
           device,
@@ -5993,30 +6106,28 @@ export default function MainScreenPage() {
           );
       }
 
-      const generateMatch = fullText.match(
-        /\[GENERATE_MOCKUP(?::\s*([\s\S]*?))?\]/,
-      );
-      const editMatch = !generateMatch
-        ? fullText.match(/\[EDIT_MOCKUP(?::\s*([\s\S]*?))?\]/)
+      const generateBlock = findBracketActionBlock(fullText, "GENERATE_MOCKUP");
+      const editBlock = !generateBlock
+        ? findBracketActionBlock(fullText, "EDIT_MOCKUP")
         : null;
       const shouldAutoGenerateForkedStyleMockup =
         shouldForkStyleDirection &&
-        !generateMatch &&
-        !editMatch &&
+        !generateBlock &&
+        !editBlock &&
         isExplicitNewMockupRequest(text);
       const selectedElementBoard = selectedElement
         ? artboards.find((artboard) => artboard.id === selectedElement.artboardId)
         : null;
       const shouldForceSelectedElementEdit =
-        Boolean(generateMatch) &&
+        Boolean(generateBlock) &&
         Boolean(selectedElementBoard) &&
         !isExplicitNewMockupRequest(text);
       const effectiveGenerateMatch = shouldForceSelectedElementEdit
         ? null
-        : generateMatch;
+        : generateBlock;
       const effectiveEditMatch = shouldForceSelectedElementEdit
-        ? generateMatch
-        : editMatch;
+        ? generateBlock
+        : editBlock;
 
       if (shouldAutoGenerateForkedStyleMockup) {
         setMessages((prev) =>
@@ -6086,7 +6197,7 @@ export default function MainScreenPage() {
           ideas.find((i) => i.id === effectiveActiveIdeaId) ??
           null;
         const parsedPrompt = normalizeMockupActionPrompt(
-            (effectiveGenerateMatch ?? effectiveEditMatch)?.[1] ??
+            (effectiveGenerateMatch ?? effectiveEditMatch)?.payload ??
             (shouldAutoGenerateForkedStyleMockup
               ? FORKED_STYLE_MOCKUP_PROMPT
               : ""),
@@ -6220,6 +6331,62 @@ export default function MainScreenPage() {
           )
             ? undefined
             : editTargetBoard?.stitchScreenId || undefined;
+          if (!isNew && editTargetBoard?.html && selectedElement) {
+            const localPatch = patchSelectedElementInHtml(
+              editTargetBoard.html,
+              selectedElement,
+              text,
+            );
+            if (localPatch && localPatch.html !== editTargetBoard.html) {
+              window.clearInterval(progressTimer);
+              if (stitchAbortControllerRef.current === stitchController) {
+                stitchAbortControllerRef.current = null;
+              }
+              const syntheticScreenId = `local-edit-fallback-${crypto.randomUUID()}`;
+              console.warn("[mockup] applied local selected-element fallback before Stitch", {
+                artboardId: editTargetBoard.id,
+                patchType: localPatch.patchType,
+                previousScreenId: editTargetBoard.stitchScreenId ?? null,
+                syntheticScreenId,
+                previousHtmlHash: quickHash(editTargetBoard.html),
+                nextHtmlHash: quickHash(localPatch.html),
+              });
+              appendActivityLog({
+                section: "mockup",
+                action: "update",
+                input: text,
+                output: `A deterministic selected-element patch was applied locally before calling Stitch (${localPatch.patchType}).`,
+                outputTitle: localPatch.title,
+              });
+              setArtboards((prev) =>
+                prev.map((artboard) =>
+                  artboard.id === editTargetBoard.id
+                    ? {
+                        ...artboard,
+                        html: localPatch.html,
+                        stitchScreenId: syntheticScreenId,
+                        htmlStatus: undefined,
+                        htmlUpdatedAt: Date.now(),
+                      }
+                    : artboard,
+                ),
+              );
+              setMockupProgress({ percent: 100, label: "완료" });
+              setActiveIdeaTab("mockup");
+              setSelectedElement(null);
+              setMessages((prev) =>
+                prev.map((m) =>
+                  m.id === assistantId
+                    ? {
+                        ...m,
+                        content: `${m.content}\n\n선택 요소 수정은 로컬 HTML에 직접 반영했습니다.`,
+                      }
+                    : m,
+                ),
+              );
+              return;
+            }
+          }
           let res: Response;
           try {
             res = await fetch("/api/stitch", {
@@ -6279,36 +6446,36 @@ export default function MainScreenPage() {
               errorData?.code === "stitch-edit-unchanged" &&
               !isNew &&
               editTargetBoard?.html &&
-              selectedElement &&
-              isSelectedElementRemovalRequest(text)
+              selectedElement
             ) {
-              const patchedHtml = removeSelectedElementFromHtml(
+              const localPatch = patchSelectedElementInHtml(
                 editTargetBoard.html,
                 selectedElement,
+                text,
               );
-              if (patchedHtml && patchedHtml !== editTargetBoard.html) {
+              if (localPatch && localPatch.html !== editTargetBoard.html) {
                 const syntheticScreenId = `local-edit-fallback-${crypto.randomUUID()}`;
-                console.warn("[mockup] applied local selected-element removal fallback", {
+                console.warn("[mockup] applied local selected-element fallback", {
                   artboardId: editTargetBoard.id,
+                  patchType: localPatch.patchType,
                   previousScreenId: editTargetBoard.stitchScreenId ?? null,
                   syntheticScreenId,
                   previousHtmlHash: quickHash(editTargetBoard.html),
-                  nextHtmlHash: quickHash(patchedHtml),
+                  nextHtmlHash: quickHash(localPatch.html),
                 });
                 appendActivityLog({
                   section: "mockup",
                   action: "update",
                   input: text,
-                  output:
-                    "Stitch returned unchanged HTML, so the selected element was removed from the local artboard HTML.",
-                  outputTitle: "로컬 선택 요소 삭제 fallback",
+                  output: localPatch.output,
+                  outputTitle: localPatch.title,
                 });
                 setArtboards((prev) =>
                   prev.map((artboard) =>
                     artboard.id === editTargetBoard.id
                       ? {
                           ...artboard,
-                          html: patchedHtml,
+                          html: localPatch.html,
                           stitchScreenId: syntheticScreenId,
                           htmlStatus: undefined,
                           htmlUpdatedAt: Date.now(),
@@ -6324,7 +6491,7 @@ export default function MainScreenPage() {
                     m.id === assistantId
                       ? {
                           ...m,
-                          content: `${m.content}\n\nStitch가 동일 HTML을 반환해 선택 요소 삭제를 로컬 HTML에 직접 반영했습니다.`,
+                          content: `${m.content}\n\n${localPatch.message}`,
                         }
                       : m,
                   ),

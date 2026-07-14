@@ -13,6 +13,7 @@ type StitchAuthMode =
   | "adc-user-oauth"
   | "static-user-oauth"
   | "api-key";
+type StitchAuthPreference = "api-key" | "api-key-only" | "oauth";
 type StitchAuthConfig = {
   config: StitchConfigInput;
   mode: StitchAuthMode;
@@ -46,6 +47,13 @@ function envValue(name: string) {
 
 function stitchProjectId() {
   return envValue("STITCH_GOOGLE_CLOUD_PROJECT") || envValue("GOOGLE_CLOUD_PROJECT");
+}
+
+function stitchAuthPreference(): StitchAuthPreference {
+  const preference = envValue("STITCH_AUTH_PREFERENCE");
+  if (preference === "oauth") return "oauth";
+  if (preference === "api-key-only") return "api-key-only";
+  return "api-key";
 }
 
 function staticOAuthConfig(): StitchAuthConfig | null {
@@ -168,19 +176,7 @@ async function refreshUserOAuthConfig(): Promise<StitchAuthConfig | null> {
   };
 }
 
-async function stitchConfig(options?: {
-  requireOAuth?: boolean;
-  forceApiKey?: boolean;
-}): Promise<StitchAuthConfig> {
-  if (options?.forceApiKey) {
-    const apiKey = apiKeyConfig();
-    if (apiKey) return apiKey;
-    throw new Error("STITCH_API_KEY is not configured.");
-  }
-
-  const apiKey = apiKeyConfig();
-  if (apiKey) return apiKey;
-
+async function userOAuthConfig(options?: { requireOAuth?: boolean }) {
   try {
     const refreshOAuth = await refreshUserOAuthConfig();
     if (refreshOAuth) return refreshOAuth;
@@ -201,6 +197,37 @@ async function stitchConfig(options?: {
     );
   }
 
+  return null;
+}
+
+async function stitchConfig(options?: {
+  requireOAuth?: boolean;
+  forceApiKey?: boolean;
+}): Promise<StitchAuthConfig> {
+  const preference = stitchAuthPreference();
+  if (options?.forceApiKey) {
+    const apiKey = apiKeyConfig();
+    if (apiKey) return apiKey;
+    throw new Error("STITCH_API_KEY is not configured.");
+  }
+
+  if (preference === "oauth" || options?.requireOAuth) {
+    const oauth = await userOAuthConfig(options);
+    if (oauth) return oauth;
+  }
+
+  const apiKey = apiKeyConfig();
+  if (apiKey) return apiKey;
+
+  if (preference === "api-key-only") {
+    throw new Error("STITCH_API_KEY is not configured.");
+  }
+
+  if (preference !== "oauth") {
+    const oauth = await userOAuthConfig(options);
+    if (oauth) return oauth;
+  }
+
   throw new Error(
     "Stitch authentication is not configured. Set STITCH_API_KEY, STITCH_OAUTH_REFRESH_TOKEN with OAuth client credentials, or STITCH_ACCESS_TOKEN with GOOGLE_CLOUD_PROJECT.",
   );
@@ -211,7 +238,6 @@ export async function createStitchClient(options?: {
   forceApiKey?: boolean;
 }) {
   const auth = await stitchConfig(options);
-  console.info("[stitch] auth mode:", auth.mode);
   // The SDK constructor falls back to process.env.STITCH_API_KEY even when an
   // OAuth accessToken is supplied. Its auth builder prefers apiKey over OAuth,
   // so hide the env key while constructing OAuth clients.
@@ -227,6 +253,38 @@ export async function createStitchClient(options?: {
       process.env.STITCH_API_KEY = envApiKey;
     }
   }
+  const sdkConfig = (
+    client as unknown as {
+      config?: { apiKey?: string; accessToken?: string; projectId?: string };
+    }
+  ).config;
+  console.info(
+    "[stitch] auth diagnostics:",
+    JSON.stringify({
+      mode: auth.mode,
+      preference: stitchAuthPreference(),
+      requested: {
+        requireOAuth: Boolean(options?.requireOAuth),
+        forceApiKey: Boolean(options?.forceApiKey),
+      },
+      availableEnv: {
+        apiKey: Boolean(envValue("STITCH_API_KEY")),
+        accessToken: Boolean(envValue("STITCH_ACCESS_TOKEN")),
+        refreshOAuth: Boolean(envRefreshOAuthInput()),
+        projectId: Boolean(stitchProjectId()),
+      },
+      sdkConfig: {
+        apiKey: Boolean(sdkConfig?.apiKey),
+        accessToken: Boolean(sdkConfig?.accessToken),
+        projectId: Boolean(sdkConfig?.projectId),
+        effectiveHeader: sdkConfig?.apiKey
+          ? "X-Goog-Api-Key"
+          : sdkConfig?.accessToken
+            ? "Authorization"
+            : "none",
+      },
+    }),
+  );
   return { client, sdk: new Stitch(client) };
 }
 

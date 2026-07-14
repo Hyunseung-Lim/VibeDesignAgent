@@ -12,6 +12,19 @@ export type ContentPart =
   | { type: "text"; content: string }
   | { type: "chip"; chip: ContentChip };
 
+export type BracketActionTag =
+  | "GENERATE_MOCKUP"
+  | "EDIT_MOCKUP"
+  | "FETCH_REFERENCES"
+  | "WEB_SEARCHED";
+
+export type BracketActionBlock = {
+  done: boolean;
+  index: number;
+  matchStr: string;
+  payload: string;
+};
+
 // Note blocks ([CREATE_NOTE:] / [UPDATE_NOTE:]) are detected by structural
 // scanning rather than regex, because the note body is freeform markdown that
 // can contain `]`, `}`, newlines, and no trailing newline. A note is "complete"
@@ -122,6 +135,88 @@ function replaceNoteLikeActionBlocks(
   }
 }
 
+export function findBracketActionBlock(
+  text: string,
+  tag: BracketActionTag,
+): BracketActionBlock | null {
+  const completeNoPayload = `[${tag}]`;
+  const noPayloadIndex = text.indexOf(completeNoPayload);
+  const opener = `[${tag}:`;
+  const payloadIndex = text.indexOf(opener);
+
+  if (
+    noPayloadIndex !== -1 &&
+    (payloadIndex === -1 || noPayloadIndex < payloadIndex)
+  ) {
+    return {
+      done: true,
+      index: noPayloadIndex,
+      matchStr: completeNoPayload,
+      payload: "",
+    };
+  }
+  if (payloadIndex === -1) return null;
+
+  const payloadStart = payloadIndex + opener.length;
+  let depth = 1;
+  for (let i = payloadStart; i < text.length; i += 1) {
+    if (text[i] === "[") depth += 1;
+    else if (text[i] === "]") {
+      depth -= 1;
+      if (depth === 0) {
+        return {
+          done: true,
+          index: payloadIndex,
+          matchStr: text.slice(payloadIndex, i + 1),
+          payload: text.slice(payloadStart, i).trim(),
+        };
+      }
+    }
+  }
+
+  return {
+    done: false,
+    index: payloadIndex,
+    matchStr: text.slice(payloadIndex),
+    payload: text.slice(payloadStart).trim(),
+  };
+}
+
+export function stripBracketActionBlocks(
+  text: string,
+  tags: readonly BracketActionTag[],
+) {
+  let result = text;
+  for (;;) {
+    const found = tags
+      .map((tag) => ({ block: findBracketActionBlock(result, tag), tag }))
+      .filter(
+        (entry): entry is { block: BracketActionBlock; tag: BracketActionTag } =>
+          Boolean(entry.block),
+      )
+      .sort((a, b) => a.block.index - b.block.index)[0];
+    if (!found) return result;
+    result = `${result.slice(0, found.block.index)}${result.slice(
+      found.block.index + found.block.matchStr.length,
+    )}`;
+  }
+}
+
+function replaceBracketActionBlocks(
+  text: string,
+  tag: BracketActionTag,
+  replacement: string,
+) {
+  let result = text;
+  for (;;) {
+    const found = findBracketActionBlock(result, tag);
+    if (!found) return result;
+    result = `${result.slice(0, found.index)}${replacement}${result.slice(
+      found.index + found.matchStr.length,
+    )}`;
+  }
+}
+
 function escapeRegExp(value: string) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -152,32 +247,34 @@ function stripActionDelimiterResidue(text: string) {
 
 const BLOCK_RULES = [
   {
-    complete: /\[GENERATE_MOCKUP(?::[^\]]*)?\]/,
-    partial: /\[GENERATE_MOCKUP:[\s\S]*$/,
+    tag: "GENERATE_MOCKUP",
     doneLabel: "새 목업 생성 요청",
     pendingLabel: "목업 설명 작성 중...",
     failedLabel: "목업 생성 불가",
     failedMarker: "⚠️ 디자인 스타일이 없어 목업을",
   },
   {
-    complete: /\[EDIT_MOCKUP(?::[^\]]*)?\]/,
-    partial: /\[EDIT_MOCKUP:[\s\S]*$/,
+    tag: "EDIT_MOCKUP",
     doneLabel: "목업 수정 요청",
     pendingLabel: "수정 내용 작성 중...",
   },
   {
-    complete: /\[FETCH_REFERENCES(?::[^\]]+)?\]/,
-    partial: /\[FETCH_REFERENCES[\s\S]*$/,
+    tag: "FETCH_REFERENCES",
     doneLabel: "레퍼런스 검색 요청됨",
     pendingLabel: "레퍼런스 검색 중...",
   },
   {
-    complete: /\[WEB_SEARCHED\]/,
-    partial: /\[WEB_SEARCHED\]/,
+    tag: "WEB_SEARCHED",
     doneLabel: "웹 검색 완료",
     pendingLabel: "웹 검색 중...",
   },
-];
+] as const satisfies readonly {
+  doneLabel: string;
+  failedLabel?: string;
+  failedMarker?: string;
+  pendingLabel: string;
+  tag: BracketActionTag;
+}[];
 
 export function processMessageContent(content: string): ContentPart[] {
   const parts: ContentPart[] = [];
@@ -229,27 +326,20 @@ export function processMessageContent(content: string): ContentPart[] {
       }
     }
 
-    // Regex-based blocks (mockup, references, web search).
+    // Bracket-balanced blocks (mockup, references, web search). Payloads can
+    // contain XPath/CSS fragments such as `/main[1]/section[1]`, so a first-`]`
+    // regex would leave broken action residue in chat and truncate the prompt.
     for (const rule of BLOCK_RULES) {
-      for (const [regex, done, label] of [
-        [rule.complete, true, rule.doneLabel],
-        [rule.partial, false, rule.pendingLabel],
-      ] as [RegExp, boolean, string][]) {
-        const m = remaining.match(regex);
-        if (
-          m &&
-          m.index !== undefined &&
-          (earliest === null || m.index < earliest.index)
-        ) {
-          earliest = {
-            index: m.index,
-            matchStr: m[0],
-            label,
-            done,
-            failedLabel: (rule as { failedLabel?: string }).failedLabel,
-            failedMarker: (rule as { failedMarker?: string }).failedMarker,
-          };
-        }
+      const block = findBracketActionBlock(remaining, rule.tag);
+      if (block && (earliest === null || block.index < earliest.index)) {
+        earliest = {
+          index: block.index,
+          matchStr: block.matchStr,
+          label: block.done ? rule.doneLabel : rule.pendingLabel,
+          done: block.done,
+          failedLabel: "failedLabel" in rule ? rule.failedLabel : undefined,
+          failedMarker: "failedMarker" in rule ? rule.failedMarker : undefined,
+        };
       }
     }
 
@@ -320,12 +410,17 @@ export function extractChatPhases(content: string) {
 }
 
 export function splitPendingMockupCompletionText(content: string) {
-  const match = content.match(/\[(?:GENERATE|EDIT)_MOCKUP:\s*[\s\S]*?\]/);
-  if (!match || match.index === undefined) {
+  const match = [
+    findBracketActionBlock(content, "GENERATE_MOCKUP"),
+    findBracketActionBlock(content, "EDIT_MOCKUP"),
+  ]
+    .filter((block): block is BracketActionBlock => Boolean(block))
+    .sort((a, b) => a.index - b.index)[0];
+  if (!match) {
     return { visibleText: content, completionText: "" };
   }
 
-  const blockEnd = match.index + match[0].length;
+  const blockEnd = match.index + match.matchStr.length;
   const completionText = content.slice(blockEnd).trim();
   if (!completionText) return { visibleText: content, completionText: "" };
 
@@ -339,7 +434,7 @@ export function normalizeActionBlockAliases(content: string) {
   const referenceActionLabel =
     String.raw`(?:FETCH[\s_-]*REFERENCES?|REFERENCES?[\s_-]*(?:FETCH|SEARCH)|REFERENCE[\s_-]*SEARCH|레퍼런스\s*검색)`;
   const bracketedReferenceAction = new RegExp(
-    String.raw`\[\s*${referenceActionLabel}\s*(?::\s*([\s\S]*?))?\]`,
+    String.raw`\[\s*(?!FETCH_REFERENCES\b)${referenceActionLabel}\s*(?::\s*([\s\S]*?))?\]`,
     "gi",
   );
   const bareLineReferenceAction = new RegExp(
@@ -391,19 +486,22 @@ export function cleanMessageContentForModel(content: string) {
     "[디자인 스타일 수정]",
   );
 
-  return noteCleaned
-    .replace(
-      /\[GENERATE_MOCKUP:[\s\S]*?\]/g,
-      "이전 액션: mockup generation requested.",
-    )
-    .replace(/\[EDIT_MOCKUP:[\s\S]*?\]/g, "이전 액션: mockup edit requested.")
+  return replaceBracketActionBlocks(
+    replaceBracketActionBlocks(
+      replaceBracketActionBlocks(
+        noteCleaned,
+        "GENERATE_MOCKUP",
+        "이전 액션: mockup generation requested.",
+      ),
+      "EDIT_MOCKUP",
+      "이전 액션: mockup edit requested.",
+    ),
+    "FETCH_REFERENCES",
+    "이전 액션: reference search requested.",
+  )
     .replace(
       /```presentation\s*\n[\s\S]*?\n?\s*```/g,
       "이전 액션: presentation requested.",
-    )
-    .replace(
-      /\[FETCH_REFERENCES(?::[^\]]+)?\]/gi,
-      "이전 액션: reference search requested.",
     )
     .replace(
       /### 레퍼런스 선택 이유[\s\S]*?(?=\n### |\n```|\n\[|$)/g,
