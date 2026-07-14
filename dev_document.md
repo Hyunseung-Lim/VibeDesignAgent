@@ -179,7 +179,7 @@
 - **Retrieval 쿼리 구성**: `[user text] + Mission: [parentMissionTitle] + Active idea: [description]` — 선택된 옵션 이름(페르소나 등)은 제외해 임베딩 노이즈 방지
 - **Admin 관측**: researcher가 `/admin/users/[uid]/memory`에서 `/agent`와 동일한 user별 memory cluster graph/list/detail을 확인 가능. detail panel은 그래프 왼쪽에 있고 cluster list는 요약 없이 색상·제목·개수만 표시한다 `[현행 2026-06-27 → 15.130]` `[stale 2026-06-30 → 15.169: cluster list가 main 세션리뷰와 동일한 review presentation(rounded card + 색상 count rail + 접기 rail)로 통일됨]` Before-session memory의 detail card 제목은 분리된 `source.sourceText`를 우선 표시하고, `Original input`은 별도 강조 없이 전체 `input` rawMarkdown을 표시한다 `[현행 2026-07-07 → 15.195/15.196]`
 - **Retrieval MVP**: v0.1.2 memory document에 embedding과 `weight` metadata를 저장하고, retrieve된 memory의 weight를 천천히 올림. retrieval과 clustering은 `memories_0_1_2.embedding`에 저장된 같은 vector를 사용하며, 누락·stale embedding은 공용 `memoryEmbedding` helper가 같은 텍스트 계약으로 재생성해 원본 memory document에 write-back한다. During-session embedding 입력은 keyword + episodic + semantic + link이고, before-session embedding 입력은 source.sourceText + keyword + episodic + semantic + link다. 원문 interaction input/output은 embedding에서 제외한다. 계약이 바뀌면 `embeddingSource` 태그를 올려(`during_session_record_text_v2`, `before_session_unit_text`) 기존 embedding을 stale 처리해 재생성한다 `[현행 2026-07-10 → 15.194/15.201]`
-- **Forgetting / inactive memory**: active memory의 기준은 `archivedAt`이 없고 `weight > 0`인 문서다. `archivedAt`이 있거나 `weight <= 0`인 memory는 Firestore에는 남지만 retrieval, current `/agent`/admin graph, clustering 입력에서 기본 제외된다. `weight <= 0`은 별도 archive write 없이 inactive로 취급한다. Idle decay는 retrieve되지 않은 memory를 0까지 낮출 수 있으며 기본 loss는 `0.006`, memory 수 multiplier 적용 후 상한은 `0.012`다. Review turn에 이미 저장된 retrieved memory는 리뷰 패널에서 회색 inactive 상태로 표시되고, 세션 리뷰 graph에서는 해당 세션에서 생성·참조·duplicate 관계로 사라진 archived memory를 cluster snapshot과 별개로 unclustered node에 포함해 클릭 시 detail panel에서 내용을 확인할 수 있게 한다. Archived/inactive node와 detail card는 더 옅은 회색 톤으로 렌더한다. Admin forgetting 후보/수동 archive route와 탭은 제거되었고, admin은 current graph/table/retrieval log 중심으로 관측한다 `[현행 2026-07-13 → 15.202/15.211/15.235/15.241]`
+- **Forgetting / inactive memory**: active memory의 기준은 `archivedAt`이 없고 `weight > 0`인 문서다. `archivedAt`이 있거나 `weight <= 0`인 memory는 Firestore에는 남지만 retrieval, current `/agent`/admin graph, clustering 입력에서 기본 제외된다. `weight <= 0`은 별도 archive write 없이 inactive로 취급한다. Idle decay는 retrieve되지 않은 memory를 0까지 낮출 수 있으며 기본 loss는 `0.006`, memory 수 multiplier 적용 후 상한은 `0.012`다. Review turn에 이미 저장된 retrieved memory는 리뷰 패널에서 회색 inactive 상태로 표시되고, 세션 리뷰 graph에서는 해당 세션에서 생성·참조·duplicate 관계로 사라진 archived memory를 이전 snapshot의 원래 cluster label 그룹에 넣어 cluster list 맨 아래에 무채색/흐린 상태로 표시한다. 삭제된 memory 자체의 cluster membership이 없으면 `duplicateOf`/`duplicate.memoryId` 원본의 cluster label을 사용한다. Cluster list 제목에는 삭제 문구를 붙이지 않고, 원래 cluster를 찾을 수 없는 예외에서만 `미분류`로 표시한다. 이 그룹은 cluster count에 포함하지 않고 graph hull/cluster attraction을 그리지 않으며, 클릭 시 detail panel에서 내용을 확인할 수 있게 한다. Archived/inactive node와 detail card는 더 옅은 회색 톤으로 렌더한다. Admin forgetting 후보/수동 archive route와 탭은 제거되었고, admin은 current graph/table/retrieval log 중심으로 관측한다 `[현행 2026-07-15 → 15.202/15.211/15.235/15.241/15.261/15.262/15.263/15.264]`
 
 #### 메모리 클러스터링
 
@@ -4558,3 +4558,27 @@ type ChatPlan = {
 - 배경(Notion `메모리 질문지 UI`): Part 1 질문지의 글씨와 배치가 작고 밋밋해, 1번/2번 1-7 Likert 문항을 더 명확하게 읽히는 UI로 바꿔야 했다. 또한 Part 2의 4번 문항 위에서 Part 1의 3번 자유응답을 실제 텍스트로 다시 보여줘야 했다.
 - 수정: `MemoryReviewIntroPanel`의 Part 1 카드 padding, 질문 font size, 1-7 숫자 버튼 크기, 척도 label 크기를 키우고 1번/2번 Likert 문항을 왼쪽 열에 세로로 배치했다. 3번 자유응답은 오른쪽 열의 긴 입력 카드로 배치해 척도 문항과 구분했다.
 - 수정: `MemoryReviewPanel`에 `introMemoryText` prop을 추가하고, `/main/[missionId]`가 `future_memory_freeform` 답변을 전달한다. Part 2 header 문장에 실제 3번 답변을 따옴표로 넣고 굵게 표시하며, 별도 preview 카드는 두지 않고 본문은 바로 4번 문항부터 시작한다.
+
+### 15.261 Deleted memory group presentation `[implemented 2026-07-14]`
+
+- 배경(Notion `삭제된 메모리 표시 이상`): 세션 리뷰 graph에서 saved cluster snapshot에 포함되지 않은 archived memory가 `Unclustered session memory`라는 일반 fallback cluster로 묶여 보여, 삭제된 메모리끼리 실제 cluster가 형성된 것처럼 해석됐다.
+- 수정: `/main/[missionId]`의 세션 리뷰 graph 구성에서 unclustered memory를 active fallback과 archived fallback으로 분리한다. Archived fallback은 label을 `(삭제된 메모리)`로 고정하고 항상 cluster list 맨 아래에 둔다.
+- 표시: `MemoryClusterList`는 `(삭제된 메모리)` 그룹을 cluster count에서 제외하고 무채색/낮은 opacity로 표시한다. `MemoryClusterGraph`는 이 그룹의 node에 중립색을 쓰되 cluster hull을 그리지 않고 force layout의 cluster attraction에서도 제외해 실제 cluster처럼 보이지 않게 한다.
+
+### 15.262 Deleted memory keeps source cluster label `[implemented 2026-07-15]`
+
+- 배경: 15.261은 삭제된 메모리가 실제 cluster처럼 보이지 않게 했지만, label을 `(삭제된 메모리)`로만 표시해 원래 어떤 cluster 맥락의 메모리였는지 가렸다.
+- 수정: 삭제된 unclustered memory를 만들 때 before snapshot, legacy review cluster, session graph cluster 순서로 원래 cluster membership을 조회한다. 원래 cluster를 찾으면 cluster list label을 `클러스터명 (삭제된 메모리)`로 표시하고, 원래 cluster별로 삭제 그룹을 나눈다.
+- 유지: 이 그룹은 여전히 cluster count에 포함하지 않고 graph hull/cluster attraction을 그리지 않는다. 원래 cluster를 찾을 수 없는 항목만 `(삭제된 메모리)` fallback label을 사용한다.
+
+### 15.263 Deleted memory label uses only cluster name `[implemented 2026-07-15]`
+
+- 배경: 15.262의 `클러스터명 (삭제된 메모리)` label도 cluster list 제목에 삭제 문구가 남아 있어 원래 클러스터명이 덜 직접적으로 보였다.
+- 수정: 삭제된 memory 그룹의 cluster list label은 원래 cluster label만 사용한다. 15.264 이후 원래 cluster를 찾을 수 없는 예외는 `미분류`로 표시한다.
+- 유지: 삭제 상태는 group의 무채색/흐린 스타일, removed count, detail card의 `삭제됨` badge로 표현한다.
+
+### 15.264 Deleted duplicate memory resolves source cluster `[implemented 2026-07-15]`
+
+- 배경: 이번 세션에서 새로 생성됐다가 duplicate/정리로 바로 archived된 memory는 before snapshot에 없고 archived라 current/after cluster 입력에도 없어, 자기 id만으로는 원래 cluster label을 찾지 못할 수 있다.
+- 수정: 삭제된 memory의 직접 cluster membership이 없으면 `duplicateOf` 또는 `duplicate.memoryId`가 가리키는 원본 memory id로 cluster label을 다시 조회한다.
+- 표시: 이 보정 후에도 원래 cluster를 찾지 못하는 legacy/snapshot-missing 예외만 `미분류` label을 사용한다.

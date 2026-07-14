@@ -384,6 +384,7 @@ type SessionGraphCluster = {
   itemIds: string[];
   representativeItems: string[];
   colorIndex?: number;
+  visualRole?: "deleted-memory";
 };
 
 type SessionGraphEdge = {
@@ -8462,22 +8463,85 @@ export default function MainScreenPage() {
     const unclusteredMemoryIds = graphItems
       .map((item) => item.id)
       .filter((id) => !clusteredMemoryIds.has(id));
-    const graphClusters =
-      unclusteredMemoryIds.length > 0
+    const deletedUnclusteredMemoryIds = unclusteredMemoryIds.filter((id) =>
+      sessionArchivedIds.has(id),
+    );
+    const regularUnclusteredMemoryIds = unclusteredMemoryIds.filter(
+      (id) => !sessionArchivedIds.has(id),
+    );
+    const deletedMemorySourceClusters = [
+      ...sessionMemorySummary.clusterSnapshots.before.graphClusters,
+      ...legacyReviewClusters.graphClusters,
+      ...sessionMemorySummary.graphClusters,
+    ];
+    const deletedMemoryClusterById = new Map<string, SessionGraphCluster>();
+    for (const cluster of deletedMemorySourceClusters) {
+      for (const itemId of cluster.itemIds) {
+        if (!deletedMemoryClusterById.has(itemId)) {
+          deletedMemoryClusterById.set(itemId, cluster);
+        }
+      }
+    }
+    const memoryById = new Map(
+      cumulativeGraphMemories.map((memory) => [memory.id, memory] as const),
+    );
+    const deletedMemoryGroups = new Map<
+      string,
+      { sourceCluster: SessionGraphCluster | null; itemIds: string[] }
+    >();
+    for (const itemId of deletedUnclusteredMemoryIds) {
+      const deletedMemory = memoryById.get(itemId) ?? null;
+      const duplicateTargetId =
+        deletedMemory?.duplicateOf ?? deletedMemory?.duplicate?.memoryId ?? null;
+      const sourceCluster =
+        deletedMemoryClusterById.get(itemId) ??
+        (duplicateTargetId
+          ? deletedMemoryClusterById.get(duplicateTargetId)
+          : undefined) ??
+        null;
+      const groupKey = sourceCluster?.id ?? "unclustered";
+      const group = deletedMemoryGroups.get(groupKey) ?? {
+        sourceCluster,
+        itemIds: [],
+      };
+      group.itemIds.push(itemId);
+      deletedMemoryGroups.set(groupKey, group);
+    }
+    const deletedMemoryClusters = Array.from(deletedMemoryGroups.entries()).map(
+      ([groupKey, group]) => {
+        const sourceLabel = group.sourceCluster?.label?.trim();
+        return {
+          id: `session-deleted-memory:${groupKey}`,
+          label: sourceLabel || "미분류",
+          summary: group.sourceCluster?.summary
+            ? `${group.sourceCluster.summary}\n삭제되어 현재 클러스터에는 포함되지 않는 메모리입니다.`
+            : "이번 세션에서 삭제되어 현재 클러스터에는 포함되지 않는 메모리입니다.",
+          count: group.itemIds.length,
+          relatedActions: group.sourceCluster?.relatedActions ?? [],
+          itemIds: group.itemIds,
+          representativeItems: group.sourceCluster?.representativeItems ?? [],
+          visualRole: "deleted-memory" as const,
+        };
+      },
+    );
+    const graphClusters = [
+      ...baseGraphClusters,
+      ...(regularUnclusteredMemoryIds.length > 0
         ? [
-            ...baseGraphClusters,
             {
               id: "session-unclustered",
               label: "Unclustered session memory",
               summary:
                 "Session memory items not included in the saved similarity cluster cache.",
-              count: unclusteredMemoryIds.length,
+              count: regularUnclusteredMemoryIds.length,
               relatedActions: [],
-              itemIds: unclusteredMemoryIds,
+              itemIds: regularUnclusteredMemoryIds,
               representativeItems: [],
             },
           ]
-        : baseGraphClusters;
+        : []),
+      ...deletedMemoryClusters,
+    ];
     const graphClusterIds = new Set(graphClusters.map((cluster) => cluster.id));
     const selectedClusterId =
       selectedSessionGraphClusterId && graphClusterIds.has(selectedSessionGraphClusterId)

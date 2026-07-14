@@ -31,6 +31,7 @@ type MemoryCluster = {
   itemIds: string[];
   representativeItems: string[];
   colorIndex?: number;
+  visualRole?: "deleted-memory";
 };
 
 type ClusterableMemoryItem = {
@@ -92,6 +93,11 @@ type ProjectionPoint = { x: number; y: number; hasEmbedding: boolean };
 const MIN_ZOOM = 0.55;
 const MAX_ZOOM = 5;
 const GRAPH_LAYOUT_ITERATIONS = 260;
+const DELETED_MEMORY_CLUSTER_COLOR = "#94a3b8";
+
+function isDeletedMemoryCluster(cluster: MemoryCluster | null | undefined) {
+  return cluster?.visualRole === "deleted-memory";
+}
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
@@ -346,6 +352,11 @@ function projectSimilarityGraph(
   clusters.forEach((cluster) => {
     cluster.itemIds.forEach((itemId) => clusterByItemId.set(itemId, cluster.id));
   });
+  const nonAttractingClusterIds = new Set(
+    clusters
+      .filter((cluster) => isDeletedMemoryCluster(cluster))
+      .map((cluster) => cluster.id),
+  );
   const nodes = normalizeProjection(baseProjection, items).map((point, index) => ({
     ...point,
     vx: 0,
@@ -405,6 +416,7 @@ function projectSimilarityGraph(
 
     const clusterSums = new Map<string, { x: number; y: number; count: number }>();
     nodes.forEach((node) => {
+      if (nonAttractingClusterIds.has(node.clusterId)) return;
       const current = clusterSums.get(node.clusterId) ?? { x: 0, y: 0, count: 0 };
       current.x += node.x;
       current.y += node.y;
@@ -640,12 +652,14 @@ export default function MemoryClusterGraph({
       const cluster = clusterByItemId.get(item.id) ?? null;
       const clusterId = cluster?.id ?? "unclustered";
       const color =
-        cluster && clusterIndexById.has(cluster.id)
-          ? memoryClusterStableColor(
-              cluster,
-              clusterIndexById.get(cluster.id) ?? 0,
-            )
-          : "#94a3b8";
+        isDeletedMemoryCluster(cluster)
+          ? DELETED_MEMORY_CLUSTER_COLOR
+          : cluster && clusterIndexById.has(cluster.id)
+            ? memoryClusterStableColor(
+                cluster,
+                clusterIndexById.get(cluster.id) ?? 0,
+              )
+            : "#94a3b8";
       const projected = projection.get(item.id) ?? { x: 0, y: 0, hasEmbedding: false };
       return {
         id: item.id,
@@ -778,6 +792,7 @@ export default function MemoryClusterGraph({
     ctx.setLineDash([]);
 
     clusters.forEach((cluster) => {
+      if (isDeletedMemoryCluster(cluster)) return;
       const points = clusterPointGroups.get(cluster.id) ?? [];
       const color = points[0]?.color ?? "#94a3b8";
       drawClusterArea(ctx, points, color, cluster.id === selectedClusterId, toScreen, view.zoom);

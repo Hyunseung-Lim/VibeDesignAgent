@@ -33,6 +33,7 @@ export type MemoryCluster = {
   itemIds: string[];
   representativeItems: string[];
   colorIndex?: number;
+  visualRole?: "deleted-memory";
 };
 
 export type ClusterGraphEdge = {

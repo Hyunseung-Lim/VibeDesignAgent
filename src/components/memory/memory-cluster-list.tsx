@@ -9,6 +9,11 @@ import type { MemoryCluster } from "./memory-cluster-types";
 import { memoryClusterStableColor } from "./memory-cluster-colors";
 
 const COLLAPSE_STORAGE_KEY = "memoryClusterList:review:collapsed";
+const DELETED_MEMORY_CLUSTER_COLOR = "#94a3b8";
+
+function isDeletedMemoryCluster(cluster: MemoryCluster) {
+  return cluster.visualRole === "deleted-memory";
+}
 
 function formatDate(ts: number | null) {
   if (!ts) return "";
@@ -74,6 +79,9 @@ export function MemoryClusterList({
   removedCountByClusterId,
 }: MemoryClusterListProps) {
   const reviewPresentation = presentation === "review";
+  const clusterCount = reviewPresentation
+    ? clusters.filter((cluster) => !isDeletedMemoryCluster(cluster)).length
+    : clusters.length;
   const [collapsed, setCollapsed] = useState(() =>
     typeof window !== "undefined" &&
     window.localStorage.getItem(COLLAPSE_STORAGE_KEY) === "1",
@@ -107,7 +115,10 @@ export function MemoryClusterList({
         <div className="min-h-0 flex-1 space-y-1.5 overflow-y-auto py-1">
           {clusters.map((cluster, index) => {
             const selected = selectedClusterId === cluster.id;
-            const color = memoryClusterStableColor(cluster, index);
+            const deletedMemoryCluster = isDeletedMemoryCluster(cluster);
+            const color = deletedMemoryCluster
+              ? DELETED_MEMORY_CLUSTER_COLOR
+              : memoryClusterStableColor(cluster, index);
             return (
               <button
                 key={cluster.id}
@@ -121,7 +132,9 @@ export function MemoryClusterList({
                   "flex size-8 cursor-pointer items-center justify-center rounded-lg border text-xs font-bold text-white transition",
                   selected
                     ? "border-white/80 shadow-[inset_0_0_0_2px_rgba(255,255,255,0.45)]"
-                    : "border-transparent opacity-80 hover:opacity-100",
+                    : deletedMemoryCluster
+                      ? "border-transparent opacity-70 hover:opacity-90"
+                      : "border-transparent opacity-80 hover:opacity-100",
                 )}
                 style={{ backgroundColor: color }}
               >
@@ -146,7 +159,7 @@ export function MemoryClusterList({
         <div className="flex items-center justify-between gap-2">
           <div>
             <p className="text-[11px] font-semibold text-muted-foreground">
-              {clusters.length}개 클러스터
+              {clusterCount}개 클러스터
             </p>
             {nodeCount != null || edgeCount != null ? (
               <p className="mt-0.5 text-[10px] font-medium text-muted-foreground/60">
@@ -201,7 +214,10 @@ export function MemoryClusterList({
       <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
         {clusters.map((cluster, index) => {
           const selected = selectedClusterId === cluster.id;
-          const color = memoryClusterStableColor(cluster, index);
+          const deletedMemoryCluster = isDeletedMemoryCluster(cluster);
+          const color = deletedMemoryCluster
+            ? DELETED_MEMORY_CLUSTER_COLOR
+            : memoryClusterStableColor(cluster, index);
           const addedCount = addedCountByClusterId?.[cluster.id] ?? 0;
           const removedCount = removedCountByClusterId?.[cluster.id] ?? 0;
           if (reviewPresentation) {
@@ -215,6 +231,8 @@ export function MemoryClusterList({
                 }}
                 className={cn(
                   "relative flex min-h-[3.25rem] w-full cursor-pointer overflow-hidden rounded-lg border bg-background text-left transition hover:border-sidebar-border hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:border-sidebar-ring focus-visible:ring-3 focus-visible:ring-sidebar-ring/50 focus-visible:outline-none",
+                  deletedMemoryCluster &&
+                    "bg-slate-50/70 text-slate-500 opacity-75 hover:bg-slate-50 hover:opacity-95",
                   selected
                     ? mentionMode
                       ? "border-amber-300 bg-amber-50"
@@ -226,8 +244,12 @@ export function MemoryClusterList({
                 style={
                   selected && !mentionMode
                     ? {
-                        borderColor: colorAlpha(color, 0.42),
-                        backgroundColor: colorAlpha(color, 0.06),
+                        borderColor: deletedMemoryCluster
+                          ? "#cbd5e1"
+                          : colorAlpha(color, 0.42),
+                        backgroundColor: deletedMemoryCluster
+                          ? "rgba(248,250,252,0.88)"
+                          : colorAlpha(color, 0.06),
                       }
                     : undefined
                 }
@@ -236,6 +258,7 @@ export function MemoryClusterList({
                   className={cn(
                     "flex w-10 shrink-0 items-center justify-center text-[13px] font-bold text-white",
                     selected && !mentionMode ? "" : "opacity-80",
+                    deletedMemoryCluster && "text-slate-50",
                   )}
                   style={{ backgroundColor: color }}
                 >
