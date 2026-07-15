@@ -329,6 +329,9 @@ type ChatPlan = {
   intent: ChatPlanIntent;
   confidence: number;
   memoryRelevance: MemoryRelevance;
+  // Planner-written imperative guidance (max 2) on HOW to apply the user's
+  // durable preferences to this turn. Empty when no memory clearly applies.
+  memoryDirectives: string[];
   needs: ChatPlanNeeds;
   reason: string;
 };
@@ -424,6 +427,7 @@ function defaultChatPlan(overrides?: Partial<ChatPlan>): ChatPlan {
     intent: "answer",
     confidence: 0,
     memoryRelevance: "medium",
+    memoryDirectives: [],
     needs: {
       mission: true,
       activeIdea: true,
@@ -666,6 +670,13 @@ function parseChatPlan(text: string): ChatPlan | null {
       memoryRelevance: MEMORY_RELEVANCE_LEVELS.has(rawMemoryRelevance)
         ? (rawMemoryRelevance as MemoryRelevance)
         : "medium",
+      memoryDirectives: Array.isArray(parsed.memoryDirectives)
+        ? parsed.memoryDirectives
+            .map((item) => (typeof item === "string" ? item.trim() : ""))
+            .filter(Boolean)
+            .slice(0, 2)
+            .map((item) => truncateText(item, 300))
+        : [],
       needs: {
         mission: Boolean(needs?.mission),
         activeIdea: Boolean(needs?.activeIdea),
@@ -1118,8 +1129,12 @@ export async function POST(request: Request) {
         role: "system",
         label: "retrievalMemory",
         content: chatRetrievedMemoryPrompt(
-          JSON.stringify(compactMemory),
-          promptPlan.memoryRelevance,
+          compactMemory,
+          // Directives (injected near currentRequest below) subsume the
+          // relevance dial; "medium" renders no relevance line.
+          promptPlan.memoryDirectives.length > 0
+            ? "medium"
+            : promptPlan.memoryRelevance,
         ),
       });
     }
@@ -1318,6 +1333,20 @@ export async function POST(request: Request) {
       promptPlanFallback || !promptPlanReliable,
     ),
   });
+
+  // Late in the system stack, right before currentRequest, where this-turn
+  // behavioral instructions get the most weight (15.266).
+  if (promptPlan.memoryDirectives.length > 0) {
+    markContext("memoryDirectives");
+    systemMessages.push({
+      role: "system",
+      label: "memoryDirectives",
+      content: [
+        "Memory-informed guidance for this turn, derived from the user's durable preferences. Apply it where it fits the current request; if any part conflicts with what the user asks now, the current request wins. When a directive shapes your result, briefly reflect that consideration in your visible reply in natural language (never call it memory or the system):",
+        ...promptPlan.memoryDirectives.map((directive) => `- ${directive}`),
+      ].join("\n"),
+    });
+  }
 
   if (latestUserText) {
     markContext("currentRequest");

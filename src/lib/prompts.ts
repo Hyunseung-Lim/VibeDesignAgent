@@ -114,12 +114,24 @@ function normalizedChatActionIntent(intent: string) {
   return intent;
 }
 
+// Visible rationale for action turns: 1-2 sentences BEFORE the action tag
+// explaining what shaped the result. Writing it first acts as a light
+// chain-of-thought for the action payload, and it is where memory-driven
+// choices become visible to the user (15.267). Excluded for fetch_references
+// (strict one-sentence contract) and plain answers.
+const CHAT_ACTION_RATIONALE_PROMPT = `Visible reply style for this action:
+- Immediately before the action tag, write 1-2 short sentences in the user's language explaining what you considered and how it shaped the result — the pattern is "~한 점을 고려해서 ~하게 구성했어요."
+- Name the concrete inputs that actually mattered this turn: the current request, the design brief or 디자인 스타일 constraints, and the user's known preferences when they influenced a choice.
+- When a durable user preference shaped the result, say so naturally (e.g. "평소 선호하시는 절제된 다크 톤을 유지하고...") — never call it memory, stored data, or the system.
+- Do not pad beyond 2 sentences, do not restate the request, and do not describe the action mechanics ("태그를 출력합니다" 등).`;
+
 export function chatActionInstructionPrompt(
   intent: string,
   includeRouter = false,
 ) {
   const normalizedIntent = normalizedChatActionIntent(intent);
   const prompts = [includeRouter ? CHAT_ACTION_ROUTER_PROMPT : ""];
+  let isRationaleAction = true;
   if (
     normalizedIntent === "create_design_brief" ||
     normalizedIntent === "edit_design_brief"
@@ -138,8 +150,13 @@ export function chatActionInstructionPrompt(
     // not independently web-search and narrate a site, since the actual cards
     // come from /api/references after the reply. Keeping them in sync.
     prompts.push(CHAT_REFERENCE_ACTION_PROMPT);
+    isRationaleAction = false;
   } else {
     prompts.push(CHAT_WEB_LOOKUP_ACTION_PROMPT);
+    isRationaleAction = false;
+  }
+  if (isRationaleAction) {
+    prompts.push(CHAT_ACTION_RATIONALE_PROMPT);
   }
   return prompts.filter(Boolean).join("\n\n");
 }
@@ -166,23 +183,57 @@ export function chatMissionPrompt(
 
 type MemoryRelevance = "light" | "medium" | "strong";
 
-function memoryRelevanceInstruction(
-  relevance: MemoryRelevance = "medium",
-) {
-  if (relevance === "light") {
-    return "Memory relevance for this turn: light. Treat memory as quiet background only; do not force it into the response.";
-  }
-  if (relevance === "strong") {
-    return "Memory relevance for this turn: strong. Actively align with relevant memory while still prioritizing the latest user request.";
-  }
-  return "Memory relevance for this turn: medium. Reflect memory when it materially helps the current response.";
+export type CompactMemoryItem = {
+  episodic?: string;
+  semantic?: string;
+  beforeSessionScope?: string;
+  sourceMissionId?: string;
+};
+
+function compactMemoryOriginSuffix(item: CompactMemoryItem) {
+  if (!item.beforeSessionScope) return "";
+  const mission = item.sourceMissionId
+    ? `, mission: ${item.sourceMissionId}`
+    : "";
+  return ` (before-session ${item.beforeSessionScope}${mission})`;
 }
 
+// Plaintext bullets instead of nested JSON: no quote escaping or repeated
+// wrapper keys, same information (15.265). The medium relevance line is
+// omitted — it duplicated the base instruction.
 export function chatRetrievedMemoryPrompt(
-  compactMemoryJson: string,
+  memory: { episodic: CompactMemoryItem[]; semantic: CompactMemoryItem[] },
   memoryRelevance: MemoryRelevance = "medium",
 ) {
-  return `Memory retrieved for this turn. The JSON groups episodic and semantic memory separately. Items may come from before-session setup or completed interaction turns; before-session items may include beforeSessionScope and sourceMissionId. Treat all items as retrieval-selected memory evidence, not as automatic mission requirements. Episodic items summarize prior context and outcomes when relevant. Semantic items contain durable user preferences, constraints, or working patterns. Use only what is helpful, prioritize the latest user request and current mission context, and apply useful memory silently without referencing it directly.\n${memoryRelevanceInstruction(memoryRelevance)}\n${compactMemoryJson}`;
+  const lines = [
+    "Memory retrieved for this turn — evidence selected by retrieval, not automatic mission requirements. Use only what helps and prioritize the latest user request and current mission context. Never quote memory verbatim or call it memory/stored data; when a durable preference shapes an action you take, briefly reflect that consideration in your visible reply in natural language.",
+  ];
+  if (memoryRelevance === "light") {
+    lines.push(
+      "Memory relevance: light — treat memory as quiet background only; do not force it into the response.",
+    );
+  } else if (memoryRelevance === "strong") {
+    lines.push(
+      "Memory relevance: strong — actively align with relevant memory while still prioritizing the latest user request.",
+    );
+  }
+  if (memory.episodic.length > 0) {
+    lines.push(
+      "Episodic (past context and outcomes):",
+      ...memory.episodic.map(
+        (item) => `- ${item.episodic ?? ""}${compactMemoryOriginSuffix(item)}`,
+      ),
+    );
+  }
+  if (memory.semantic.length > 0) {
+    lines.push(
+      "Semantic (durable user preferences, constraints, working patterns):",
+      ...memory.semantic.map(
+        (item) => `- ${item.semantic ?? ""}${compactMemoryOriginSuffix(item)}`,
+      ),
+    );
+  }
+  return lines.join("\n");
 }
 
 export function chatDesignSpecPrompt(designSpec: string) {
@@ -318,6 +369,7 @@ Output shape:
   "intent": "answer" | "create_design_brief" | "edit_design_brief" | "create_mockup" | "edit_mockup" | "fetch_references" | "create_design_spec" | "edit_design_spec",
   "confidence": 0.0,
   "memoryRelevance": "light" | "medium" | "strong",
+  "memoryDirectives": ["short imperative guidance derived from semanticMemories, max 2 items, [] when unsure"],
   "needs": {
     "mission": true,
     "activeIdea": false,
@@ -351,7 +403,8 @@ Rules:
   - "medium": memory is somewhat relevant to the request or design direction; reflect it when it helps.
   - "strong": memory is directly relevant, high-signal, or the user asks for personalization/continuity; actively align the response with it.
 - If the user request cannot be answered without asking a question, choose "answer" and ask the shortest useful clarifying question in the final response.
-- semanticMemories, when present, are retrieved memory items already selected by the app's retrieval/filter policy. Use them only to judge memoryRelevance and disambiguate vague requests. Do not override the latest user request or quote memory.
+- semanticMemories, when present, are retrieved memory items already selected by the app's retrieval/filter policy. Use them to judge memoryRelevance, write memoryDirectives, and disambiguate vague requests. Do not override the latest user request or quote memory.
+- memoryDirectives: at most 2 short imperative sentences (English) telling the responder HOW to apply the user's durable preferences to THIS request, e.g. "Keep the restrained dark editorial tone the user consistently prefers." Only write a directive when a semantic memory clearly applies to the current request AND the chosen intent; when none clearly applies, return []. Never write directives that repeat or continue a previous task, contradict the current request, or merely restate the request itself.
 - In analysis, apply the rules before choosing intent/needs. Mention ambiguity if relevant. Keep analysis concise.
 
 Compact input:

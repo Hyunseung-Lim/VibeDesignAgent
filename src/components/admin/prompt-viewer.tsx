@@ -63,6 +63,7 @@ const SYSTEM_BLOCK_PREFIXES: Array<[string, string]> = [
   ["The user is citing these references", "citedReferences"],
   ["The user explicitly mentioned an existing workspace artifact.", "mentionedArtifact"],
   ["The user explicitly selected the composer command", "requestedCommand"],
+  ["Memory-informed guidance for this turn", "memoryDirectives"],
   ["The most recent user message is the current request", "currentRequest"],
 ];
 
@@ -107,6 +108,7 @@ const BLOCK_LABEL_STYLES: Record<string, string> = {
   designSpec: "bg-violet-100 text-violet-700",
   mockupHtml: "bg-orange-100 text-orange-700",
   retrievalMemory: "bg-sky-100 text-sky-700",
+  memoryDirectives: "bg-sky-200 text-sky-800",
   citedTexts: "bg-amber-100 text-amber-700",
   citedReferences: "bg-amber-100 text-amber-700",
   referencePreference: "bg-amber-100 text-amber-700",
