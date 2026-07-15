@@ -38,7 +38,7 @@ const REVIEW_QUESTIONS: ReviewQuestion[] = [
   {
     id: "wrong_or_unnecessary_memory",
     label:
-      "반대로, 틀렸거나, 필요 없거나, 바란 것과 다르게 기억된 정보가 있나요?",
+      "반대로, 틀렸거나, 필요 없거나, 바란 것과 다르게 기억된 정보가 있나요? (어떻게 저장되었어야 하나요?)",
     allowNone: true,
     placeholder: "무엇이 어떻게 잘못 기억되어 있는지 적어주세요",
   },
@@ -52,7 +52,7 @@ const REVIEW_QUESTIONS: ReviewQuestion[] = [
   {
     id: "correction_preference",
     label:
-      "위에서 메모리에 수정이나 추가가 필요하다고 답하셨다면, 어떻게 바로잡히기를 원하시나요? (앞서 언급한 정보 각각에 대해 답해주세요)",
+      "위에서 메모리에 수정이나 추가가 필요하다고 답하셨다면, 이것이 어떤 방식으로 바로잡히기를 원하시나요? (앞서 언급한 정보 각각에 대해 답해주세요)",
     allowNone: true,
     placeholder:
       "예: 직접 고치고 싶다, 말해서 고치게 하고 싶다, 이후 작업을 보며 스스로 반영했으면 한다",
