@@ -1112,6 +1112,41 @@ function assetImageUrl(asset: AssetImageRequest) {
   return asset.url || `/api/mission-assets?path=${encodeURIComponent(asset.path)}`;
 }
 
+// Stitch generation cannot reference assets it can never fetch or echo:
+// relative URLs, localhost, and private-network hosts always fail the
+// literal-URL coverage check, so the generate→repair waterfall just burns
+// minutes before the OpenAI fallback runs anyway (dev_document 15.262).
+function isPubliclyReachableAssetUrl(value: string) {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return false; // relative URL — resolvable only by this app's origin
+  }
+  if (!["http:", "https:"].includes(url.protocol)) return false;
+  const host = url.hostname.toLowerCase();
+  if (
+    host === "localhost" ||
+    host === "0.0.0.0" ||
+    host === "::1" ||
+    host === "[::1]" ||
+    host.endsWith(".local") ||
+    host.endsWith(".localhost") ||
+    host.endsWith(".internal")
+  ) {
+    return false;
+  }
+  if (
+    /^127\./.test(host) ||
+    /^10\./.test(host) ||
+    /^192\.168\./.test(host) ||
+    /^172\.(1[6-9]|2\d|3[01])\./.test(host)
+  ) {
+    return false;
+  }
+  return true;
+}
+
 function assetImageUrlFallbackPrompt(
   productPrompt: string,
   deviceLabel: string,
@@ -1299,43 +1334,77 @@ async function generateOpenAiAssetFallbackScreen(
     deviceLabel,
     assets,
   );
-  const completion = await openai.chat.completions.create({
-    model: process.env.OPENAI_STITCH_FALLBACK_MODEL ?? "gpt-5.4-mini",
-    messages: [
-      {
-        role: "system",
-        content: [
-          "You generate production-ready standalone HTML mockups.",
-          "Return only complete HTML. Do not wrap it in markdown.",
-          "Use Tailwind Play CDN or plain CSS inside the document.",
-          "Use the provided asset tokens exactly as img src values.",
-          "Do not mention that this is a fallback.",
-        ].join("\n"),
-      },
-      {
-        role: "user",
-        content: fallbackPrompt,
-      },
-    ],
-  });
-  const html = replaceAssetTokens(
-    completeHtmlDocument(completion.choices[0]?.message?.content ?? ""),
-    assets,
-  );
-  if (!/<(main|section|article|div|body)\b/i.test(html)) {
-    throw new Error("OpenAI HTML fallback returned no usable mockup markup.");
-  }
-  const coverage = assetHtmlCoverage(html, assets);
-  if (!coverage.allMatched) {
-    logAssetCoverageFailure("openai-fallback", html, assets);
-    throw new Error(
-      `OpenAI HTML fallback did not preserve every mission asset (${coverage.matchedCount}/${coverage.totalCount}).`,
+  const systemContent = [
+    "You generate production-ready standalone HTML mockups.",
+    "Return only complete HTML. Do not wrap it in markdown.",
+    "Use Tailwind Play CDN or plain CSS inside the document.",
+    "Use the provided asset tokens exactly as img src values.",
+    "Do not mention that this is a fallback.",
+  ].join("\n");
+
+  // The model sometimes drops a few of the required assets (observed 5/7).
+  // Retry once with explicit feedback listing the missed tokens before
+  // giving up — a 500 here fails the whole generation.
+  const maxAttempts = 2;
+  let lastCoverage = { matchedCount: 0, totalCount: assets.length };
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const missingFeedback =
+      attempt === 1
+        ? ""
+        : [
+            `Your previous HTML used only ${lastCoverage.matchedCount} of the ${assets.length} required asset tokens. Regenerate the complete HTML and include EVERY token below at least once as an img src value:`,
+            assets
+              .map(
+                (asset, index) =>
+                  `{{ASSET_${index + 1}}} — ${asset.note || "No admin description provided."}`,
+              )
+              .join("\n"),
+          ].join("\n");
+    const completion = await openai.chat.completions.create({
+      model: process.env.OPENAI_STITCH_FALLBACK_MODEL ?? "gpt-5.4-mini",
+      messages: [
+        { role: "system", content: systemContent },
+        {
+          role: "user",
+          content: missingFeedback
+            ? `${fallbackPrompt}\n\n${missingFeedback}`
+            : fallbackPrompt,
+        },
+      ],
+    });
+    const html = replaceAssetTokens(
+      completeHtmlDocument(completion.choices[0]?.message?.content ?? ""),
+      assets,
     );
+    if (!/<(main|section|article|div|body)\b/i.test(html)) {
+      if (attempt < maxAttempts) {
+        console.warn(
+          "[stitch] OpenAI fallback returned no usable markup; retrying",
+        );
+        continue;
+      }
+      throw new Error("OpenAI HTML fallback returned no usable mockup markup.");
+    }
+    const coverage = assetHtmlCoverage(html, assets);
+    if (!coverage.allMatched) {
+      lastCoverage = coverage;
+      logAssetCoverageFailure("openai-fallback", html, assets);
+      if (attempt < maxAttempts) {
+        console.warn(
+          `[stitch] OpenAI fallback missed mission assets (${coverage.matchedCount}/${coverage.totalCount}); retrying with feedback`,
+        );
+        continue;
+      }
+      throw new Error(
+        `OpenAI HTML fallback did not preserve every mission asset (${coverage.matchedCount}/${coverage.totalCount}).`,
+      );
+    }
+    return {
+      id: `openai-asset-fallback-${randomUUID()}`,
+      getHtml: async () => html,
+    };
   }
-  return {
-    id: `openai-asset-fallback-${randomUUID()}`,
-    getHtml: async () => html,
-  };
+  throw new Error("OpenAI HTML fallback did not produce a usable mockup.");
 }
 
 // Reverse-extract a 디자인 스타일 note from the reconstructed (correct) HTML so
@@ -1405,6 +1474,43 @@ export async function POST(request: Request) {
   const isAssetLed = assetImageInputs.length > 0 && !screenId && !isImageLed;
 
   try {
+    // Asset-led generation whose assets Stitch can never reference (relative /
+    // localhost / private-network URLs — typical in dev) always fails the
+    // literal-URL coverage check, so the Stitch generate→repair waterfall only
+    // burns minutes before the OpenAI fallback runs anyway. Skip Stitch
+    // entirely (project creation and design-system apply included) and go
+    // straight to the direct HTML fallback.
+    if (isAssetLed) {
+      const unreachableAssetUrls = assetImageInputs
+        .map((asset) => assetImageUrl(asset))
+        .filter((url) => !isPubliclyReachableAssetUrl(url));
+      if (unreachableAssetUrls.length > 0) {
+        console.warn(
+          "[stitch] asset-led assets are not publicly reachable; skipping Stitch generation for direct HTML fallback:",
+          JSON.stringify(unreachableAssetUrls.slice(0, 3)),
+        );
+        const fallbackScreen = await generateOpenAiAssetFallbackScreen(
+          prompt,
+          deviceType,
+          assetImageInputs,
+        );
+        const fallbackHtml = await fallbackScreen.getHtml();
+        console.log(
+          "[stitch] asset-led fallback screen id:",
+          fallbackScreen.id,
+        );
+        console.log("[stitch] selected html length:", fallbackHtml.length);
+        return Response.json({
+          html: fallbackHtml,
+          projectId: projectId ?? "",
+          screenId: fallbackScreen.id,
+          allScreenIds: [fallbackScreen.id],
+          designSystemId: null,
+          appliedDesignStyleHash: null,
+        });
+      }
+    }
+
     let stitch: StitchClientBundle;
     try {
       stitch = await createStitchClient();
@@ -1791,6 +1897,36 @@ export async function POST(request: Request) {
       );
       if (!coverage.allMatched) {
         logAssetCoverageFailure("asset-led-first-design", html, assetImageInputs);
+        const applyOpenAiAssetFallback = async () => {
+          screen = await generateOpenAiAssetFallbackScreen(
+            prompt,
+            deviceType,
+            assetImageInputs,
+          );
+          html = await screen.getHtml();
+          selected = {
+            screen,
+            html,
+            htmlPending: false,
+            score: 0,
+          };
+          allScreenIds = [screen.id];
+          if (screen.id.startsWith("openai-asset-fallback-")) {
+            actualProjectId = projectId ?? "";
+            resolvedDesignSystemId = null;
+            resolvedStyleHash = null;
+          }
+          console.log("[stitch] asset-led fallback screen id:", screen.id);
+        };
+        if (coverage.matchedCount === 0) {
+          // A zero-coverage first design means Stitch declined to reference the
+          // asset URLs at all — the repair edit reliably comes back 0/N too
+          // (observed in logs), so skip the slowest call and fall back now.
+          console.warn(
+            "[stitch] asset-led first design preserved no mission assets; skipping repair edit for direct HTML fallback",
+          );
+          await applyOpenAiAssetFallback();
+        } else {
         console.warn(
           "[stitch] asset-led first design missed mission assets; editing generated screen",
         );
@@ -1841,25 +1977,8 @@ export async function POST(request: Request) {
             "[stitch] asset-led generated-screen edit failed; generating direct HTML fallback:",
             errorMessage(repairErr),
           );
-          screen = await generateOpenAiAssetFallbackScreen(
-            prompt,
-            deviceType,
-            assetImageInputs,
-          );
-          html = await screen.getHtml();
-          selected = {
-            screen,
-            html,
-            htmlPending: false,
-            score: 0,
-          };
-          allScreenIds = [screen.id];
-          if (screen.id.startsWith("openai-asset-fallback-")) {
-            actualProjectId = projectId ?? "";
-            resolvedDesignSystemId = null;
-            resolvedStyleHash = null;
-          }
-          console.log("[stitch] asset-led fallback screen id:", screen.id);
+          await applyOpenAiAssetFallback();
+        }
         }
       }
     }

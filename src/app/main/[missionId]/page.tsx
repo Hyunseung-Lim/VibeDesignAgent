@@ -179,6 +179,19 @@ type Message = {
     boundingRect?: SelectedElementBounds;
     viewport?: SelectedElementViewport;
   } | null;
+  // Multi-select (shift/cmd click) citations. citedElement stays as the first
+  // element for backward compatibility with saved sessions.
+  citedElements?:
+    | {
+        selector: string;
+        artboardId: string;
+        outerHTML?: string;
+        textContent?: string;
+        xpath?: string;
+        boundingRect?: SelectedElementBounds;
+        viewport?: SelectedElementViewport;
+      }[]
+    | null;
   citedReferences?: { id: string; title: string; imageUrl?: string }[] | null;
   citedTexts?: string[] | null;
   styleImage?: { dataUrl: string; name?: string } | null;
@@ -1136,6 +1149,53 @@ function selectedElementTargetPrompt(
   ]
     .filter(Boolean)
     .join("\n");
+}
+
+function selectedElementsTargetPrompt(
+  elements: SelectedElement[],
+  originalRequest?: string,
+) {
+  if (elements.length === 1) {
+    return selectedElementTargetPrompt(elements[0], originalRequest);
+  }
+  return [
+    `The user multi-selected ${elements.length} elements. Apply the requested edit to every selected element below.`,
+    ...elements.map(
+      (element, index) =>
+        `--- Selected element ${index + 1} of ${elements.length} ---\n${selectedElementTargetPrompt(element, originalRequest)}`,
+    ),
+  ].join("\n\n");
+}
+
+// Applies the deterministic patch sequentially across a multi-selection.
+// All-or-nothing: if any selected element cannot be patched deterministically,
+// return null so the whole selection falls through to the LLM local edit.
+function patchSelectedElementsInHtml(
+  html: string,
+  elements: SelectedElement[],
+  requestText: string,
+) {
+  if (elements.length === 0) return null;
+  if (elements.length === 1) {
+    return patchSelectedElementInHtml(html, elements[0], requestText);
+  }
+  let currentHtml = html;
+  let lastPatch: ReturnType<typeof patchSelectedElementInHtml> = null;
+  const patchTypes: string[] = [];
+  for (const element of elements) {
+    const patch = patchSelectedElementInHtml(currentHtml, element, requestText);
+    if (!patch || patch.html === currentHtml) return null;
+    currentHtml = patch.html;
+    patchTypes.push(patch.patchType);
+    lastPatch = patch;
+  }
+  if (!lastPatch) return null;
+  return {
+    ...lastPatch,
+    html: currentHtml,
+    patchType: patchTypes.join(","),
+    output: `${lastPatch.output} (applied to ${elements.length} selected elements)`,
+  };
 }
 
 function quickHash(value: string) {
@@ -2454,14 +2514,6 @@ function retrievalLogForMessage(
   );
 }
 
-function stringifyDebugJson(value: unknown) {
-  try {
-    return JSON.stringify(value, null, 2);
-  } catch {
-    return String(value);
-  }
-}
-
 type MemoryReviewIntroPanelProps = {
   initialAnswers?: MemoryReviewAnswers | null;
   saveStatus: "idle" | "saving" | "saved" | "error";
@@ -2624,7 +2676,7 @@ function MemoryReviewIntroPanel({
         </div>
         <section className="flex min-h-0 flex-col space-y-2 rounded-lg border border-slate-200 bg-slate-50/70 p-3">
           <p className="text-sm font-semibold leading-snug text-slate-800">
-            3. 오늘 세션 내용 중, 에이전트가 앞으로 기억해 주었으면 하는 것들을 자유롭게 적어주세요.
+            3. 오늘 세션 내용 중, 에이전트가 앞으로 기억해 주었으면 하는 것들을 최대한 많이, 자세하게 적어주세요.
           </p>
           <Textarea
             value={futureMemoryText}
@@ -2657,173 +2709,6 @@ function MemoryReviewIntroPanel({
       </div>
       </div>
     </section>
-  );
-}
-
-function RetrievalLogViewer({
-  turnId,
-  retrievalLog,
-  onClose,
-}: {
-  turnId: string;
-  retrievalLog: SessionRetrievalLog;
-  onClose: () => void;
-}) {
-  const retrievedMemories = retrievalLog.retrievedMemories ?? [];
-  const setupMemories = retrievalLog.includedCurrentSetupMemories ?? [];
-  return (
-    <div className="fixed inset-0 z-70 flex items-center justify-center bg-slate-950/35 px-4 py-6">
-      <div className="flex max-h-[86vh] w-full max-w-4xl flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl">
-        <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4">
-          <div>
-            <p className="text-sm font-semibold text-slate-900">
-              Retrieval log
-            </p>
-            <p className="mt-1 text-xs text-slate-500">
-              Turn {turnId} ·{" "}
-              {retrievalLog.createdAt
-                ? new Date(retrievalLog.createdAt).toLocaleString("ko-KR")
-                : "시간 정보 없음"}
-              {retrievalLog.interactionId
-                ? ` · interaction ${retrievalLog.interactionId}`
-                : ""}
-            </p>
-          </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-full p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
-            aria-label="닫기"
-          >
-            <XIcon className="size-4" />
-          </button>
-        </div>
-        <div className="min-h-0 flex-1 space-y-4 overflow-auto p-5 text-sm">
-          <section className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-            <div className="grid gap-3 md:grid-cols-4">
-              <div>
-                <p className="text-[11px] font-semibold uppercase text-slate-400">
-                  Retrieved
-                </p>
-                <p className="mt-1 text-lg font-semibold text-slate-900">
-                  {retrievalLog.retrievedCount ?? retrievedMemories.length}
-                </p>
-              </div>
-              <div>
-                <p className="text-[11px] font-semibold uppercase text-slate-400">
-                  Current setup
-                </p>
-                <p className="mt-1 text-lg font-semibold text-slate-900">
-                  {retrievalLog.includedCurrentSetupMemoryCount ??
-                    setupMemories.length}
-                </p>
-              </div>
-              <div>
-                <p className="text-[11px] font-semibold uppercase text-slate-400">
-                  Candidates
-                </p>
-                <p className="mt-1 text-lg font-semibold text-slate-900">
-                  {retrievalLog.memoryCount ?? 0}
-                </p>
-              </div>
-              <div>
-                <p className="text-[11px] font-semibold uppercase text-slate-400">
-                  Before-session
-                </p>
-                <p className="mt-1 text-lg font-semibold text-slate-900">
-                  {retrievalLog.profileItemCount ?? 0}
-                </p>
-              </div>
-            </div>
-            {retrievalLog.query && (
-              <div className="mt-4">
-                <p className="text-xs font-semibold text-slate-500">Query</p>
-                <pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap rounded-lg bg-white p-3 text-xs leading-relaxed text-slate-700">
-                  {retrievalLog.query}
-                </pre>
-              </div>
-            )}
-          </section>
-
-          <section>
-            <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-              Retrieved memories
-            </h3>
-            <div className="mt-2 space-y-2">
-              {retrievedMemories.length > 0 ? (
-                retrievedMemories.map((memory) => (
-                  <div
-                    key={memory.id}
-                    className="rounded-xl border border-slate-200 bg-white p-3"
-                  >
-                    <div className="flex flex-wrap items-center gap-2 text-xs text-slate-400">
-                      <span className="font-mono">{memory.id}</span>
-                      {memory.similarity != null && (
-                        <span>similarity {memory.similarity}</span>
-                      )}
-                      {memory.weight != null && <span>weight {memory.weight}</span>}
-                      {memory.source?.missionId && (
-                        <span>mission {memory.source.missionId}</span>
-                      )}
-                    </div>
-                    <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-slate-700">
-                      {memory.semantic ||
-                        memory.episodic ||
-                        memory.input ||
-                        memory.output ||
-                        "내용 없음"}
-                    </p>
-                  </div>
-                ))
-              ) : (
-                <p className="rounded-xl border border-dashed border-slate-200 p-4 text-sm text-slate-400">
-                  검색된 메모리가 없습니다.
-                </p>
-              )}
-            </div>
-          </section>
-
-          {setupMemories.length > 0 && (
-            <section>
-              <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                Current before-session setup
-              </h3>
-              <div className="mt-2 space-y-2">
-                {setupMemories.map((memory) => (
-                  <div
-                    key={memory.id}
-                    className="rounded-xl border border-sky-100 bg-sky-50/50 p-3"
-                  >
-                    <div className="flex flex-wrap items-center gap-2 text-xs text-sky-500">
-                      <span className="font-mono">{memory.id}</span>
-                      {memory.source?.missionId && (
-                        <span>mission {memory.source.missionId}</span>
-                      )}
-                    </div>
-                    <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-slate-700">
-                      {memory.semantic ||
-                        memory.episodic ||
-                        memory.input ||
-                        memory.output ||
-                        "내용 없음"}
-                    </p>
-                  </div>
-                ))}
-              </div>
-            </section>
-          )}
-
-          <details className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-            <summary className="cursor-pointer text-xs font-semibold text-slate-500">
-              Raw retrieval log JSON
-            </summary>
-            <pre className="mt-3 max-h-72 overflow-auto whitespace-pre-wrap rounded-lg bg-slate-950 p-3 text-xs leading-relaxed text-slate-100">
-              {stringifyDebugJson(retrievalLog)}
-            </pre>
-          </details>
-        </div>
-      </div>
-    </div>
   );
 }
 
@@ -3010,8 +2895,16 @@ export default function MainScreenPage() {
   const [activityLog, setActivityLog] = useState<ActivityLogEvent[]>([]);
   const [ideas, setIdeas] = useState<Idea[]>([]);
   const [isDesignSpecOpen, setIsDesignSpecOpen] = useState(false);
-  const [selectedElement, setSelectedElement] =
-    useState<SelectedElement | null>(null);
+  // Multi-select: shift/cmd click accumulates elements on the same artboard.
+  // selectedElement (first entry) is kept for single-element code paths.
+  const [selectedElements, setSelectedElements] = useState<SelectedElement[]>(
+    [],
+  );
+  const selectedElementsRef = useRef<SelectedElement[]>([]);
+  useEffect(() => {
+    selectedElementsRef.current = selectedElements;
+  }, [selectedElements]);
+  const selectedElement = selectedElements[0] ?? null;
   const [selectedReferences, setSelectedReferences] = useState<Reference[]>([]);
   const [citedTexts, setCitedTexts] = useState<string[]>([]);
   const citedTextsRef = useRef<string[]>([]);
@@ -3176,10 +3069,7 @@ export default function MainScreenPage() {
     rawPrompt: unknown;
     rawPromptSanitization?: unknown;
     rawResponseMeta?: unknown;
-  } | null>(null);
-  const [retrievalLogModal, setRetrievalLogModal] = useState<{
-    turnId: string;
-    retrievalLog: SessionRetrievalLog;
+    retrievalLog?: SessionRetrievalLog | null;
   } | null>(null);
   const [reviewDetailModal, setReviewDetailModal] = useState<{
     mode: "memory" | "turn-memory";
@@ -4741,10 +4631,20 @@ export default function MainScreenPage() {
     editModeRef.current = editMode;
   }, [editMode]);
 
+  const clearIframeSelections = useCallback((artboardId?: string | null) => {
+    mockupFrameRefs.current.forEach((frame, id) => {
+      if (artboardId && id !== artboardId) return;
+      frame.contentWindow?.postMessage(
+        { type: "vda-clear-selection", artboardId: artboardId ?? id },
+        "*",
+      );
+    });
+  }, []);
+
   useEffect(() => {
     const handler = (e: MessageEvent) => {
       if (e.data?.type === "vda-element-selected" && editModeRef.current) {
-        setSelectedElement({
+        const element: SelectedElement = {
           artboardId: e.data.artboardId,
           selector: e.data.selector,
           outerHTML: e.data.outerHTML,
@@ -4761,6 +4661,34 @@ export default function MainScreenPage() {
             e.data.viewport && typeof e.data.viewport === "object"
               ? (e.data.viewport as SelectedElementViewport)
               : undefined,
+        };
+        const additive = Boolean(e.data.additive);
+        const deselected = Boolean(e.data.deselected);
+        setSelectedElements((prev) => {
+          if (!additive) return deselected ? [] : [element];
+          // Additive selection is scoped to one artboard: shift-clicking on a
+          // different artboard replaces the selection (and clears the old
+          // artboard's outlines).
+          if (prev.length > 0 && prev[0].artboardId !== element.artboardId) {
+            clearIframeSelections(prev[0].artboardId);
+            return [element];
+          }
+          const matchIndex = prev.findIndex((item) =>
+            item.xpath && element.xpath
+              ? item.xpath === element.xpath
+              : item.outerHTML === element.outerHTML,
+          );
+          if (deselected) {
+            return matchIndex >= 0
+              ? prev.filter((_, index) => index !== matchIndex)
+              : prev;
+          }
+          if (matchIndex >= 0) {
+            return prev.map((item, index) =>
+              index === matchIndex ? element : item,
+            );
+          }
+          return [...prev, element];
         });
         setActiveArtboardId(e.data.artboardId);
       }
@@ -4847,7 +4775,12 @@ export default function MainScreenPage() {
     };
     window.addEventListener("message", handler);
     return () => window.removeEventListener("message", handler);
-  }, [applyCanvasViewDirectly, commitCanvasViewSoon, isReadOnly]);
+  }, [
+    applyCanvasViewDirectly,
+    clearIframeSelections,
+    commitCanvasViewSoon,
+    isReadOnly,
+  ]);
 
   // Trackpad and mouse zoom toward cursor
   useEffect(() => {
@@ -5193,20 +5126,10 @@ export default function MainScreenPage() {
     stitchAbortControllerRef.current?.abort();
   }, []);
 
-  const clearIframeSelections = useCallback((artboardId?: string | null) => {
-    mockupFrameRefs.current.forEach((frame, id) => {
-      if (artboardId && id !== artboardId) return;
-      frame.contentWindow?.postMessage(
-        { type: "vda-clear-selection", artboardId: artboardId ?? id },
-        "*",
-      );
-    });
-  }, []);
-
   const clearSelectedElement = useCallback(() => {
-    clearIframeSelections(selectedElement?.artboardId ?? null);
-    setSelectedElement(null);
-  }, [clearIframeSelections, selectedElement?.artboardId]);
+    clearIframeSelections(selectedElementsRef.current[0]?.artboardId ?? null);
+    setSelectedElements([]);
+  }, [clearIframeSelections]);
 
   const handleAttachStyleImage = useCallback((file: File) => {
     if (!file.type.startsWith("image/")) return;
@@ -5296,7 +5219,7 @@ export default function MainScreenPage() {
       setComposerMention(null);
       if (selectedElement) {
         clearIframeSelections(selectedElement.artboardId);
-        setSelectedElement(null);
+        setSelectedElements([]);
       }
       setSelectedReferences([]);
       updateCitedTexts([]);
@@ -5331,6 +5254,18 @@ export default function MainScreenPage() {
             viewport: selectedElement.viewport,
           }
         : null,
+      citedElements:
+        selectedElements.length > 1
+          ? selectedElements.map((element) => ({
+              selector: element.selector,
+              artboardId: element.artboardId,
+              outerHTML: element.outerHTML,
+              textContent: element.textContent,
+              xpath: element.xpath,
+              boundingRect: element.boundingRect,
+              viewport: element.viewport,
+            }))
+          : null,
       citedReferences:
         selectedReferences.length > 0
           ? selectedReferences.map((r) => ({
@@ -5385,7 +5320,7 @@ export default function MainScreenPage() {
     setComposerMention(null);
     if (selectedElement) {
       clearIframeSelections(selectedElement.artboardId);
-      setSelectedElement(null);
+      setSelectedElements([]);
     }
     setSelectedReferences([]);
     updateCitedTexts([]);
@@ -5527,6 +5462,8 @@ export default function MainScreenPage() {
             .filter((message) => message.content),
           mockupHtml: activeBoard?.html || undefined,
           selectedElement: selectedElement || undefined,
+          selectedElements:
+            selectedElements.length > 1 ? selectedElements : undefined,
           citedReferences:
             selectedReferences.length > 0 ? selectedReferences : undefined,
           missionTitle: effectiveMissionTitle,
@@ -6243,10 +6180,10 @@ export default function MainScreenPage() {
           // Only inject mission brief for new mockups — edits don't need the full product context
           isNew ? missionBrief : undefined,
         );
-        if (!isNew && selectedElement) {
+        if (!isNew && selectedElements.length > 0) {
           stitchPrompt = [
             stitchPrompt,
-            selectedElementTargetPrompt(selectedElement, text),
+            selectedElementsTargetPrompt(selectedElements, text),
           ].join("\n\n");
         }
         appendActivityLog({
@@ -6339,10 +6276,10 @@ export default function MainScreenPage() {
           const requestProjectId = isNew
             ? stitchProjectId || undefined
             : editTargetBoard?.stitchProjectId || stitchProjectId || undefined;
-          if (!isNew && editTargetBoard?.html && selectedElement) {
-            const localPatch = patchSelectedElementInHtml(
+          if (!isNew && editTargetBoard?.html && selectedElements.length > 0) {
+            const localPatch = patchSelectedElementsInHtml(
               editTargetBoard.html,
-              selectedElement,
+              selectedElements,
               text,
             );
             if (localPatch && localPatch.html !== editTargetBoard.html) {
@@ -6382,7 +6319,7 @@ export default function MainScreenPage() {
               );
               setMockupProgress({ percent: 100, label: "완료" });
               setActiveIdeaTab("mockup");
-              setSelectedElement(null);
+              setSelectedElements([]);
               setMessages((prev) =>
                 prev.map((m) =>
                   m.id === assistantId
@@ -6401,7 +6338,7 @@ export default function MainScreenPage() {
           // synthetic artboards (no Stitch screen to edit) and real Stitch
           // screens (where edit_screens can no-op with a text-only response),
           // so targeted edits stop depending on Stitch edit persistence.
-          if (!isNew && editTargetBoard?.html && selectedElement) {
+          if (!isNew && editTargetBoard?.html && selectedElements.length > 0) {
             setMockupProgress({ percent: 32, label: "선택 요소 수정 적용 중" });
             let localEditFailure = "";
             try {
@@ -6416,21 +6353,51 @@ export default function MainScreenPage() {
                   designStyleContent:
                     activeDesignStyle(activeIdea)?.content ?? undefined,
                   element: {
-                    selector: selectedElement.selector,
-                    outerHTML: stripSelectionMarkers(selectedElement.outerHTML),
+                    selector: selectedElement!.selector,
+                    outerHTML: stripSelectionMarkers(
+                      selectedElement!.outerHTML,
+                    ),
                   },
+                  elements:
+                    selectedElements.length > 1
+                      ? selectedElements.map((element) => ({
+                          selector: element.selector,
+                          outerHTML: stripSelectionMarkers(element.outerHTML),
+                        }))
+                      : undefined,
                 }),
               });
               const localEditData = await localEditRes.json().catch(() => null);
+              const replacements: (string | null)[] | null = Array.isArray(
+                localEditData?.replacements,
+              )
+                ? (localEditData.replacements as unknown[]).map((item) =>
+                    typeof item === "string" ? item : null,
+                  )
+                : typeof localEditData?.replacementHtml === "string"
+                  ? [localEditData.replacementHtml]
+                  : null;
               if (
                 localEditRes.ok &&
-                typeof localEditData?.replacementHtml === "string"
+                replacements &&
+                replacements.length === selectedElements.length &&
+                replacements.every((item): item is string => Boolean(item))
               ) {
-                const patchedHtml = replaceSelectedElementInHtml(
-                  editTargetBoard.html,
-                  selectedElement,
-                  localEditData.replacementHtml,
-                );
+                // Apply each replacement sequentially on the evolving HTML.
+                // All-or-nothing: a partial apply would leave the artboard in a
+                // mixed state before the Stitch fallback re-applies the edit.
+                let patchedHtml: string | null = editTargetBoard.html;
+                for (
+                  let index = 0;
+                  index < selectedElements.length && patchedHtml;
+                  index += 1
+                ) {
+                  patchedHtml = replaceSelectedElementInHtml(
+                    patchedHtml,
+                    selectedElements[index],
+                    replacements[index],
+                  );
+                }
                 if (patchedHtml && patchedHtml !== editTargetBoard.html) {
                   if (stitchAbortControllerRef.current === stitchController) {
                     stitchAbortControllerRef.current = null;
@@ -6468,7 +6435,7 @@ export default function MainScreenPage() {
                   );
                   setMockupProgress({ percent: 100, label: "완료" });
                   setActiveIdeaTab("mockup");
-                  setSelectedElement(null);
+                  setSelectedElements([]);
                   setMessages((prev) =>
                     prev.map((m) =>
                       m.id === assistantId
@@ -6734,11 +6701,11 @@ export default function MainScreenPage() {
                 errorData?.code === "stitch-screen-not-found") &&
               !isNew &&
               editTargetBoard?.html &&
-              selectedElement
+              selectedElements.length > 0
             ) {
-              const localPatch = patchSelectedElementInHtml(
+              const localPatch = patchSelectedElementsInHtml(
                 editTargetBoard.html,
-                selectedElement,
+                selectedElements,
                 text,
               );
               if (localPatch && localPatch.html !== editTargetBoard.html) {
@@ -6775,7 +6742,7 @@ export default function MainScreenPage() {
                 );
                 setMockupProgress({ percent: 100, label: "완료" });
                 setActiveIdeaTab("mockup");
-                setSelectedElement(null);
+                setSelectedElements([]);
                 setMessages((prev) =>
                   prev.map((m) =>
                     m.id === assistantId
@@ -7250,7 +7217,7 @@ export default function MainScreenPage() {
           }
           setMockupProgress({ percent: 100, label: "완료" });
           setActiveIdeaTab("mockup");
-          setSelectedElement(null);
+          setSelectedElements([]);
           if (deferredMockupCompletionText) {
             setMessages((prev) =>
               prev.map((m) =>
@@ -7338,7 +7305,7 @@ export default function MainScreenPage() {
     artboards,
     activeArtboardId,
     activeIdeaId,
-    selectedElement,
+    selectedElements,
     selectedReferences,
     updateCitedTexts,
     attachedStyleImage,
@@ -7535,8 +7502,10 @@ export default function MainScreenPage() {
       delete next[artboardId];
       return next;
     });
-    setSelectedElement((prev) =>
-      prev?.artboardId === artboardId ? null : prev,
+    setSelectedElements((prev) =>
+      prev.some((element) => element.artboardId === artboardId)
+        ? prev.filter((element) => element.artboardId !== artboardId)
+        : prev,
     );
   };
 
@@ -7891,10 +7860,23 @@ export default function MainScreenPage() {
         stitchScreenId: "",
         stitchPrompt: "",
         messageIndex: String(index + 1),
-        citedElement: message.citedElement
-          ? `${message.citedElement.artboardId}:${message.citedElement.selector}`
-          : "",
-        citedElementHtml: message.citedElement?.outerHTML ?? "",
+        citedElement: (message.citedElements?.length
+          ? message.citedElements
+          : message.citedElement
+            ? [message.citedElement]
+            : []
+        )
+          .map((element) => `${element.artboardId}:${element.selector}`)
+          .join(" | "),
+        citedElementHtml: (message.citedElements?.length
+          ? message.citedElements
+          : message.citedElement
+            ? [message.citedElement]
+            : []
+        )
+          .map((element) => element.outerHTML ?? "")
+          .filter(Boolean)
+          .join("\n<!-- next selected element -->\n"),
         citedReferences: (message.citedReferences ?? [])
           .map((reference) =>
             [reference.title, reference.imageUrl].filter(Boolean).join(" - "),
@@ -8362,11 +8344,17 @@ export default function MainScreenPage() {
       (memory) => {
         const referenced = referencedByMemoryId.get(memory.id);
         const isPromoted = promotedIds.has(memory.id);
+        // 비활성 = auto-duplicate 아카이브 또는 idle decay로 weight 0 도달.
+        // 둘 다 클러스터 스냅샷 입력에서 제외되므로, after 페이즈에서 예외로
+        // 살려 비활성 메모리 그룹에 dimmed로 표시한다.
         const isArchived = sessionArchivedIds.has(memory.id);
+        const isInactiveWeight =
+          memory.weight != null && memory.weight <= 0;
+        const isInactive = isArchived || isInactiveWeight;
         if (
           shouldUseSnapshotItems &&
           !snapshotItemIds.has(memory.id) &&
-          !(isArchived && memoryGraphPhase === "after")
+          !(isInactive && memoryGraphPhase === "after")
         ) {
           return false;
         }
@@ -8376,11 +8364,16 @@ export default function MainScreenPage() {
         }
         if (memoryGraphFilter === "all") return true;
         if (memoryGraphFilter === "changed") {
-          return Boolean(referenced) || isPromoted || isArchived;
+          return (
+            Boolean(referenced) ||
+            isPromoted ||
+            isArchived ||
+            (isInactiveWeight && memoryGraphPhase === "after")
+          );
         }
         if (memoryGraphFilter === "referenced") return Boolean(referenced);
         if (memoryGraphFilter === "promoted") return isPromoted;
-        return isArchived && memoryGraphPhase === "after";
+        return isInactive && memoryGraphPhase === "after";
       },
     );
     const visibleMemoryIds = new Set(visibleMemoryItems.map((item) => item.id));
@@ -8674,6 +8667,7 @@ export default function MainScreenPage() {
               saveStatus={memoryReviewSaveStatus}
               submittedAt={memoryReviewSubmittedAt}
               readOnly={isViewingAsAdmin}
+              showPart1Summary={isViewingAsAdmin}
               onAnswersChange={handleMemoryReviewAnswersChange}
               onSubmitFeedback={
                 isViewingAsAdmin
@@ -8926,14 +8920,8 @@ export default function MainScreenPage() {
           rawPrompt={rawPromptModal.rawPrompt}
           rawPromptSanitization={rawPromptModal.rawPromptSanitization}
           rawResponseMeta={rawPromptModal.rawResponseMeta}
+          retrievalLog={rawPromptModal.retrievalLog}
           onClose={() => setRawPromptModal(null)}
-        />
-      )}
-      {retrievalLogModal && (
-        <RetrievalLogViewer
-          turnId={retrievalLogModal.turnId}
-          retrievalLog={retrievalLogModal.retrievalLog}
-          onClose={() => setRetrievalLogModal(null)}
         />
       )}
       <SessionProductTour
@@ -9498,7 +9486,7 @@ export default function MainScreenPage() {
                 sectionRef={mockupSectionRef}
                 hasArtboards={ideaArtboards.length > 0}
                 editMode={editMode}
-                selectedElement={selectedElement}
+                selectedElements={selectedElements}
                 canvasScale={canvasScale}
                 activeArtboard={activeArtboard}
                 shouldRenderCanvas={shouldRenderMockupCanvas}
@@ -9984,13 +9972,6 @@ export default function MainScreenPage() {
                     expandedChipKeys={expandedChips}
                     markdownComponents={CHAT_MARKDOWN_COMPONENTS}
                     remarkPlugins={CHAT_REMARK_PLUGINS}
-                    adminMemoryCount={
-                      msg.role === "assistant" &&
-                      isViewingAsAdmin &&
-                      reviewTurn
-                        ? retrievedReviewMemories.length
-                        : 0
-                    }
                     hasTurnMemory={Boolean(
                       msg.role === "assistant" &&
                         turnMemoryDraft &&
@@ -10047,15 +10028,6 @@ export default function MainScreenPage() {
                         return next;
                       })
                     }
-                    onShowRetrievedMemory={() => {
-                      if (!reviewTurn) return;
-                      setReviewDetailModal({
-                        mode: "memory",
-                        turnId: reviewTurnId,
-                        reviewTurn,
-                        memories: retrievedReviewMemories,
-                      });
-                    }}
                     onToggleTurnMemory={() =>
                       setReviewDetailModal(
                         isTurnSelected || !turnMemoryDraft
@@ -10072,24 +10044,19 @@ export default function MainScreenPage() {
                     onShowRawPrompt={() => {
                       if (
                         reviewTurn?.rawPromptActual == null &&
-                        reviewTurn?.rawPrompt == null
+                        reviewTurn?.rawPrompt == null &&
+                        !retrievalLog
                       ) {
                         return;
                       }
                       setRawPromptModal({
                         turnId: reviewTurnId,
-                        rawPromptActual: reviewTurn.rawPromptActual,
-                        rawPrompt: reviewTurn.rawPrompt ?? null,
+                        rawPromptActual: reviewTurn?.rawPromptActual,
+                        rawPrompt: reviewTurn?.rawPrompt ?? null,
                         rawPromptSanitization:
-                          reviewTurn.rawPromptSanitization,
-                        rawResponseMeta: reviewTurn.rawResponseMeta,
-                      });
-                    }}
-                    onShowRetrievalLog={() => {
-                      if (!retrievalLog) return;
-                      setRetrievalLogModal({
-                        turnId: reviewTurnId,
-                        retrievalLog,
+                          reviewTurn?.rawPromptSanitization,
+                        rawResponseMeta: reviewTurn?.rawResponseMeta,
+                        retrievalLog: retrievalLog ?? null,
                       });
                     }}
                     onOpenFeedback={(vote) =>
@@ -10103,7 +10070,7 @@ export default function MainScreenPage() {
             <ChatInput
               ref={chatInputRef}
               readOnly={isReadOnly}
-              selectedElement={selectedElement}
+              selectedElements={selectedElements}
               citedTexts={citedTexts}
               selectedReferences={selectedReferences}
               styleImage={attachedStyleImage}

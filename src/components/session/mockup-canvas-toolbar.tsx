@@ -29,7 +29,7 @@ export type MockupToolbarSelectedElement = {
 
 type MockupCanvasToolbarProps = {
   editMode: boolean;
-  selectedElement: MockupToolbarSelectedElement | null;
+  selectedElements: MockupToolbarSelectedElement[];
   canvasScale: number;
   activeArtboard: MockupToolbarArtboard | null | undefined;
   onToggleEditMode: () => void;
@@ -69,7 +69,7 @@ function ToolbarIconButton({
 
 export function MockupCanvasToolbar({
   editMode,
-  selectedElement,
+  selectedElements,
   canvasScale,
   activeArtboard,
   onToggleEditMode,
@@ -83,10 +83,14 @@ export function MockupCanvasToolbar({
   return (
     <TooltipProvider>
       <div className="flex flex-wrap items-center justify-end gap-2">
-        {editMode && selectedElement && (
-          <div className="flex max-w-56 items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-2 py-1 text-xs font-medium text-slate-700">
+        {editMode && selectedElements.length > 0 && (
+          <div className="flex max-w-64 items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-2 py-1 text-xs font-medium text-slate-700">
             <MousePointer2 className="size-3.5 shrink-0" aria-hidden="true" />
-            <span className="truncate">{selectedElement.selector}</span>
+            <span className="truncate">
+              {selectedElements.length > 1
+                ? `${selectedElements[0].selector} 외 ${selectedElements.length - 1}개`
+                : selectedElements[0].selector}
+            </span>
             <button
               type="button"
               onClick={onClearSelectedElement}
@@ -96,6 +100,11 @@ export function MockupCanvasToolbar({
               <X className="size-3" aria-hidden="true" />
             </button>
           </div>
+        )}
+        {editMode && (
+          <span className="hidden text-[11px] text-slate-400 lg:inline">
+            Shift 클릭으로 여러 요소 선택
+          </span>
         )}
 
         <Button

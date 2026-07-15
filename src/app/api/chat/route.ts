@@ -409,6 +409,9 @@ function forceRequestedCommand(
 type BuiltChatMessage = {
   role: "system" | "user" | "assistant";
   content: string;
+  // Admin prompt viewer block name (basePrompt, mission, mockupHtml, ...).
+  // Stripped before the model call — only stored with the review turn.
+  label?: string;
 };
 
 type ChatProviderStreamEvent =
@@ -913,6 +916,7 @@ export async function POST(request: Request) {
     messages,
     mockupHtml,
     selectedElement,
+    selectedElements,
     citedReferences,
     missionTitle,
     missionBrief,
@@ -1045,7 +1049,7 @@ export async function POST(request: Request) {
   };
 
   const systemMessages: BuiltChatMessage[] = [
-    { role: "system", content: CHAT_AGENT_BASE_PROMPT },
+    { role: "system", content: CHAT_AGENT_BASE_PROMPT, label: "basePrompt" },
   ];
 
   if (missionTitle || missionBrief) {
@@ -1054,6 +1058,7 @@ export async function POST(request: Request) {
     );
     systemMessages.push({
       role: "system",
+      label: "mission",
       content: chatMissionPrompt(
         truncateText(missionTitle || "(없음)", 300),
         truncateText(
@@ -1069,6 +1074,7 @@ export async function POST(request: Request) {
     markContext("activeIdea");
     systemMessages.push({
       role: "system",
+      label: "activeIdea",
       content: chatActiveIdeaPrompt(
         truncateText(activeIdea.title, 200),
         truncateText(activeIdea.description || "(내용 없음)", 3000),
@@ -1080,6 +1086,7 @@ export async function POST(request: Request) {
     markContext("designSpec");
     systemMessages.push({
       role: "system",
+      label: "designSpec",
       content: chatDesignSpecPrompt(truncateText(designSpec, 2500)),
     });
   }
@@ -1088,6 +1095,7 @@ export async function POST(request: Request) {
     markContext("mockupHtml");
     systemMessages.push({
       role: "system",
+      label: "mockupHtml",
       content: chatMockupHtmlPrompt(compactHtmlForModel(mockupHtml, 12000)),
     });
   }
@@ -1101,6 +1109,7 @@ export async function POST(request: Request) {
       markContext("retrievedMemory");
       systemMessages.push({
         role: "system",
+        label: "retrievalMemory",
         content: chatRetrievedMemoryPrompt(
           JSON.stringify(compactMemory),
           promptPlan.memoryRelevance,
@@ -1117,6 +1126,7 @@ export async function POST(request: Request) {
     markContext("citedTexts");
     systemMessages.push({
       role: "system",
+      label: "citedTexts",
       content: chatCitedTextsPrompt(
         citedTexts.map((text: string) => truncateText(text, 1200)),
       ),
@@ -1125,32 +1135,49 @@ export async function POST(request: Request) {
 
   if (selectedElement && shouldIncludePlannedContext("selectedElement")) {
     markContext("selectedElement");
-    systemMessages.push({
-      role: "system",
-      content: chatSelectedElementPrompt(
-        selectedElement.selector,
-        truncateText(selectedElement.outerHTML, 3000),
-        {
-          textContent:
-            typeof selectedElement.textContent === "string"
-              ? truncateText(selectedElement.textContent, 1000)
-              : undefined,
-          xpath:
-            typeof selectedElement.xpath === "string"
-              ? selectedElement.xpath
-              : undefined,
-          boundingRect:
-            selectedElement.boundingRect &&
-            typeof selectedElement.boundingRect === "object"
-              ? selectedElement.boundingRect
-              : undefined,
-          viewport:
-            selectedElement.viewport && typeof selectedElement.viewport === "object"
-              ? selectedElement.viewport
-              : undefined,
-        },
-      ),
-    });
+    // Multi-select (shift/cmd click) sends every element; fall back to the
+    // single legacy field so older clients keep working.
+    const selectedElementList: (typeof selectedElement)[] =
+      Array.isArray(selectedElements) && selectedElements.length > 0
+        ? selectedElements
+        : [selectedElement];
+    for (const [index, element] of selectedElementList.entries()) {
+      if (!element || typeof element !== "object") continue;
+      const prefix =
+        selectedElementList.length > 1
+          ? `[Selected element ${index + 1} of ${selectedElementList.length} — the user multi-selected these elements; apply the request to all of them]\n`
+          : "";
+      systemMessages.push({
+        role: "system",
+        label:
+          selectedElementList.length > 1
+            ? `selectedElement ${index + 1}/${selectedElementList.length}`
+            : "selectedElement",
+        content:
+          prefix +
+          chatSelectedElementPrompt(
+            element.selector,
+            truncateText(element.outerHTML, 3000),
+            {
+              textContent:
+                typeof element.textContent === "string"
+                  ? truncateText(element.textContent, 1000)
+                  : undefined,
+              xpath:
+                typeof element.xpath === "string" ? element.xpath : undefined,
+              boundingRect:
+                element.boundingRect &&
+                typeof element.boundingRect === "object"
+                  ? element.boundingRect
+                  : undefined,
+              viewport:
+                element.viewport && typeof element.viewport === "object"
+                  ? element.viewport
+                  : undefined,
+            },
+          ),
+      });
+    }
   }
 
   // Build messages early so cited reference context can annotate the latest
@@ -1178,6 +1205,7 @@ export async function POST(request: Request) {
         {
           role: message.role,
           content: truncateText(message.content, 6000),
+          label: "conversation",
       },
     ];
   });
@@ -1199,11 +1227,13 @@ export async function POST(request: Request) {
     if (refUrls.length > 0) {
       systemMessages.push({
         role: "system",
+        label: "citedReferences",
         content: chatCitedRefsWithUrlPrompt(titles, refUrls),
       });
     } else {
       systemMessages.push({
         role: "system",
+        label: "citedReferences",
         content: chatCitedRefsNoUrlPrompt(titles),
       });
     }
@@ -1215,6 +1245,7 @@ export async function POST(request: Request) {
       const originalContent = builtMessages[lastUserIdx].content as string;
       builtMessages[lastUserIdx] = {
         role: "user",
+        label: "conversation",
         content: `[인용된 레퍼런스: ${titles.join(", ")}]\n\n${originalContent}`,
       };
     }
@@ -1234,6 +1265,7 @@ export async function POST(request: Request) {
     markContext("referencePreference");
     systemMessages.push({
       role: "system",
+      label: "referencePreference",
       content: chatReferencePreferencePrompt(
         refPref as Parameters<typeof chatReferencePreferencePrompt>[0],
       ),
@@ -1252,6 +1284,7 @@ export async function POST(request: Request) {
       mentionTargetLabel[normalizedMention.kind] ?? "the mentioned artifact";
     systemMessages.push({
       role: "system",
+      label: "mentionedArtifact",
       content: `The user explicitly mentioned an existing workspace artifact. Kind: ${normalizedMention.kind}; ideaId: ${normalizedMention.ideaId}; artifactId: ${normalizedMention.artifactId || "(none)"}. The client has already aligned activeIdea to this target. Treat the structured target as authoritative. Scope this turn to ${target}: work on that artifact itself and prefer the matching action for its kind. Do not branch into other artifacts or run unrelated actions (for example, generating a Design Style or Mockup when the user mentioned the Design Brief) unless the user explicitly asks for them this turn.`,
     });
   }
@@ -1260,6 +1293,7 @@ export async function POST(request: Request) {
     markContext("requestedCommand");
     systemMessages.push({
       role: "system",
+      label: "requestedCommand",
       content: `The user explicitly selected the composer command ${requestedCommandId}. Execute the mapped action for this turn. Do not reinterpret it as a different intent.`,
     });
   }
@@ -1267,6 +1301,7 @@ export async function POST(request: Request) {
   markContext("actionInstruction");
   systemMessages.push({
     role: "system",
+    label: "actionInstruction",
     content: chatActionInstructionPrompt(
       promptPlan.intent,
       promptPlanFallback || !promptPlanReliable,
@@ -1277,6 +1312,7 @@ export async function POST(request: Request) {
     markContext("currentRequest");
     systemMessages.push({
       role: "system",
+      label: "currentRequest",
       content: chatCurrentRequestPrompt(),
     });
   }
@@ -1390,8 +1426,13 @@ export async function POST(request: Request) {
   const allowWebSearch = !(
     promptPlan.intent === "fetch_references" && !hasRefUrls
   );
+  // Strip the admin-only block labels before the provider call — the OpenAI
+  // Responses API rejects unknown message fields.
+  const modelInput: BuiltChatMessage[] = rawPromptInput.map(
+    ({ role, content }) => ({ role, content }),
+  );
   const stream = createChatResponseStream(
-    rawPromptInput,
+    modelInput,
     hasRefUrls,
     selectedResponseProvider,
     allowWebSearch,

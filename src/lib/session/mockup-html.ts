@@ -338,10 +338,18 @@ export function injectSelectionScript(html: string, artboardId: string): string 
   document.addEventListener('click', function(e) {
     e.preventDefault();
     e.stopPropagation();
-    clearVdaSelection();
     clearVdaHover();
     var el = e.target;
-    el.setAttribute('data-vda-selected', 'true');
+    // Shift/Cmd/Ctrl click toggles the element in a multi-selection instead of
+    // replacing it. A plain click keeps the original single-select behavior.
+    var additive = e.shiftKey || e.metaKey || e.ctrlKey;
+    var wasSelected = el.getAttribute('data-vda-selected') === 'true';
+    if (!additive) clearVdaSelection();
+    if (additive && wasSelected) {
+      el.removeAttribute('data-vda-selected');
+    } else {
+      el.setAttribute('data-vda-selected', 'true');
+    }
 
     var selector = el.tagName.toLowerCase();
     if (el.id) selector += '#' + el.id;
@@ -354,6 +362,8 @@ export function injectSelectionScript(html: string, artboardId: string): string 
     window.parent.postMessage({
       type: 'vda-element-selected',
       artboardId: '${artboardId}',
+      additive: additive,
+      deselected: additive && wasSelected,
       selector: selector,
       outerHTML: el.outerHTML,
       textContent: (el.innerText || el.textContent || '').trim().slice(0, 1000),

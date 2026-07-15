@@ -151,7 +151,7 @@ const IDEA_STEPS: TourStep[] = [
   {
     target: "idea-mockup",
     title: "Mockup",
-    body: "Stitch가 만든 화면이 여기에 표시됩니다. 영역 선택 버튼을 누르면 화면 요소를 선택할 수 있고, 선택한 요소를 인용해 채팅으로 보내면 더 정확하게 수정 요청할 수 있어요.",
+    body: "Stitch가 만든 화면이 여기에 표시됩니다. 영역 선택 버튼을 누르면 화면 요소를 선택할 수 있고, Shift(또는 Cmd) 클릭으로 여러 요소를 한 번에 선택할 수도 있어요. 선택한 요소를 인용해 채팅으로 보내면 더 정확하게 수정 요청할 수 있어요.",
   },
   {
     target: "final-design",

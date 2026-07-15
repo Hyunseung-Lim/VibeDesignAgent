@@ -61,7 +61,7 @@ export type ChatInputHandle = {
 
 type ChatInputProps = {
   readOnly: boolean;
-  selectedElement: ChatInputSelectedElement | null;
+  selectedElements: ChatInputSelectedElement[];
   citedTexts: string[];
   selectedReferences: ChatInputReference[];
   styleImage: { dataUrl: string; name?: string } | null;
@@ -549,7 +549,7 @@ function LexicalChatEditor({
 export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function ChatInput(
   {
   readOnly,
-  selectedElement,
+  selectedElements,
   citedTexts,
   selectedReferences,
   styleImage,
@@ -607,7 +607,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
         )
     : [];
   const hasAttachments =
-    Boolean(selectedElement) ||
+    selectedElements.length > 0 ||
     citedTexts.length > 0 ||
     selectedReferences.length > 0 ||
     Boolean(styleImage);
@@ -694,15 +694,20 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
       {!readOnly && hasAttachments && (
         <div className="mb-2 overflow-x-auto pb-1">
           <div className="flex w-max items-center gap-2">
-            {selectedElement && (
+            {selectedElements.map((element, index) => (
               <ComposerAttachment
+                key={`${element.selector}-${index}`}
                 tone="indigo"
                 icon={<MousePointer2 className="size-4" />}
-                title="선택된 요소"
-                description={selectedElement.selector}
+                title={
+                  selectedElements.length > 1
+                    ? `선택된 요소 ${index + 1}/${selectedElements.length}`
+                    : "선택된 요소"
+                }
+                description={element.selector}
                 onRemove={onClearSelectedElement}
               />
-            )}
+            ))}
             {citedTexts.map((text, index) => (
               <ComposerAttachment
                 key={`${text}-${index}`}

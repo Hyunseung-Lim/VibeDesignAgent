@@ -1,5 +1,10 @@
-import { useEffect, useRef } from "react";
-import { AtSignIcon, Trash2Icon } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import {
+  AtSignIcon,
+  ChevronDownIcon,
+  ChevronUpIcon,
+  Trash2Icon,
+} from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import type {
   ClusterGraphItem,
@@ -68,12 +73,14 @@ function defaultMissionLabel(missionId: string) {
 function MemoryField({
   label,
   value,
+  boxClassName = "border-border bg-background",
 }: {
   label: string;
   value: string;
+  boxClassName?: string;
 }) {
   return (
-    <div className="rounded-lg border border-border bg-background px-3 py-2">
+    <div className={`rounded-lg border px-3 py-2 ${boxClassName}`}>
       <p className="mb-1 text-[10px] font-semibold uppercase text-muted-foreground">
         {label}
       </p>
@@ -216,6 +223,18 @@ export function MemoryClusterSidePanel({
   const displayItems = selectedFallbackItem
     ? [selectedFallbackItem, ...items]
     : items;
+  // Original input / Keyword boxes are collapsed by default per memory card.
+  const [expandedInputIds, setExpandedInputIds] = useState<Set<string>>(
+    new Set(),
+  );
+  const toggleInputDetails = (id: string) => {
+    setExpandedInputIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
   // Scroll the detail list to the item selected from the graph/node click.
   const selectedItemRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
@@ -348,22 +367,27 @@ export function MemoryClusterSidePanel({
                               ? "border-amber-300 bg-amber-50 shadow-sm ring-2 ring-amber-100"
                               : inactive
                                 ? "border-slate-200 bg-slate-50/70 shadow-sm ring-2 ring-slate-100"
-                                : "border-slate-400 bg-slate-100 shadow-sm ring-2 ring-slate-200"
+                                : isNewThisSession
+                                  ? "border-indigo-400 bg-indigo-100 shadow-sm ring-2 ring-indigo-200"
+                                  : "border-slate-400 bg-slate-100 shadow-sm ring-2 ring-slate-200"
                             : mentionMode
                               ? "cursor-pointer border-amber-100 bg-amber-50/50 hover:border-amber-300 hover:bg-amber-50"
                               : inactive
                                 ? "cursor-pointer border-slate-100 bg-slate-50/40 text-slate-400 hover:border-slate-200 hover:bg-slate-50/70"
-                                : "cursor-pointer border-border bg-background hover:border-slate-300 hover:bg-muted/30"
+                                : isNewThisSession
+                                  ? "cursor-pointer border-indigo-100 bg-indigo-50/60 hover:border-indigo-300 hover:bg-indigo-50"
+                                  : "cursor-pointer border-border bg-background hover:border-slate-300 hover:bg-muted/30"
                         }`}
                       >
                       <div className="mb-2 flex items-center justify-between gap-3 text-[11px] text-muted-foreground">
                         <span className="flex min-w-0 items-center gap-1.5">
                           {isNewThisSession ? (
                             <span
-                              className="size-2 shrink-0 rounded-full bg-green-500"
+                              className="shrink-0 rounded-full bg-indigo-100 px-1.5 py-0.5 text-[10px] font-bold text-indigo-700"
                               title="이번 세션에 생성됨"
-                              aria-hidden="true"
-                            />
+                            >
+                              NEW
+                            </span>
                           ) : null}
                           <span className="min-w-0 truncate font-medium text-slate-500">
                             {missionLabel}
@@ -404,6 +428,11 @@ export function MemoryClusterSidePanel({
                             비활성
                           </Badge>
                         ) : null}
+                        {weightLabel ? (
+                          <span className="ml-auto shrink-0 text-[10px] font-semibold uppercase tabular-nums text-slate-400">
+                            weight {weightLabel}
+                          </span>
+                        ) : null}
                       </div>
                       {inactive ? (
                         <p className="mb-2 text-[11px] leading-snug text-slate-400">
@@ -414,10 +443,14 @@ export function MemoryClusterSidePanel({
                         <span
                           className={`mt-0.5 w-1 shrink-0 rounded-full ${
                             selected
-                              ? "bg-slate-700"
+                              ? isNewThisSession
+                                ? "bg-indigo-600"
+                                : "bg-slate-700"
                               : isNewThisSession
-                                ? "bg-slate-900"
-                                : "bg-transparent"
+                                ? "bg-indigo-400"
+                                : inactive
+                                  ? "bg-slate-200"
+                                  : "bg-slate-300"
                           }`}
                           aria-hidden="true"
                         />
@@ -445,21 +478,76 @@ export function MemoryClusterSidePanel({
                         </div>
                       </div>
                       {selected ? (
+                        (() => {
+                          // Inner detail boxes follow the card tone: NEW cards
+                          // are light indigo, so plain white boxes look off.
+                          const detailBoxClass =
+                            isNewThisSession && !mentionMode && !inactive
+                              ? "border-indigo-200/70 bg-white/70"
+                              : "border-border bg-background";
+                          const showInputDetails = expandedInputIds.has(
+                            item.id,
+                          );
+                          const hasInputDetails = Boolean(
+                            originalInput || item.keywords.length > 0,
+                          );
+                          return (
                         <div className="mt-3 space-y-3 select-text">
                           {item.semantic ? (
-                            <MemoryField label="Semantic" value={item.semantic} />
+                            <MemoryField
+                              label="Semantic"
+                              value={item.semantic}
+                              boxClassName={detailBoxClass}
+                            />
                           ) : null}
                           {item.episodic ? (
-                            <MemoryField label="Episodic" value={item.episodic} />
+                            <MemoryField
+                              label="Episodic"
+                              value={item.episodic}
+                              boxClassName={detailBoxClass}
+                            />
                           ) : null}
-                          {originalInput ? (
+                          {hasInputDetails ? (
+                            // The whole card is a <button>, so the toggle is a
+                            // span[role=button] to avoid nested buttons.
+                            <span
+                              role="button"
+                              tabIndex={0}
+                              onClick={(event) => {
+                                event.preventDefault();
+                                event.stopPropagation();
+                                toggleInputDetails(item.id);
+                              }}
+                              onKeyDown={(event) => {
+                                if (event.key !== "Enter" && event.key !== " ")
+                                  return;
+                                event.preventDefault();
+                                event.stopPropagation();
+                                toggleInputDetails(item.id);
+                              }}
+                              className="inline-flex cursor-pointer items-center gap-1 text-[11px] font-medium text-slate-400 transition hover:text-slate-600"
+                            >
+                              {showInputDetails ? (
+                                <ChevronUpIcon size={12} aria-hidden="true" />
+                              ) : (
+                                <ChevronDownIcon size={12} aria-hidden="true" />
+                              )}
+                              {showInputDetails
+                                ? "원문·키워드 접기"
+                                : "원문·키워드 보기"}
+                            </span>
+                          ) : null}
+                          {showInputDetails && originalInput ? (
                             <MemoryField
                               label="Original input"
                               value={originalInput}
+                              boxClassName={detailBoxClass}
                             />
                           ) : null}
-                          {item.keywords.length > 0 ? (
-                            <div className="rounded-lg border border-border bg-background px-3 py-2">
+                          {showInputDetails && item.keywords.length > 0 ? (
+                            <div
+                              className={`rounded-lg border px-3 py-2 ${detailBoxClass}`}
+                            >
                               <p className="mb-1.5 text-[10px] font-semibold uppercase text-muted-foreground">
                                 Keyword
                               </p>
@@ -476,19 +564,9 @@ export function MemoryClusterSidePanel({
                               </div>
                             </div>
                           ) : null}
-                          {weightLabel ? (
-                            <div className="rounded-lg border border-border bg-background px-3 py-2">
-                              <div className="flex items-center justify-between gap-2">
-                                <p className="text-[10px] font-semibold uppercase text-muted-foreground">
-                                  Weight
-                                </p>
-                                <p className="text-[10px] font-semibold tabular-nums text-slate-600">
-                                  {weightLabel}
-                                </p>
-                              </div>
-                            </div>
-                          ) : null}
                         </div>
+                          );
+                        })()
                       ) : null}
                     </button>
                     </div>

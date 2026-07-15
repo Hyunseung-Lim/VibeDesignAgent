@@ -11,7 +11,6 @@ import {
   TriangleAlert,
 } from "lucide-react";
 import { ToolActionChip, type ToolActionChipData } from "./tool-action-chip";
-import { RetrievedMemoryBadge } from "@/components/memory/retrieved-memory-badge";
 import { Spinner } from "@/components/ui/spinner";
 import type {
   ChatComposerCommand,
@@ -25,6 +24,7 @@ export type ChatBubbleMessage = {
   citedElement?: {
     selector: string;
   } | null;
+  citedElements?: { selector: string }[] | null;
   citedReferences?: { id: string; title: string; imageUrl?: string }[] | null;
   citedTexts?: string[] | null;
   styleImage?: { dataUrl: string; name?: string } | null;
@@ -49,7 +49,6 @@ type ChatBubbleProps = {
   expandedChipKeys: Set<string>;
   markdownComponents: ComponentProps<typeof ReactMarkdown>["components"];
   remarkPlugins: ComponentProps<typeof ReactMarkdown>["remarkPlugins"];
-  adminMemoryCount: number;
   hasTurnMemory: boolean;
   hasRawPrompt: boolean;
   hasRetrievalLog: boolean;
@@ -58,10 +57,8 @@ type ChatBubbleProps = {
   isReferenceLoading?: boolean;
   onToggleChatPhases: () => void;
   onToggleChip: (key: string) => void;
-  onShowRetrievedMemory: () => void;
   onToggleTurnMemory: () => void;
   onShowRawPrompt: () => void;
-  onShowRetrievalLog: () => void;
   onOpenFeedback?: (vote: AssistantFeedbackVote) => void;
 };
 
@@ -129,7 +126,6 @@ export function ChatBubble({
   expandedChipKeys,
   markdownComponents,
   remarkPlugins,
-  adminMemoryCount,
   hasTurnMemory,
   hasRawPrompt,
   hasRetrievalLog,
@@ -138,10 +134,8 @@ export function ChatBubble({
   isReferenceLoading = false,
   onToggleChatPhases,
   onToggleChip,
-  onShowRetrievedMemory,
   onToggleTurnMemory,
   onShowRawPrompt,
-  onShowRetrievalLog,
   onOpenFeedback,
 }: ChatBubbleProps) {
   const isUser = message.role === "user";
@@ -187,12 +181,25 @@ export function ChatBubble({
                 />
               </div>
             )}
-            {message.citedElement && (
-              <div className="flex justify-end">
-                <span className="flex items-center gap-1.5 rounded-full bg-white/20 px-2.5 py-0.5 text-xs text-white/80">
-                  <span className="h-1.5 w-1.5 rounded-full bg-indigo-300" />
-                  {message.citedElement.selector}
-                </span>
+            {(message.citedElements?.length
+              ? message.citedElements
+              : message.citedElement
+                ? [message.citedElement]
+                : []
+            ).length > 0 && (
+              <div className="flex flex-wrap justify-end gap-1">
+                {(message.citedElements?.length
+                  ? message.citedElements
+                  : [message.citedElement!]
+                ).map((element, index) => (
+                  <span
+                    key={`${element.selector}-${index}`}
+                    className="flex items-center gap-1.5 rounded-full bg-white/20 px-2.5 py-0.5 text-xs text-white/80"
+                  >
+                    <span className="h-1.5 w-1.5 rounded-full bg-indigo-300" />
+                    {element.selector}
+                  </span>
+                ))}
               </div>
             )}
             {message.citedReferences &&
@@ -312,49 +319,33 @@ export function ChatBubble({
           </span>
         )}
 
-        {!isUser && adminMemoryCount > 0 && (
-          <div className="mt-3 flex flex-wrap gap-2 border-t border-slate-200 pt-3">
-            <RetrievedMemoryBadge
-              count={adminMemoryCount}
-              onClick={onShowRetrievedMemory}
-            />
+        {!isUser && (hasTurnMemory || hasRawPrompt || hasRetrievalLog) && (
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            {hasTurnMemory && (
+              <button
+                type="button"
+                onClick={onToggleTurnMemory}
+                className={`flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium transition ${
+                  isTurnSelected
+                    ? "border-violet-300 bg-violet-100 text-violet-600"
+                    : "border-slate-200 text-slate-400 hover:border-slate-300 hover:bg-slate-100 hover:text-slate-600"
+                }`}
+                title="이 인터랙션에서 생성된 기억"
+              >
+                <Brain className="size-3" />
+                기억 보기
+              </button>
+            )}
+            {(hasRawPrompt || hasRetrievalLog) && (
+              <button
+                type="button"
+                onClick={onShowRawPrompt}
+                className="flex items-center gap-1.5 rounded-full border border-indigo-100 bg-indigo-50 px-2.5 py-1 text-xs font-semibold text-indigo-600 transition hover:border-indigo-200 hover:bg-indigo-100"
+              >
+                Prompt 보기
+              </button>
+            )}
           </div>
-        )}
-
-        {!isUser && hasTurnMemory && (
-          <button
-            type="button"
-            onClick={onToggleTurnMemory}
-            className={`mt-2 flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium transition ${
-              isTurnSelected
-                ? "border-violet-300 bg-violet-100 text-violet-600"
-                : "border-slate-200 text-slate-400 hover:border-slate-300 hover:bg-slate-100 hover:text-slate-600"
-            }`}
-            title="이 인터랙션에서 생성된 기억"
-          >
-            <Brain className="size-3" />
-            기억 보기
-          </button>
-        )}
-
-        {!isUser && hasRawPrompt && (
-          <button
-            type="button"
-            onClick={onShowRawPrompt}
-            className="mt-3 w-full rounded-xl border border-indigo-100 bg-indigo-50 px-3 py-2 text-left text-xs font-semibold text-indigo-600 transition hover:border-indigo-200 hover:bg-indigo-100"
-          >
-            Raw prompt 보기
-          </button>
-        )}
-
-        {!isUser && hasRetrievalLog && (
-          <button
-            type="button"
-            onClick={onShowRetrievalLog}
-            className="mt-2 w-full rounded-xl border border-sky-100 bg-sky-50 px-3 py-2 text-left text-xs font-semibold text-sky-700 transition hover:border-sky-200 hover:bg-sky-100"
-          >
-            Retrieval 보기
-          </button>
         )}
 
         {!isUser && (canGiveFeedback || feedbackVote) && (

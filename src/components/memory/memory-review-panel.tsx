@@ -94,10 +94,32 @@ type MemoryReviewPanelProps = {
   saveStatus?: "idle" | "saving" | "saved" | "error";
   submittedAt?: number | null;
   readOnly?: boolean;
+  /** Admin view: show the Part 1 answers stored in initialAnswers above Part 2. */
+  showPart1Summary?: boolean;
   onAnswersChange?: (answers: MemoryReviewAnswers) => void;
   onSubmitFeedback?: (answers: MemoryReviewAnswers) => Promise<boolean> | boolean;
   onSubmitted?: () => void;
 };
+
+// Part 1 (오늘 세션 돌아보기) answer keys — same contract as
+// MEMORY_REVIEW_INTRO_KEYS in /main/[missionId].
+const PART1_QUESTIONS: { key: string; label: string; rating: boolean }[] = [
+  {
+    key: "session_understanding",
+    label: "에이전트가 내 취향과 작업 방식을 잘 이해하고 있다고 느꼈다",
+    rating: true,
+  },
+  {
+    key: "memory_helpfulness",
+    label: "에이전트의 메모리 덕분에 작업이 더 수월했다",
+    rating: true,
+  },
+  {
+    key: "future_memory_freeform",
+    label: "앞으로 기억해 주었으면 하는 것",
+    rating: false,
+  },
+];
 
 export type MemoryReviewMention = {
   type: "cluster" | "memory";
@@ -204,6 +226,7 @@ export function MemoryReviewPanel({
   saveStatus = "idle",
   submittedAt = null,
   readOnly = false,
+  showPart1Summary = false,
   onAnswersChange,
   onSubmitFeedback,
   onSubmitted,
@@ -723,8 +746,36 @@ export function MemoryReviewPanel({
     );
   };
 
+  const part1Answers = PART1_QUESTIONS.map((question) => ({
+    ...question,
+    text: initialAnswers?.[question.key]?.text?.trim() ?? "",
+  })).filter((question) => question.text);
+
   return (
     <aside className="relative m-3 ml-0 flex w-92 shrink-0 flex-col overflow-hidden rounded-lg border border-slate-200 bg-white shadow-xl xl:w-96">
+      {showPart1Summary && part1Answers.length > 0 ? (
+        <div className="shrink-0 border-b border-slate-200 bg-slate-50/70 px-4 py-3">
+          <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+            Review Part 1 · 오늘 세션 돌아보기
+          </p>
+          <dl className="mt-2 space-y-1.5">
+            {part1Answers.map((question) => (
+              <div key={question.key} className="text-xs leading-relaxed">
+                <dt className="font-medium text-slate-500">{question.label}</dt>
+                <dd
+                  className={
+                    question.rating
+                      ? "font-semibold text-slate-800"
+                      : "wrap-anywhere whitespace-pre-wrap text-slate-700"
+                  }
+                >
+                  {question.rating ? `${question.text} / 7` : question.text}
+                </dd>
+              </div>
+            ))}
+          </dl>
+        </div>
+      ) : null}
       <div className="border-b border-slate-200 px-4 py-4">
         <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">
           Review Part 2

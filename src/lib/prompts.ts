@@ -792,11 +792,15 @@ export function localElementEditUserPrompt(params: {
   designStyleContent?: string;
   selector?: string;
   elementHtml: string;
+  multiSelect?: { index: number; total: number; selectors: string[] };
 }) {
   return [
     `User request: ${params.userRequest.slice(0, 1000)}`,
     params.editInstruction?.trim()
       ? `Edit instruction (rewritten in English): ${params.editInstruction.slice(0, 2000)}`
+      : "",
+    params.multiSelect && params.multiSelect.total > 1
+      ? `Multi-selection context: the user selected ${params.multiSelect.total} elements together (selectors: ${params.multiSelect.selectors.join(", ")}) and the request applies to each of them. You are rewriting element ${params.multiSelect.index + 1} of ${params.multiSelect.total}. If the request does not apply to this specific element, return its outerHTML unchanged.`
       : "",
     `Mockup device: ${params.deviceLabel}`,
     params.selector ? `Selected element selector: ${params.selector}` : "",

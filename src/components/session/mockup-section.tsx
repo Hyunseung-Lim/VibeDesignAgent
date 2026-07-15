@@ -17,7 +17,7 @@ type MockupSectionProps = {
   sectionRef: RefObject<HTMLElement | null>;
   hasArtboards: boolean;
   editMode: boolean;
-  selectedElement: MockupSectionSelectedElement | null;
+  selectedElements: MockupSectionSelectedElement[];
   canvasScale: number;
   activeArtboard: MockupSectionArtboard | null | undefined;
   shouldRenderCanvas: boolean;
@@ -40,7 +40,7 @@ export function MockupSection({
   sectionRef,
   hasArtboards,
   editMode,
-  selectedElement,
+  selectedElements,
   canvasScale,
   activeArtboard,
   shouldRenderCanvas,
@@ -71,7 +71,7 @@ export function MockupSection({
         {hasArtboards && (
           <MockupCanvasToolbar
             editMode={editMode}
-            selectedElement={selectedElement}
+            selectedElements={selectedElements}
             canvasScale={canvasScale}
             activeArtboard={activeArtboard}
             onToggleEditMode={onToggleEditMode}
