@@ -181,7 +181,7 @@ export function chatMissionPrompt(
   return `Current mission context:\nTitle: ${missionTitle}\nBrief: ${missionBrief}${deviceLine}`;
 }
 
-type MemoryRelevance = "light" | "medium" | "strong";
+type MemoryRelevance = "background" | "light" | "relevant" | "strong";
 
 export type CompactMemoryItem = {
   episodic?: string;
@@ -203,14 +203,18 @@ function compactMemoryOriginSuffix(item: CompactMemoryItem) {
 // omitted — it duplicated the base instruction.
 export function chatRetrievedMemoryPrompt(
   memory: { episodic: CompactMemoryItem[]; semantic: CompactMemoryItem[] },
-  memoryRelevance: MemoryRelevance = "medium",
+  memoryRelevance: MemoryRelevance = "relevant",
 ) {
   const lines = [
     "Memory retrieved for this turn — evidence selected by retrieval, not automatic mission requirements. Use only what helps and prioritize the latest user request and current mission context. Never quote memory verbatim or call it memory/stored data; when a durable preference shapes an action you take, briefly reflect that consideration in your visible reply in natural language.",
   ];
-  if (memoryRelevance === "light") {
+  if (memoryRelevance === "background") {
     lines.push(
-      "Memory relevance: light — treat memory as quiet background only; do not force it into the response.",
+      "Memory relevance: background — the retrieved memory barely relates to this request; ignore it unless it resolves an ambiguity.",
+    );
+  } else if (memoryRelevance === "light") {
+    lines.push(
+      "Memory relevance: light — treat memory as a quiet tie-breaker only; do not force it into the response.",
     );
   } else if (memoryRelevance === "strong") {
     lines.push(
@@ -368,7 +372,7 @@ Output shape:
   "analysis": "Work through the decision in 1-2 sentences: which rule(s) in the list apply to the latest user request, any ambiguity, and why the intent below follows. Do NOT restate the request; reason about it.",
   "intent": "answer" | "create_design_brief" | "edit_design_brief" | "create_mockup" | "edit_mockup" | "fetch_references" | "create_design_spec" | "edit_design_spec",
   "confidence": 0.0,
-  "memoryRelevance": "light" | "medium" | "strong",
+  "memoryRelevance": "background" | "light" | "relevant" | "strong",
   "memoryDirectives": ["short imperative guidance derived from semanticMemories, max 2 items, [] when unsure"],
   "needs": {
     "mission": true,
@@ -398,10 +402,11 @@ Rules:
 - Need activeIdea for design brief updates, mockup generation from the current design brief, or design spec work tied to the brief.
 - Need designSpec for mockup generation/editing, design spec revision, or style variant creation when a current style already exists.
 - Need citedTexts or citedReferences only when the current request refers to selected/cited material, examples, references, or inspiration.
-- If semanticMemories are present in the compact input, choose memoryRelevance instead of deciding whether to include memory:
-  - "light": memory is weak, generic, or only background; use it only as a quiet tie-breaker.
-  - "medium": memory is somewhat relevant to the request or design direction; reflect it when it helps.
-  - "strong": memory is directly relevant, high-signal, or the user asks for personalization/continuity; actively align the response with it.
+- If semanticMemories are present in the compact input, grade memoryRelevance with the single best-fitting level. Each item carries a similarity signal (high / mid-high / mid-low / low); use the signals AND whether the content actually bears on the current request. Do not default to a middle level — commit to the level the evidence supports:
+  - "background": no item clearly relates to this request (mostly low signals or unrelated content); memory should be ignored unless it resolves an ambiguity.
+  - "light": only weakly or generically related items (mid-low signals); quiet tie-breaker at most.
+  - "relevant": at least one item materially bears on the request or design direction (typically mid-high signal) and should be reflected.
+  - "strong": a high-signal item directly matches the request, or the user asks for personalization/continuity; actively align the response with it.
 - If the user request cannot be answered without asking a question, choose "answer" and ask the shortest useful clarifying question in the final response.
 - semanticMemories, when present, are retrieved memory items already selected by the app's retrieval/filter policy. Use them to judge memoryRelevance, write memoryDirectives, and disambiguate vague requests. Do not override the latest user request or quote memory.
 - memoryDirectives: at most 2 short imperative sentences (English) telling the responder HOW to apply the user's durable preferences to THIS request, e.g. "Keep the restrained dark editorial tone the user consistently prefers." Only write a directive when a semantic memory clearly applies to the current request AND the chosen intent; when none clearly applies, return []. Never write directives that repeat or continue a previous task, contradict the current request, or merely restate the request itself.

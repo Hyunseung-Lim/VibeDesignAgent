@@ -162,10 +162,11 @@ function compactMemoryContext(memoryContext: unknown) {
 
 function memorySimilaritySignal(similarity: unknown) {
   const score = typeof similarity === "number" ? similarity : NaN;
-  if (!Number.isFinite(score)) return "mid";
+  if (!Number.isFinite(score)) return "mid-low";
   if (score >= 0.48) return "high";
-  if (score <= 0.39) return "low";
-  return "mid";
+  if (score >= 0.44) return "mid-high";
+  if (score > 0.39) return "mid-low";
+  return "low";
 }
 
 function compactPlannerSemanticMemories(memoryItems: unknown[]) {
@@ -300,7 +301,12 @@ const CHAT_PLAN_INTENTS = new Set([
   "edit_design_spec",
 ]);
 
-const MEMORY_RELEVANCE_LEVELS = new Set(["light", "medium", "strong"]);
+const MEMORY_RELEVANCE_LEVELS = new Set([
+  "background",
+  "light",
+  "relevant",
+  "strong",
+]);
 
 type ChatPlanIntent =
   | "answer"
@@ -323,7 +329,7 @@ type ChatPlanNeeds = {
   conversationHistory: "minimal" | "recent" | "full";
 };
 
-type MemoryRelevance = "light" | "medium" | "strong";
+type MemoryRelevance = "background" | "light" | "relevant" | "strong";
 
 type ChatPlan = {
   intent: ChatPlanIntent;
@@ -426,7 +432,7 @@ function defaultChatPlan(overrides?: Partial<ChatPlan>): ChatPlan {
   return {
     intent: "answer",
     confidence: 0,
-    memoryRelevance: "medium",
+    memoryRelevance: "relevant",
     memoryDirectives: [],
     needs: {
       mission: true,
@@ -654,9 +660,13 @@ function parseChatPlan(text: string): ChatPlan | null {
     const parsed = JSON.parse(jsonText) as Record<string, unknown>;
     const needs = parsed.needs as Record<string, unknown> | undefined;
     const intent = normalizeChatPlanIntent(parsed.intent);
-    const rawMemoryRelevance = String(
-      parsed.memoryRelevance ?? parsed.memoryRelavance ?? "medium",
+    // Legacy 3-level value from older prompts/stored plans maps onto the
+    // 4-level ladder ("medium" was the old catch-all default).
+    const rawMemoryRelevanceInput = String(
+      parsed.memoryRelevance ?? parsed.memoryRelavance ?? "relevant",
     );
+    const rawMemoryRelevance =
+      rawMemoryRelevanceInput === "medium" ? "relevant" : rawMemoryRelevanceInput;
     const conversationHistory = String(
       needs?.conversationHistory ?? "recent",
     );
@@ -669,7 +679,7 @@ function parseChatPlan(text: string): ChatPlan | null {
           : 0,
       memoryRelevance: MEMORY_RELEVANCE_LEVELS.has(rawMemoryRelevance)
         ? (rawMemoryRelevance as MemoryRelevance)
-        : "medium",
+        : "relevant",
       memoryDirectives: Array.isArray(parsed.memoryDirectives)
         ? parsed.memoryDirectives
             .map((item) => (typeof item === "string" ? item.trim() : ""))
@@ -1131,9 +1141,9 @@ export async function POST(request: Request) {
         content: chatRetrievedMemoryPrompt(
           compactMemory,
           // Directives (injected near currentRequest below) subsume the
-          // relevance dial; "medium" renders no relevance line.
+          // relevance dial; "relevant" renders no relevance line.
           promptPlan.memoryDirectives.length > 0
-            ? "medium"
+            ? "relevant"
             : promptPlan.memoryRelevance,
         ),
       });
