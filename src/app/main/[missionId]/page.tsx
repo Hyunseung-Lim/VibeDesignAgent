@@ -27,6 +27,7 @@ import {
   Minimize2Icon,
   BrainIcon,
   EyeIcon,
+  EyeOffIcon,
   DownloadIcon,
   XIcon,
   HelpCircleIcon,
@@ -3091,6 +3092,10 @@ export default function MainScreenPage() {
   );
   const [memoryGraphFilter, setMemoryGraphFilter] =
     useState<MemoryGraphFilter>("all");
+  // 리뷰 그래프에서 비활성(아카이브/weight 0) 노드 표시 여부. 비활성 노드가
+  // 하나도 없으면 토글 버튼 자체를 숨긴다.
+  const [showInactiveGraphMemories, setShowInactiveGraphMemories] =
+    useState(true);
   const [isMemoryDiffOpen, setIsMemoryDiffOpen] = useState(false);
   const [isMemoryReviewIntroOpen, setIsMemoryReviewIntroOpen] = useState(false);
   const [selectedGraphMemoryId, setSelectedGraphMemoryId] = useState<
@@ -8345,42 +8350,56 @@ export default function MainScreenPage() {
     );
     const snapshotItemIds = new Set(activeClusterSnapshot.itemIds);
     const shouldUseSnapshotItems = !activeClusterSnapshot.isFallback;
-    const visibleMemoryItems = cumulativeGraphMemories.filter(
-      (memory) => {
-        const referenced = referencedByMemoryId.get(memory.id);
-        const isPromoted = promotedIds.has(memory.id);
-        // 비활성 = auto-duplicate 아카이브 또는 idle decay로 weight 0 도달.
-        // 둘 다 클러스터 스냅샷 입력에서 제외되므로, after 페이즈에서 예외로
-        // 살려 비활성 메모리 그룹에 dimmed로 표시한다.
-        const isArchived = sessionArchivedIds.has(memory.id);
-        const isInactiveWeight =
-          memory.weight != null && memory.weight <= 0;
-        const isInactive = isArchived || isInactiveWeight;
-        if (
-          shouldUseSnapshotItems &&
-          !snapshotItemIds.has(memory.id) &&
-          !(isInactive && memoryGraphPhase === "after")
-        ) {
-          return false;
-        }
-        if (memoryGraphPhase === "before" && isPromoted) return false;
-        if (memoryGraphPhase === "before" && isArchived && !referenced) {
-          return false;
-        }
-        if (memoryGraphFilter === "all") return true;
-        if (memoryGraphFilter === "changed") {
-          return (
-            Boolean(referenced) ||
-            isPromoted ||
-            isArchived ||
-            (isInactiveWeight && memoryGraphPhase === "after")
-          );
-        }
-        if (memoryGraphFilter === "referenced") return Boolean(referenced);
-        if (memoryGraphFilter === "promoted") return isPromoted;
-        return isInactive && memoryGraphPhase === "after";
-      },
+    const isInactiveGraphMemory = (
+      memory: (typeof cumulativeGraphMemories)[number],
+    ) =>
+      sessionArchivedIds.has(memory.id) ||
+      (memory.weight != null && memory.weight <= 0);
+    const isVisibleGraphMemory = (
+      memory: (typeof cumulativeGraphMemories)[number],
+      includeInactive: boolean,
+    ) => {
+      const referenced = referencedByMemoryId.get(memory.id);
+      const isPromoted = promotedIds.has(memory.id);
+      // 비활성 = auto-duplicate 아카이브 또는 idle decay로 weight 0 도달.
+      // 둘 다 클러스터 스냅샷 입력에서 제외되므로, after 페이즈에서 예외로
+      // 살려 비활성 메모리 그룹에 dimmed로 표시한다.
+      const isArchived = sessionArchivedIds.has(memory.id);
+      const isInactiveWeight = memory.weight != null && memory.weight <= 0;
+      const isInactive = isArchived || isInactiveWeight;
+      if (isInactive && !includeInactive) return false;
+      if (
+        shouldUseSnapshotItems &&
+        !snapshotItemIds.has(memory.id) &&
+        !(isInactive && memoryGraphPhase === "after")
+      ) {
+        return false;
+      }
+      if (memoryGraphPhase === "before" && isPromoted) return false;
+      if (memoryGraphPhase === "before" && isArchived && !referenced) {
+        return false;
+      }
+      if (memoryGraphFilter === "all") return true;
+      if (memoryGraphFilter === "changed") {
+        return (
+          Boolean(referenced) ||
+          isPromoted ||
+          isArchived ||
+          (isInactiveWeight && memoryGraphPhase === "after")
+        );
+      }
+      if (memoryGraphFilter === "referenced") return Boolean(referenced);
+      if (memoryGraphFilter === "promoted") return isPromoted;
+      return isInactive && memoryGraphPhase === "after";
+    };
+    const visibleMemoryItems = cumulativeGraphMemories.filter((memory) =>
+      isVisibleGraphMemory(memory, showInactiveGraphMemories),
     );
+    // 토글 노출 판단: 토글이 켜져 있다고 가정할 때 보이는 비활성 노드 수.
+    const inactiveVisibleCount = cumulativeGraphMemories.filter(
+      (memory) =>
+        isInactiveGraphMemory(memory) && isVisibleGraphMemory(memory, true),
+    ).length;
     const visibleMemoryIds = new Set(visibleMemoryItems.map((item) => item.id));
     const visibleGraphEdges = reviewGraphEdges.filter(
       (edge) =>
@@ -8636,6 +8655,29 @@ export default function MainScreenPage() {
               }
             />
             <div className="relative min-w-0 flex-1 overflow-hidden">
+              {inactiveVisibleCount > 0 ? (
+                <div className="absolute left-3 top-3 z-10">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setShowInactiveGraphMemories((prev) => !prev)
+                    }
+                    aria-pressed={showInactiveGraphMemories}
+                    className={`flex cursor-pointer items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold shadow-sm ring-1 transition ${
+                      showInactiveGraphMemories
+                        ? "bg-white/90 text-slate-600 ring-slate-200 hover:bg-white"
+                        : "bg-slate-100/90 text-slate-400 ring-slate-200 hover:bg-slate-100"
+                    }`}
+                  >
+                    {showInactiveGraphMemories ? (
+                      <EyeIcon size={12} aria-hidden="true" />
+                    ) : (
+                      <EyeOffIcon size={12} aria-hidden="true" />
+                    )}
+                    비활성 메모리 {inactiveVisibleCount}
+                  </button>
+                </div>
+              ) : null}
               {graphItems.length === 0 ? (
                 emptyState
               ) : (

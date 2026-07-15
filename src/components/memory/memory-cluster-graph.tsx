@@ -170,6 +170,27 @@ function isInactiveGraphItem(item: ClusterableMemoryItem) {
   return item.action?.split(" / ").includes("archived") ?? false;
 }
 
+// 비활성 경로는 두 가지: auto-duplicate 아카이브(archivedAt) 또는 idle decay로
+// weight 0 도달. 사이드 패널 카드(inactiveReasonLabel)와 동일한 문구.
+function inactiveGraphReasonLabel(item: ClusterableMemoryItem) {
+  if (
+    item.archivedAt ||
+    (item.action?.split(" / ").includes("archived") ?? false)
+  ) {
+    return "유사 메모리 존재";
+  }
+  return "weight 0 도달";
+}
+
+function isNewThisSessionGraphItem(item: ClusterableMemoryItem) {
+  return item.action?.split(" / ").includes("promoted") ?? false;
+}
+
+function formatGraphWeight(weight: number | null | undefined) {
+  if (weight == null || !Number.isFinite(weight)) return "";
+  return `${Math.round(weight * 100)}%`;
+}
+
 function originalInputText(item: ClusterableMemoryItem) {
   const sourceText = beforeSessionSourceText(item);
   if (sourceText) return sourceText;
@@ -1015,14 +1036,26 @@ export default function MemoryClusterGraph({
 
       {hoveredPoint && !dragState ? (
         <div
-          className="pointer-events-none absolute z-20 w-[min(20rem,calc(100%-1.5rem))] rounded-lg border border-border bg-background p-3 text-left text-xs shadow-xl backdrop-blur"
+          className={`pointer-events-none absolute z-20 w-[min(20rem,calc(100%-1.5rem))] rounded-lg border p-3 text-left text-xs shadow-xl backdrop-blur ${
+            isNewThisSessionGraphItem(hoveredPoint.item) &&
+            !isInactiveGraphItem(hoveredPoint.item)
+              ? "border-indigo-100 bg-indigo-50/90"
+              : "border-border bg-background"
+          }`}
           style={{ left: hoverCardLeft, top: hoverCardTop }}
         >
           <div className="mb-2 flex items-center justify-between gap-3 text-[11px] text-muted-foreground">
-            <span className="min-w-0 truncate font-medium text-slate-500">
-              {hoveredPoint.item.row?.source?.missionId
-                ? getMissionLabel(hoveredPoint.item.row.source.missionId)
-                : "세션 정보 없음"}
+            <span className="flex min-w-0 items-center gap-1.5">
+              {isNewThisSessionGraphItem(hoveredPoint.item) ? (
+                <span className="shrink-0 rounded-full bg-indigo-100 px-1.5 py-0.5 text-[10px] font-bold text-indigo-700">
+                  NEW
+                </span>
+              ) : null}
+              <span className="min-w-0 truncate font-medium text-slate-500">
+                {hoveredPoint.item.row?.source?.missionId
+                  ? getMissionLabel(hoveredPoint.item.row.source.missionId)
+                  : "세션 정보 없음"}
+              </span>
             </span>
             {hoveredPoint.item.timestamp ? (
               <span className="shrink-0 tabular-nums">
@@ -1054,10 +1087,34 @@ export default function MemoryClusterGraph({
                 {preferenceSignalLabel}
               </Badge>
             ) : null}
+            {isInactiveGraphItem(hoveredPoint.item) ? (
+              <Badge
+                variant="secondary"
+                className="rounded-full border-slate-200 bg-slate-50 text-slate-400"
+              >
+                비활성
+              </Badge>
+            ) : null}
+            {formatGraphWeight(hoveredPoint.item.weight) ? (
+              <span className="ml-auto shrink-0 text-[10px] font-semibold uppercase tabular-nums text-slate-400">
+                weight {formatGraphWeight(hoveredPoint.item.weight)}
+              </span>
+            ) : null}
           </div>
+          {isInactiveGraphItem(hoveredPoint.item) ? (
+            <p className="mb-2 text-[11px] leading-snug text-slate-400">
+              비활성 이유: {inactiveGraphReasonLabel(hoveredPoint.item)}
+            </p>
+          ) : null}
           <div className="flex gap-2">
             <span
-              className="mt-0.5 w-1 shrink-0 rounded-full bg-transparent"
+              className={`mt-0.5 w-1 shrink-0 rounded-full ${
+                isNewThisSessionGraphItem(hoveredPoint.item)
+                  ? "bg-indigo-400"
+                  : isInactiveGraphItem(hoveredPoint.item)
+                    ? "bg-slate-200"
+                    : "bg-slate-300"
+              }`}
               aria-hidden="true"
             />
             <div className="min-w-0 flex-1">

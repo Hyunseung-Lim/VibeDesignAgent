@@ -32,6 +32,18 @@ const DEFAULT_LIMIT = 10;
 const IDLE_DECAY_WEIGHT_LOSS = 0.006;
 const IDLE_DECAY_MAX_WEIGHT_LOSS = 0.012;
 const MIN_MEMORY_WEIGHT = 0;
+// Active-memory soft cap (15.269): idle decay only runs while the active count
+// exceeds the cap, so deactivation starts at 100 and the active pool grows
+// slowly with total inputs — cap(200 total) ≈ 118, cap(300 total) ≈ 125.
+const ACTIVE_MEMORY_BASE_CAP = 100;
+
+function activeMemoryCap(totalMemoryCount: number) {
+  if (totalMemoryCount <= ACTIVE_MEMORY_BASE_CAP) return ACTIVE_MEMORY_BASE_CAP;
+  return Math.round(
+    ACTIVE_MEMORY_BASE_CAP +
+      1.8 * Math.sqrt(totalMemoryCount - ACTIVE_MEMORY_BASE_CAP),
+  );
+}
 
 type MemoryDoc = Record<string, unknown> & {
   id: string;
@@ -124,12 +136,17 @@ async function loadCollectionDocs(
       return { id, ...data } as MemoryDoc;
     }),
   );
-  return docs.filter((doc) => {
-    const sourceType = String(
-      doc.sourceType ?? doc.memorySource ?? doc.type ?? "",
-    );
-    return sourceType === "during_session" || sourceType === "before_session";
-  });
+  return {
+    docs: docs.filter((doc) => {
+      const sourceType = String(
+        doc.sourceType ?? doc.memorySource ?? doc.type ?? "",
+      );
+      return sourceType === "during_session" || sourceType === "before_session";
+    }),
+    // 지금까지 입력된 전체 메모리 수(비활성 포함, MAX_MEMORY_DOCS 절단 이전).
+    // active soft cap 곡선의 입력이다 (15.269).
+    totalCount: ids.length,
+  };
 }
 
 function isBeforeSessionDoc(doc: MemoryDoc) {
@@ -248,12 +265,16 @@ function v2Candidate(uid: string, doc: MemoryDoc): Candidate | null {
 }
 
 async function loadCandidates(uid: string, token: string) {
-  const v2Docs = await loadCollectionDocs(uid, MEMORY_COLLECTION, token);
+  const { docs: v2Docs, totalCount } = await loadCollectionDocs(
+    uid,
+    MEMORY_COLLECTION,
+    token,
+  );
   const v2 = v2Docs
     .map((doc) => v2Candidate(uid, doc))
     .filter((item): item is Candidate => Boolean(item));
   await ensureFreshMemoryEmbeddings(v2, token);
-  return v2;
+  return { candidates: v2, totalMemoryCount: totalCount };
 }
 
 function nextWeight(candidate: Candidate, wasRetrieved: boolean) {
@@ -262,22 +283,27 @@ function nextWeight(candidate: Candidate, wasRetrieved: boolean) {
   return Number(Math.min(1, candidate.weight + gain).toFixed(4));
 }
 
-function memoryCountDecayMultiplier(memoryCount: number) {
-  if (memoryCount >= 200) return 1.5;
-  if (memoryCount >= 120) return 1.3;
-  if (memoryCount >= 60) return 1.15;
-  return 1;
-}
-
-function idleDecayWeightLoss(memoryCount: number) {
-  return Math.min(
-    IDLE_DECAY_MAX_WEIGHT_LOSS,
-    IDLE_DECAY_WEIGHT_LOSS * memoryCountDecayMultiplier(memoryCount),
+function idleDecayWeightLoss(activeCount: number, totalMemoryCount: number) {
+  const cap = activeMemoryCap(totalMemoryCount);
+  if (activeCount <= cap) return 0;
+  // Ramp from the base loss to the max as the overshoot grows; saturated at
+  // 50 memories above the cap.
+  const overshootRatio = Math.min(1, (activeCount - cap) / 50);
+  return Number(
+    (
+      IDLE_DECAY_WEIGHT_LOSS +
+      (IDLE_DECAY_MAX_WEIGHT_LOSS - IDLE_DECAY_WEIGHT_LOSS) * overshootRatio
+    ).toFixed(6),
   );
 }
 
-function nextIdleWeight(candidate: Candidate, memoryCount: number) {
-  const loss = idleDecayWeightLoss(memoryCount);
+function nextIdleWeight(
+  candidate: Candidate,
+  activeCount: number,
+  totalMemoryCount: number,
+) {
+  const loss = idleDecayWeightLoss(activeCount, totalMemoryCount);
+  if (loss === 0) return candidate.weight;
   return Number(
     Math.max(MIN_MEMORY_WEIGHT, candidate.weight - loss).toFixed(4),
   );
@@ -318,14 +344,15 @@ async function updateIdleDecayWeights(
   idleTargets: Candidate[],
   token: string,
   now: number,
-  memoryCount: number,
+  activeCount: number,
+  totalMemoryCount: number,
 ) {
   const deltas = await Promise.all(
     idleTargets.map(async (candidate) => {
       const previousWeight = candidate.weight;
-      const weight = nextIdleWeight(candidate, memoryCount);
-      // Already at the floor — nothing to write, and keep the log lean since we
-      // now decay every non-retrieved memory each turn.
+      const weight = nextIdleWeight(candidate, activeCount, totalMemoryCount);
+      // Under the active cap or already at the floor — nothing to write, and
+      // keep the log lean since we decay every non-retrieved memory each turn.
       if (weight === previousWeight) return null;
 
       await patchFirestoreDocument(
@@ -345,7 +372,6 @@ async function updateIdleDecayWeights(
         previousWeight,
         weight,
         weightDelta: candidate.weightDelta,
-        decayMultiplier: memoryCountDecayMultiplier(memoryCount),
       };
     }),
   );
@@ -390,7 +416,10 @@ export async function POST(request: Request) {
     const now = Date.now();
     const [queryEmbedding] = await embedMemoryTexts([query]);
 
-    const candidates = await loadCandidates(user.localId, token);
+    const { candidates, totalMemoryCount } = await loadCandidates(
+      user.localId,
+      token,
+    );
     const memoryCount = candidates.length;
 
     const ranked = candidates
@@ -430,6 +459,7 @@ export async function POST(request: Request) {
       token,
       now,
       memoryCount,
+      totalMemoryCount,
     );
     const retrievedBeforeSession = retrieved.filter((candidate) =>
       isBeforeSessionDoc(candidate.doc),
@@ -478,8 +508,12 @@ export async function POST(request: Request) {
           .filter((candidate) => isBeforeSessionDoc(candidate.doc))
           .map((candidate) => Number(candidate.similarity.toFixed(4))),
         memoryCount,
-        idleDecayMultiplier: memoryCountDecayMultiplier(memoryCount),
-        idleDecayWeightLoss: idleDecayWeightLoss(memoryCount),
+        totalMemoryCount,
+        activeMemoryCap: activeMemoryCap(totalMemoryCount),
+        idleDecayWeightLoss: idleDecayWeightLoss(
+          memoryCount,
+          totalMemoryCount,
+        ),
         idleDecayCount: idleDecayDeltas.length,
         scoreDeltas,
         idleDecayDeltas,
