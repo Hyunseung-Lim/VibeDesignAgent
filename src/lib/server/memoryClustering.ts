@@ -614,10 +614,15 @@ export async function embedItems(items: ClusterInputItem[], token?: string) {
   return items.map((item) => l2Normalize(item.embedding ?? []));
 }
 
+function clusterItemSetKey(itemIds: string[]) {
+  return [...itemIds].sort().join("");
+}
+
 async function generateClusterGraph(
   items: ClusterInputItem[],
   token: string,
   subjectName?: string,
+  previousClusters: MemoryCluster[] = [],
 ) {
   if (items.length === 0) {
     return {
@@ -629,12 +634,49 @@ async function generateClusterGraph(
   const vectors = await embedItems(items, token);
   const graphCommunity = buildGraphCommunityClusters(items, vectors);
   const itemsById = new Map(items.map((item) => [item.id, item]));
+  // 세션 간 클러스터 일관성: 노드 구성이 이전 클러스터와 완전히 동일하면
+  // label/summary를 LLM으로 다시 생성하지 않고 그대로 재사용한다.
+  const previousByItemSet = new Map(
+    previousClusters
+      .filter(
+        (cluster) =>
+          cluster.itemIds.length > 0 && cluster.label && cluster.summary,
+      )
+      .map((cluster) => [clusterItemSetKey(cluster.itemIds), cluster] as const),
+  );
+  const reusedLabelsByClusterId = new Map<
+    string,
+    { label: string; summary: string }
+  >();
+  const clustersToLabel: MemoryCluster[] = [];
+  graphCommunity.clusters.forEach((cluster) => {
+    const previous = previousByItemSet.get(clusterItemSetKey(cluster.itemIds));
+    if (previous) {
+      reusedLabelsByClusterId.set(cluster.id, {
+        label: previous.label,
+        summary: previous.summary,
+      });
+    } else {
+      clustersToLabel.push(cluster);
+    }
+  });
+  const labeledClusters = await labelClusters(
+    clustersToLabel,
+    itemsById,
+    subjectName,
+  );
+  const labeledById = new Map(
+    labeledClusters.map((cluster) => [cluster.id, cluster] as const),
+  );
+  const graphClusters = graphCommunity.clusters.map((cluster) => {
+    const reused = reusedLabelsByClusterId.get(cluster.id);
+    if (reused) {
+      return { ...cluster, label: reused.label, summary: reused.summary };
+    }
+    return labeledById.get(cluster.id) ?? cluster;
+  });
   return {
-    graphClusters: await labelClusters(
-      graphCommunity.clusters,
-      itemsById,
-      subjectName,
-    ),
+    graphClusters,
     graphEdges: graphCommunity.edges,
     graphDiagnostics: graphCommunity.diagnostics,
   };
@@ -843,7 +885,12 @@ export async function generateAndStoreClusters(
     { currentMethodOnly: false },
   );
   const { graphClusters: generatedGraphClusters, graphEdges, graphDiagnostics } =
-    await generateClusterGraph(items, token, subjectName);
+    await generateClusterGraph(
+      items,
+      token,
+      subjectName,
+      previousClusterDoc?.graphClusters ?? [],
+    );
   const graphClusters = assignStableClusterColors(
     generatedGraphClusters,
     previousClusterDoc?.graphClusters ?? [],
@@ -960,7 +1007,12 @@ export async function generateAndStoreSessionClusterSnapshots(
       graphClusters: generatedGraphClusters,
       graphEdges,
       graphDiagnostics,
-    } = await generateClusterGraph(items, token, subjectName);
+    } = await generateClusterGraph(
+      items,
+      token,
+      subjectName,
+      previousPhaseClusters,
+    );
     const graphClusters = assignStableClusterColors(
       generatedGraphClusters,
       previousPhaseClusters,

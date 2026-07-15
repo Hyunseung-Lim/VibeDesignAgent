@@ -9,38 +9,66 @@ import {
 type ReviewQuestion = {
   id: string;
   label: string;
+  allowNone?: boolean;
+  type?: "rating";
+  placeholder?: string;
 };
+
+const NONE_ANSWER_TEXT = "없음";
+
+// 4·5·6번(기대대로 기억됨 / 잘못 기억됨 / 빠진 정보)이 동시에 모두 "없음"일
+// 수는 없다 — 셋 중 하나는 반드시 내용이 있어야 논리적으로 성립한다.
+const NONE_CONFLICT_QUESTION_IDS = [
+  "expected_memory_present",
+  "wrong_or_unnecessary_memory",
+  "missing_memory",
+];
+
+function reasonKey(questionId: string) {
+  return `${questionId}_reason`;
+}
 
 const REVIEW_QUESTIONS: ReviewQuestion[] = [
   {
     id: "expected_memory_present",
-    label:
-      "어떤 내용이 기대했던 대로 기억되어 있었나요?",
+    label: "메모리를 둘러보며, 기대했던 대로 기억된 내용이 있나요?",
+    allowNone: true,
+    placeholder: "어떤 내용인지 적어주세요",
   },
   {
     id: "wrong_or_unnecessary_memory",
     label:
-      "메모리를 둘러보며, 틀렸거나, 필요 없거나, 바란 것과 다르게 기억된 정보가 있나요? 없으면 없음이라고 적어주세요.",
+      "반대로, 틀렸거나, 필요 없거나, 바란 것과 다르게 기억된 정보가 있나요?",
+    allowNone: true,
+    placeholder: "무엇이 어떻게 잘못 기억되어 있는지 적어주세요",
   },
   {
     id: "missing_memory",
     label:
-      "반대로, 있어야 하는데 없는 정보가 있나요? 없으면 없음이라고 적어주세요.",
+      "혹시 기억되기를 바랐는데 없는 정보(또는 빠진 내용)가 있나요?",
+    allowNone: true,
+    placeholder: "어떤 정보가 빠져 있는지 적어주세요",
   },
   {
     id: "correction_preference",
     label:
-      "위 내용이 있다면, 어떻게 바로 잡히기를 원하시나요? 예: 직접 고치고 싶다, 말해서 고치게 하고 싶다, 이후 작업을 보며 스스로 반영했으면 한다.",
+      "위에서 메모리에 수정이나 추가가 필요하다고 답하셨다면, 어떻게 바로잡히기를 원하시나요? (앞서 언급한 정보 각각에 대해 답해주세요)",
+    allowNone: true,
+    placeholder:
+      "예: 직접 고치고 싶다, 말해서 고치게 하고 싶다, 이후 작업을 보며 스스로 반영했으면 한다",
   },
   {
     id: "overall_memory_accuracy",
     label:
-      "저장된 메모리가 전반적으로 나를 정확하게 반영하고 있습니다. 1에서 7 사이로 답하고, 이유가 있으면 함께 적어주세요.",
+      "지금까지 둘러본 메모리가 전반적으로 나를 정확하게 반영하고 있습니다.",
+    type: "rating",
   },
   {
     id: "new_self_insight",
     label:
-      "메모리를 보면서, 평소 미처 몰랐던 나의 취향이나 작업 습관을 새로 알게 된 것이 있나요? 없으면 없음이라고 적어주세요.",
+      "마지막으로, 메모리를 보면서 평소 미처 몰랐던 나의 취향이나 작업 습관을 새로 알게 된 것이 있나요?",
+    allowNone: true,
+    placeholder: "새로 알게 된 취향이나 작업 습관을 적어주세요",
   },
 ];
 
@@ -181,6 +209,7 @@ export function MemoryReviewPanel({
   onSubmitted,
 }: MemoryReviewPanelProps) {
   const [answers, setAnswers] = useState<Record<string, string>>({});
+  const [noneSelected, setNoneSelected] = useState<Record<string, boolean>>({});
   const [mentionRequest, setMentionRequest] = useState<MentionRequest | null>(
     null,
   );
@@ -205,8 +234,18 @@ export function MemoryReviewPanel({
   }, [mentionRequest, onMentionModeChange]);
 
   const allQuestionsAnswered = REVIEW_QUESTIONS.every(
-    (question) => answersRef.current[question.id]?.trim(),
+    (question) =>
+      answersRef.current[question.id]?.trim() &&
+      (question.type !== "rating" ||
+        answersRef.current[reasonKey(question.id)]?.trim()),
   );
+  const allNoneConflict = NONE_CONFLICT_QUESTION_IDS.every(
+    (id) => answersRef.current[id]?.trim() === NONE_ANSWER_TEXT,
+  );
+  const noneConflictNumbers = NONE_CONFLICT_QUESTION_IDS.map(
+    (id) =>
+      startNumber + REVIEW_QUESTIONS.findIndex((question) => question.id === id),
+  ).join("·");
 
   const submitPendingFeedback = async () => {
     if (!pendingSubmitPayload || !onSubmitFeedback) return;
@@ -223,7 +262,7 @@ export function MemoryReviewPanel({
   };
 
   const buildAnswersPayload = useCallback((): MemoryReviewAnswers => {
-    return Object.fromEntries(
+    const entries: (readonly [string, MemoryReviewAnswer])[] =
       REVIEW_QUESTIONS.map((question) => {
         const text = answersRef.current[question.id] ?? "";
         const targets = mentionTargetsRef.current[question.id] ?? {};
@@ -242,8 +281,13 @@ export function MemoryReviewPanel({
           });
         }
         return [question.id, { text, mentions }] as const;
-      }),
-    );
+      });
+    for (const question of REVIEW_QUESTIONS) {
+      if (question.type !== "rating") continue;
+      const key = reasonKey(question.id);
+      entries.push([key, { text: answersRef.current[key] ?? "", mentions: [] }]);
+    }
+    return Object.fromEntries(entries);
   }, []);
 
   const emitAnswersChange = useCallback(() => {
@@ -271,12 +315,17 @@ export function MemoryReviewPanel({
       return;
     }
 
-    const nextAnswers = Object.fromEntries(
+    const nextAnswers: Record<string, string> = Object.fromEntries(
       REVIEW_QUESTIONS.map((question) => [
         question.id,
         initialAnswers[question.id]?.text ?? "",
       ]),
     );
+    for (const question of REVIEW_QUESTIONS) {
+      if (question.type !== "rating") continue;
+      const key = reasonKey(question.id);
+      nextAnswers[key] = initialAnswers[key]?.text ?? "";
+    }
     const nextTargets = Object.fromEntries(
       REVIEW_QUESTIONS.map((question) => {
         const answer = initialAnswers[question.id];
@@ -296,6 +345,16 @@ export function MemoryReviewPanel({
     answersRef.current = nextAnswers;
     mentionTargetsRef.current = nextTargets;
     hydratedAnswersKeyRef.current = nextHydrationKey;
+    setNoneSelected(
+      Object.fromEntries(
+        REVIEW_QUESTIONS.filter((question) => question.allowNone).map(
+          (question) => [
+            question.id,
+            (nextAnswers[question.id] ?? "").trim() === NONE_ANSWER_TEXT,
+          ],
+        ),
+      ),
+    );
     // Apply synchronously. A deferred setAnswers (setTimeout) would be cancelled
     // by this effect's cleanup under React StrictMode's setup→cleanup→setup
     // double-invoke, while hydratedAnswersKeyRef is already set — so the second
@@ -401,6 +460,64 @@ export function MemoryReviewPanel({
     emitAnswersChange();
   };
 
+  const toggleNoneAnswer = (questionId: string) => {
+    const nextNone = !noneSelected[questionId];
+    const nextValue = nextNone ? NONE_ANSWER_TEXT : "";
+    setNoneSelected((current) => ({ ...current, [questionId]: nextNone }));
+    answersRef.current = {
+      ...answersRef.current,
+      [questionId]: nextValue,
+    };
+    setAnswers((current) => ({ ...current, [questionId]: nextValue }));
+    if (mentionRequest?.questionId === questionId) setMentionRequest(null);
+    if (activeQuestionIdRef.current === questionId) {
+      activeQuestionIdRef.current = null;
+    }
+    setCompletionRevision((current) => current + 1);
+    emitAnswersChange();
+  };
+
+  const selectRating = (questionId: string, score: number) => {
+    const nextValue = String(score);
+    answersRef.current = {
+      ...answersRef.current,
+      [questionId]: nextValue,
+    };
+    setAnswers((current) => ({ ...current, [questionId]: nextValue }));
+    setCompletionRevision((current) => current + 1);
+    emitAnswersChange();
+  };
+
+  const updateRatingReason = (questionId: string, value: string) => {
+    const key = reasonKey(questionId);
+    answersRef.current = {
+      ...answersRef.current,
+      [key]: value,
+    };
+    setAnswers((current) => ({ ...current, [key]: value }));
+    emitAnswersChange();
+  };
+
+  const renderRatingReason = (question: ReviewQuestion) => {
+    const key = reasonKey(question.id);
+    const value = answers[key] ?? "";
+    if (readOnly) {
+      return value.trim() ? (
+        <p className="wrap-anywhere whitespace-pre-wrap rounded-md border border-slate-100 bg-slate-50 px-3 py-2 text-xs leading-relaxed text-slate-600">
+          {value}
+        </p>
+      ) : null;
+    }
+    return (
+      <textarea
+        value={value}
+        onChange={(event) => updateRatingReason(question.id, event.target.value)}
+        placeholder="점수를 준 이유를 함께 적어주세요"
+        className="min-h-16 w-full resize-none wrap-anywhere rounded-md border border-input bg-white px-3 py-2 text-xs leading-relaxed outline-none ring-offset-background placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+      />
+    );
+  };
+
   const focusMentionToken = (questionId: string, token: string) => {
     const match = token.match(/^@(cluster|memory)\((.*)\)$/);
     const target = mentionTargetsRef.current[questionId]?.[token] ?? {
@@ -411,9 +528,50 @@ export function MemoryReviewPanel({
     onMentionFocus(target);
   };
 
-  const renderReadOnlyQuestion = (question: ReviewQuestion, index: number) => (
+  const renderRatingRow = (questionId: string) => {
+    const selected = Number(answers[questionId] ?? "");
+    return (
+      <div className="space-y-2.5">
+        <div className="flex justify-between gap-2">
+          {Array.from({ length: 7 }, (_, index) => index + 1).map((score) => (
+            <button
+              key={score}
+              type="button"
+              disabled={readOnly}
+              aria-pressed={selected === score}
+              aria-label={`${score}점`}
+              onClick={() => selectRating(questionId, score)}
+              className={`h-9 w-9 rounded-full border text-sm font-semibold transition ${
+                selected === score
+                  ? "border-slate-900 bg-slate-900 text-white"
+                  : "border-slate-200 bg-white text-slate-600 hover:border-slate-400 hover:text-slate-950"
+              } ${readOnly ? "cursor-default" : "cursor-pointer"}`}
+            >
+              {score}
+            </button>
+          ))}
+        </div>
+        <div className="grid grid-cols-3 text-[11px] font-medium leading-tight text-slate-500">
+          <span>1 전혀 아니다</span>
+          <span className="text-center">4 보통</span>
+          <span className="text-right">7 매우 그렇다</span>
+        </div>
+      </div>
+    );
+  };
+
+  const renderReadOnlyQuestion = (question: ReviewQuestion, index: number) =>
+    question.type === "rating" ? (
+      <div key={question.id} className="space-y-2">
+        <span className="block text-sm font-medium leading-relaxed text-slate-700">
+          {startNumber + index}. {question.label}
+        </span>
+        {renderRatingRow(question.id)}
+        {renderRatingReason(question)}
+      </div>
+    ) : (
     <div key={question.id} className="space-y-1.5">
-      <span className="block text-xs font-medium leading-relaxed text-slate-700">
+      <span className="block text-sm font-medium leading-relaxed text-slate-700">
         {startNumber + index}. {question.label}
       </span>
       <div
@@ -437,15 +595,39 @@ export function MemoryReviewPanel({
     </div>
   );
 
-  const renderQuestion = (question: ReviewQuestion, index: number) =>
-    readOnly ? (
-      renderReadOnlyQuestion(question, index)
-    ) : (
+  const renderQuestion = (question: ReviewQuestion, index: number) => {
+    if (readOnly) return renderReadOnlyQuestion(question, index);
+    if (question.type === "rating") {
+      return (
+        <div key={question.id} className="space-y-2">
+          <span className="block text-sm font-medium leading-relaxed text-slate-700">
+            {startNumber + index}. {question.label}
+          </span>
+          {renderRatingRow(question.id)}
+          {renderRatingReason(question)}
+        </div>
+      );
+    }
+    const isNone = Boolean(question.allowNone && noneSelected[question.id]);
+    return (
     <div key={question.id} className="space-y-1.5">
-      <span className="block text-xs font-medium leading-relaxed text-slate-700">
+      <span className="block text-sm font-medium leading-relaxed text-slate-700">
         {startNumber + index}. {question.label}
-        <span className="ml-0.5 text-rose-500">*</span>
       </span>
+      {question.allowNone ? (
+        <button
+          type="button"
+          aria-pressed={isNone}
+          onClick={() => toggleNoneAnswer(question.id)}
+          className={`cursor-pointer rounded-full border px-2.5 py-1 text-[11px] font-semibold transition ${
+            isNone
+              ? "border-slate-900 bg-slate-900 text-white"
+              : "border-slate-200 bg-white text-slate-500 hover:border-slate-400 hover:text-slate-800"
+          }`}
+        >
+          없음
+        </button>
+      ) : null}
       <div
         ref={(element) => {
           editorRefs.current[question.id] = element;
@@ -453,9 +635,10 @@ export function MemoryReviewPanel({
         role="textbox"
         aria-label={question.label}
         aria-multiline="true"
-        contentEditable
+        aria-disabled={isNone}
+        contentEditable={!isNone}
         suppressContentEditableWarning
-        data-placeholder="@ 입력 후 왼쪽 메모리뷰에서 항목을 선택하세요"
+        data-placeholder={question.placeholder ?? ""}
         onInput={(event) =>
           updateAnswerFromEditor(question.id, event.currentTarget)
         }
@@ -521,7 +704,11 @@ export function MemoryReviewPanel({
           const text = event.clipboardData.getData("text/plain");
           document.execCommand("insertText", false, text);
         }}
-        className={`min-h-20 wrap-anywhere whitespace-pre-wrap rounded-md border border-input bg-white px-3 py-2 text-xs leading-relaxed outline-none ring-offset-background empty:before:pointer-events-none empty:before:text-muted-foreground empty:before:content-[attr(data-placeholder)] focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 ${
+        className={`min-h-20 wrap-anywhere whitespace-pre-wrap rounded-md border border-input px-3 py-2 text-xs leading-relaxed outline-none ring-offset-background empty:before:pointer-events-none empty:before:text-muted-foreground empty:before:content-[attr(data-placeholder)] focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 ${
+          isNone
+            ? "pointer-events-none bg-slate-100 text-slate-400"
+            : "bg-white"
+        } ${
           mentionRequest?.questionId === question.id
             ? "border-amber-200 ring-2 ring-amber-100"
             : ""
@@ -534,6 +721,7 @@ export function MemoryReviewPanel({
       ) : null}
     </div>
     );
+  };
 
   return (
     <aside className="relative m-3 ml-0 flex w-92 shrink-0 flex-col overflow-hidden rounded-lg border border-slate-200 bg-white shadow-xl xl:w-96">
@@ -544,25 +732,44 @@ export function MemoryReviewPanel({
         <h2 className="mt-1 text-xl font-semibold tracking-normal text-slate-950">
           메모리 리뷰하기
         </h2>
-        <p className="mt-2 text-sm font-medium leading-relaxed text-slate-600">
-          {trimmedIntroMemoryText ? (
-            <>
-              <span className="font-bold text-slate-800">
-                ‘{trimmedIntroMemoryText}’
+        {trimmedIntroMemoryText ? (
+          <div className="mt-2 space-y-2">
+            <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5">
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+                기억해 주었으면 한 내용
+              </p>
+              <p className="mt-1 wrap-anywhere whitespace-pre-wrap text-sm font-semibold leading-relaxed text-slate-800">
+                {trimmedIntroMemoryText}
+              </p>
+            </div>
+            <p className="text-sm font-medium leading-relaxed text-slate-600">
+              입력해주신 기억할 정보와 실제로 저장된 정보를 비교해서 아래 질문에
+              답해주세요.{" "}
+              <span className="text-slate-400">
+                (@ 입력 후 왼쪽 메모리뷰에서 항목을 선택해 언급할 수 있어요)
               </span>
-              와 관련해, 에이전트는 지금 이렇게 기억하고 있어요.
-            </>
-          ) : (
-            "3번에서 적은 답변과 관련해, 에이전트는 지금 이렇게 기억하고 있어요."
-          )}
-        </p>
+            </p>
+          </div>
+        ) : (
+          <p className="mt-2 text-sm font-medium leading-relaxed text-slate-600">
+            3번에서 적은 답변과 실제로 저장된 정보를 비교해서 아래 질문에
+            답해주세요.{" "}
+            <span className="text-slate-400">
+              (@ 입력 후 왼쪽 메모리뷰에서 항목을 선택해 언급할 수 있어요)
+            </span>
+          </p>
+        )}
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-4">
         <div className="space-y-4">{REVIEW_QUESTIONS.map(renderQuestion)}</div>
       </div>
       <div className="flex items-center justify-between gap-3 border-t border-slate-200 px-4 py-3">
-        <p className="min-w-0 text-[11px] text-slate-400">
+        <p
+          className={`min-w-0 text-[11px] ${
+            !readOnly && allNoneConflict ? "font-semibold text-rose-500" : "text-slate-400"
+          }`}
+        >
           {readOnly
             ? submittedAt
               ? "제출 완료 (읽기 전용)"
@@ -573,6 +780,8 @@ export function MemoryReviewPanel({
                 ? "저장 실패"
                 : submittedAt
                   ? "제출 완료"
+                  : allNoneConflict
+                    ? `${noneConflictNumbers}번이 모두 없음일 수는 없어요. 하나 이상 작성해주세요.`
                   : !allQuestionsAnswered
                     ? "모든 항목 입력 후 제출할 수 있습니다."
                   : saveStatus === "saved"
@@ -587,8 +796,18 @@ export function MemoryReviewPanel({
             onAnswersChange?.(payload);
             if (!onSubmitFeedback) return;
             if (
-              !REVIEW_QUESTIONS.every((question) =>
-                payload[question.id]?.text.trim(),
+              !REVIEW_QUESTIONS.every(
+                (question) =>
+                  payload[question.id]?.text.trim() &&
+                  (question.type !== "rating" ||
+                    payload[reasonKey(question.id)]?.text.trim()),
+              )
+            ) {
+              return;
+            }
+            if (
+              NONE_CONFLICT_QUESTION_IDS.every(
+                (id) => payload[id]?.text.trim() === NONE_ANSWER_TEXT,
               )
             ) {
               return;
@@ -598,6 +817,7 @@ export function MemoryReviewPanel({
           disabled={
             !onSubmitFeedback ||
             !allQuestionsAnswered ||
+            allNoneConflict ||
             saveStatus === "saving" ||
             isSubmitting
           }

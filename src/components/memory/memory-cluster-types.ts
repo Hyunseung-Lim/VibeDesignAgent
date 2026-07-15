@@ -33,6 +33,11 @@ export type MemoryCluster = {
   itemIds: string[];
   representativeItems: string[];
   colorIndex?: number;
+  /**
+   * True for pseudo-groups (e.g. 비활성 메모리) that are not real similarity
+   * clusters — the graph skips the enclosing hull/area for them.
+   */
+  hideArea?: boolean;
 };
 
 export type ClusterGraphEdge = {

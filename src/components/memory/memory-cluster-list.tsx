@@ -256,7 +256,7 @@ export function MemoryClusterList({
                   {removedCount > 0 ? (
                     <span
                       className="shrink-0 rounded-full bg-slate-100 px-1.5 py-0.5 text-[10px] font-bold text-slate-500"
-                      title={`이번 세션에서 ${removedCount}개 노드 삭제됨`}
+                      title={`이번 세션에서 ${removedCount}개 노드 비활성화됨`}
                     >
                       -{removedCount}
                     </span>

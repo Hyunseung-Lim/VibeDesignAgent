@@ -31,6 +31,8 @@ type MemoryCluster = {
   itemIds: string[];
   representativeItems: string[];
   colorIndex?: number;
+  /** Pseudo-groups (비활성 메모리 등)는 hull/area를 그리지 않는다. */
+  hideArea?: boolean;
 };
 
 type ClusterableMemoryItem = {
@@ -778,6 +780,7 @@ export default function MemoryClusterGraph({
     ctx.setLineDash([]);
 
     clusters.forEach((cluster) => {
+      if (cluster.hideArea) return;
       const points = clusterPointGroups.get(cluster.id) ?? [];
       const color = points[0]?.color ?? "#94a3b8";
       drawClusterArea(ctx, points, color, cluster.id === selectedClusterId, toScreen, view.zoom);

@@ -146,6 +146,22 @@ function isInactiveMemoryItem(
   return item.action?.split(" / ").includes("archived") ?? false;
 }
 
+// 비활성 경로는 두 가지뿐: 세션 종료 시 auto-duplicate 아카이브(archivedAt 기록)
+// 또는 idle decay로 weight가 0에 도달한 경우.
+function inactiveReasonLabel(
+  item: ClusterGraphItem,
+  memory: MemoryItem | null,
+) {
+  if (
+    memory?.archivedAt ||
+    item.archivedAt ||
+    (item.action?.split(" / ").includes("archived") ?? false)
+  ) {
+    return "유사 메모리 존재";
+  }
+  return "weight 0 도달";
+}
+
 function clusterGraphItemFromMemory(memory: MemoryItem): ClusterGraphItem {
   return {
     id: memory.id,
@@ -380,17 +396,7 @@ export function MemoryClusterSidePanel({
                             {preferenceSignalLabel}
                           </Badge>
                         ) : null}
-                        {memory?.archivedAt || item.archivedAt ? (
-                          <Badge
-                            variant="secondary"
-                            className="rounded-full border-slate-200 bg-slate-50 text-slate-400"
-                          >
-                            삭제됨
-                          </Badge>
-                        ) : null}
-                        {!(memory?.archivedAt || item.archivedAt) &&
-                        (memory?.weight ?? item.weight) != null &&
-                        (memory?.weight ?? item.weight)! <= 0 ? (
+                        {inactive ? (
                           <Badge
                             variant="secondary"
                             className="rounded-full border-slate-200 bg-slate-50 text-slate-400"
@@ -399,6 +405,11 @@ export function MemoryClusterSidePanel({
                           </Badge>
                         ) : null}
                       </div>
+                      {inactive ? (
+                        <p className="mb-2 text-[11px] leading-snug text-slate-400">
+                          비활성 이유: {inactiveReasonLabel(item, memory)}
+                        </p>
+                      ) : null}
                       <div className="flex gap-2">
                         <span
                           className={`mt-0.5 w-1 shrink-0 rounded-full ${

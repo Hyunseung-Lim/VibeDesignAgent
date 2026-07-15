@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, type ReactNode } from "react";
-import { XIcon } from "lucide-react";
+import { ArrowLeftIcon } from "lucide-react";
 
 interface SessionMemoryDiffProps {
   /** Right-aligned header controls (e.g. cluster variant tabs). */
@@ -36,19 +36,12 @@ export function SessionMemoryDiff({
           <button
             type="button"
             onClick={onClose}
-            className="cursor-pointer rounded-full p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
-            aria-label="메모리 변화 전체 보기 닫기"
+            className="inline-flex cursor-pointer items-center gap-1.5 rounded-full border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 transition hover:border-slate-300 hover:bg-slate-50 hover:text-slate-900"
           >
-            <XIcon size={18} />
+            <ArrowLeftIcon size={14} />
+            리뷰 페이지로 돌아가기
           </button>
-          <div>
-            <p className="text-base font-semibold text-slate-900">
-              메모리 변화 전체 보기
-            </p>
-            <p className="mt-0.5 text-xs text-slate-400">
-              세션 이전과 이후의 전체 memory node 상태를 비교합니다.
-            </p>
-          </div>
+          <p className="text-base font-semibold text-slate-900">메모리 리뷰</p>
         </div>
         {headerActions}
       </header>

@@ -7,7 +7,6 @@ import { isActiveMemoryDocument } from "@/lib/server/memoryActivity";
 
 export const MEMORY_FORGETTING_COLLECTION = "memories_0_1_2";
 export const MEMORY_DUPLICATE_SIMILARITY_THRESHOLD = 0.92;
-export const MEMORY_LOW_WEIGHT_THRESHOLD = 0.28;
 
 const MAX_DUPLICATE_SCAN_ITEMS = 220;
 
@@ -17,7 +16,7 @@ type MemoryDoc = Record<string, unknown> & {
 
 export type ForgettingCandidate = {
   id: string;
-  reason: "low-weight" | "duplicate";
+  reason: "duplicate";
   reasonLabel: string;
   memoryId: string;
   semanticItemId: string | null;
@@ -63,24 +62,6 @@ function embeddingValue(value: unknown) {
   return Array.isArray(value)
     ? value.map(Number).filter((item) => Number.isFinite(item))
     : [];
-}
-
-function duplicateValue(value: unknown): ForgettingCandidate["duplicate"] | undefined {
-  if (!value || typeof value !== "object") return undefined;
-  const duplicate = value as Record<string, unknown>;
-  const memoryId = String(duplicate.memoryId ?? "").trim();
-  if (!memoryId) return undefined;
-  return {
-    memoryId,
-    semanticItemId:
-      duplicate.semanticItemId == null ? null : String(duplicate.semanticItemId),
-    semantic:
-      typeof duplicate.semantic === "string" && duplicate.semantic.trim()
-        ? duplicate.semantic
-        : null,
-    episodic: String(duplicate.episodic ?? ""),
-    similarity: numberValue(duplicate.similarity),
-  };
 }
 
 function cosineSimilarity(a: number[], b: number[]) {
@@ -129,7 +110,7 @@ export function indexedMemoriesFromDocs(docs: MemoryDoc[]) {
           : null;
       return {
         id: doc.id,
-        reason: "low-weight",
+        reason: "duplicate",
         reasonLabel: "",
         memoryId: doc.id,
         semanticItemId: null,
@@ -170,33 +151,7 @@ function addCandidate(
 }
 
 function sortCandidates(candidates: ForgettingCandidate[]) {
-  return candidates.sort((a, b) => {
-    const reasonOrder = { duplicate: 0, "low-weight": 1 };
-    const reasonDiff = reasonOrder[a.reason] - reasonOrder[b.reason];
-    if (reasonDiff !== 0) return reasonDiff;
-    return (a.weight ?? 1) - (b.weight ?? 1);
-  });
-}
-
-export function buildForgettingCandidates(items: IndexedMemory[]) {
-  const candidates = new Map<string, ForgettingCandidate>();
-
-  items.forEach((item) => {
-    if (item.weight != null && item.weight < MEMORY_LOW_WEIGHT_THRESHOLD) {
-      addCandidate(
-        candidates,
-        item,
-        "low-weight",
-        `weight가 ${MEMORY_LOW_WEIGHT_THRESHOLD}보다 낮습니다.`,
-      );
-    }
-  });
-
-  buildDuplicateCandidates(items).forEach((candidate) => {
-    candidates.set(candidate.id, candidate);
-  });
-
-  return sortCandidates(Array.from(candidates.values()));
+  return candidates.sort((a, b) => (a.weight ?? 1) - (b.weight ?? 1));
 }
 
 export function buildDuplicateCandidates(
@@ -256,55 +211,6 @@ export function buildDuplicateCandidates(
 export function sortArchivedItems(items: ForgettingCandidate[]) {
   return [...items].sort(
     (a, b) => Number(b.archivedAt ?? 0) - Number(a.archivedAt ?? 0),
-  );
-}
-
-export function archivedItemsFromDocs(docs: MemoryDoc[]) {
-  return sortArchivedItems(
-    docs
-      .map((doc): ForgettingCandidate | null => {
-        const episodic = String(doc.episodic ?? doc.episode ?? doc.content ?? "").trim();
-        const semantic =
-          typeof doc.semantic === "string" && doc.semantic.trim()
-            ? doc.semantic.trim()
-            : null;
-        const archivedAt = timestampValue(doc.archivedAt);
-        if (!episodic || !archivedAt) return null;
-        const archiveReason = doc.archiveReason
-          ? String(doc.archiveReason)
-          : "archived";
-        const weight =
-          typeof doc.weight === "number" && Number.isFinite(doc.weight)
-            ? doc.weight
-            : null;
-        const duplicate = duplicateValue(doc.duplicate);
-        return {
-          id: doc.id,
-          reason: archiveReason.includes("duplicate")
-            ? "duplicate"
-            : "low-weight",
-          reasonLabel: `archivedAt ${new Date(archivedAt).toISOString()}`,
-          memoryId: doc.id,
-          semanticItemId: null,
-          episodic,
-          semantic,
-          weight,
-          retrievedCount: numberValue(doc.retrievedCount),
-          lastRetrievedAt: timestampValue(doc.lastRetrievedAt),
-          createdAt: timestampValue(doc.createdAt),
-          archivedAt,
-          archiveReason,
-          duplicateOf: doc.duplicateOf
-            ? String(doc.duplicateOf)
-            : duplicate?.memoryId ?? null,
-          source: doc.source ?? null,
-          keywords: stringArray(doc.keyword).length
-            ? stringArray(doc.keyword)
-            : stringArray(doc.keywords),
-          duplicate,
-        };
-      })
-      .filter((item): item is ForgettingCandidate => Boolean(item)),
   );
 }
 
