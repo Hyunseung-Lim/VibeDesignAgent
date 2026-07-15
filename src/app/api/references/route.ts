@@ -1,4 +1,6 @@
+import { load, type CheerioAPI } from "cheerio";
 import OpenAI from "openai";
+import { getUrlScreenshotUrl } from "@/lib/server/urlScreenshot";
 import {
   REFERENCE_MODE_CLASSIFY_PROMPT,
   referenceQueryBuilderPrompt,
@@ -13,10 +15,15 @@ const FINAL_REFERENCE_COUNT = 3;
 // Upper bound when the user asks for a specific number of references. Keeps
 // "100개" style requests from degrading search quality / flooding the panel.
 const MAX_REFERENCE_COUNT = 6;
+const REFERENCE_SCREENSHOT_TIMEOUT_MS = 18_000;
+const REFERENCE_IMAGE_CHECK_TIMEOUT_MS = 5_000;
+
+export const maxDuration = 120;
 
 type ReferenceMode = "style" | "product";
 // All references now come from a single OpenAI web_search path.
 type SearchProvider = "openai-web";
+type ThumbnailStrategy = "image-first" | "screenshot-first";
 
 const STRUCTURE_REFERENCE_PATTERN =
   /구조\s*참고|구조|레이아웃\s*참고|섹션\s*구성|화면\s*구성|정보\s*구조|와이어프레임|layout\s+reference|layout|structure|section\s+structure|content\s+structure|information\s+architecture|wireframe/i;
@@ -142,6 +149,239 @@ function metaContent(html: string, key: string) {
     metaContentRegexCache.set(key, pattern);
   }
   return html.match(pattern)?.[1] ?? "";
+}
+
+function cheerioMetaContent($: CheerioAPI, html: string, key: string) {
+  return (
+    $(`meta[property="${key}"], meta[name="${key}"]`).attr("content") ||
+    metaContent(html, key)
+  );
+}
+
+function linkHref($: CheerioAPI, rel: string) {
+  const matches = $(`link[rel]`).toArray();
+  const found = matches.find((node) => {
+    const value = $(node).attr("rel") ?? "";
+    return value
+      .split(/\s+/)
+      .some((part) => part.toLowerCase() === rel.toLowerCase());
+  });
+  return found ? ($(found).attr("href") ?? "") : "";
+}
+
+function srcsetUrls(value: string) {
+  return value
+    .split(",")
+    .map((part) => part.trim().split(/\s+/)[0])
+    .filter(Boolean);
+}
+
+function jsonLdImageValues(
+  value: unknown,
+  out: string[],
+  depth = 0,
+  imageContext = false,
+) {
+  if (!value || depth > 4 || out.length >= 12) return;
+  if (typeof value === "string") {
+    if (imageContext) out.push(value);
+    return;
+  }
+  if (Array.isArray(value)) {
+    value.forEach((item) =>
+      jsonLdImageValues(item, out, depth + 1, imageContext),
+    );
+    return;
+  }
+  if (typeof value !== "object") return;
+
+  const record = value as Record<string, unknown>;
+  const rawType = record["@type"];
+  const typeText = Array.isArray(rawType)
+    ? rawType.join(" ")
+    : String(rawType ?? "");
+  const isImageObject = /\bImageObject\b/i.test(typeText);
+  if (isImageObject && "url" in record) {
+    jsonLdImageValues(record.url, out, depth + 1, true);
+  }
+  for (const key of ["image", "thumbnail", "thumbnailUrl", "contentUrl"]) {
+    if (key in record) jsonLdImageValues(record[key], out, depth + 1, true);
+  }
+  if ("@graph" in record) {
+    jsonLdImageValues(record["@graph"], out, depth + 1, false);
+  }
+}
+
+function jsonLdImageCandidates($: CheerioAPI) {
+  const candidates: string[] = [];
+  $("script[type='application/ld+json']")
+    .slice(0, 6)
+    .each((_, node) => {
+      const text = $(node).text().trim();
+      if (!text) return;
+      try {
+        jsonLdImageValues(JSON.parse(text), candidates);
+      } catch {
+        // Ignore malformed JSON-LD; many sites include relaxed or truncated data.
+      }
+    });
+  return candidates;
+}
+
+function htmlImageCandidates($: CheerioAPI) {
+  const candidates: string[] = [];
+  $("img")
+    .slice(0, 24)
+    .each((_, node) => {
+      const el = $(node);
+      const text = [
+        el.attr("src"),
+        el.attr("data-src"),
+        el.attr("data-lazy-src"),
+        el.attr("data-original"),
+        el.attr("srcset"),
+        el.attr("data-srcset"),
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+      if (/favicon|sprite|tracking|pixel/.test(text)) return;
+
+      const width = Number(el.attr("width") ?? 0);
+      const height = Number(el.attr("height") ?? 0);
+      if ((width > 0 && width < 120) || (height > 0 && height < 80)) return;
+
+      for (const attr of ["src", "data-src", "data-lazy-src", "data-original"]) {
+        const value = el.attr(attr);
+        if (value) candidates.push(value);
+      }
+      for (const attr of ["srcset", "data-srcset"]) {
+        const value = el.attr(attr);
+        if (value) candidates.push(...srcsetUrls(value));
+      }
+    });
+  return candidates;
+}
+
+function absoluteHttpUrl(value: string | null | undefined, baseUrl: URL) {
+  const raw = (value ?? "").trim();
+  if (!raw || raw.startsWith("data:") || raw.startsWith("blob:")) return "";
+  try {
+    const url = new URL(raw, baseUrl);
+    if (!["http:", "https:"].includes(url.protocol)) return "";
+    if (/\.(?:svg|ico)(?:[?#].*)?$/i.test(url.pathname)) return "";
+    return url.toString();
+  } catch {
+    return "";
+  }
+}
+
+function uniqueImageCandidates(candidates: string[], baseUrl: URL) {
+  const seen = new Set<string>();
+  const unique: string[] = [];
+  for (const candidate of candidates) {
+    const url = absoluteHttpUrl(candidate, baseUrl);
+    if (!url || seen.has(url)) continue;
+    seen.add(url);
+    unique.push(url);
+  }
+  return unique.slice(0, 12);
+}
+
+function referenceImageCandidates(
+  reference: WebReference,
+  html: string,
+  baseUrl: URL,
+) {
+  const $ = load(html);
+  return uniqueImageCandidates(
+    [
+      reference.imageUrl ?? "",
+      cheerioMetaContent($, html, "og:image"),
+      cheerioMetaContent($, html, "og:image:secure_url"),
+      cheerioMetaContent($, html, "twitter:image"),
+      cheerioMetaContent($, html, "twitter:image:src"),
+      linkHref($, "image_src"),
+      ...jsonLdImageCandidates($),
+      ...htmlImageCandidates($),
+    ],
+    baseUrl,
+  );
+}
+
+async function verifyImageUrl(url: string) {
+  try {
+    const res = await fetch(url, {
+      headers: {
+        Accept: "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+        Range: "bytes=0-4095",
+        "User-Agent": "Mozilla/5.0 VibeDesignAgent reference image check",
+      },
+      signal: AbortSignal.timeout(REFERENCE_IMAGE_CHECK_TIMEOUT_MS),
+    });
+    await res.body?.cancel().catch(() => undefined);
+    if (!res.ok) return "";
+    const contentType = res.headers.get("content-type")?.split(";")[0] ?? "";
+    if (contentType && !contentType.startsWith("image/")) return "";
+    return res.url || url;
+  } catch {
+    return "";
+  }
+}
+
+async function firstVerifiedImageUrl(candidates: string[]) {
+  for (const candidate of candidates) {
+    const verified = await verifyImageUrl(candidate);
+    if (verified) return verified;
+  }
+  return "";
+}
+
+async function screenshotFallbackUrl(reference: WebReference) {
+  try {
+    const screenshotUrl = await getUrlScreenshotUrl(reference.url, "DESKTOP", {
+      timeoutMs: REFERENCE_SCREENSHOT_TIMEOUT_MS,
+    });
+    return await verifyImageUrl(screenshotUrl);
+  } catch (error) {
+    console.warn("[references] screenshot fallback failed", {
+      url: reference.url,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return "";
+  }
+}
+
+async function fallbackReferenceImageUrl(
+  reference: WebReference,
+  baseUrl: URL,
+  strategy: ThumbnailStrategy,
+) {
+  if (strategy === "screenshot-first") {
+    const screenshotUrl = await screenshotFallbackUrl(reference);
+    if (screenshotUrl) return screenshotUrl;
+    return firstVerifiedImageUrl(
+      uniqueImageCandidates([reference.imageUrl ?? ""], baseUrl),
+    );
+  }
+  const directImage = await firstVerifiedImageUrl(
+    uniqueImageCandidates([reference.imageUrl ?? ""], baseUrl),
+  );
+  return directImage || screenshotFallbackUrl(reference);
+}
+
+async function selectReferenceThumbnail(params: {
+  reference: WebReference;
+  imageCandidates: string[];
+  strategy: ThumbnailStrategy;
+}) {
+  if (params.strategy === "screenshot-first") {
+    const screenshotUrl = await screenshotFallbackUrl(params.reference);
+    if (screenshotUrl) return screenshotUrl;
+    return firstVerifiedImageUrl(params.imageCandidates);
+  }
+  const verifiedImage = await firstVerifiedImageUrl(params.imageCandidates);
+  return verifiedImage || screenshotFallbackUrl(params.reference);
 }
 
 function pageTitle(html: string) {
@@ -467,7 +707,10 @@ function parseWebReferences(text: string): WebReference[] {
   }
 }
 
-async function hydrateReferenceMetadata(reference: WebReference) {
+async function hydrateReferenceMetadata(
+  reference: WebReference,
+  strategy: ThumbnailStrategy,
+) {
   let url: URL;
   try {
     url = new URL(reference.url);
@@ -484,31 +727,42 @@ async function hydrateReferenceMetadata(reference: WebReference) {
       },
       signal: AbortSignal.timeout(7000),
     });
-    if (!res.ok) return reference;
+    if (!res.ok) {
+      return {
+        ...reference,
+        imageUrl:
+          (await fallbackReferenceImageUrl(reference, url, strategy)) || null,
+      };
+    }
     const html = (await res.text()).slice(0, 300_000);
+    const $ = load(html);
     const title =
-      decodeHtml(metaContent(html, "og:title")) ||
-      decodeHtml(metaContent(html, "twitter:title")) ||
+      decodeHtml(cheerioMetaContent($, html, "og:title")) ||
+      decodeHtml(cheerioMetaContent($, html, "twitter:title")) ||
       pageTitle(html) ||
       reference.title;
-    const image =
-      decodeHtml(metaContent(html, "og:image")) ||
-      decodeHtml(metaContent(html, "twitter:image")) ||
-      decodeHtml(metaContent(html, "twitter:image:src"));
+    const imageUrl = await selectReferenceThumbnail({
+      reference,
+      imageCandidates: referenceImageCandidates(reference, html, url),
+      strategy,
+    });
     return {
       ...reference,
       title: title || reference.title,
-      imageUrl:
-        reference.imageUrl || (image ? new URL(image, url).toString() : null),
+      imageUrl: imageUrl || null,
     };
   } catch {
-    return reference;
+    return {
+      ...reference,
+      imageUrl:
+        (await fallbackReferenceImageUrl(reference, url, strategy)) || null,
+    };
   }
 }
 
 // Single OpenAI web_search path for both style and product references. The mode
-// selects the system prompt and the quality filter; thumbnails come from the
-// page og:image via hydrateReferenceMetadata.
+// selects the system prompt, quality filter, and thumbnail strategy. Product
+// references prefer live page screenshots; style references prefer page images.
 async function searchWebReferences(
   mode: ReferenceMode,
   keywords: string[],
@@ -528,6 +782,8 @@ async function searchWebReferences(
       mode === "style"
         ? isLowQualityStyleReference
         : isLowQualityProductReference;
+    const thumbnailStrategy: ThumbnailStrategy =
+      mode === "product" ? "screenshot-first" : "image-first";
     const response = await openai.responses.create({
       model: SEARCH_MODEL,
       tools: [{ type: "web_search_preview" }],
@@ -565,7 +821,9 @@ async function searchWebReferences(
     );
     // Limit concurrency to 3 to avoid hammering external sites simultaneously
     const hydrated = await withConcurrency(
-      parsed.slice(0, 6).map((ref) => () => hydrateReferenceMetadata(ref)),
+      parsed
+        .slice(0, 6)
+        .map((ref) => () => hydrateReferenceMetadata(ref, thumbnailStrategy)),
       3,
     );
     return hydrated.slice(0, targetCount);

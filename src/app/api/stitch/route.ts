@@ -17,6 +17,7 @@ import {
   applyStitchDomOperations,
   extractStitchDomOperations,
 } from "@/lib/server/stitchDomOperations";
+import { captureUrlScreenshotDataUrl } from "@/lib/server/urlScreenshot";
 import {
   DESIGN_SYSTEM_EXTRACT_PROMPT,
   DERIVE_DESIGN_MD_FROM_HTML_PROMPT,
@@ -973,12 +974,6 @@ async function choosePrimaryScreen(
   };
 }
 
-function screenshotViewport(deviceType: DeviceType) {
-  return deviceType === "MOBILE"
-    ? { width: 390, height: 844, isMobile: true, deviceScaleFactor: 3 }
-    : { width: 1280, height: 900, isMobile: false, deviceScaleFactor: 1 };
-}
-
 // Screenshot a live URL into a data URL. Abstracted so the engine can be
 // swapped later (managed API with key, self-hosted Playwright, ...). v1 uses
 // Microlink's no-key endpoint. Returns a base64 data URL; throws on failure.
@@ -986,48 +981,7 @@ async function captureScreenshot(
   rawUrl: string,
   deviceType: DeviceType,
 ): Promise<string> {
-  let url: URL;
-  try {
-    url = new URL(rawUrl);
-  } catch {
-    throw new Error(`Invalid style source URL: ${rawUrl}`);
-  }
-  if (!["http:", "https:"].includes(url.protocol)) {
-    throw new Error("Style source URL must be http(s).");
-  }
-  const viewport = screenshotViewport(deviceType);
-  const apiUrl = new URL("https://api.microlink.io/");
-  apiUrl.searchParams.set("url", url.toString());
-  apiUrl.searchParams.set("screenshot", "true");
-  apiUrl.searchParams.set("meta", "false");
-  apiUrl.searchParams.set("viewport.width", String(viewport.width));
-  apiUrl.searchParams.set("viewport.height", String(viewport.height));
-  apiUrl.searchParams.set("viewport.isMobile", String(viewport.isMobile));
-  apiUrl.searchParams.set(
-    "viewport.deviceScaleFactor",
-    String(viewport.deviceScaleFactor),
-  );
-  const res = await fetch(apiUrl.toString(), {
-    headers: { Accept: "application/json" },
-    signal: AbortSignal.timeout(45_000),
-  });
-  if (!res.ok) {
-    throw new Error(`Screenshot service returned ${res.status}.`);
-  }
-  const json = (await res.json()) as {
-    data?: { screenshot?: { url?: string } };
-  };
-  const shotUrl = json?.data?.screenshot?.url;
-  if (!shotUrl) {
-    throw new Error("Screenshot service did not return an image.");
-  }
-  const imgRes = await fetch(shotUrl, { signal: AbortSignal.timeout(20_000) });
-  if (!imgRes.ok) {
-    throw new Error(`Failed to fetch captured screenshot: ${imgRes.status}.`);
-  }
-  const buf = Buffer.from(await imgRes.arrayBuffer());
-  const mime = imgRes.headers.get("content-type")?.split(";")[0] || "image/png";
-  return `data:${mime};base64,${buf.toString("base64")}`;
+  return captureUrlScreenshotDataUrl(rawUrl, deviceType);
 }
 
 const STYLE_IMAGE_EXT: Record<string, string> = {

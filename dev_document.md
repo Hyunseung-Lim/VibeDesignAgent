@@ -101,7 +101,7 @@
 - 레퍼런스 선택(인용) 후 메시지 전송 시 이미지를 base64로 서버에서 변환해 chat provider에 전달
 - 인용된 레퍼런스 URL도 시스템 컨텍스트로 전달. OpenAI provider에서는 웹 검색으로 방문 가능
 - **검색 모드 분기**: `inferReferenceMode(query)`로 "style" vs "product" 모드를 분류한 뒤, 두 모드 모두 `searchWebReferences(mode, ...)` 단일 OpenAI `web_search_preview` 경로로 검색한다. 모드는 시스템 프롬프트(style: `referenceStyleSearchPrompt`, product: `referenceProductSearchPrompt`)와 저품질 필터만 다르게 고른다 `[현행 2026-06-30 → 15.172]`
-  - 썸네일은 결과 페이지 URL의 og:image를 `hydrateReferenceMetadata()`로 추출해 확보한다(전용 이미지 검색 없음). 모든 카드의 `searchProvider`는 `openai-web` `[현행 2026-06-30 → 15.172]`
+  - 썸네일은 `hydrateReferenceMetadata()`가 검색 모드별 전략으로 확보한다. product 모드는 실제 페이지 구조를 보여주도록 Microlink desktop screenshot URL을 우선하고 검증된 페이지 이미지로 폴백한다. style 모드는 검색 결과 `imageUrl`, 페이지 메타(og/twitter/link/json-ld), HTML 이미지 후보를 서버에서 검증해 우선하고 screenshot으로 폴백한다(전용 이미지 검색 없음). 모든 카드의 `searchProvider`는 `openai-web` `[현행 2026-07-16 → 15.272]`
   - style 필터는 갤러리/포트폴리오를 허용하고 stock·소셜·검색/태그 인덱스만 제외, product 필터는 추가로 소셜 포스트와 collection/board 인덱스도 제외
 - 레퍼런스 카드에는 provider/source 정보만 표시하고, 내부 `style/product` 검색 모드는 중복 배지로 노출하지 않는다
 - `withConcurrency(tasks, limit)` 함수로 병렬 fetch 수를 제한해 외부 API 과부하 방지
@@ -4626,3 +4626,16 @@ type ChatPlan = {
 - 배경(Notion `메모리 질문지 수정 minor`): Part 2 5번/7번 문항이 사용자가 어떤 저장 방식과 수정 방식을 원하는지 더 직접적으로 묻도록 문구를 보강해야 했다.
 - 수정: `MemoryReviewPanel`의 `wrong_or_unnecessary_memory` label에 `어떻게 저장되었어야 하나요?` 괄호 문구를 추가했다.
 - 수정: `correction_preference` label을 `이것이 어떤 방식으로 바로잡히기를 원하시나요?`로 바꿔 앞서 답한 수정/추가 필요 사항의 처리 방식을 묻도록 했다.
+
+### 15.271 Reference card screenshot thumbnail fallback `[implemented 2026-07-16]`
+
+- 배경: OpenAI web search 결과 페이지의 og:image만 카드 썸네일로 쓰면, 메타 이미지가 없거나 hotlink/봇 차단/JS 렌더링 때문에 레퍼런스 카드 이미지가 비는 경우가 많았다.
+- 수정: `/api/references`의 `hydrateReferenceMetadata()`가 검색 결과 `imageUrl`을 먼저 보고, 페이지 HTML에서 og/twitter/link image_src/json-ld/image 태그 후보를 Cheerio로 수집한다. 각 후보는 서버 fetch로 image content-type을 검증한 뒤에만 카드 `imageUrl`로 사용한다.
+- 수정: 유효한 이미지 후보가 없거나 페이지 HTML fetch가 실패하면 Microlink screenshot URL을 desktop viewport로 생성해 `imageUrl` fallback으로 넣는다. 카드/세션 저장량 보호를 위해 레퍼런스 카드에는 base64 data URL이 아니라 캡처 이미지 URL만 저장한다.
+- 정리: 기존 Stitch URL screenshot 로직을 `src/lib/server/urlScreenshot.ts`로 공용화했다. Stitch 이미지 주도 생성은 계속 data URL을 필요로 하므로 `captureUrlScreenshotDataUrl()`을 사용하고, 레퍼런스 카드는 `getUrlScreenshotUrl()`만 사용한다.
+
+### 15.272 Reference thumbnail strategy by search mode `[implemented 2026-07-16]`
+
+- 배경: 레퍼런스 카드 썸네일은 검색 의도에 따라 달라야 한다. 실제 제품/페이지 구조 참고에서는 og 이미지보다 live screenshot이 유용하고, 비주얼 스타일 참고에서는 screenshot보다 대표 이미지/OG 이미지가 더 유용한 경우가 많다.
+- 수정: `/api/references`가 `referenceMode`에 따라 `ThumbnailStrategy`를 고른다. `product` 모드는 `screenshot-first`, `style` 모드는 `image-first`다.
+- 동작: `screenshot-first`는 Microlink desktop screenshot URL을 먼저 생성·검증하고 실패하면 검색 결과/페이지 이미지 후보로 폴백한다. `image-first`는 검증된 페이지 이미지 후보를 먼저 쓰고 실패하면 screenshot으로 폴백한다.

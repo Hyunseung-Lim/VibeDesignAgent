@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { ArrowUpRight, Check, ExternalLink, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
@@ -38,8 +39,11 @@ export function ReferenceCard({
   onToggle,
   onDelete,
 }: ReferenceCardProps) {
+  const [failedImageUrl, setFailedImageUrl] = useState<string | null>(null);
   const purpose =
     reference.referencePurposeLabel ?? purposeLabel(reference.referencePurpose);
+  const showImage =
+    Boolean(reference.imageUrl) && failedImageUrl !== reference.imageUrl;
 
   return (
     <article
@@ -53,14 +57,12 @@ export function ReferenceCard({
       data-selected={selected ? "true" : "false"}
     >
       <div className="relative h-36 overflow-hidden border-b border-border bg-muted">
-        {reference.imageUrl ? (
+        {showImage ? (
           <img
             src={reference.imageUrl}
             alt={reference.title}
             className="h-full w-full object-cover transition duration-200 group-hover:scale-[1.02]"
-            onError={(event) => {
-              (event.currentTarget as HTMLImageElement).style.display = "none";
-            }}
+            onError={() => setFailedImageUrl(reference.imageUrl ?? null)}
           />
         ) : (
           <div className="flex h-full items-center justify-center text-muted-foreground">
