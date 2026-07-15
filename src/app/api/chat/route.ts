@@ -1053,18 +1053,25 @@ export async function POST(request: Request) {
   ];
 
   if (missionTitle || missionBrief) {
-    markContext(
-      shouldIncludePlannedContext("mission") ? "mission" : "missionPreview",
-    );
+    // Explicit mockup-generation command with a saved design brief: the brief
+    // (activeIdea) is the binding content source and the client injects the
+    // full mission brief into the Stitch prompt separately, so the chat model
+    // only needs a mission preview — the full text mostly duplicates the brief.
+    const missionPreviewForCommand =
+      requestedCommandId === "generate_mockup" &&
+      Boolean(
+        typeof activeIdea?.description === "string" &&
+          activeIdea.description.trim(),
+      );
+    const includeFullMission =
+      shouldIncludePlannedContext("mission") && !missionPreviewForCommand;
+    markContext(includeFullMission ? "mission" : "missionPreview");
     systemMessages.push({
       role: "system",
       label: "mission",
       content: chatMissionPrompt(
         truncateText(missionTitle || "(없음)", 300),
-        truncateText(
-          missionBrief || "(없음)",
-          shouldIncludePlannedContext("mission") ? 1800 : 350,
-        ),
+        truncateText(missionBrief || "(없음)", includeFullMission ? 1800 : 350),
         deviceLabel,
       ),
     });
@@ -1182,9 +1189,13 @@ export async function POST(request: Request) {
 
   // Build messages early so cited reference context can annotate the latest
   // user turn while the system prompt ordering remains stable.
-  const conversationHistoryMode = promptPlanFallback
-    ? "recent"
-    : promptPlan.needs.conversationHistory;
+  // Explicit composer commands fix the intent, so long history adds tokens
+  // without changing the output — keep only the last few turns for context.
+  const conversationHistoryMode = requestedCommandId
+    ? "minimal"
+    : promptPlanFallback
+      ? "recent"
+      : promptPlan.needs.conversationHistory;
   const conversationHistoryLimit =
     conversationHistoryMode === "minimal"
       ? 4

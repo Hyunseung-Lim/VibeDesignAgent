@@ -5490,9 +5490,14 @@ export default function MainScreenPage() {
           designSpec: (() => {
             const idea = ideas.find((i) => i.id === activeIdeaId);
             const appliedStyle = activeDesignStyle(idea);
-            return appliedStyle
-              ? `# ${appliedStyle.title}\n${appliedStyle.content}`
-              : undefined;
+            if (!appliedStyle) return undefined;
+            // Style content often already starts with the same heading — avoid
+            // sending a duplicated "# 디자인 스타일" line to the model.
+            const heading = `# ${appliedStyle.title}`;
+            const content = appliedStyle.content.trimStart();
+            return content.startsWith(heading)
+              ? content
+              : `${heading}\n${appliedStyle.content}`;
           })(),
           requestedCommand: commandForTurn
             ? { id: commandForTurn.id, label: commandForTurn.label }
@@ -9926,7 +9931,6 @@ export default function MainScreenPage() {
                   msg.role === "assistant"
                     ? reviewTurnsById[msg.reviewTurnId ?? msg.id]
                     : null;
-                const retrievedReviewMemories = reviewTurn?.retrieved ?? [];
                 const reviewTurnId = msg.reviewTurnId ?? msg.id;
                 const retrievalLog =
                   msg.role === "assistant" && showReviewAnnotations

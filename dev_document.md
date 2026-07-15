@@ -4579,3 +4579,10 @@ type ChatPlan = {
 - 수정: `/api/chat`의 `BuiltChatMessage`에 admin 전용 `label` 필드를 추가하고 systemMessages/builtMessages 구성 시 블록 이름(basePrompt, mission, activeIdea, designSpec, mockupHtml, retrievalMemory, citedTexts, selectedElement, citedReferences, referencePreference, mentionedArtifact, requestedCommand, actionInstruction, currentRequest, conversation)을 붙였다. 모델 호출 직전에는 role/content만 남기고 strip해 OpenAI Responses API 스키마와 충돌하지 않는다. label이 붙은 배열이 그대로 review turn의 rawPromptActual/rawPrompt로 저장된다.
 - 수정: `PromptViewer`를 블록 카드 UI로 재작성했다. 각 블록은 순번, label 배지(색상 구분), 글자 수와 함께 표시되고 1200자 초과 블록(mockupHtml, basePrompt 등)은 기본 접힘 상태로 시작한다. 전체 JSON, sanitized copy, sanitization, response meta는 하단 details로 이동했다. Retrieval 탭을 같은 모달에 통합하고 기존 `RetrievalLogViewer` 컴포넌트와 별도 모달, chat bubble의 Retrieval 보기 버튼을 제거했다 — assistant bubble에는 기억 보기와 Prompt 보기만 남는다.
 - 호환: label이 없는 기존 저장 turn은 role(system/user/assistant) 기준으로 블록을 렌더링하고, 배열이 아닌 형태는 기존 JSON 덤프로 폴백한다.
+
+### 15.264 Chat prompt slimming for explicit command turns `[implemented 2026-07-15]`
+
+- 배경: /목업생성 턴의 raw prompt를 블록 단위로 검토한 결과, mission 블록의 콘텐츠 전문이 activeIdea 브리프의 필수 콘텐츠와 대부분 중복되고, 명시적 composer command 턴에도 recent(12개) 대화 이력이 그대로 들어가며, designSpec에 # 디자인 스타일 헤딩이 두 번 붙는 문제가 있었다.
+- 수정: `/api/chat`에서 requestedCommand가 generate_mockup이고 activeIdea description이 있으면 planner 판단과 무관하게 mission을 preview(350자)로 강등한다 — 신규 목업은 클라이언트 buildMockupPrompt가 Stitch prompt에 missionBrief를 별도 주입하므로 chat 모델에는 브리프만으로 충분하다.
+- 수정: requestedCommandId가 있는 턴은 conversationHistory를 minimal(4)로 강제한다. 명시적 커맨드는 intent가 확정되어 있어 긴 이력이 출력에 기여하지 않는다.
+- 수정: 클라이언트 designSpec 조립 시 스타일 content가 이미 같은 헤딩으로 시작하면 title 헤딩을 중복으로 붙이지 않는다.

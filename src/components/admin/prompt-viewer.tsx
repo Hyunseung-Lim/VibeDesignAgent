@@ -47,9 +47,39 @@ type PromptBlock = {
   content: string;
 };
 
+// Older turns were stored without labels — infer the block name from each
+// prompt builder's distinctive opening text (src/lib/prompts.ts).
+const SYSTEM_BLOCK_PREFIXES: Array<[string, string]> = [
+  ["You are a UI/UX design agent.", "basePrompt"],
+  ["Current mission context:", "mission"],
+  ["The user is currently working on this design brief:", "activeIdea"],
+  ["Applied 디자인 스타일", "designSpec"],
+  ["Current mockup HTML exists.", "mockupHtml"],
+  ["Memory retrieved for this turn.", "retrievalMemory"],
+  ["The user has cited the following text excerpts", "citedTexts"],
+  ["The user has selected this exact element", "selectedElement"],
+  ["[Selected element", "selectedElement"],
+  ["The user has cited the following reference URLs", "citedReferences"],
+  ["The user is citing these references", "citedReferences"],
+  ["The user explicitly mentioned an existing workspace artifact.", "mentionedArtifact"],
+  ["The user explicitly selected the composer command", "requestedCommand"],
+  ["The most recent user message is the current request", "currentRequest"],
+];
+
+function inferSystemBlockLabel(content: string) {
+  const trimmed = content.trimStart();
+  for (const [prefix, label] of SYSTEM_BLOCK_PREFIXES) {
+    if (trimmed.startsWith(prefix)) return label;
+  }
+  if (/\bAction instruction\b|\[CREATE_NOTE|\[GENERATE_MOCKUP|Action rule/i.test(trimmed.slice(0, 400))) {
+    return "actionInstruction";
+  }
+  return "system";
+}
+
 // The stored raw prompt is [...systemMessages, ...builtMessages]; each entry
 // carries a block label (basePrompt, mission, mockupHtml, ...) since 15.263.
-// Older turns have no labels — fall back to the role so blocks still render.
+// Older turns have no labels — infer from content, then fall back to the role.
 function promptBlocksFrom(value: unknown): PromptBlock[] | null {
   if (!Array.isArray(value) || value.length === 0) return null;
   const blocks: PromptBlock[] = [];
@@ -62,7 +92,9 @@ function promptBlocksFrom(value: unknown): PromptBlock[] | null {
     const label =
       typeof record.label === "string" && record.label.trim()
         ? record.label
-        : role;
+        : role === "system"
+          ? inferSystemBlockLabel(content)
+          : "conversation";
     blocks.push({ label, role, content });
   }
   return blocks;
@@ -116,11 +148,6 @@ function PromptBlockCard({
         >
           {block.label}
         </span>
-        {block.role !== "system" ? (
-          <span className="shrink-0 rounded-full bg-white px-2 py-0.5 text-[10px] font-medium text-slate-400 ring-1 ring-slate-200">
-            {block.role}
-          </span>
-        ) : null}
         <span className="ml-auto shrink-0 text-[11px] tabular-nums text-slate-400">
           {block.content.length.toLocaleString()} chars
         </span>
@@ -198,6 +225,9 @@ export function PromptViewer({
 
   const promptValue = rawPromptActual ?? rawPrompt;
   const blocks = promptBlocksFrom(promptValue);
+  const systemBlocks = blocks?.filter((block) => block.role === "system") ?? [];
+  const conversationBlocks =
+    blocks?.filter((block) => block.role !== "system") ?? [];
   const retrievedMemories = retrievalLog?.retrievedMemories ?? [];
   const setupMemories = retrievalLog?.includedCurrentSetupMemories ?? [];
 
@@ -241,14 +271,51 @@ export function PromptViewer({
           {tab === "prompt" ? (
             <div className="space-y-4">
               {blocks ? (
-                <div className="space-y-2">
-                  {blocks.map((block, index) => (
-                    <PromptBlockCard
-                      key={`${block.label}-${index}`}
-                      block={block}
-                      index={index}
-                    />
-                  ))}
+                <div className="space-y-5">
+                  <section>
+                    <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">
+                      System context · {systemBlocks.length} blocks
+                    </p>
+                    <div className="space-y-2">
+                      {systemBlocks.map((block, index) => (
+                        <PromptBlockCard
+                          key={`${block.label}-${index}`}
+                          block={block}
+                          index={index}
+                        />
+                      ))}
+                    </div>
+                  </section>
+                  {conversationBlocks.length > 0 && (
+                    <section>
+                      <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">
+                        Conversation · {conversationBlocks.length} messages
+                      </p>
+                      <div className="overflow-hidden rounded-xl border border-slate-200">
+                        <div className="max-h-96 divide-y divide-slate-100 overflow-y-auto">
+                          {conversationBlocks.map((block, index) => (
+                            <div
+                              key={`conversation-${index}`}
+                              className="flex items-start gap-2.5 px-4 py-2.5"
+                            >
+                              <span
+                                className={`mt-0.5 w-16 shrink-0 rounded-full px-2 py-0.5 text-center text-[10px] font-semibold ${
+                                  block.role === "user"
+                                    ? "bg-slate-900 text-white"
+                                    : "bg-slate-100 text-slate-500"
+                                }`}
+                              >
+                                {block.role}
+                              </span>
+                              <pre className="min-w-0 flex-1 whitespace-pre-wrap wrap-break-word text-xs leading-relaxed text-slate-700">
+                                {block.content}
+                              </pre>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </section>
+                  )}
                 </div>
               ) : (
                 <section>
