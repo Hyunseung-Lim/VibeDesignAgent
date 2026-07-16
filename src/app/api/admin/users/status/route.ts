@@ -4,6 +4,7 @@ import {
   verifyFirebaseIdToken,
 } from "@/lib/server/firebaseAdminRest";
 import { isAdminEmail } from "@/lib/admin";
+import { stitchApiGroupForUser } from "@/lib/server/stitchApiGroup";
 
 export const runtime = "nodejs";
 
@@ -27,6 +28,10 @@ export async function POST(request: Request) {
               ? "completed"
               : "required"
             : "unknown",
+          stitchApiGroup: stitchApiGroupForUser(
+            uid,
+            profile?.stitchApiGroup,
+          ),
         },
       ] as const;
     }),

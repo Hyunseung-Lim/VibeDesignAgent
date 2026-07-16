@@ -18,6 +18,7 @@ export type Participant = {
   onboardingStatus?: "completed" | "required" | "unknown";
   memoryReviewSubmittedAt?: number | null;
   isAdmin?: boolean;
+  stitchApiGroup?: "A" | "B";
 };
 
 export type AdminUser = Participant & {
@@ -156,6 +157,18 @@ export function AdminUserCard({
                 className="rounded-full border-transparent bg-indigo-50 text-indigo-700"
               >
                 관리자
+              </Badge>
+            )}
+            {user.stitchApiGroup && (
+              <Badge
+                variant="outline"
+                className={
+                  user.stitchApiGroup === "A"
+                    ? "rounded-full border-emerald-200 bg-emerald-50 text-emerald-700"
+                    : "rounded-full border-sky-200 bg-sky-50 text-sky-700"
+                }
+              >
+                Stitch {user.stitchApiGroup}
               </Badge>
             )}
           </div>

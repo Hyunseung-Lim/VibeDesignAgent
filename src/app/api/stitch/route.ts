@@ -5,14 +5,18 @@ import os from "node:os";
 import path from "node:path";
 import sharp from "sharp";
 import OpenAI from "openai";
+import { isAdminEmail } from "@/lib/admin";
 import {
   createStitchClient,
   isStitchAuthError,
+  stitchApiKeyForGroup,
   STITCH_AUTH_ERROR_CODE,
   STITCH_AUTH_ERROR_MESSAGE,
   STITCH_OAUTH_REQUIRED_ERROR_CODE,
   STITCH_OAUTH_REQUIRED_ERROR_MESSAGE,
 } from "@/lib/server/stitch-auth";
+import { verifyFirebaseIdToken } from "@/lib/server/firebaseAdminRest";
+import { resolveUserStitchApiGroup } from "@/lib/server/stitchApiGroup";
 import {
   applyStitchDomOperations,
   extractStitchDomOperations,
@@ -1437,6 +1441,10 @@ async function deriveDesignStyleFromHtml(html: string): Promise<string> {
 }
 
 export async function POST(request: Request) {
+  const requestingUser = await verifyFirebaseIdToken(request);
+  if (!requestingUser) {
+    return Response.json({ error: "unauthorized" }, { status: 401 });
+  }
   const {
     prompt,
     device,
@@ -1449,6 +1457,7 @@ export async function POST(request: Request) {
     styleImage,
     styleSourceUrl,
     assetImages,
+    ownerUid,
   } = (await request.json()) as {
     prompt?: string;
     device?: string;
@@ -1461,7 +1470,18 @@ export async function POST(request: Request) {
     styleImage?: { dataUrl?: string } | null;
     styleSourceUrl?: string | null;
     assetImages?: { url?: string; path?: string; note?: string }[] | null;
+    ownerUid?: string | null;
   };
+
+  const stitchOwnerUid = ownerUid?.trim() || requestingUser.localId;
+  if (
+    stitchOwnerUid !== requestingUser.localId &&
+    !isAdminEmail(requestingUser.email)
+  ) {
+    return Response.json({ error: "forbidden" }, { status: 403 });
+  }
+  const stitchApiGroup = await resolveUserStitchApiGroup(stitchOwnerUid);
+  const stitchApiKey = stitchApiKeyForGroup(stitchApiGroup);
 
   if (!prompt) {
     return Response.json({ error: "prompt is required" }, { status: 400 });
@@ -1523,7 +1543,10 @@ export async function POST(request: Request) {
 
     let stitch: StitchClientBundle;
     try {
-      stitch = await createStitchClient();
+      stitch = await createStitchClient({
+        apiKey: stitchApiKey,
+        apiKeyGroup: stitchApiGroup,
+      });
     } catch (authErr) {
       console.warn("[stitch] auth setup failed:", errorMessage(authErr));
       return Response.json(
@@ -1722,7 +1745,11 @@ export async function POST(request: Request) {
           console.warn(
             "[stitch] asset-led URL text generation failed auth; retrying with API key",
           );
-          const apiKeyStitch = await createStitchClient({ forceApiKey: true });
+          const apiKeyStitch = await createStitchClient({
+            forceApiKey: true,
+            apiKey: stitchApiKey,
+            apiKeyGroup: stitchApiGroup,
+          });
           client = apiKeyStitch.client;
           sdk = apiKeyStitch.sdk;
           console.log("[stitch] creating API-key fallback project...");

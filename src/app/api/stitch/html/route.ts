@@ -1,9 +1,13 @@
 import {
   createStitchClient,
   isStitchAuthError,
+  stitchApiKeyForGroup,
   STITCH_AUTH_ERROR_CODE,
   STITCH_AUTH_ERROR_MESSAGE,
 } from "@/lib/server/stitch-auth";
+import { isAdminEmail } from "@/lib/admin";
+import { verifyFirebaseIdToken } from "@/lib/server/firebaseAdminRest";
+import { resolveUserStitchApiGroup } from "@/lib/server/stitchApiGroup";
 
 export const maxDuration = 60;
 
@@ -29,16 +33,32 @@ async function materializeHtml(htmlUrlOrContent: string) {
 }
 
 export async function GET(request: Request) {
+  const requestingUser = await verifyFirebaseIdToken(request);
+  if (!requestingUser) {
+    return Response.json({ error: "unauthorized" }, { status: 401 });
+  }
   const { searchParams } = new URL(request.url);
   const projectId = searchParams.get("projectId");
   const screenId = searchParams.get("screenId");
+  const ownerUid = searchParams.get("ownerUid")?.trim() || requestingUser.localId;
+
+  if (
+    ownerUid !== requestingUser.localId &&
+    !isAdminEmail(requestingUser.email)
+  ) {
+    return Response.json({ error: "forbidden" }, { status: 403 });
+  }
 
   if (!projectId || !screenId) {
     return Response.json({ error: "projectId and screenId required" }, { status: 400 });
   }
 
   try {
-    const { sdk: stitchSdk } = await createStitchClient();
+    const stitchApiGroup = await resolveUserStitchApiGroup(ownerUid);
+    const { sdk: stitchSdk } = await createStitchClient({
+      apiKey: stitchApiKeyForGroup(stitchApiGroup),
+      apiKeyGroup: stitchApiGroup,
+    });
     const project = stitchSdk.project(projectId);
     let lastError = "Stitch 화면 HTML이 아직 준비되지 않았습니다.";
     for (let attempt = 0; attempt < 10; attempt += 1) {

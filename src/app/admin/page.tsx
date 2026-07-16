@@ -618,6 +618,8 @@ export default function AdminPage() {
       participantRows.forEach((participant) => {
         participant.onboardingStatus =
           statuses[participant.id]?.onboardingStatus ?? "unknown";
+        participant.stitchApiGroup =
+          statuses[participant.id]?.stitchApiGroup;
       });
       await hydrateParticipantReviewStatus(missionId, participantRows);
       setParticipants(participantRows);
@@ -743,7 +745,10 @@ export default function AdminPage() {
     if (!token || uids.length === 0) {
       return {} as Record<
         string,
-        { onboardingStatus: Participant["onboardingStatus"] }
+        {
+          onboardingStatus: Participant["onboardingStatus"];
+          stitchApiGroup?: Participant["stitchApiGroup"];
+        }
       >;
     }
     const res = await fetch("/api/admin/users/status", {
@@ -757,13 +762,19 @@ export default function AdminPage() {
     if (!res.ok) {
       return {} as Record<
         string,
-        { onboardingStatus: Participant["onboardingStatus"] }
+        {
+          onboardingStatus: Participant["onboardingStatus"];
+          stitchApiGroup?: Participant["stitchApiGroup"];
+        }
       >;
     }
     const data = (await res.json()) as {
       statuses?: Record<
         string,
-        { onboardingStatus: Participant["onboardingStatus"] }
+        {
+          onboardingStatus: Participant["onboardingStatus"];
+          stitchApiGroup?: Participant["stitchApiGroup"];
+        }
       >;
     };
     return data.statuses ?? {};
@@ -880,6 +891,8 @@ export default function AdminPage() {
         updatedAt: changes.updatedAt ?? prev?.updatedAt ?? 0,
         onboardingStatus:
           changes.onboardingStatus ?? prev?.onboardingStatus ?? "unknown",
+        stitchApiGroup:
+          changes.stitchApiGroup ?? prev?.stitchApiGroup,
         isAdmin:
           changes.isAdmin ??
           prev?.isAdmin ??
@@ -909,6 +922,7 @@ export default function AdminPage() {
         photoURL: user.photoURL,
         updatedAt: user.updatedAt,
         onboardingStatus: user.onboardingStatus,
+        stitchApiGroup: user.stitchApiGroup,
         isAdmin: user.isAdmin,
         missionOrder: user.missionOrder,
       });
@@ -2662,6 +2676,18 @@ export default function AdminPage() {
                               className="rounded-full border-transparent bg-indigo-50 text-indigo-700"
                             >
                               관리자
+                            </Badge>
+                          )}
+                          {p.stitchApiGroup && (
+                            <Badge
+                              variant="outline"
+                              className={
+                                p.stitchApiGroup === "A"
+                                  ? "rounded-full border-emerald-200 bg-emerald-50 text-emerald-700"
+                                  : "rounded-full border-sky-200 bg-sky-50 text-sky-700"
+                              }
+                            >
+                              Stitch {p.stitchApiGroup}
                             </Badge>
                           )}
                           <Badge

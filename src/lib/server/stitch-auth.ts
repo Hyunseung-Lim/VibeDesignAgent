@@ -7,6 +7,7 @@ import {
 import { readFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import type { StitchApiGroup } from "@/lib/server/stitchApiGroup";
 
 type StitchAuthMode =
   | "refresh-user-oauth"
@@ -65,8 +66,8 @@ function staticOAuthConfig(): StitchAuthConfig | null {
   return null;
 }
 
-function apiKeyConfig(): StitchAuthConfig | null {
-  const apiKey = envValue("STITCH_API_KEY");
+function apiKeyConfig(explicitApiKey?: string): StitchAuthConfig | null {
+  const apiKey = explicitApiKey?.trim() || envValue("STITCH_API_KEY");
   if (apiKey) {
     return { config: { apiKey }, mode: "api-key" };
   }
@@ -203,8 +204,12 @@ async function userOAuthConfig(options?: { requireOAuth?: boolean }) {
 async function stitchConfig(options?: {
   requireOAuth?: boolean;
   forceApiKey?: boolean;
+  apiKey?: string;
 }): Promise<StitchAuthConfig> {
   const preference = stitchAuthPreference();
+  if (options?.apiKey) {
+    return { config: { apiKey: options.apiKey }, mode: "api-key" };
+  }
   if (options?.forceApiKey) {
     const apiKey = apiKeyConfig();
     if (apiKey) return apiKey;
@@ -236,6 +241,8 @@ async function stitchConfig(options?: {
 export async function createStitchClient(options?: {
   requireOAuth?: boolean;
   forceApiKey?: boolean;
+  apiKey?: string;
+  apiKeyGroup?: StitchApiGroup;
 }) {
   const auth = await stitchConfig(options);
   // The SDK constructor falls back to process.env.STITCH_API_KEY even when an
@@ -266,9 +273,12 @@ export async function createStitchClient(options?: {
       requested: {
         requireOAuth: Boolean(options?.requireOAuth),
         forceApiKey: Boolean(options?.forceApiKey),
+        apiKeyGroup: options?.apiKeyGroup ?? null,
       },
       availableEnv: {
         apiKey: Boolean(envValue("STITCH_API_KEY")),
+        apiKeyA: Boolean(envValue("STITCH_API_KEY_A")),
+        apiKeyB: Boolean(envValue("STITCH_API_KEY_B")),
         accessToken: Boolean(envValue("STITCH_ACCESS_TOKEN")),
         refreshOAuth: Boolean(envRefreshOAuthInput()),
         projectId: Boolean(stitchProjectId()),
@@ -286,6 +296,14 @@ export async function createStitchClient(options?: {
     }),
   );
   return { client, sdk: new Stitch(client) };
+}
+
+export function stitchApiKeyForGroup(group: StitchApiGroup) {
+  const apiKey = envValue(`STITCH_API_KEY_${group}`);
+  if (!apiKey) {
+    throw new Error(`STITCH_API_KEY_${group} is not configured.`);
+  }
+  return apiKey;
 }
 
 export function isStitchAuthError(error: unknown) {

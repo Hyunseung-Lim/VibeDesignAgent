@@ -2825,13 +2825,19 @@ async function stitchResponseError(response: Response) {
 async function fetchStitchScreenHtml(
   projectId: string,
   screenId: string,
-  attempts = 10,
+  options?: { attempts?: number; ownerUid?: string },
 ) {
+  const currentUser = firebaseAuth.currentUser;
+  if (!currentUser) throw new Error("Stitch 화면 조회 인증 정보가 없습니다.");
+  const token = await getIdToken(currentUser);
+  const params = new URLSearchParams({ projectId, screenId });
+  if (options?.ownerUid) params.set("ownerUid", options.ownerUid);
+  const attempts = options?.attempts ?? 10;
   let lastError = "Stitch 화면 HTML이 아직 준비되지 않았습니다.";
   for (let attempt = 0; attempt < attempts; attempt += 1) {
-    const response = await fetch(
-      `/api/stitch/html?projectId=${encodeURIComponent(projectId)}&screenId=${encodeURIComponent(screenId)}`,
-    );
+    const response = await fetch(`/api/stitch/html?${params.toString()}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
     const data = await response.json().catch(() => null);
     if (response.ok && typeof data?.html === "string" && data.html.trim()) {
       return data.html as string;
@@ -4206,7 +4212,9 @@ export default function MainScreenPage() {
               isSyntheticStitchScreenId(a.stitchScreenId)
             )
               return;
-            fetchStitchScreenHtml(artboardProjectId, a.stitchScreenId)
+            fetchStitchScreenHtml(artboardProjectId, a.stitchScreenId, {
+              ownerUid: targetUserId,
+            })
               .then((html) =>
                 setArtboards((prev) =>
                   prev.map((p) =>
@@ -6806,9 +6814,17 @@ export default function MainScreenPage() {
           }, 1000);
           let res: Response;
           try {
+            const stitchUser = firebaseAuth.currentUser;
+            if (!stitchUser) {
+              throw new Error("Stitch 요청 인증 정보가 없습니다.");
+            }
+            const stitchToken = await getIdToken(stitchUser);
             res = await fetch("/api/stitch", {
               method: "POST",
-              headers: { "Content-Type": "application/json" },
+              headers: {
+                Authorization: `Bearer ${stitchToken}`,
+                "Content-Type": "application/json",
+              },
               signal: stitchController.signal,
               body: JSON.stringify({
                 prompt: stitchPrompt,
@@ -6846,6 +6862,7 @@ export default function MainScreenPage() {
                         note: image.note,
                       }))
                     : undefined,
+                ownerUid: targetSessionUserId ?? undefined,
               }),
             });
           } finally {
@@ -7101,7 +7118,9 @@ export default function MainScreenPage() {
                 );
                 return;
               }
-              fetchStitchScreenHtml(responseProjectId, sid)
+              fetchStitchScreenHtml(responseProjectId, sid, {
+                ownerUid: targetSessionUserId ?? undefined,
+              })
                 .then((html) =>
                   setArtboards((prev) =>
                     prev.map((a) =>
@@ -7378,7 +7397,9 @@ export default function MainScreenPage() {
                   ),
                 );
               } else {
-                fetchStitchScreenHtml(responseProjectId, data.screenId)
+                fetchStitchScreenHtml(responseProjectId, data.screenId, {
+                  ownerUid: targetSessionUserId ?? undefined,
+                })
                 .then((html) =>
                   setArtboards((prev) => {
                     console.info("[mockup] pending edit HTML resolved", {
@@ -7517,6 +7538,7 @@ export default function MainScreenPage() {
     missionTitle,
     missionBrief,
     userId,
+    targetSessionUserId,
     isReadOnly,
     isOnboardingMission,
     missionId,
