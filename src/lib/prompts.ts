@@ -51,7 +51,7 @@ const CHAT_MOCKUP_GENERATE_ACTION_PROMPT = `Mockup generation rules:
 - If the active 시안 already has a 디자인 스타일 and the user asks to remake/recreate using a different style, new mood, new version, or newly cited reference direction, treat it as a new 시안 direction rather than an edit of the current 시안. The new 시안 needs its own [CREATE_NOTE] and [CREATE_DESIGN_SPEC] before or along with [GENERATE_MOCKUP] when the user explicitly asked to make it.
 - Do NOT use [GENERATE_MOCKUP] when the user is only asking whether there is enough information, whether a mockup is possible, whether you are ready, or what is still needed. Answer the assessment in plain prose only.
 - Conditional offers such as "필요하면", "원하시면", "if needed", or "I can..." are not permission to generate. Write them as plain prose and wait for the user to explicitly ask to make/generate/proceed.
-- A 디자인 스타일 is REQUIRED before any mockup. If the active 시안 has no 디자인 스타일 yet, do NOT emit [GENERATE_MOCKUP] — the app will block it. Instead define the visual direction first with [CREATE_DESIGN_SPEC: ...] when the user has given or implied a visual style, or ask the user about color palette, typography, and mood, then generate on a later turn once a 디자인 스타일 exists.
+- A 디자인 스타일 is REQUIRED before any mockup unless the current turn context explicitly says an attached style image or style source URL is available for image-led generation. If the active 시안 has no 디자인 스타일 and no current-turn image/URL style source, do NOT emit [GENERATE_MOCKUP] — the app will block it. Instead define the visual direction first with [CREATE_DESIGN_SPEC: ...] when the user has given or implied a visual style, or ask the user about color palette, typography, and mood, then generate on a later turn once a 디자인 스타일 exists.
 - If there is also no active design brief and no concrete product description, ask a clarifying question before doing anything else.
 - The prompt inside [GENERATE_MOCKUP: ...] must be English, 900-1800 characters, and cover target device, layout, sections, components, visible copy, states, and relevant references.
 - Follow provided 디자인 스타일 exactly; do not invent style tokens when a style spec exists.`;
@@ -256,6 +256,11 @@ export function chatCurrentRequestPrompt() {
   return `The most recent user message is the current request and has the highest priority.\nTreat earlier conversation only as background. Do not repeat, continue, or complete a previous task unless this current request explicitly asks you to. If the current request says to make it Korean / 한국어로 만들어줘 and a current mockup exists, interpret that as editing the visible text in the current mockup into Korean, not as repeating a previous color or layout change.`;
 }
 
+export function chatAttachedStyleImagePrompt(name?: string) {
+  const label = name?.trim() ? ` Filename: ${name.trim().slice(0, 200)}.` : "";
+  return `The latest user turn includes an attached reference/style image.${label} Treat the image requirement as satisfied: do not ask the user to upload or share a reference again. If the user's text says this, this feeling, like this, 이번엔 이런 느낌, or asks to make/generate using the attached image, route the turn as image-led mockup generation when an active design brief exists. The downstream Stitch step will receive the actual image pixels; this chat model only needs to acknowledge and plan around the attachment.`;
+}
+
 export function chatMockupHtmlPrompt(mockupHtml: string) {
   return `Current mockup HTML exists. The next mockup-related request should be treated as an edit unless the user explicitly asks for a new/different mockup, a new design, a new layout, a new structure, a new concept, another version, or a fresh canvas.\n\nCurrent mockup HTML:\n\`\`\`html\n${mockupHtml}\n\`\`\``;
 }
@@ -395,6 +400,7 @@ Rules:
 - If the user asks for a new style variant, different visual direction, different mood, new reference direction, or another style version without overwriting the current one, choose intent "create_design_spec"; require activeIdea and designSpec so the responder can preserve the current brief while creating a separate style direction.
 - If the user asks whether there is enough information to make a mockup, whether a mockup is possible, whether you are ready, or what is still needed before making one, choose intent "answer", not "create_mockup".
 - If the active idea already has a design style and the current request asks to remake/recreate as a different style, new mood, new version, or newly cited reference direction, choose "create_mockup" when the user explicitly asks to make it now, and require activeIdea/designSpec/citedReferences as needed. The app will fork this into a new idea; do not treat it as a normal edit of the active idea.
+- If uiState.hasAttachedStyleImage is true, treat the latest user turn as having a visible reference image. Do not choose "answer" merely to ask for a reference. If the user asks to make/generate using this/this feeling/이번엔 이런 느낌 and there is an active design brief, choose "create_mockup"; require activeIdea and designSpec only when available because the attached image can satisfy visual style for image-led generation.
 - If the current request asks to organize visual direction so it can be inserted into a style/reference section and it does not target an existing style, choose intent "create_design_spec".
 - If the user asks to add, include, or put specific apps, products, brands, sites, or examples into the reference section, list, or panel (e.g. "X랑 Y 레퍼런스에 추가해줘"), choose intent "fetch_references" — they must be searched and added as reference cards, not written into a note.
 - Need mockupHtml for editing or explicit analysis of the existing mockup.

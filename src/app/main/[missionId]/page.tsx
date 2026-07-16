@@ -2027,12 +2027,13 @@ function shouldForkIdeaForStyleReference(
   text: string,
   activeIdea?: Idea | null,
   citedReferenceCount = 0,
+  hasAttachedStyleImage = false,
 ) {
   if (!activeIdea?.designStyle?.content?.trim()) return false;
   const normalized = text.trim().toLowerCase();
   const remakeIntent =
     isExplicitNewMockupRequest(normalized) ||
-    /(다시|새로|새롭게|재생성|재구성|리메이크|갈아엎|바꿔서|바꾸고|만들어줘|생성해줘|제작해줘|버전|version|remake|recreate|regenerate|redo|from scratch)/i.test(
+    /(다시|새로|새롭게|재생성|재구성|리메이크|갈아엎|바꿔서|바꾸고|만들어줘|만들어봐|생성해줘|제작해줘|해줘|해봐|보여줘|버전|version|remake|recreate|regenerate|redo|from scratch)/i.test(
       normalized,
     );
   const styleShift =
@@ -2045,7 +2046,13 @@ function shouldForkIdeaForStyleReference(
     /(레퍼런스|참고|reference|스타일|느낌|무드|톤|방향|처럼|기반|따라|맞춰)/i.test(
       normalized,
     );
-  return (remakeIntent && styleShift) || citedStyleRemake;
+  const attachedImageStyleRemake =
+    hasAttachedStyleImage &&
+    remakeIntent &&
+    /(이런|요런|이\s*느낌|느낌|스타일|무드|톤|방향|이미지|image|this)/i.test(
+      normalized,
+    );
+  return (remakeIntent && styleShift) || citedStyleRemake || attachedImageStyleRemake;
 }
 
 function fallbackDesignStyleFromStyleReference(
@@ -5521,6 +5528,12 @@ export default function MainScreenPage() {
                 label: mentionForTurn.label,
               }
             : undefined,
+          styleImageContext: styleImageForTurn
+            ? {
+                present: true,
+                name: attachedStyleImage?.name,
+              }
+            : undefined,
           review: {
             missionId,
             turnId: assistantId,
@@ -5587,6 +5600,7 @@ export default function MainScreenPage() {
           text,
           activeIdeaAtTurnStart,
           selectedReferences.length,
+          Boolean(styleImageForTurn),
         );
 
       // Convert web search citation domains (domain.com) to clickable markdown links

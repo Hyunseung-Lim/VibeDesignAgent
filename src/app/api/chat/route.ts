@@ -20,6 +20,7 @@ import {
   chatCitedRefsNoUrlPrompt,
   chatReferencePreferencePrompt,
   chatPlannerPrompt,
+  chatAttachedStyleImagePrompt,
 } from "@/lib/prompts";
 import type { ChatComposerCommandId } from "@/lib/session/chat-composer";
 
@@ -380,6 +381,17 @@ function normalizeMentionIdentifier(value: unknown) {
   return String(value ?? "")
     .replace(/[^a-zA-Z0-9_-]/g, "")
     .slice(0, 200);
+}
+
+function normalizeStyleImageContext(value: unknown) {
+  if (!value || typeof value !== "object") return null;
+  const record = value as Record<string, unknown>;
+  if (record.present !== true) return null;
+  const name = truncateText(record.name, 200).replace(/[\r\n]+/g, " ").trim();
+  return {
+    present: true,
+    name: name || undefined,
+  };
 }
 
 function forceRequestedCommand(
@@ -764,6 +776,8 @@ function forceIntentFromUserText(
   hasSelectedElement: boolean,
   citedReferenceCount: number,
   citedTextCount: number,
+  hasActiveIdea: boolean,
+  hasAttachedStyleImage: boolean,
 ) {
   const text = latestUserText.toLowerCase();
 
@@ -850,6 +864,37 @@ function forceIntentFromUserText(
         conversationHistory: plan.needs.conversationHistory ?? "recent",
       },
       reason: `${plan.reason ? `${plan.reason} ` : ""}Forced create_mockup because the user asked to remake as a new style/reference direction; the client will fork a new idea.`,
+    };
+  }
+
+  const attachedImageMockupRequest =
+    hasAttachedStyleImage &&
+    hasActiveIdea &&
+    !/(?:뭐야|무엇|어떤|왜|가능|충분|해도\s*돼|can\s+i|should\s+i|what|why|how)/i.test(
+      text,
+    ) &&
+    /(이런|요런|이\s*느낌|느낌|스타일|무드|톤|방향|이미지|image|this|attached)/i.test(
+      text,
+    ) &&
+    /(만들|생성|제작|해줘|해봐|보여줘|시안|목업|mockup|generate|make|create)/i.test(
+      text,
+    );
+  if (attachedImageMockupRequest) {
+    return {
+      ...plan,
+      intent: "create_mockup" as const,
+      confidence: Math.max(plan.confidence, 0.9),
+      needs: {
+        ...plan.needs,
+        mission: true,
+        activeIdea: true,
+        designSpec: hasDesignSpec || plan.needs.designSpec,
+        mockupHtml: false,
+        selectedElement: false,
+        citedReferences: citedReferenceCount > 0,
+        conversationHistory: plan.needs.conversationHistory ?? "recent",
+      },
+      reason: `${plan.reason ? `${plan.reason} ` : ""}Forced create_mockup because the current turn has an attached style image and the user asked to make a mockup using this feeling.`,
     };
   }
 
@@ -951,6 +996,7 @@ export async function POST(request: Request) {
     referencePreferenceContext,
     requestedCommand,
     mentionedArtifact,
+    styleImageContext,
   } = await request.json();
   const requestedCommandId = normalizeRequestedCommand(requestedCommand);
   const mentionRecord =
@@ -970,6 +1016,16 @@ export async function POST(request: Request) {
           label: truncateText(mentionRecord.label, 200).replace(/[\r\n]+/g, " "),
         }
       : null;
+  const normalizedStyleImageContext =
+    normalizeStyleImageContext(styleImageContext);
+  if (normalizedStyleImageContext) {
+    console.info(
+      "[api/chat] attached style image context:",
+      JSON.stringify({
+        hasName: Boolean(normalizedStyleImageContext.name),
+      }),
+    );
+  }
   const reviewConfig = (review && typeof review === "object"
     ? review
     : null) as {
@@ -1016,6 +1072,7 @@ export async function POST(request: Request) {
       citedTextCount: Array.isArray(citedTexts) ? citedTexts.length : 0,
       hasActiveIdea: Boolean(activeIdea),
       hasDesignSpec: Boolean(designSpec),
+      hasAttachedStyleImage: Boolean(normalizedStyleImageContext),
       retrievedMemoryCount: memoryItems.length,
       device: device === "mobile" ? "mobile" : "desktop",
     },
@@ -1038,6 +1095,8 @@ export async function POST(request: Request) {
       Boolean(selectedElement),
       Array.isArray(citedReferences) ? citedReferences.length : 0,
       Array.isArray(citedTexts) ? citedTexts.length : 0,
+      Boolean(activeIdea),
+      Boolean(normalizedStyleImageContext),
     ),
     requestedCommandId,
     Array.isArray(citedTexts) ? citedTexts.length : 0,
@@ -1344,6 +1403,15 @@ export async function POST(request: Request) {
     ),
   });
 
+  if (normalizedStyleImageContext) {
+    markContext("styleImageContext");
+    systemMessages.push({
+      role: "system",
+      label: "styleImageContext",
+      content: chatAttachedStyleImagePrompt(normalizedStyleImageContext.name),
+    });
+  }
+
   // Late in the system stack, right before currentRequest, where this-turn
   // behavioral instructions get the most weight (15.266).
   if (promptPlan.memoryDirectives.length > 0) {
@@ -1389,6 +1457,7 @@ export async function POST(request: Request) {
     citedReferences: compactReferences(citedReferences),
     requestedCommand: requestedCommandId,
     mentionedArtifact: normalizedMention,
+    styleImageContext: normalizedStyleImageContext,
   };
 
   const storeReviewTurn = async (meta: Record<string, unknown>) => {
