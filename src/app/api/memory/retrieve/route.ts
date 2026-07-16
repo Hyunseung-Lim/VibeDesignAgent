@@ -32,16 +32,32 @@ const DEFAULT_LIMIT = 10;
 const IDLE_DECAY_WEIGHT_LOSS = 0.006;
 const IDLE_DECAY_MAX_WEIGHT_LOSS = 0.012;
 const MIN_MEMORY_WEIGHT = 0;
-// Active-memory soft cap (15.269): idle decay only runs while the active count
-// exceeds the cap, so deactivation starts at 100 and the active pool grows
-// slowly with total inputs — cap(200 total) ≈ 118, cap(300 total) ≈ 125.
-const ACTIVE_MEMORY_BASE_CAP = 100;
+// Active-memory soft cap (15.283): start decay immediately above 70 memories,
+// reach 85 at 100 inputs, then grow more slowly along a square-root curve.
+// Target checkpoints: cap(200 total) ≈ 114, cap(300 total) ≈ 133.
+const ACTIVE_MEMORY_BASE_CAP = 70;
+const ACTIVE_MEMORY_LINEAR_END_COUNT = 100;
+const ACTIVE_MEMORY_LINEAR_END_CAP = 85;
+const ACTIVE_MEMORY_SQRT_GROWTH = 5;
 
 function activeMemoryCap(totalMemoryCount: number) {
   if (totalMemoryCount <= ACTIVE_MEMORY_BASE_CAP) return ACTIVE_MEMORY_BASE_CAP;
-  return Math.round(
-    ACTIVE_MEMORY_BASE_CAP +
-      1.8 * Math.sqrt(totalMemoryCount - ACTIVE_MEMORY_BASE_CAP),
+  if (totalMemoryCount <= ACTIVE_MEMORY_LINEAR_END_COUNT) {
+    const progress =
+      (totalMemoryCount - ACTIVE_MEMORY_BASE_CAP) /
+      (ACTIVE_MEMORY_LINEAR_END_COUNT - ACTIVE_MEMORY_BASE_CAP);
+    return Math.floor(
+      ACTIVE_MEMORY_BASE_CAP +
+        (ACTIVE_MEMORY_LINEAR_END_CAP - ACTIVE_MEMORY_BASE_CAP) * progress,
+    );
+  }
+  return Math.floor(
+    ACTIVE_MEMORY_LINEAR_END_CAP +
+      ACTIVE_MEMORY_SQRT_GROWTH *
+        (Math.sqrt(totalMemoryCount - ACTIVE_MEMORY_BASE_CAP) -
+          Math.sqrt(
+            ACTIVE_MEMORY_LINEAR_END_COUNT - ACTIVE_MEMORY_BASE_CAP,
+          )),
   );
 }
 
