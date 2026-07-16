@@ -16,6 +16,7 @@ import {
   MEMORY_EMBEDDING_MODEL,
 } from "@/lib/server/memoryEmbedding";
 import { isActiveMemoryDocument } from "@/lib/server/memoryActivity";
+import { rankMemoriesWithClusters } from "@/lib/server/memoryClusterRetrieval";
 
 export const runtime = "nodejs";
 
@@ -452,12 +453,12 @@ export async function POST(request: Request) {
       .filter((candidate) => Number.isFinite(candidate.similarity))
       .sort((a, b) => b.similarity - a.similarity);
 
-    retrieved = ranked.slice(0, limit);
-    // Best-effort: attach the persona summary of the cluster each retrieved item
-    // belongs to. Used by the chat planner to pick user-specific actions without
-    // re-summarizing. Never blocks retrieval — cache miss just yields no summary.
+    // Best-effort cluster-aware reranking. Ranking uses only stored membership
+    // and embedding similarities; labels/summaries never enter the score and no
+    // generative model is called. Cache miss falls back to global cosine rank.
+    let clusters: Awaited<ReturnType<typeof loadLatestStoredClusters>> = [];
     try {
-      const clusters = await loadLatestStoredClusters(user.localId, token);
+      clusters = await loadLatestStoredClusters(user.localId, token);
       if (clusters.length > 0) {
         clusterByItemId = clusterSummaryByItemId(clusters);
       }
@@ -467,9 +468,14 @@ export async function POST(request: Request) {
         clusterError,
       );
     }
+    const clusterRanking = rankMemoriesWithClusters(ranked, clusters, limit);
+    retrieved = clusterRanking.items;
     const scoreDeltas = await updateRetrievedWeights(retrieved, token, now);
     // Decay every memory that was NOT retrieved this turn (usage-based forgetting).
-    const idleTargets = ranked.slice(limit);
+    const retrievedIds = new Set(retrieved.map((candidate) => candidate.id));
+    const idleTargets = ranked.filter(
+      (candidate) => !retrievedIds.has(candidate.id),
+    );
     const idleDecayDeltas = await updateIdleDecayWeights(
       idleTargets,
       token,
@@ -495,6 +501,13 @@ export async function POST(request: Request) {
         missionId: missionId || null,
         memoryVersion: "0.1.2",
         retrievalRankingPolicy: {
+          method: clusterRanking.usedClusterRanking
+            ? "cluster_aware_hybrid_v1"
+            : "global_cosine_fallback",
+          individualSimilarityWeight: 0.8,
+          clusterEvidenceWeight: 0.2,
+          clusterEvidence: "0.7_max_similarity_plus_0.3_top3_mean",
+          globalSafeguardCount: 2,
           beforeSession: "same_similarity_ranking_as_other_memories",
           currentBeforeSession:
             "same_similarity_ranking_no_forced_prompt_inclusion",
@@ -506,6 +519,26 @@ export async function POST(request: Request) {
         similarities: retrieved.map((candidate) =>
           Number(candidate.similarity.toFixed(4)),
         ),
+        retrievalScores: retrieved.map((candidate) =>
+          Number(
+            (
+              clusterRanking.scoreByItemId.get(candidate.id) ??
+              candidate.similarity
+            ).toFixed(4),
+          ),
+        ),
+        globalTopMemoryIds: clusterRanking.globalTopIds,
+        clusterRankingUsed: clusterRanking.usedClusterRanking,
+        clusterAssignedCandidateCount:
+          clusterRanking.assignedCandidateCount,
+        clusterAssignmentCoverage: Number(
+          clusterRanking.assignmentCoverage.toFixed(4),
+        ),
+        clusterRetrievalScores: clusterRanking.clusterScores.map((cluster) => ({
+          clusterId: cluster.clusterId,
+          score: Number(cluster.score.toFixed(4)),
+          activeMemberCount: cluster.activeMemberCount,
+        })),
         profileItemCount: retrieved.filter((candidate) =>
           isBeforeSessionDoc(candidate.doc),
         ).length,
