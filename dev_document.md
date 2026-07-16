@@ -153,7 +153,7 @@
 - **스트리밍**: SSE 방식으로 실시간 토큰 출력
 - **웹 검색 표시**: 검색 발생 시 `[WEB_SEARCHED]` 마커 → "웹 검색 완료" 배지 표시
 - **인용 링크**: 웹 검색 출처 `(domain.com)` 자동으로 클릭 가능한 마크다운 링크로 변환
-- **채팅 bubble UI**: user message는 어두운 filled bubble, assistant message는 기본적으로 ghost bubble(배경/테두리 없이 본문 중심)로 표시한다. 선택된 assistant turn과 error turn만 별도 surface를 갖고, 진행 상태와 tool action marker는 bubble 안의 Marker-style row로 낮은 위계에서 표시한다. `[WEB_SEARCHED]` 같은 marker row는 클릭하면 원문 marker 세부 내용을 펼친다 `[현행 2026-06-30 → 15.158/15.159/15.163]`
+- **채팅 bubble UI**: user message는 어두운 filled bubble, assistant message는 기본적으로 ghost bubble(배경/테두리 없이 본문 중심)로 표시한다. user bubble에 hover/focus하면 버블 아래에 보낸 시간이 `Jul 21, 09:32 AM` 형식으로 나타난다. 선택된 assistant turn과 error turn만 별도 surface를 갖고, 진행 상태와 tool action marker는 bubble 안의 Marker-style row로 낮은 위계에서 표시한다. `[WEB_SEARCHED]` 같은 marker row는 클릭하면 원문 marker 세부 내용을 펼친다 `[현행 2026-07-16 → 15.273]`
 - **특수 블록 처리**:
   - `[CREATE_NOTE: ...]` → 새 아이디어(시안) 생성. 저장 payload는 목표/대상 사용자, 핵심 경험, 화면 구조, 미션 필수 콘텐츠, 제약을 포함한 독립적인 Design Brief여야 한다. 모델이 한 줄 작업 지시문을 반환하면 클라이언트가 먼저 assistant 응답 본문에서 실질 브리프를 복구하고, 없을 때 미션 맥락과 현재 사용자 요청으로 시작 가능한 브리프를 복구한다. 단, 현재 시안이 빈 shell이면(디자인 스타일만 먼저 작성된 경우, 또는 세션 시작 시 시드된 빈 디폴트 시안 1: description·designStyle·artboard 모두 없음) 새 시안을 만들지 않고 해당 시안 내용을 채움 `[현행 2026-06-30 → 15.98/15.116/15.153]`
   - 세션은 빈 디폴트 시안 1로 시작한다(read-only/완료 세션 제외). 워크스페이스·탭·Brief/Style/Mockup 구조를 처음부터 노출하고, 첫 brief가 위 shell-fill 규칙으로 이 시안을 채운다 `[현행 2026-06-23 → 15.116]`
@@ -4639,3 +4639,8 @@ type ChatPlan = {
 - 배경: 레퍼런스 카드 썸네일은 검색 의도에 따라 달라야 한다. 실제 제품/페이지 구조 참고에서는 og 이미지보다 live screenshot이 유용하고, 비주얼 스타일 참고에서는 screenshot보다 대표 이미지/OG 이미지가 더 유용한 경우가 많다.
 - 수정: `/api/references`가 `referenceMode`에 따라 `ThumbnailStrategy`를 고른다. `product` 모드는 `screenshot-first`, `style` 모드는 `image-first`다.
 - 동작: `screenshot-first`는 Microlink desktop screenshot URL을 먼저 생성·검증하고 실패하면 검색 결과/페이지 이미지 후보로 폴백한다. `image-first`는 검증된 페이지 이미지 후보를 먼저 쓰고 실패하면 screenshot으로 폴백한다.
+
+### 15.273 User chat bubble sent time on hover `[implemented 2026-07-16]`
+
+- 배경: 사용자가 보낸 채팅을 훑을 때 각 메시지의 전송 시각을 필요할 때만 확인할 수 있어야 했다.
+- 수정: `ChatBubbleMessage`에 기존 session `Message.createdAt`을 노출하고, user bubble wrapper를 hover/focus group으로 바꿔 버블 아래 absolute label에 `Jul 21, 09:32 AM` 형식의 시간을 표시한다. 기본 상태에서는 opacity 0이라 채팅 간격을 늘리지 않는다.

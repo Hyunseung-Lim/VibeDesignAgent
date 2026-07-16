@@ -21,6 +21,7 @@ export type ChatBubbleMessage = {
   id: string;
   role: "user" | "assistant";
   content: string;
+  createdAt?: number;
   citedElement?: {
     selector: string;
   } | null;
@@ -116,6 +117,17 @@ function ChatPhaseMarker({
   );
 }
 
+function formatMessageTime(timestamp?: number) {
+  if (!timestamp || !Number.isFinite(timestamp)) return "";
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: true,
+  }).format(new Date(timestamp));
+}
+
 export function ChatBubble({
   message,
   contentParts,
@@ -139,6 +151,7 @@ export function ChatBubble({
   onOpenFeedback,
 }: ChatBubbleProps) {
   const isUser = message.role === "user";
+  const sentTime = isUser ? formatMessageTime(message.createdAt) : "";
   const visibleComposerCommand =
     message.composerCommand?.id === "fetch_references"
       ? null
@@ -152,7 +165,11 @@ export function ChatBubble({
         : "px-1 py-1 text-slate-700";
 
   return (
-    <div className={`flex min-w-0 ${isUser ? "justify-end" : "justify-start"}`}>
+    <div
+      className={`group relative flex min-w-0 flex-col ${
+        isUser ? "items-end" : "items-start"
+      }`}
+    >
       <div
         className={`min-w-0 max-w-[85%] text-sm leading-relaxed ${bubbleClassName}`}
       >
@@ -376,6 +393,11 @@ export function ChatBubble({
           </div>
         )}
       </div>
+      {sentTime && (
+        <div className="pointer-events-none absolute right-1 top-full mt-1 px-1 text-[11px] font-medium text-slate-400 opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100">
+          {sentTime}
+        </div>
+      )}
     </div>
   );
 }
