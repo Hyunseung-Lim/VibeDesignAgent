@@ -55,6 +55,13 @@ function sessionFilterDate(timestamp: number) {
   });
 }
 
+function isInactiveMemory(memory: MemoryItem) {
+  return (
+    Boolean(memory.archivedAt) ||
+    (memory.weight != null && memory.weight <= 0)
+  );
+}
+
 const MemoryClusterGraph = dynamic(
   () => import("@/components/memory/memory-cluster-graph"),
   {
@@ -80,7 +87,9 @@ export function MemoryClusterPage({
   const targetPath = targetUserId
     ? `/api/admin/users/${encodeURIComponent(targetUserId)}/memory`
     : "/api/memory";
-  const memoryEndpoint = targetUserId ? targetPath : `${targetPath}/all`;
+  const memoryEndpoint = targetUserId
+    ? `${targetPath}?includeInactive=1`
+    : `${targetPath}/all?includeInactive=1`;
   const clustersEndpoint = `${targetPath}/clusters`;
   const [currentUser, setCurrentUser] = useState<
     import("firebase/auth").User | null
@@ -97,6 +106,7 @@ export function MemoryClusterPage({
   const [selectedSessionKey, setSelectedSessionKey] = useState<string | null>(
     null,
   );
+  const [showInactiveMemories, setShowInactiveMemories] = useState(true);
   const [missionTitleById, setMissionTitleById] = useState<
     Record<string, string>
   >({});
@@ -234,31 +244,40 @@ export function MemoryClusterPage({
       : null;
 
   // MemoryClusterGraph expects ClusterableMemoryItem shape
-  const clusterItems = memories.map((m) => ({
-    id: m.id,
-    memoryId: m.id,
-    semantic: m.semantic ?? "",
-    episodic: m.episodic ?? "",
-    input: m.input ?? "",
-    output: m.output ?? "",
-    action:
-      highlightMissionId && m.source?.missionId === highlightMissionId
-        ? [m.action, "promoted"].filter(Boolean).join(" / ")
-        : (m.action ?? ""),
-    sourceType: m.sourceType,
-    weight: m.weight,
-    embedding: m.embedding,
-    timestamp: m.timestamp ?? 0,
-    archivedAt: m.archivedAt ?? null,
-    archiveReason: m.archiveReason ?? null,
-    keyword: m.keywords,
-    keywords: m.keywords,
-    row: {
-      source: m.source ?? undefined,
-    },
-  }));
+  const clusterItems = useMemo(
+    () =>
+      memories.map((m) => ({
+        id: m.id,
+        memoryId: m.id,
+        semantic: m.semantic ?? "",
+        episodic: m.episodic ?? "",
+        input: m.input ?? "",
+        output: m.output ?? "",
+        action:
+          highlightMissionId && m.source?.missionId === highlightMissionId
+            ? [m.action, "promoted"].filter(Boolean).join(" / ")
+            : (m.action ?? ""),
+        sourceType: m.sourceType,
+        weight: m.weight,
+        embedding: m.embedding,
+        timestamp: m.timestamp ?? 0,
+        archivedAt: m.archivedAt ?? null,
+        archiveReason: m.archiveReason ?? null,
+        inactive: isInactiveMemory(m),
+        inactiveReason: m.inactiveReason ?? null,
+        inactiveReasonDetail: m.inactiveReasonDetail ?? null,
+        keyword: m.keywords,
+        keywords: m.keywords,
+        row: {
+          source: m.source ?? undefined,
+        },
+      })),
+    [highlightMissionId, memories],
+  );
 
-  const clusterItemIdSet = new Set(clusterItems.map((i) => i.id));
+  const clusterItemIdSet = new Set(
+    clusterItems.filter((item) => !item.inactive).map((item) => item.id),
+  );
   const totalClusterItemIds = clusters.flatMap((c) => c.itemIds);
   const matchedCount = totalClusterItemIds.filter((id) =>
     clusterItemIdSet.has(id),
@@ -295,36 +314,84 @@ export function MemoryClusterPage({
   // Cumulative: selecting a mission shows that mission plus every earlier one
   // (onboarding base + prior missions). "전체"(null) shows all; the no-session
   // bucket stays exact since those memories have no comparable mission.
-  const filteredClusterItems = !selectedSessionKey
-    ? clusterItems
-    : selectedSessionKey === NO_SESSION_KEY
-      ? clusterItems.filter((item) => !item.row.source?.missionId)
-      : clusterItems.filter((item) =>
-          isWithinCumulative(
-            item.row.source?.missionId,
-            selectedSessionKey,
-            missionOrder,
-          ),
-        );
+  const sessionFilteredClusterItems = useMemo(
+    () =>
+      !selectedSessionKey
+        ? clusterItems
+        : selectedSessionKey === NO_SESSION_KEY
+          ? clusterItems.filter((item) => !item.row.source?.missionId)
+          : clusterItems.filter((item) =>
+              isWithinCumulative(
+                item.row.source?.missionId,
+                selectedSessionKey,
+                missionOrder,
+              ),
+            ),
+    [clusterItems, missionOrder, selectedSessionKey],
+  );
+
+  const inactiveFilteredItems = useMemo(
+    () => sessionFilteredClusterItems.filter((item) => item.inactive),
+    [sessionFilteredClusterItems],
+  );
+  const inactiveMemoryIdSet = useMemo(
+    () => new Set(inactiveFilteredItems.map((item) => item.id)),
+    [inactiveFilteredItems],
+  );
+  const filteredClusterItems = useMemo(
+    () =>
+      showInactiveMemories
+        ? sessionFilteredClusterItems
+        : sessionFilteredClusterItems.filter((item) => !item.inactive),
+    [sessionFilteredClusterItems, showInactiveMemories],
+  );
 
   // Narrow the cluster list (left panel) to clusters that still have at least
   // one item within the selected session, with counts adjusted to match.
   const filteredClusters = useMemo(() => {
-    if (!selectedSessionKey) return clusters;
-    const idSet = new Set(filteredClusterItems.map((item) => item.id));
+    const idSet = new Set(
+      sessionFilteredClusterItems
+        .filter((item) => !item.inactive)
+        .map((item) => item.id),
+    );
     return clusters
       .map((cluster) => {
         const itemIds = cluster.itemIds.filter((id) => idSet.has(id));
         return { ...cluster, itemIds, count: itemIds.length };
       })
       .filter((cluster) => cluster.itemIds.length > 0);
-  }, [clusters, filteredClusterItems, selectedSessionKey]);
+  }, [clusters, sessionFilteredClusterItems]);
   const filteredClusterEdges = useMemo(() => {
     const idSet = new Set(filteredClusterItems.map((item) => item.id));
     return clusterEdges.filter(
-      (edge) => idSet.has(edge.sourceId) && idSet.has(edge.targetId),
+      (edge) =>
+        idSet.has(edge.sourceId) &&
+        idSet.has(edge.targetId) &&
+        !inactiveMemoryIdSet.has(edge.sourceId) &&
+        !inactiveMemoryIdSet.has(edge.targetId),
     );
-  }, [clusterEdges, filteredClusterItems]);
+  }, [clusterEdges, filteredClusterItems, inactiveMemoryIdSet]);
+
+  const inactiveCluster = useMemo<MemoryCluster>(
+    () => ({
+      id: "session-inactive",
+      label: "비활성 메모리",
+      summary:
+        "유사 메모리 정리, weight 0 도달, 사용자 설정으로 비활성화된 메모리 모음입니다. 클러스터로 묶이지 않습니다.",
+      count: showInactiveMemories ? inactiveFilteredItems.length : 0,
+      relatedActions: [],
+      itemIds: showInactiveMemories
+        ? inactiveFilteredItems.map((item) => item.id)
+        : [],
+      representativeItems: [],
+      hideArea: true,
+    }),
+    [inactiveFilteredItems, showInactiveMemories],
+  );
+  const graphClusters = useMemo(
+    () => [...filteredClusters, inactiveCluster],
+    [filteredClusters, inactiveCluster],
+  );
 
   // Per-cluster count of notes newly created in the selected session tab. "new"
   // matches the graph's "promoted" ring: memories authored in the selected
@@ -351,13 +418,13 @@ export function MemoryClusterPage({
   // Keep the selected cluster valid whenever the session filter narrows the list.
   useEffect(() => {
     setSelectedClusterId((current) =>
-      filteredClusters.length === 0
+      graphClusters.length === 0
         ? null
-        : current && filteredClusters.some((c) => c.id === current)
+        : current && graphClusters.some((c) => c.id === current)
           ? current
-          : filteredClusters[0].id,
+          : graphClusters[0].id,
     );
-  }, [filteredClusters]);
+  }, [graphClusters]);
 
   const handleSelectSession = (key: string | null) => {
     setSelectedSessionKey(key);
@@ -365,7 +432,7 @@ export function MemoryClusterPage({
   };
 
   const selectedCluster =
-    filteredClusters.find((c) => c.id === selectedClusterId) ?? null;
+    graphClusters.find((c) => c.id === selectedClusterId) ?? null;
   const selectedClusterItems = selectedCluster
     ? filteredClusterItems.filter((item) =>
         selectedCluster.itemIds.includes(item.id),
@@ -403,10 +470,12 @@ export function MemoryClusterPage({
         <div className="flex items-center justify-center py-24 text-sm text-muted-foreground">
           불러오는 중...
         </div>
-      ) : clusters.length === 0 ? (
+      ) : clusters.length === 0 && inactiveFilteredItems.length === 0 ? (
         <div>
           <MemoryClusterEmptyState
-            canGenerate={memories.length >= 3}
+            canGenerate={
+              memories.filter((memory) => !isInactiveMemory(memory)).length >= 3
+            }
             isRegenerating={isRegenerating}
             onGenerate={handleRegenerate}
           />
@@ -473,6 +542,24 @@ export function MemoryClusterPage({
               nodeCount={filteredClusterItems.length}
               edgeCount={filteredClusterEdges.length}
               addedCountByClusterId={addedCountByClusterId}
+              inactiveMemoryCount={inactiveFilteredItems.length}
+              inactiveMemoriesSelected={
+                selectedClusterId === "session-inactive"
+              }
+              showInactiveMemories={showInactiveMemories}
+              onSelectInactiveMemories={() => {
+                setShowInactiveMemories(true);
+                setSelectedClusterId("session-inactive");
+                setSelectedMemoryId(null);
+              }}
+              onToggleInactiveMemories={() => {
+                const next = !showInactiveMemories;
+                setShowInactiveMemories(next);
+                if (!next && selectedClusterId === "session-inactive") {
+                  setSelectedClusterId(filteredClusters[0]?.id ?? null);
+                  setSelectedMemoryId(null);
+                }
+              }}
             />
 
             <div className="flex min-w-0 flex-1 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
@@ -488,13 +575,18 @@ export function MemoryClusterPage({
               />
               <div className="min-w-0 flex-1 overflow-hidden">
                 <MemoryClusterGraph
-                  clusters={filteredClusters}
+                  clusters={graphClusters}
                   items={filteredClusterItems}
                   edges={filteredClusterEdges}
                   selectedClusterId={selectedClusterId}
                   selectedMemoryId={selectedMemoryId}
                   onSelectCluster={setSelectedClusterId}
-                  onSelectMemory={setSelectedMemoryId}
+                  onSelectMemory={(memoryId) => {
+                    setSelectedMemoryId(memoryId);
+                    if (inactiveMemoryIdSet.has(memoryId)) {
+                      setSelectedClusterId("session-inactive");
+                    }
+                  }}
                   getMissionLabel={(missionId) =>
                     sessionFilterLabel(missionId, missionTitleById[missionId])
                   }

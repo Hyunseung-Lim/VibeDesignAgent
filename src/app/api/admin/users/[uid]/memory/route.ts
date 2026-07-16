@@ -77,7 +77,12 @@ export async function GET(
   }
   const { uid } = await params;
   const token = await getFirebaseAccessToken();
-  const memories = await loadUserMemoryItems(uid, token);
+  const includeInactive =
+    new URL(request.url).searchParams.get("includeInactive") === "1";
+  const memories = await loadUserMemoryItems(uid, token, {
+    includeArchived: includeInactive,
+    includeInactive,
+  });
   const profile = await getFirestoreDocument(`users/${uid}`, token);
   const missionOrder = Array.isArray(profile?.missionOrder)
     ? profile.missionOrder.map(String)

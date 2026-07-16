@@ -12,8 +12,13 @@ export async function GET(request: Request) {
   if (!user) return Response.json({ error: "unauthorized" }, { status: 401 });
 
   try {
+    const includeInactive =
+      new URL(request.url).searchParams.get("includeInactive") === "1";
     const token = await getFirebaseAccessToken();
-    const memories = await loadUserMemoryItems(user.localId, token);
+    const memories = await loadUserMemoryItems(user.localId, token, {
+      includeArchived: includeInactive,
+      includeInactive,
+    });
     const profile = await getFirestoreDocument(`users/${user.localId}`, token);
     const missionOrder = Array.isArray(profile?.missionOrder)
       ? profile.missionOrder.map(String)
