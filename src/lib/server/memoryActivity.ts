@@ -14,3 +14,17 @@ export function isInactiveMemoryWeight(value: unknown) {
 export function isActiveMemoryDocument(doc: Record<string, unknown>) {
   return !memoryArchivedAt(doc.archivedAt) && !isInactiveMemoryWeight(doc.weight);
 }
+
+export type MemoryInactiveReason =
+  | "similar_memory"
+  | "weight_zero"
+  | "user_disabled";
+
+export function memoryInactiveReason(
+  doc: Record<string, unknown>,
+): MemoryInactiveReason | null {
+  if (doc.inactiveReason === "user_disabled") return "user_disabled";
+  if (memoryArchivedAt(doc.archivedAt)) return "similar_memory";
+  if (isInactiveMemoryWeight(doc.weight)) return "weight_zero";
+  return null;
+}

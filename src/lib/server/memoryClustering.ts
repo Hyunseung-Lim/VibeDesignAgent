@@ -989,6 +989,7 @@ export async function generateAndStoreSessionClusterSnapshots(
   generatedBy: string,
   subjectName?: string,
   variant: ClusteringInputVariant = CLUSTERING_INPUT_VARIANT,
+  phases: ClusterSnapshotPhase[] = ["before", "after"],
 ) {
   const memories = await loadUserMemoryItems(uid, token);
   const previousClusterDoc = await loadLatestStoredClusterDoc(
@@ -998,8 +999,15 @@ export async function generateAndStoreSessionClusterSnapshots(
     { currentMethodOnly: false },
   );
   const snapshots: StoredClusterSnapshot[] = [];
-  let previousPhaseClusters = previousClusterDoc?.graphClusters ?? [];
-  for (const phase of ["before", "after"] as const) {
+  const storedSnapshots = phases[0] === "after"
+    ? await loadSessionClusterSnapshots(uid, missionId, token)
+    : null;
+  let previousPhaseClusters =
+    storedSnapshots?.before?.graphClusters ??
+    storedSnapshots?.after?.graphClusters ??
+    previousClusterDoc?.graphClusters ??
+    [];
+  for (const phase of phases) {
     const items = snapshotItems(memories, missionId, missionOrder, phase);
     const itemSignature =
       items.length > 0 ? memoryClusterItemSignature(items) : null;

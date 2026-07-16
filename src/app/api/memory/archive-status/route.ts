@@ -19,6 +19,7 @@ type ArchiveStatus = {
   duplicate: unknown;
   inactive: boolean;
   inactiveReason: string | null;
+  inactiveReasonDetail: string | null;
   weight: number | null;
 };
 
@@ -72,9 +73,10 @@ export async function POST(request: Request) {
           duplicateOf: stringOrNull(doc.duplicateOf),
           duplicate,
           inactive: isInactiveMemoryWeight(doc.weight),
-          inactiveReason: isInactiveMemoryWeight(doc.weight)
-            ? "weight_zero"
-            : null,
+          inactiveReason:
+            stringOrNull(doc.inactiveReason) ??
+            (isInactiveMemoryWeight(doc.weight) ? "weight_zero" : null),
+          inactiveReasonDetail: stringOrNull(doc.inactiveReasonDetail),
           weight: memoryWeight(doc.weight),
         },
       ];

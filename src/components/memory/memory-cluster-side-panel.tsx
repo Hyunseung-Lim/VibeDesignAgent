@@ -3,9 +3,20 @@ import {
   AtSignIcon,
   ChevronDownIcon,
   ChevronUpIcon,
+  PowerOffIcon,
+  RotateCcwIcon,
   Trash2Icon,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Textarea } from "@/components/ui/textarea";
 import type {
   ClusterGraphItem,
   MemoryCluster,
@@ -25,6 +36,11 @@ type MemoryClusterSidePanelProps = {
   selectedMemoryId: string | null;
   onSelectMemory: (memoryId: string) => void;
   onDeleteMemory?: (memoryId: string) => void;
+  onSetMemoryActive?: (
+    memoryId: string,
+    active: boolean,
+    reason?: string,
+  ) => Promise<boolean> | boolean;
   mentionMode?: boolean;
   onMentionCluster?: (cluster: MemoryCluster) => void;
   onMentionMemory?: (item: ClusterGraphItem) => void;
@@ -146,6 +162,7 @@ function isInactiveMemoryItem(
   item: ClusterGraphItem,
   memory: MemoryItem | null,
 ) {
+  if (item.inactive) return true;
   if (memory?.archivedAt || item.archivedAt) return true;
   if ((memory?.weight ?? item.weight) != null && (memory?.weight ?? item.weight)! <= 0) {
     return true;
@@ -159,6 +176,14 @@ function inactiveReasonLabel(
   item: ClusterGraphItem,
   memory: MemoryItem | null,
 ) {
+  const inactiveReason = memory?.inactiveReason ?? item.inactiveReason;
+  const inactiveReasonDetail =
+    memory?.inactiveReasonDetail ?? item.inactiveReasonDetail;
+  if (inactiveReason === "user_disabled") {
+    return inactiveReasonDetail
+      ? `사용자가 직접 비활성화함 · ${inactiveReasonDetail}`
+      : "사용자가 직접 비활성화함";
+  }
   if (
     memory?.archivedAt ||
     item.archivedAt ||
@@ -186,6 +211,8 @@ function clusterGraphItemFromMemory(memory: MemoryItem): ClusterGraphItem {
     timestamp: memory.timestamp ?? 0,
     archivedAt: memory.archivedAt,
     archiveReason: memory.archiveReason,
+    inactiveReason: memory.inactiveReason,
+    inactiveReasonDetail: memory.inactiveReasonDetail,
     keyword: memory.keywords,
     keywords: memory.keywords,
     row: {
@@ -201,6 +228,7 @@ export function MemoryClusterSidePanel({
   selectedMemoryId,
   onSelectMemory,
   onDeleteMemory,
+  onSetMemoryActive,
   mentionMode = false,
   onMentionCluster,
   onMentionMemory,
@@ -227,6 +255,11 @@ export function MemoryClusterSidePanel({
   const [expandedInputIds, setExpandedInputIds] = useState<Set<string>>(
     new Set(),
   );
+  const [deactivationMemoryId, setDeactivationMemoryId] = useState<string | null>(
+    null,
+  );
+  const [deactivationReason, setDeactivationReason] = useState("");
+  const [changingMemoryId, setChangingMemoryId] = useState<string | null>(null);
   const toggleInputDetails = (id: string) => {
     setExpandedInputIds((prev) => {
       const next = new Set(prev);
@@ -234,6 +267,31 @@ export function MemoryClusterSidePanel({
       else next.add(id);
       return next;
     });
+  };
+  const changeMemoryActiveState = async (
+    memoryId: string,
+    active: boolean,
+    reason?: string,
+  ) => {
+    if (!onSetMemoryActive || changingMemoryId) return false;
+    setChangingMemoryId(memoryId);
+    try {
+      return await onSetMemoryActive(memoryId, active, reason);
+    } finally {
+      setChangingMemoryId(null);
+    }
+  };
+  const submitDeactivation = async () => {
+    const reason = deactivationReason.trim();
+    if (!deactivationMemoryId || !reason) return;
+    const changed = await changeMemoryActiveState(
+      deactivationMemoryId,
+      false,
+      reason,
+    );
+    if (!changed) return;
+    setDeactivationMemoryId(null);
+    setDeactivationReason("");
   };
   // Scroll the detail list to the item selected from the graph/node click.
   const selectedItemRef = useRef<HTMLDivElement | null>(null);
@@ -317,6 +375,11 @@ export function MemoryClusterSidePanel({
                 {cluster ? "Included memory items" : "Selected memory"}
               </p>
               <div className="space-y-2">
+                {cluster?.id === "session-inactive" && displayItems.length === 0 ? (
+                  <p className="rounded-lg border border-dashed border-slate-200 bg-slate-50 px-3 py-6 text-center text-xs text-slate-400">
+                    비활성 메모리가 없습니다.
+                  </p>
+                ) : null}
                 {displayItems.map((item) => {
                   const selected = item.id === selectedMemoryId;
                   const memory =
@@ -355,13 +418,47 @@ export function MemoryClusterSidePanel({
                           <Trash2Icon size={12} />
                         </button>
                       ) : null}
+                      {selected && onSetMemoryActive ? (
+                        inactive ? (
+                          <button
+                            type="button"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              void changeMemoryActiveState(item.id, true);
+                            }}
+                            disabled={changingMemoryId === item.id}
+                            className="absolute right-2 top-2 z-10 inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-md border border-slate-200 bg-white px-2.5 text-[11px] font-semibold text-slate-600 shadow-sm transition hover:border-slate-300 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            <RotateCcwIcon size={13} aria-hidden="true" />
+                            {changingMemoryId === item.id
+                              ? "활성화 중..."
+                              : "활성화"}
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              setDeactivationMemoryId(item.id);
+                              setDeactivationReason("");
+                            }}
+                            disabled={changingMemoryId === item.id}
+                            className="absolute right-2 top-2 z-10 inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-md border border-slate-200 bg-white px-2.5 text-[11px] font-semibold text-slate-500 shadow-sm transition hover:border-rose-200 hover:bg-rose-50 hover:text-rose-600 disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            <PowerOffIcon size={13} aria-hidden="true" />
+                            비활성화
+                          </button>
+                        )
+                      ) : null}
                       <button
                         type="button"
                         onClick={() => {
                           onSelectMemory(item.id);
                           if (mentionMode) onMentionMemory?.(item);
                         }}
-                        className={`w-full rounded-lg border p-3 text-left text-xs transition ${
+                        className={`w-full rounded-lg border px-3 pb-3 text-left text-xs transition ${
+                          selected && onSetMemoryActive ? "pt-12" : "pt-3"
+                        } ${
                           selected
                             ? mentionMode
                               ? "border-amber-300 bg-amber-50 shadow-sm ring-2 ring-amber-100"
@@ -577,6 +674,51 @@ export function MemoryClusterSidePanel({
           </div>
         ) : null}
       </div>
+      <Dialog
+        open={Boolean(deactivationMemoryId)}
+        onOpenChange={(open) => {
+          if (open || changingMemoryId) return;
+          setDeactivationMemoryId(null);
+          setDeactivationReason("");
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>메모리 비활성화</DialogTitle>
+            <DialogDescription>
+              비활성화 이유를 입력해주세요. 이 메모리는 다시 활성화할 수 있습니다.
+            </DialogDescription>
+          </DialogHeader>
+          <Textarea
+            value={deactivationReason}
+            onChange={(event) => setDeactivationReason(event.target.value)}
+            maxLength={1000}
+            placeholder="비활성화 이유"
+            className="min-h-24 resize-none"
+          />
+          <DialogFooter>
+            <button
+              type="button"
+              onClick={() => {
+                setDeactivationMemoryId(null);
+                setDeactivationReason("");
+              }}
+              disabled={Boolean(changingMemoryId)}
+              className="h-9 cursor-pointer rounded-md border border-slate-200 px-3 text-sm font-semibold text-slate-600 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              취소
+            </button>
+            <button
+              type="button"
+              onClick={() => void submitDeactivation()}
+              disabled={!deactivationReason.trim() || Boolean(changingMemoryId)}
+              className="h-9 cursor-pointer rounded-md bg-slate-900 px-3 text-sm font-semibold text-white transition hover:bg-slate-700 disabled:cursor-not-allowed disabled:bg-slate-300"
+            >
+              {changingMemoryId ? "처리 중..." : "비활성화"}
+            </button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </aside>
   );
 }

@@ -21,6 +21,8 @@ export type MemoryItem = {
   timestamp: number | null;
   archivedAt: number | null;
   archiveReason: string | null;
+  inactiveReason?: string | null;
+  inactiveReasonDetail?: string | null;
   source: MemorySource | null;
 };
 
@@ -62,6 +64,9 @@ export type ClusterGraphItem = {
   timestamp: number;
   archivedAt?: number | null;
   archiveReason?: string | null;
+  inactive?: boolean;
+  inactiveReason?: string | null;
+  inactiveReasonDetail?: string | null;
   keyword: string[];
   keywords: string[];
   row: {

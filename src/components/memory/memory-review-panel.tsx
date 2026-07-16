@@ -5,18 +5,19 @@ import {
   useRef,
   useState,
 } from "react";
+import { CheckIcon } from "lucide-react";
 
 type ReviewQuestion = {
   id: string;
   label: string;
   allowNone?: boolean;
-  type?: "rating";
+  type?: "rating" | "memory-activity";
   placeholder?: string;
 };
 
 const NONE_ANSWER_TEXT = "없음";
 
-// 4·5·6번(기대대로 기억됨 / 잘못 기억됨 / 빠진 정보)이 동시에 모두 "없음"일
+// 기대대로 기억됨 / 잘못 기억됨 / 빠진 정보가 동시에 모두 "없음"일
 // 수는 없다 — 셋 중 하나는 반드시 내용이 있어야 논리적으로 성립한다.
 const NONE_CONFLICT_QUESTION_IDS = [
   "expected_memory_present",
@@ -34,6 +35,12 @@ const REVIEW_QUESTIONS: ReviewQuestion[] = [
     label: "메모리를 둘러보며, 기대했던 대로 기억된 내용이 있나요?",
     allowNone: true,
     placeholder: "어떤 내용인지 적어주세요",
+  },
+  {
+    id: "memory_activity_review",
+    label:
+      "메모리 중 비활성화하고 싶거나, 활성화하고 싶은 메모리를 설정해주세요.",
+    type: "memory-activity",
   },
   {
     id: "wrong_or_unnecessary_memory",
@@ -511,6 +518,19 @@ export function MemoryReviewPanel({
     emitAnswersChange();
   };
 
+  const toggleMemoryActivityReview = (questionId: string) => {
+    const nextValue = answersRef.current[questionId]?.trim()
+      ? ""
+      : "확인 완료";
+    answersRef.current = {
+      ...answersRef.current,
+      [questionId]: nextValue,
+    };
+    setAnswers((current) => ({ ...current, [questionId]: nextValue }));
+    setCompletionRevision((current) => current + 1);
+    emitAnswersChange();
+  };
+
   const updateRatingReason = (questionId: string, value: string) => {
     const key = reasonKey(questionId);
     answersRef.current = {
@@ -592,6 +612,16 @@ export function MemoryReviewPanel({
         {renderRatingRow(question.id)}
         {renderRatingReason(question)}
       </div>
+    ) : question.type === "memory-activity" ? (
+      <div key={question.id} className="space-y-1.5">
+        <span className="block text-sm font-medium leading-relaxed text-slate-700">
+          {startNumber + index}. {question.label}
+        </span>
+        <p className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-500">
+          <CheckIcon size={13} aria-hidden="true" />
+          {answers[question.id]?.trim() || "응답 없음"}
+        </p>
+      </div>
     ) : (
     <div key={question.id} className="space-y-1.5">
       <span className="block text-sm font-medium leading-relaxed text-slate-700">
@@ -620,6 +650,29 @@ export function MemoryReviewPanel({
 
   const renderQuestion = (question: ReviewQuestion, index: number) => {
     if (readOnly) return renderReadOnlyQuestion(question, index);
+    if (question.type === "memory-activity") {
+      const reviewed = Boolean(answers[question.id]?.trim());
+      return (
+        <div key={question.id} className="space-y-2">
+          <span className="block text-sm font-medium leading-relaxed text-slate-700">
+            {startNumber + index}. {question.label}
+          </span>
+          <button
+            type="button"
+            aria-pressed={reviewed}
+            onClick={() => toggleMemoryActivityReview(question.id)}
+            className={`inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-md border px-2.5 text-[11px] font-semibold transition ${
+              reviewed
+                ? "border-slate-900 bg-slate-900 text-white"
+                : "border-slate-200 bg-white text-slate-500 hover:border-slate-400 hover:text-slate-800"
+            }`}
+          >
+            <CheckIcon size={13} aria-hidden="true" />
+            상태 확인 완료
+          </button>
+        </div>
+      );
+    }
     if (question.type === "rating") {
       return (
         <div key={question.id} className="space-y-2">

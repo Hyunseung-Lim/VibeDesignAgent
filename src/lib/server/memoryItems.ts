@@ -78,6 +78,8 @@ export async function loadUserMemoryItems(
         timestamp: numberValue(data.timestamp ?? data.createdAt),
         archivedAt: memoryArchivedAt(data.archivedAt),
         archiveReason: stringValue(data.archiveReason),
+        inactiveReason: stringValue(data.inactiveReason),
+        inactiveReasonDetail: stringValue(data.inactiveReasonDetail),
         inactive: isInactiveMemoryWeight(data.weight),
         source:
           data.source && typeof data.source === "object" ? data.source : null,

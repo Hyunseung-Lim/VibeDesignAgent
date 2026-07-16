@@ -172,6 +172,8 @@ function compactMemory(id: string, doc: Record<string, unknown>) {
     embedding: numberArray(doc.embedding),
     archivedAt: numberOrNull(doc.archivedAt),
     archiveReason: stringOrNull(doc.archiveReason),
+    inactiveReason: stringOrNull(doc.inactiveReason),
+    inactiveReasonDetail: stringOrNull(doc.inactiveReasonDetail),
     duplicateOf: stringOrNull(doc.duplicateOf),
     duplicate:
       doc.duplicate && typeof doc.duplicate === "object"
@@ -198,6 +200,8 @@ function compactGraphMemory(item: ReturnType<typeof compactMemory>) {
     embedding: item.embedding,
     archivedAt: item.archivedAt,
     archiveReason: item.archiveReason,
+    inactiveReason: item.inactiveReason,
+    inactiveReasonDetail: item.inactiveReasonDetail,
     duplicateOf: item.duplicateOf,
     duplicate: item.duplicate,
     sourceType: item.sourceType,
@@ -245,6 +249,8 @@ function referencedSummary(
     timestamp: doc?.timestamp ?? first?.createdAt ?? null,
     archivedAt: doc?.archivedAt ?? null,
     archiveReason: doc?.archiveReason ?? null,
+    inactiveReason: doc?.inactiveReason ?? null,
+    inactiveReasonDetail: doc?.inactiveReasonDetail ?? null,
     duplicateOf: doc?.duplicateOf ?? null,
     duplicate: doc?.duplicate ?? null,
     referenceCount: events.length,

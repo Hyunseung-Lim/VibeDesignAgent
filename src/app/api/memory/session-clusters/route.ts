@@ -5,6 +5,7 @@ import {
   verifyFirebaseIdToken,
 } from "@/lib/server/firebaseAdminRest";
 import {
+  type ClusterSnapshotPhase,
   CLUSTERING_INPUT_VARIANT,
   MEMORY_VERSION,
   generateAndStoreSessionClusterSnapshots,
@@ -23,6 +24,7 @@ export async function POST(request: Request) {
   const body = (await request.json().catch(() => ({}))) as {
     targetUid?: unknown;
     missionId?: unknown;
+    phases?: unknown;
   };
   const missionId = stringOrNull(body.missionId);
   if (!missionId) {
@@ -33,6 +35,19 @@ export async function POST(request: Request) {
   const targetUid = requestedTargetUid ?? user.localId;
   if (targetUid !== user.localId && !isAdminEmail(user.email)) {
     return Response.json({ error: "forbidden" }, { status: 403 });
+  }
+  const phases: ClusterSnapshotPhase[] = Array.isArray(body.phases)
+    ? Array.from(
+        new Set(
+          body.phases.filter(
+            (phase): phase is ClusterSnapshotPhase =>
+              phase === "before" || phase === "after",
+          ),
+        ),
+      )
+    : ["before", "after"];
+  if (phases.length === 0) {
+    return Response.json({ error: "valid phase required" }, { status: 400 });
   }
 
   try {
@@ -54,6 +69,7 @@ export async function POST(request: Request) {
       user.email ?? user.localId,
       subjectName,
       CLUSTERING_INPUT_VARIANT,
+      phases,
     );
 
     return Response.json({

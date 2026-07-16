@@ -52,6 +52,9 @@ type ClusterableMemoryItem = {
   timestamp: number;
   archivedAt?: number | null;
   archiveReason?: string | null;
+  inactive?: boolean;
+  inactiveReason?: string | null;
+  inactiveReasonDetail?: string | null;
   keyword: string[];
   keywords: string[];
   row?: {
@@ -165,14 +168,18 @@ function userInputText(item: ClusterableMemoryItem) {
 }
 
 function isInactiveGraphItem(item: ClusterableMemoryItem) {
+  if (item.inactive) return true;
   if (item.archivedAt) return true;
   if (item.weight != null && item.weight <= 0) return true;
   return item.action?.split(" / ").includes("archived") ?? false;
 }
 
-// 비활성 경로는 두 가지: auto-duplicate 아카이브(archivedAt) 또는 idle decay로
-// weight 0 도달. 사이드 패널 카드(inactiveReasonLabel)와 동일한 문구.
 function inactiveGraphReasonLabel(item: ClusterableMemoryItem) {
+  if (item.inactiveReason === "user_disabled") {
+    return item.inactiveReasonDetail
+      ? `사용자가 직접 비활성화함 · ${item.inactiveReasonDetail}`
+      : "사용자가 직접 비활성화함";
+  }
   if (
     item.archivedAt ||
     (item.action?.split(" / ").includes("archived") ?? false)

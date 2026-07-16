@@ -1,7 +1,13 @@
 "use client";
 
 import { useState } from "react";
-import { PanelLeftCloseIcon, PanelLeftOpenIcon } from "lucide-react";
+import {
+  CircleOffIcon,
+  EyeIcon,
+  EyeOffIcon,
+  PanelLeftCloseIcon,
+  PanelLeftOpenIcon,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
@@ -50,6 +56,11 @@ type MemoryClusterListProps = {
   presentation?: "default" | "review";
   nodeCount?: number;
   edgeCount?: number;
+  inactiveMemoryCount?: number;
+  inactiveMemoriesSelected?: boolean;
+  showInactiveMemories?: boolean;
+  onSelectInactiveMemories?: () => void;
+  onToggleInactiveMemories?: () => void;
   // Per-cluster count of nodes newly added in this session. Rendered as "+n"
   // next to the cluster; omitted when 0/undefined.
   addedCountByClusterId?: Record<string, number>;
@@ -70,6 +81,11 @@ export function MemoryClusterList({
   presentation = "default",
   nodeCount,
   edgeCount,
+  inactiveMemoryCount = 0,
+  inactiveMemoriesSelected = false,
+  showInactiveMemories = false,
+  onSelectInactiveMemories,
+  onToggleInactiveMemories,
   addedCountByClusterId,
   removedCountByClusterId,
 }: MemoryClusterListProps) {
@@ -130,6 +146,53 @@ export function MemoryClusterList({
             );
           })}
         </div>
+        {onSelectInactiveMemories ? (
+          <div className="flex shrink-0 flex-col items-center gap-1">
+            <button
+              type="button"
+              onClick={onSelectInactiveMemories}
+              aria-pressed={inactiveMemoriesSelected}
+              aria-label={`비활성 메모리 ${inactiveMemoryCount}개 선택`}
+              title={`비활성 메모리 ${inactiveMemoryCount}개`}
+              className={cn(
+                "relative flex size-8 cursor-pointer items-center justify-center rounded-lg border transition",
+                inactiveMemoriesSelected
+                  ? "border-slate-400 bg-slate-200 text-slate-800"
+                  : "border-sidebar-border bg-background text-muted-foreground hover:bg-sidebar-accent",
+              )}
+            >
+              <CircleOffIcon size={14} aria-hidden="true" />
+              <span className="absolute -right-1 -top-1 flex size-4 items-center justify-center rounded-full bg-slate-700 text-[9px] font-bold text-white">
+                {inactiveMemoryCount > 9 ? "9+" : inactiveMemoryCount}
+              </span>
+            </button>
+            {onToggleInactiveMemories ? (
+              <button
+                type="button"
+                onClick={onToggleInactiveMemories}
+                disabled={inactiveMemoryCount === 0}
+                aria-pressed={showInactiveMemories}
+                aria-label={
+                  showInactiveMemories
+                    ? "비활성 메모리 숨기기"
+                    : "비활성 메모리 보기"
+                }
+                title={
+                  showInactiveMemories
+                    ? "비활성 메모리 숨기기"
+                    : "비활성 메모리 보기"
+                }
+                className="flex size-7 cursor-pointer items-center justify-center rounded-md text-muted-foreground transition hover:bg-sidebar-accent hover:text-sidebar-accent-foreground disabled:cursor-not-allowed disabled:opacity-35 disabled:hover:bg-transparent disabled:hover:text-muted-foreground"
+              >
+                {showInactiveMemories ? (
+                  <EyeIcon size={13} aria-hidden="true" />
+                ) : (
+                  <EyeOffIcon size={13} aria-hidden="true" />
+                )}
+              </button>
+            ) : null}
+          </div>
+        ) : null}
       </aside>
     );
   }
@@ -305,6 +368,56 @@ export function MemoryClusterList({
           );
         })}
       </div>
+      {onSelectInactiveMemories ? (
+        <div className="shrink-0 border-t border-sidebar-border pt-2">
+          <div
+            className={cn(
+              "flex h-9 items-center rounded-lg border transition",
+              inactiveMemoriesSelected
+                ? "border-slate-400 bg-slate-100 text-slate-800"
+                : "border-sidebar-border bg-background text-muted-foreground",
+            )}
+          >
+            <button
+              type="button"
+              onClick={onSelectInactiveMemories}
+              aria-pressed={inactiveMemoriesSelected}
+              className="flex h-full min-w-0 flex-1 cursor-pointer items-center gap-2 rounded-l-lg px-2.5 text-left text-[11px] font-semibold transition hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+            >
+              <CircleOffIcon size={14} aria-hidden="true" />
+              <span className="min-w-0 flex-1 truncate">비활성 메모리</span>
+              <span className="shrink-0 tabular-nums text-muted-foreground">
+                {inactiveMemoryCount}
+              </span>
+            </button>
+            {onToggleInactiveMemories ? (
+              <button
+                type="button"
+                onClick={onToggleInactiveMemories}
+                disabled={inactiveMemoryCount === 0}
+                aria-pressed={showInactiveMemories}
+                aria-label={
+                  showInactiveMemories
+                    ? "비활성 메모리 숨기기"
+                    : "비활성 메모리 보기"
+                }
+                title={
+                  showInactiveMemories
+                    ? "비활성 메모리 숨기기"
+                    : "비활성 메모리 보기"
+                }
+                className="flex size-8 shrink-0 cursor-pointer items-center justify-center rounded-md text-muted-foreground transition hover:bg-sidebar-accent hover:text-sidebar-accent-foreground disabled:cursor-not-allowed disabled:opacity-35 disabled:hover:bg-transparent disabled:hover:text-muted-foreground"
+              >
+                {showInactiveMemories ? (
+                  <EyeIcon size={14} aria-hidden="true" />
+                ) : (
+                  <EyeOffIcon size={14} aria-hidden="true" />
+                )}
+              </button>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
     </aside>
   );
 }

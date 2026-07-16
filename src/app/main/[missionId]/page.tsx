@@ -27,7 +27,6 @@ import {
   Minimize2Icon,
   BrainIcon,
   EyeIcon,
-  EyeOffIcon,
   DownloadIcon,
   XIcon,
   HelpCircleIcon,
@@ -294,6 +293,7 @@ type ReviewMemoryArchiveStatus = {
   duplicateOf: string | null;
   inactive?: boolean;
   inactiveReason?: string | null;
+  inactiveReasonDetail?: string | null;
   weight?: number | null;
   duplicate?: {
     memoryId?: string;
@@ -322,6 +322,8 @@ type SessionMemoryItem = {
   embedding?: number[];
   archivedAt?: number | null;
   archiveReason?: string | null;
+  inactiveReason?: string | null;
+  inactiveReasonDetail?: string | null;
   duplicateOf?: string | null;
   sourceType?: string | null;
   duplicate?: {
@@ -3105,8 +3107,7 @@ export default function MainScreenPage() {
   );
   const [memoryGraphFilter, setMemoryGraphFilter] =
     useState<MemoryGraphFilter>("all");
-  // 리뷰 그래프에서 비활성(아카이브/weight 0) 노드 표시 여부. 비활성 노드가
-  // 하나도 없으면 토글 버튼 자체를 숨긴다.
+  // 리뷰 그래프에서 비활성(아카이브/weight 0) 노드 표시 여부.
   const [showInactiveGraphMemories, setShowInactiveGraphMemories] =
     useState(true);
   const [isMemoryDiffOpen, setIsMemoryDiffOpen] = useState(false);
@@ -3459,6 +3460,138 @@ export default function MainScreenPage() {
       return true;
     },
     [saveMemoryReviewFeedback],
+  );
+  const setMemoryActiveFromReview = useCallback(
+    async (memoryId: string, active: boolean, reason?: string) => {
+      if (isViewingAsAdmin) return false;
+      const currentUser = firebaseAuth.currentUser;
+      if (!currentUser) return false;
+
+      try {
+        const token = await getIdToken(currentUser);
+        const response = await fetch("/api/memory/active-state", {
+          method: "PATCH",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ memoryId, active, reason }),
+        });
+        if (!response.ok) throw new Error(`active_state_failed_${response.status}`);
+        const data = (await response.json()) as {
+          status?: {
+            memoryId: string;
+            active: boolean;
+            archivedAt: number | null;
+            archiveReason: string | null;
+            inactiveReason: string | null;
+            inactiveReasonDetail: string | null;
+            weight: number | null;
+          };
+        };
+        const status = data.status;
+        if (!status) throw new Error("active_state_missing_status");
+
+        const updateMemory = <T extends SessionMemoryItem>(memory: T): T =>
+          memory.id === memoryId ||
+          ("memoryId" in memory && memory.memoryId === memoryId)
+            ? {
+                ...memory,
+                weight: status.weight,
+                archivedAt: status.archivedAt,
+                archiveReason: status.archiveReason,
+                inactiveReason: status.inactiveReason,
+                inactiveReasonDetail: status.inactiveReasonDetail,
+              }
+            : memory;
+        setSessionMemorySummary((current) => ({
+          ...current,
+          graphMemories: current.graphMemories.map(updateMemory),
+          promoted: current.promoted.map(updateMemory),
+          referenced: current.referenced.map(updateMemory),
+        }));
+        setReviewMemoryArchiveById((current) => ({
+          ...current,
+          [memoryId]: {
+            ...(current[memoryId] ?? {
+              memoryId,
+              duplicateOf: null,
+              duplicate: null,
+            }),
+            archivedAt: status.archivedAt,
+            archiveReason: status.archiveReason,
+            inactive: !status.active && !status.archivedAt,
+            inactiveReason: status.inactiveReason,
+            inactiveReasonDetail: status.inactiveReasonDetail,
+            weight: status.weight,
+          },
+        }));
+        if (!active) {
+          setShowInactiveGraphMemories(true);
+          setSelectedSessionGraphClusterId("session-inactive");
+        }
+        let clusterRefreshFailed = false;
+        if (active && missionId) {
+          try {
+            const clusterResponse = await fetch("/api/memory/session-clusters", {
+              method: "POST",
+              headers: {
+                Authorization: `Bearer ${token}`,
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({ missionId, phases: ["after"] }),
+            });
+            if (!clusterResponse.ok) {
+              throw new Error(`cluster_refresh_failed_${clusterResponse.status}`);
+            }
+            const summaryTargetUid = targetSessionUserId ?? currentUser.uid;
+            const refreshedSummary = await fetchSessionMemorySummary(
+              token,
+              summaryTargetUid,
+              missionId,
+            );
+            setSessionMemorySummary(refreshedSummary);
+            sessionMemorySummaryKeyRef.current = sessionMemorySummaryKey(
+              summaryTargetUid,
+              missionId,
+            );
+            const containingCluster =
+              refreshedSummary.clusterSnapshots.after.graphClusters.find(
+                (cluster) => cluster.itemIds.includes(memoryId),
+              );
+            if (!containingCluster) {
+              clusterRefreshFailed = true;
+              setSelectedSessionGraphClusterId(null);
+            } else {
+              setSelectedSessionGraphClusterId(containingCluster.id);
+            }
+          } catch (clusterError) {
+            clusterRefreshFailed = true;
+            console.warn(
+              "[main] memory activated but cluster refresh failed",
+              clusterError,
+            );
+          }
+        }
+        if (active && clusterRefreshFailed) {
+          toast.warning(
+            "메모리는 활성화했지만 클러스터를 갱신하지 못했습니다.",
+          );
+        } else {
+          toast.success(
+            active
+              ? "메모리를 활성화하고 클러스터를 갱신했습니다."
+              : "메모리를 비활성화했습니다.",
+          );
+        }
+        return true;
+      } catch (error) {
+        console.error("[main] memory active state update failed", error);
+        toast.error("메모리 상태를 변경하지 못했습니다.");
+        return false;
+      }
+    },
+    [isViewingAsAdmin, missionId, targetSessionUserId],
   );
   const activeOption =
     missionOptions.find((option) => option.id === selectedOptionId) ??
@@ -8459,10 +8592,17 @@ export default function MainScreenPage() {
         isInactiveGraphMemory(memory) && isVisibleGraphMemory(memory, true),
     ).length;
     const visibleMemoryIds = new Set(visibleMemoryItems.map((item) => item.id));
+    const inactiveMemoryIds = new Set(
+      visibleMemoryItems
+        .filter(isInactiveGraphMemory)
+        .map((memory) => memory.id),
+    );
     const visibleGraphEdges = reviewGraphEdges.filter(
       (edge) =>
         visibleMemoryIds.has(edge.sourceId) &&
-        visibleMemoryIds.has(edge.targetId),
+        visibleMemoryIds.has(edge.targetId) &&
+        !inactiveMemoryIds.has(edge.sourceId) &&
+        !inactiveMemoryIds.has(edge.targetId),
     );
     const graphItems = visibleMemoryItems.map((memory) => {
       const referenced = referencedByMemoryId.get(memory.id);
@@ -8496,6 +8636,9 @@ export default function MainScreenPage() {
         timestamp: memory.timestamp ?? 0,
         archivedAt: memory.archivedAt ?? null,
         archiveReason: memory.archiveReason ?? null,
+        inactive: isInactiveGraphMemory(memory),
+        inactiveReason: memory.inactiveReason ?? null,
+        inactiveReasonDetail: memory.inactiveReasonDetail ?? null,
         weight: phaseWeight ?? null,
         embedding: memory.embedding,
         keyword: memoryKeywords,
@@ -8508,35 +8651,34 @@ export default function MainScreenPage() {
     const baseGraphClusters = reviewGraphClusters
       .map((cluster) => ({
         ...cluster,
-        itemIds: cluster.itemIds.filter((itemId) => visibleMemoryIds.has(itemId)),
-        count: cluster.itemIds.filter((itemId) => visibleMemoryIds.has(itemId))
-          .length,
+        itemIds: cluster.itemIds.filter(
+          (itemId) =>
+            visibleMemoryIds.has(itemId) && !inactiveMemoryIds.has(itemId),
+        ),
+        count: cluster.itemIds.filter(
+          (itemId) =>
+            visibleMemoryIds.has(itemId) && !inactiveMemoryIds.has(itemId),
+        ).length,
         hideArea: false,
       }))
       .filter((cluster) => cluster.itemIds.length > 0);
-    const clusteredMemoryIds = new Set(
-      baseGraphClusters.flatMap((cluster) => cluster.itemIds),
-    );
-    const unclusteredMemoryIds = graphItems
+    const inactiveUnclusteredMemoryIds = graphItems
       .map((item) => item.id)
-      .filter((id) => !clusteredMemoryIds.has(id));
-    const graphClusters =
-      unclusteredMemoryIds.length > 0
-        ? [
-            ...baseGraphClusters,
-            {
-              id: "session-unclustered",
-              label: "비활성 메모리",
-              summary:
-                "유사 메모리 정리 또는 weight 0 도달로 비활성화된 메모리 모음입니다. 클러스터로 묶이지 않습니다.",
-              count: unclusteredMemoryIds.length,
-              relatedActions: [],
-              itemIds: unclusteredMemoryIds,
-              representativeItems: [],
-              hideArea: true,
-            },
-          ]
-        : baseGraphClusters;
+      .filter((id) => inactiveMemoryIds.has(id));
+    const graphClusters = [
+      ...baseGraphClusters,
+      {
+        id: "session-inactive",
+        label: "비활성 메모리",
+        summary:
+          "유사 메모리 정리, weight 0 도달, 사용자 설정으로 비활성화된 메모리 모음입니다. 클러스터로 묶이지 않습니다.",
+        count: inactiveUnclusteredMemoryIds.length,
+        relatedActions: [],
+        itemIds: inactiveUnclusteredMemoryIds,
+        representativeItems: [],
+        hideArea: true,
+      },
+    ];
     const graphClusterIds = new Set(graphClusters.map((cluster) => cluster.id));
     const selectedClusterId =
       selectedSessionGraphClusterId && graphClusterIds.has(selectedSessionGraphClusterId)
@@ -8583,6 +8725,8 @@ export default function MainScreenPage() {
           timestamp: memory.timestamp ?? null,
           archivedAt: memory.archivedAt ?? null,
           archiveReason: memory.archiveReason ?? null,
+          inactiveReason: memory.inactiveReason ?? null,
+          inactiveReasonDetail: memory.inactiveReasonDetail ?? null,
           source: memory.source ?? null,
         }),
       );
@@ -8602,8 +8746,7 @@ export default function MainScreenPage() {
           memory.id).replace(/\s+/g, " ").trim();
       const selectReviewMentionMemory = (memoryId: string) => {
         setSelectedGraphMemoryId(memoryId);
-        // 비활성 메모리 그룹은 클러스터 목록에서 숨겨져 직접 선택할 수 없으므로,
-        // 소속 노드를 클릭했을 때만 사이드 패널이 그룹 소속으로 표시되게 한다.
+        // 비활성 노드를 직접 선택해도 사이드 패널이 해당 보조 그룹을 유지한다.
         const containingCluster = graphClusters.find((cluster) =>
           cluster.itemIds.includes(memoryId),
         );
@@ -8678,6 +8821,29 @@ export default function MainScreenPage() {
             presentation="review"
             nodeCount={graphItems.length}
             edgeCount={visibleGraphEdges.length}
+            inactiveMemoryCount={inactiveVisibleCount}
+            inactiveMemoriesSelected={
+              selectedClusterId === "session-inactive"
+            }
+            showInactiveMemories={showInactiveGraphMemories}
+            onSelectInactiveMemories={() => {
+              setShowInactiveGraphMemories(true);
+              setSelectedSessionGraphClusterId("session-inactive");
+              setSelectedGraphMemoryId(null);
+            }}
+            onToggleInactiveMemories={() => {
+              const next = !showInactiveGraphMemories;
+              setShowInactiveGraphMemories(next);
+              if (
+                !next &&
+                selectedSessionGraphClusterId === "session-inactive"
+              ) {
+                setSelectedSessionGraphClusterId(
+                  baseGraphClusters[0]?.id ?? null,
+                );
+                setSelectedGraphMemoryId(null);
+              }
+            }}
           />
           <div className="flex min-w-0 flex-1 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
             <MemoryClusterSidePanel
@@ -8686,6 +8852,9 @@ export default function MainScreenPage() {
               memories={sidePanelMemories}
               selectedMemoryId={selectedGraphMemoryId}
               onSelectMemory={setSelectedGraphMemoryId}
+              onSetMemoryActive={
+                isViewingAsAdmin ? undefined : setMemoryActiveFromReview
+              }
               getMissionLabel={(originMissionId) => {
                 if (originMissionId === ONBOARDING_MISSION_ID) return "온보딩";
                 if (originMissionId === missionId && missionTitle) {
@@ -8713,29 +8882,6 @@ export default function MainScreenPage() {
               }
             />
             <div className="relative min-w-0 flex-1 overflow-hidden">
-              {inactiveVisibleCount > 0 ? (
-                <div className="absolute left-3 top-3 z-10">
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setShowInactiveGraphMemories((prev) => !prev)
-                    }
-                    aria-pressed={showInactiveGraphMemories}
-                    className={`flex cursor-pointer items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold shadow-sm ring-1 transition ${
-                      showInactiveGraphMemories
-                        ? "bg-white/90 text-slate-600 ring-slate-200 hover:bg-white"
-                        : "bg-slate-100/90 text-slate-400 ring-slate-200 hover:bg-slate-100"
-                    }`}
-                  >
-                    {showInactiveGraphMemories ? (
-                      <EyeIcon size={12} aria-hidden="true" />
-                    ) : (
-                      <EyeOffIcon size={12} aria-hidden="true" />
-                    )}
-                    비활성 메모리 {inactiveVisibleCount}
-                  </button>
-                </div>
-              ) : null}
               {graphItems.length === 0 ? (
                 emptyState
               ) : (
@@ -8797,7 +8943,7 @@ export default function MainScreenPage() {
         {graphItems.length > 0 && (
           <>
             <div className="absolute right-3 top-3 z-10 rounded-full bg-white/90 px-2.5 py-1 text-[10px] font-semibold text-slate-400 shadow-sm ring-1 ring-slate-100">
-              {graphClusters.length} clusters · {graphItems.length} nodes ·{" "}
+              {baseGraphClusters.length} clusters · {graphItems.length} nodes ·{" "}
               {visibleGraphEdges.length} edges
             </div>
             {graphClusters.length === 0 && (
@@ -9781,7 +9927,13 @@ export default function MainScreenPage() {
                           >
                             <span className="font-semibold">
                               {isInactive
-                                ? "weight 0 inactive"
+                                ? archiveStatus.inactiveReason === "user_disabled"
+                                  ? `사용자가 직접 비활성화함${
+                                      archiveStatus.inactiveReasonDetail
+                                        ? ` · ${archiveStatus.inactiveReasonDetail}`
+                                        : ""
+                                    }`
+                                  : "weight 0 inactive"
                                 : archiveStatus.archiveReason ?? "archived"}
                             </span>
                             {!isInactive && archiveStatus.duplicate && (
