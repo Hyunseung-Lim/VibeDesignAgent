@@ -11,13 +11,7 @@ import {
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import { Badge } from "@/components/ui/badge";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+import { ImagePreviewDialog } from "@/components/session/image-preview-dialog";
 
 type MissionBriefDevice = "desktop" | "mobile";
 
@@ -323,48 +317,22 @@ export function MissionBriefSection({
         )}
       </div>
 
-      <Dialog
+      <ImagePreviewDialog
         open={Boolean(previewImage)}
         onOpenChange={(open) => {
           if (!open) setPreviewImage(null);
         }}
-      >
-        <DialogContent
-          aria-describedby="mission-brief-asset-image-description"
-          className="max-w-3xl overflow-hidden p-0"
-        >
-          {previewImage && (
-            <>
-              <DialogHeader className="border-b border-slate-100 px-5 py-4 pr-12">
-                <DialogTitle className="leading-snug">
-                  콘텐츠 이미지 {previewImage.index + 1}
-                </DialogTitle>
-                <DialogDescription id="mission-brief-asset-image-description">
-                  미션 콘텐츠 이미지 원본 미리보기
-                </DialogDescription>
-              </DialogHeader>
-              <div className="flex max-h-[calc(100vh-8rem)] flex-col gap-4 overflow-y-auto p-5">
-                <div className="flex items-center justify-center rounded-xl bg-slate-100 p-3">
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img
-                    src={previewImage.image.url}
-                    alt={
-                      previewImage.image.note?.trim() ||
-                      `콘텐츠 이미지 ${previewImage.index + 1}`
-                    }
-                    className="max-h-[60vh] max-w-full rounded-lg object-contain"
-                  />
-                </div>
-                {previewImage.image.note?.trim() && (
-                  <p className="whitespace-pre-wrap text-sm leading-relaxed text-slate-600">
-                    {previewImage.image.note.trim()}
-                  </p>
-                )}
-              </div>
-            </>
-          )}
-        </DialogContent>
-      </Dialog>
+        title={
+          previewImage ? `콘텐츠 이미지 ${previewImage.index + 1}` : "콘텐츠 이미지"
+        }
+        description="미션 콘텐츠 이미지 원본 미리보기"
+        imageUrl={previewImage?.image.url}
+        alt={
+          previewImage?.image.note?.trim() ||
+          (previewImage ? `콘텐츠 이미지 ${previewImage.index + 1}` : "콘텐츠 이미지")
+        }
+        caption={previewImage?.image.note}
+      />
     </div>
   );
 }

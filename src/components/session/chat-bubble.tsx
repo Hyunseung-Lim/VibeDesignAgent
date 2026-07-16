@@ -1,16 +1,18 @@
 import ReactMarkdown from "react-markdown";
-import type { ComponentProps } from "react";
+import { useState, type ComponentProps } from "react";
 import {
   Brain,
   Check,
   ChevronDown,
   ChevronUp,
   Circle,
+  Maximize2,
   ThumbsDown,
   ThumbsUp,
   TriangleAlert,
 } from "lucide-react";
 import { ToolActionChip, type ToolActionChipData } from "./tool-action-chip";
+import { ImagePreviewDialog } from "@/components/session/image-preview-dialog";
 import { Spinner } from "@/components/ui/spinner";
 import type {
   ChatComposerCommand,
@@ -29,6 +31,12 @@ export type ChatBubbleMessage = {
   citedReferences?: { id: string; title: string; imageUrl?: string }[] | null;
   citedTexts?: string[] | null;
   styleImage?: { dataUrl: string; name?: string } | null;
+  stitchReferenceImage?: {
+    dataUrl: string;
+    sourceUrl?: string;
+    stitchReferenceScreenId?: string;
+    hash?: string;
+  } | null;
   composerCommand?: ChatComposerCommand | null;
   composerMention?: ChatComposerMention | null;
   error?: string;
@@ -128,6 +136,14 @@ function formatMessageTime(timestamp?: number) {
   }).format(new Date(timestamp));
 }
 
+type PreviewImage = {
+  title: string;
+  description: string;
+  imageUrl: string;
+  alt?: string;
+  caption?: string;
+};
+
 export function ChatBubble({
   message,
   contentParts,
@@ -150,6 +166,7 @@ export function ChatBubble({
   onShowRawPrompt,
   onOpenFeedback,
 }: ChatBubbleProps) {
+  const [previewImage, setPreviewImage] = useState<PreviewImage | null>(null);
   const isUser = message.role === "user";
   const sentTime = isUser ? formatMessageTime(message.createdAt) : "";
   const visibleComposerCommand =
@@ -191,11 +208,29 @@ export function ChatBubble({
             )}
             {message.styleImage && (
               <div className="flex justify-end">
-                <img
-                  src={message.styleImage.dataUrl}
-                  alt={message.styleImage.name || "첨부 이미지"}
-                  className="max-h-44 max-w-full rounded-lg object-contain"
-                />
+                <button
+                  type="button"
+                  onClick={() =>
+                    setPreviewImage({
+                      title: message.styleImage?.name || "첨부 이미지",
+                      description: "사용자가 채팅에 첨부한 이미지",
+                      imageUrl: message.styleImage!.dataUrl,
+                      alt: message.styleImage?.name || "첨부 이미지",
+                    })
+                  }
+                  className="group/image relative max-w-full rounded-lg focus:outline-none focus:ring-2 focus:ring-white/60"
+                  aria-label="첨부 이미지 크게 보기"
+                  title="크게 보기"
+                >
+                  <img
+                    src={message.styleImage.dataUrl}
+                    alt={message.styleImage.name || "첨부 이미지"}
+                    className="max-h-44 max-w-full rounded-lg object-contain"
+                  />
+                  <span className="absolute right-2 top-2 inline-flex size-7 items-center justify-center rounded-md bg-slate-900/70 text-white opacity-0 transition group-hover/image:opacity-100 group-focus-visible/image:opacity-100">
+                    <Maximize2 className="size-3.5" aria-hidden="true" />
+                  </span>
+                </button>
               </div>
             )}
             {(message.citedElements?.length
@@ -310,6 +345,52 @@ export function ChatBubble({
                 />
               ),
             )}
+            {message.stitchReferenceImage && (
+              <div className="mt-2 max-w-xs rounded-xl border border-slate-200 bg-white p-2">
+                <div className="mb-1.5 text-[11px] font-semibold text-slate-500">
+                  Stitch에 전달한 캡처 이미지
+                </div>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setPreviewImage({
+                      title: "Stitch에 전달한 캡처 이미지",
+                      description: "Stitch image-led 생성에 사용한 입력 이미지",
+                      imageUrl: message.stitchReferenceImage!.dataUrl,
+                      alt: "Stitch에 전달한 캡처 이미지",
+                      caption: message.stitchReferenceImage?.sourceUrl,
+                    })
+                  }
+                  className="group/image relative block w-full rounded-lg focus:outline-none focus:ring-2 focus:ring-slate-300"
+                  aria-label="Stitch에 전달한 캡처 이미지 크게 보기"
+                  title="크게 보기"
+                >
+                  <img
+                    src={message.stitchReferenceImage.dataUrl}
+                    alt="Stitch에 전달한 캡처 이미지"
+                    className="max-h-44 w-full rounded-lg object-contain"
+                  />
+                  <span className="absolute right-2 top-2 inline-flex size-7 items-center justify-center rounded-md bg-slate-900/70 text-white opacity-0 transition group-hover/image:opacity-100 group-focus-visible/image:opacity-100">
+                    <Maximize2 className="size-3.5" aria-hidden="true" />
+                  </span>
+                </button>
+                {(message.stitchReferenceImage.sourceUrl ||
+                  message.stitchReferenceImage.stitchReferenceScreenId) && (
+                  <div className="mt-1.5 space-y-0.5 text-[10px] leading-snug text-slate-400">
+                    {message.stitchReferenceImage.sourceUrl && (
+                      <div className="truncate">
+                        {message.stitchReferenceImage.sourceUrl}
+                      </div>
+                    )}
+                    {message.stitchReferenceImage.stitchReferenceScreenId && (
+                      <div className="truncate">
+                        screen {message.stitchReferenceImage.stitchReferenceScreenId}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
             {message.error && (
               <div
                 role="alert"
@@ -398,6 +479,17 @@ export function ChatBubble({
           {sentTime}
         </div>
       )}
+      <ImagePreviewDialog
+        open={Boolean(previewImage)}
+        onOpenChange={(open) => {
+          if (!open) setPreviewImage(null);
+        }}
+        title={previewImage?.title ?? "이미지"}
+        description={previewImage?.description ?? "이미지 미리보기"}
+        imageUrl={previewImage?.imageUrl}
+        alt={previewImage?.alt}
+        caption={previewImage?.caption}
+      />
     </div>
   );
 }

@@ -196,6 +196,12 @@ type Message = {
   citedReferences?: { id: string; title: string; imageUrl?: string }[] | null;
   citedTexts?: string[] | null;
   styleImage?: { dataUrl: string; name?: string } | null;
+  stitchReferenceImage?: {
+    dataUrl: string;
+    sourceUrl?: string;
+    stitchReferenceScreenId?: string;
+    hash?: string;
+  } | null;
   composerCommand?: ChatComposerCommand | null;
   composerMention?: ChatComposerMention | null;
   reviewTurnId?: string | null;
@@ -6772,6 +6778,44 @@ export default function MainScreenPage() {
           setMockupProgress({ percent: 92, label: "응답 처리 중" });
           const data = await res.json();
           if (data.error) throw new Error(data.error);
+          const stitchReferenceInput =
+            data.styleReferenceInput &&
+            typeof data.styleReferenceInput === "object"
+              ? (data.styleReferenceInput as {
+                  sourceType?: string;
+                  sourceUrl?: string;
+                  previewDataUrl?: string;
+                  stitchReferenceScreenId?: string;
+                  hash?: string;
+                })
+              : null;
+          if (
+            stitchReferenceInput?.sourceType === "url-screenshot" &&
+            stitchReferenceInput.previewDataUrl
+          ) {
+            console.info("[mockup] Stitch reference screenshot captured", {
+              sourceUrl: stitchReferenceInput.sourceUrl ?? null,
+              stitchReferenceScreenId:
+                stitchReferenceInput.stitchReferenceScreenId ?? null,
+              hash: stitchReferenceInput.hash ?? null,
+            });
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.id === assistantId
+                  ? {
+                      ...m,
+                      stitchReferenceImage: {
+                        dataUrl: stitchReferenceInput.previewDataUrl!,
+                        sourceUrl: stitchReferenceInput.sourceUrl,
+                        stitchReferenceScreenId:
+                          stitchReferenceInput.stitchReferenceScreenId,
+                        hash: stitchReferenceInput.hash,
+                      },
+                    }
+                  : m,
+              ),
+            );
+          }
           if (
             (typeof data.html !== "string" || !data.html.trim()) &&
             !data.htmlPending

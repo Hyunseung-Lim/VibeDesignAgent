@@ -36,6 +36,13 @@ type StitchProject = ReturnType<StitchClientBundle["sdk"]["project"]>;
 type StitchEditModelId = "GEMINI_3_1_PRO";
 type StitchEditPromptMode = "legacy" | "compact";
 type StitchEditTargetMode = "screen-id" | "screen-instance";
+type StyleReferenceUploadDebug = {
+  stitchReferenceScreenId: string;
+  hash: string;
+  byteLength: number;
+  mime: string;
+  previewDataUrl?: string;
+};
 const STITCH_LOG_TOOL_SCHEMAS =
   process.env.STITCH_LOG_TOOL_SCHEMAS?.trim() === "1";
 let stitchToolSchemasLogged = false;
@@ -990,9 +997,28 @@ const STYLE_IMAGE_EXT: Record<string, string> = {
   "image/webp": ".webp",
 };
 
+async function styleImagePreviewDataUrl(bytes: Buffer) {
+  try {
+    const preview = await sharp(bytes)
+      .resize({ width: 520, height: 520, fit: "inside", withoutEnlargement: true })
+      .jpeg({ quality: 78 })
+      .toBuffer();
+    return `data:image/jpeg;base64,${preview.toString("base64")}`;
+  } catch (err) {
+    console.warn("[stitch] style image preview failed:", errorMessage(err));
+    return undefined;
+  }
+}
+
 // Decode a style-image data URL, downscale, and write a temp file for
 // project.upload() (which reads from disk). Caller must unlink the path.
-async function writeStyleImageTmp(dataUrl: string): Promise<string> {
+async function writeStyleImageTmp(dataUrl: string): Promise<{
+  tmpPath: string;
+  hash: string;
+  byteLength: number;
+  mime: string;
+  previewDataUrl?: string;
+}> {
   const match = /^data:([^;]+);base64,([\s\S]*)$/.exec(dataUrl);
   if (!match) throw new Error("Invalid style image data URL.");
   const mime = match[1].toLowerCase();
@@ -1012,9 +1038,18 @@ async function writeStyleImageTmp(dataUrl: string): Promise<string> {
     if (!ext) throw new Error(`Unsupported style image type: ${mime}`);
     console.warn("[stitch] sharp normalize failed, using raw image:", errorMessage(err));
   }
+  const uploadMime = ext === ".png" ? "image/png" : mime;
+  const hash = createHash("sha256").update(bytes).digest("hex");
+  const previewDataUrl = await styleImagePreviewDataUrl(bytes);
   const tmpPath = path.join(os.tmpdir(), `vda-style-${randomUUID()}${ext}`);
   await writeFile(tmpPath, bytes);
-  return tmpPath;
+  return {
+    tmpPath,
+    hash,
+    byteLength: bytes.length,
+    mime: uploadMime,
+    previewDataUrl,
+  };
 }
 
 // Image-led generation: upload the reference screenshot as a Stitch screen,
@@ -1027,26 +1062,46 @@ async function generateScreenFromStyleImage(
   productPrompt: string,
   deviceType: DeviceType,
   previousScreenIds: Set<string>,
-): Promise<StitchScreenHandle> {
-  const tmpPath = await writeStyleImageTmp(styleImageDataUrl);
+): Promise<{
+  screen: StitchScreenHandle;
+  referenceUpload: StyleReferenceUploadDebug;
+}> {
+  const prepared = await writeStyleImageTmp(styleImageDataUrl);
   let refScreen:
     | { id: string; edit: (p: string, d?: DeviceType) => Promise<StitchScreenHandle> }
     | undefined;
   try {
     const uploaded = await withTransientRetry("upload style image to Stitch", () =>
-      project.upload(tmpPath, { title: "Style reference" }),
+      project.upload(prepared.tmpPath, { title: "Style reference" }),
     );
     refScreen = Array.isArray(uploaded) ? uploaded[0] : undefined;
   } finally {
-    await unlink(tmpPath).catch(() => {});
+    await unlink(prepared.tmpPath).catch(() => {});
   }
   if (!refScreen) {
     throw new Error("Stitch did not return a screen for the uploaded style image.");
   }
+  const referenceUpload: StyleReferenceUploadDebug = {
+    stitchReferenceScreenId: refScreen.id,
+    hash: prepared.hash,
+    byteLength: prepared.byteLength,
+    mime: prepared.mime,
+    previewDataUrl: prepared.previewDataUrl,
+  };
+  console.log(
+    "[stitch] uploaded style reference:",
+    JSON.stringify({
+      stitchReferenceScreenId: referenceUpload.stitchReferenceScreenId,
+      hash: referenceUpload.hash,
+      byteLength: referenceUpload.byteLength,
+      mime: referenceUpload.mime,
+      hasPreview: Boolean(referenceUpload.previewDataUrl),
+    }),
+  );
   const deviceLabel =
     deviceType === "MOBILE" ? "mobile app screen" : "desktop website";
   const reconstructPrompt = styleImageReconstructPrompt(productPrompt, deviceLabel);
-  return editScreen(
+  const screen = await editScreen(
     client,
     project,
     refScreen.id,
@@ -1054,6 +1109,7 @@ async function generateScreenFromStyleImage(
     deviceType,
     new Set([...previousScreenIds, refScreen.id]),
   );
+  return { screen, referenceUpload };
 }
 
 type AssetImageRequest = {
@@ -1500,6 +1556,12 @@ export async function POST(request: Request) {
     // Set when image-led generation screenshots a URL, so the client can show
     // which page was actually captured (it may differ from the intended page).
     let capturedUrl: string | null = null;
+    let styleReferenceInput:
+      | (StyleReferenceUploadDebug & {
+          sourceType: "attached-image" | "url-screenshot";
+          sourceUrl?: string;
+        })
+      | null = null;
     let beforeScreenIds = new Set<string>();
     // For image-led generation we do NOT pre-apply the existing (possibly stale)
     // design style — it would fight the screenshot. We derive a fresh style from
@@ -1553,16 +1615,19 @@ export async function POST(request: Request) {
       try {
         // Attached image wins; otherwise screenshot the provided URL.
         let styleImageDataUrl = styleImage?.dataUrl ?? null;
+        let styleReferenceSourceType: "attached-image" | "url-screenshot" =
+          styleImageDataUrl ? "attached-image" : "url-screenshot";
         if (!styleImageDataUrl && styleSourceUrl) {
           console.log("[stitch] capturing screenshot of style source URL...");
           styleImageDataUrl = await captureScreenshot(styleSourceUrl, deviceType);
           capturedUrl = styleSourceUrl;
+          styleReferenceSourceType = "url-screenshot";
         }
         if (!styleImageDataUrl) {
           throw new Error("No style image or capturable URL was provided.");
         }
         console.log("[stitch] image-led generation from style image...");
-        screen = await generateScreenFromStyleImage(
+        const imageLedResult = await generateScreenFromStyleImage(
           client,
           project,
           styleImageDataUrl,
@@ -1570,6 +1635,12 @@ export async function POST(request: Request) {
           deviceType,
           beforeScreenIds,
         );
+        screen = imageLedResult.screen;
+        styleReferenceInput = {
+          ...imageLedResult.referenceUpload,
+          sourceType: styleReferenceSourceType,
+          sourceUrl: capturedUrl ?? undefined,
+        };
       } catch (imgErr) {
         console.warn(
           "[stitch] image-led generation failed:",
@@ -1971,6 +2042,7 @@ export async function POST(request: Request) {
       appliedDesignStyleHash: resolvedStyleHash,
       derivedDesignStyle,
       capturedUrl: capturedUrl ?? undefined,
+      styleReferenceInput: styleReferenceInput ?? undefined,
     });
   } catch (err) {
     const message = errorMessage(err);
