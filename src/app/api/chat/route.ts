@@ -161,12 +161,18 @@ function compactMemoryContext(memoryContext: unknown) {
   return { episodic, semantic };
 }
 
+// 발화 0.6 + full query 0.4 블렌드 임베딩(15.306) 스케일 기준 임계값.
+// 블렌드는 보일러플레이트 인플레이션이 빠져 이전 full-query 스케일보다 전반적으로
+// 낮다(실측 top-10 중앙값 0.446→0.383). 실제 retrieval 로그 15개 쿼리의 top-10
+// 분포로 기존 밴드 비율(high 25% / mid-high까지 59% / mid-low까지 89%)을 보존하는
+// 값(0.442/0.357/0.314)을 구한 뒤, 메모리를 조금 더 적극 반영하도록 각 밴드를
+// 소폭 완화했다(15.307).
 function memorySimilaritySignal(similarity: unknown) {
   const score = typeof similarity === "number" ? similarity : NaN;
   if (!Number.isFinite(score)) return "mid-low";
-  if (score >= 0.48) return "high";
-  if (score >= 0.44) return "mid-high";
-  if (score > 0.39) return "mid-low";
+  if (score >= 0.43) return "high";
+  if (score >= 0.35) return "mid-high";
+  if (score > 0.3) return "mid-low";
   return "low";
 }
 

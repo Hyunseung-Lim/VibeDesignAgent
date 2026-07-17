@@ -411,11 +411,12 @@ Rules:
 - If semanticMemories are present in the compact input, grade memoryRelevance with the single best-fitting level. Each item carries a similarity signal (high / mid-high / mid-low / low); use the signals AND whether the content actually bears on the current request. Do not default to a middle level — commit to the level the evidence supports:
   - "background": no item clearly relates to this request (mostly low signals or unrelated content); memory should be ignored unless it resolves an ambiguity.
   - "light": only weakly or generically related items (mid-low signals); quiet tie-breaker at most.
-  - "relevant": at least one item materially bears on the request or design direction (typically mid-high signal) and should be reflected.
-  - "strong": a high-signal item directly matches the request, or the user asks for personalization/continuity; actively align the response with it.
+  - "relevant": at least one item materially bears on the request or design direction (typically mid-high signal), or several mid-low items consistently point at the same durable preference; it should be reflected.
+  - "strong": a high-signal item directly matches the request, multiple mid-high items align with it, or the user asks for personalization/continuity; actively align the response with it.
+  - When torn between two adjacent levels, prefer the higher one — retrieved memories passed this app's relevance filter, so under-using them is the more common failure than over-using them.
 - If the user request cannot be answered without asking a question, choose "answer" and ask the shortest useful clarifying question in the final response.
 - semanticMemories, when present, are retrieved memory items already selected by the app's retrieval/filter policy. Use them to judge memoryRelevance, write memoryDirectives, and disambiguate vague requests. Do not override the latest user request or quote memory.
-- memoryDirectives: at most 2 short imperative sentences (English) telling the responder HOW to apply the user's durable preferences to THIS request, e.g. "Keep the restrained dark editorial tone the user consistently prefers." Only write a directive when a semantic memory clearly applies to the current request AND the chosen intent; when none clearly applies, return []. Never write directives that repeat or continue a previous task, contradict the current request, or merely restate the request itself.
+- memoryDirectives: at most 2 short imperative sentences (English) telling the responder HOW to apply the user's durable preferences to THIS request, e.g. "Keep the restrained dark editorial tone the user consistently prefers." Write a directive whenever a mid-high or high signal memory plausibly applies to the current request AND the chosen intent — prefer one concrete directive over an empty list. Return [] only when nothing plausibly applies (all low/unrelated). Never write directives that repeat or continue a previous task, contradict the current request, or merely restate the request itself.
 - In analysis, apply the rules before choosing intent/needs. Mention ambiguity if relevant. Keep analysis concise.
 
 Compact input:

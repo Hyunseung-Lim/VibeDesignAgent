@@ -4858,3 +4858,10 @@ type ChatPlan = {
 - 수정 2(클러스터 증거): member-similarity 최대값 증거를 쿼리↔클러스터 centroid cosine으로 교체하고 후보 자신은 centroid에서 제외(leave-one-out). 쿼리 임베딩이 없으면 v1 증거로 폴백. retrievalRankingPolicy에 method(cluster_aware_hybrid_v2_centroid), clusterEvidence, queryComposition, utterance를 기록해 분석 스크립트가 정책 변화를 추적할 수 있게 함.
 - 평가 근거: 블렌드+v2에서 아이콘 쿼리 4종의 top-10이 Refined Icon Details 중심으로 재구성되고, 라인 얇게 쿼리는 Line Break Microcopy/Whitespace Tuning/Editorial이 섞인 구성이 됨. 단위 테스트 6/6(generic 클러스터 outlier 무시, 정렬 클러스터 uplift 케이스 포함).
 - 런타임 확인 방법: dev 서버 재시작 후 채팅 1턴을 보내면 memoryRetrievalLogs 최신 문서의 retrievalRankingPolicy.queryComposition이 utterance_0.6_full_query_0.4_vector_blend로 기록된다.
+
+### 15.307 Recalibrate planner memory signal for blend scale and apply memory more assertively `[implemented 2026-07-17]`
+
+- 배경: planner의 memorySimilaritySignal 임계값(0.48/0.44/0.39)은 구 full-query 임베딩 스케일 기준이었다. 15.306의 발화 0.6 블렌드는 보일러플레이트 인플레이션이 빠져 유사도가 전반적으로 낮아진다(실측 top-10 중앙값 0.446→0.383) — 그대로 두면 대부분의 메모리가 mid-low/low로 강등되어 반영도가 급락한다.
+- 보정: 실제 retrieval 로그 15개 쿼리의 top-10 유사도 150개 샘플로 밴드 비율 보존값(0.442/0.357/0.314)을 구한 뒤, 소폭 완화한 0.43/0.35/0.30으로 설정. 결과 밴드: high 26%→33%, low 11%→6%, 중간 밴드 유지. top1 메모리는 60%가 high, 100%가 mid-high 이상.
+- 적극화(프롬프트): relevant에 여러 mid-low가 같은 선호를 가리키는 경우를 추가, strong에 다수 mid-high 정렬 케이스 추가, 인접 레벨 사이에서는 높은 쪽 선택 지시. memoryDirectives는 clearly applies에서 plausibly applies(mid-high 이상)로 완화하고 빈 배열보다 구체적 directive 1개를 선호하도록 변경. 금지 규칙(이전 작업 반복, 현재 요청과 충돌, 요청 재진술)은 유지.
+- 참고: 계측 중 rhuB(참여자 Changhwi)의 memories_0_1_2와 memoryRetrievalLogs가 0건으로 확인됨 — admin의 세션 백업 후 삭제/메모리 전체 삭제 동작 범위와 일치(연구자 수동 정리로 추정). 이번 보정은 임현승 데이터 기준.
