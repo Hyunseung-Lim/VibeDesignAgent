@@ -29,7 +29,7 @@
 | 스타일링        | Tailwind CSS v4, @phosphor-icons/react                                                |
 | 인증            | Firebase Authentication (Google OAuth)                                                |
 | 데이터베이스    | Firebase Firestore                                                                    |
-| AI 채팅         | OpenAI Responses API (기본 `gpt-5.4`) / Anthropic Claude 선택 + web_search_preview 툴 |
+| AI 채팅         | OpenAI Responses API (기본 `gpt-5.4`, vision 입력 포함) + web_search_preview 툴. Anthropic 경로는 서버에 legacy로 유지, UI 선택 제거 `[현행 2026-07-17 → 15.302]` |
 | 목업 생성       | Google Stitch SDK                                                                     |
 | 레퍼런스 검색   | OpenAI web_search_preview (style·product 공용)                                        |
 | 마크다운 렌더링 | react-markdown                                                                        |
@@ -4824,3 +4824,8 @@ type ChatPlan = {
 - 범위: 현재 턴의 첨부 이미지만 vision으로 전달(히스토리의 과거 이미지는 재전송하지 않음 — 토큰 비용 상한). 인용 레퍼런스 카드의 원격 이미지는 기존대로 제목/URL 텍스트만.
 - chatAttachedStyleImagePrompt 문구를 이미지를 직접 볼 수 있다는 전제로 갱신하고, 보이는 것에 근거해 답하되 판독 불가 시 추측하지 말라는 지시 추가.
 - 검증: 5개 사각형(3+2 배치) 테스트 PNG를 dev 서버 /api/chat에 첨부해 개수와 배치(오른쪽 아래 빈 칸 포함)를 정확히 답하는 것 확인. 모델 조사: 기본 모델 gpt-5.4는 MMMU-Pro 81.2 수준의 vision을 갖춰 충분하며, 문제는 모델이 아니라 이미지 미전달이었다. 고밀도 스크린샷 정밀 판독이 필요하면 detail을 original(최대 10.24MP)로 올리는 옵션이 있다.
+
+### 15.302 Fix chat provider to OpenAI and remove header LLM selector `[implemented 2026-07-17]`
+
+- 세션 헤더의 admin 전용 LLM(OpenAI/Claude) Select를 제거하고 chat provider를 openai로 고정. localStorage(vda:chat-response-provider) 저장/복원 effect도 삭제.
+- 서버의 Anthropic 경로(createAnthropicChatStream, responseProvider body 필드, CHAT_RESPONSE_PROVIDER env)는 legacy로 유지 — 코드 삭제 없음, 진입 UI만 제거.

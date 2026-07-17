@@ -52,13 +52,6 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import {
   ChatBubble,
   type AssistantFeedbackVote,
 } from "@/components/session/chat-bubble";
@@ -3007,8 +3000,9 @@ export default function MainScreenPage() {
   >(null);
   const [referenceSearchError, setReferenceSearchError] = useState("");
   const [isAdmin, setIsAdmin] = useState(false);
-  const [chatResponseProvider, setChatResponseProvider] =
-    useState<ChatResponseProvider>("openai");
+  // Chat provider is fixed to OpenAI. The Anthropic path stays server-side as
+  // legacy (CHAT_RESPONSE_PROVIDER env / responseProvider body field).
+  const chatResponseProvider: ChatResponseProvider = "openai";
   const [viewAsName, setViewAsName] = useState<string | null>(null);
   const [stitchProjectId, setStitchProjectId] = useState<string>("");
   // Stitch project-level design system synced from the active 시안's design
@@ -4001,20 +3995,6 @@ export default function MainScreenPage() {
     },
     [],
   );
-
-  useEffect(() => {
-    const stored = window.localStorage.getItem("vda:chat-response-provider");
-    if (stored === "anthropic" || stored === "openai") {
-      setChatResponseProvider(stored);
-    }
-  }, []);
-
-  useEffect(() => {
-    window.localStorage.setItem(
-      "vda:chat-response-provider",
-      chatResponseProvider,
-    );
-  }, [chatResponseProvider]);
 
   // Auth state
   useEffect(() => {
@@ -9311,33 +9291,6 @@ export default function MainScreenPage() {
               <HelpCircleIcon size={15} />
               튜토리얼
             </button>
-          )}
-          {isAdmin && !isReadOnly && (
-            <label className="flex items-center gap-2 text-xs font-semibold text-slate-500">
-              <span>LLM</span>
-              <Select
-                value={chatResponseProvider}
-                onValueChange={(value) =>
-                  setChatResponseProvider(
-                    value === "anthropic" ? "anthropic" : "openai",
-                  )
-                }
-                disabled={isLoading}
-              >
-                <SelectTrigger
-                  size="sm"
-                  className="h-8 rounded-full border-slate-300 bg-white px-3 text-xs font-semibold text-slate-700 shadow-sm hover:border-slate-400"
-                  aria-label="Chat response provider"
-                  title="Chat response provider"
-                >
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent align="end">
-                  <SelectItem value="openai">OpenAI</SelectItem>
-                  <SelectItem value="anthropic">Claude</SelectItem>
-                </SelectContent>
-              </Select>
-            </label>
           )}
           {timerDisplay && (
             <span
