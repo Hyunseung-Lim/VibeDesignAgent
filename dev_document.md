@@ -53,14 +53,14 @@
 ### `/admin` — 관리자 페이지
 
 - 어드민 이메일 화이트리스트로 접근 제한
-- 미션 CRUD (생성/수정/삭제)
-- 미션 콘텐츠는 Firestore `missions/{id}.options[0]`에 저장(제목/설명/마크다운 content). 옵션에는 어드민이 올린 콘텐츠 이미지 `assetImages[{url, path, note}]`도 담긴다. 이 이미지는 `/admin/new`뿐 아니라 `/admin` 기존 미션 편집에서도 Firebase Storage `mission-assets/`에 PNG/JPG/WebP만 업로드/삭제할 수 있고, main 세션의 Mission 섹션에서 썸네일로 바로 확인할 수 있다. Mission 섹션에서 이미지 본문을 클릭하면 채팅 입력에 이미지 인용 attachment로 추가되고, 원본 확대는 카드 하단의 `확대보기` 버튼으로 연다. `/api/mission-assets`는 Storage 이미지를 buffer로 받아 응답하고 짧은 in-memory cache/promise dedupe를 사용하며, Mission grid 이미지는 로드 실패 시 cache-bust retry 후 placeholder를 표시한다. 저장된 URL/path는 목업 생성 시 asset-led 경로로 그대로 주입된다(위 "콘텐츠 자산 주도 생성" 참고) `[현행 2026-07-03 → 15.96/15.179/15.180]`
+- 미션 탭 없음 — 유저 목록 단일 화면 `[stale 2026-07-17 → 15.291/15.292: 생성·수정 제거(15.291)에 이어 미션 탭 전체(목록/삭제/온보딩 제한시간 설정 UI/미션별 참여자 모달) 제거(15.292)]`
+- 미션 콘텐츠는 Firestore `missions/{id}.options[0]`에 저장(제목/설명/마크다운 content). 옵션에는 어드민이 올린 콘텐츠 이미지 `assetImages[{url, path, note}]`도 담긴다. 이 이미지의 업로드/편집 UI는 제거되었고 저장된 데이터만 사용한다 `[stale 2026-07-17 → 15.291: /admin/new와 카드 편집 UI 삭제]`. main 세션의 Mission 섹션에서 썸네일로 바로 확인할 수 있다. Mission 섹션에서 이미지 본문을 클릭하면 채팅 입력에 이미지 인용 attachment로 추가되고, 원본 확대는 카드 하단의 `확대보기` 버튼으로 연다. `/api/mission-assets`는 Storage 이미지를 buffer로 받아 응답하고 짧은 in-memory cache/promise dedupe를 사용하며, Mission grid 이미지는 로드 실패 시 cache-bust retry 후 placeholder를 표시한다. 저장된 URL/path는 목업 생성 시 asset-led 경로로 그대로 주입된다(위 "콘텐츠 자산 주도 생성" 참고) `[현행 2026-07-03 → 15.96/15.179/15.180]`
 - 미션 ID: `mission-YYYYMMDD-HHmmss` 형식 (사람이 읽기 쉬운 구조)
-- 참여자 목록 조회 및 세션 열람 (읽기 전용 뷰)
-- 참여자 카드의 X는 해당 미션 세션과 하위 `memoryDrafts`/`reviewTurns`만 삭제하며, 유저 정보/장기 메모리/다른 미션 기록은 유지
+- 세션 열람(읽기 전용 view-as)은 유저 카드의 미션 행 링크로만 진입 `[stale 2026-07-17 → 15.292: 미션별 참여자 모달 제거]`
+- `[stale 2026-07-17 → 15.292: 참여자 모달 삭제로 참여자 카드 X(개별 미션 기록 삭제) 진입점 제거. deleteUserData 로직도 함께 삭제]`
 - 사용자 카드의 `세션 백업 후 삭제`는 세션/참여 기록/Storage 파일/장기 메모리(`memories_0_1_2`)/클러스터 캐시(`memoryClusters`)/세션 클러스터 snapshot(`memoryClusterSnapshots`)/retrieval logs를 백업 후 삭제한다 `[현행 2026-07-10 → 15.94/15.197]`
 - 사용자 카드는 1열 전체 폭으로 배치한다. 카드의 미션 영역은 온보딩을 첫 행에 두고 `missionOrder` 순서를 기준으로 참여/세션 미션을 보완한 단일 진행 목록이다. Lobby와 같은 session snapshot 판정으로 `대기`/`준비중`/`진행중`/`시간 초과`/`완료`를 표시하고, 온보딩 미션도 Lobby처럼 실제 세션 진행을 반영하되 완료 판정만 onboarding profile flag로 한다. Lobby의 순차 잠금 규칙(온보딩→`missionOrder` 순서, 첫 미완료가 `현재`, 그 이후는 `잠김`)도 같은 판정으로 계산해 `현재`/`잠김` 배지와 흐릿 처리로 표시한다(관리/조회용이라 잠금은 표시만 하고 링크는 막지 않음). 각 행의 미션 제목 링크는 `/main/{id}?viewAs={uid}`로 해당 세션을 읽기 전용 view-as로 연다. admin viewAs 세션의 헤더 뒤로가기 버튼은 `/admin`으로 돌아가며, read-only banner 안의 별도 `어드민으로 돌아가기` 링크는 두지 않는다(별도 리뷰 링크는 제거 — admin viewAs는 이미 읽기 전용+리뷰 탭 노출이라 `review=1`은 초기 탭만 바꿔 중복이었다) `[현행 2026-07-04 → 15.122/15.123/15.124/15.125/15.127/15.181]`
-- 참여자 모달의 개별 `미션 기록 삭제`는 해당 미션 세션, participant record, `memoryDrafts`/`reviewTurns`, 그 미션의 `source.missionId`를 가진 장기 메모리, 해당 미션의 `memoryClusterSnapshots`, mission-scoped retrieval logs를 삭제하고, `memoryClusters` cache를 비운다 `[현행 2026-07-10 → 15.94/15.197]`
+- `[stale 2026-07-17 → 15.292: 참여자 모달과 개별 미션 기록 삭제 기능 제거(구 15.94/15.197 동작)]`
 - 유저 카드의 `메모리 보기`는 모달을 열지 않고 `/admin/users/[uid]/memory` 전용 페이지로 이동한다. 이 페이지는 `/agent`와 같은 `MemoryClusterPage`를 렌더링해 헤더, 세션 누적 필터, 좁은 cluster list, 좌측 cluster detail panel, similarity graph, empty/loading state를 동일하게 유지한다 `[현행 2026-06-27 → 15.130]`
 - Admin 대상 메모리 목록과 clustering API는 self `/agent` 경로와 같은 normalization 및 clustering helper를 사용한다. 같은 uid와 item signature에는 양쪽 화면이 같은 memory item, cache document, cluster membership/label을 읽는다 `[현행 2026-06-22 → 15.107]`
 
@@ -303,7 +303,6 @@ type Idea = {
 | `POST /api/memory/retrieve`                       | query embedding과 cluster evidence 기반 memory top 10 검색 및 weight 업데이트 |
 | `POST /api/memory/session-clusters`               | 완료 세션 리뷰용 before/after cluster snapshot 생성                      |
 | `GET/POST /api/memory/profile`                    | profile source 저장/조회 및 derived memory 생성                         |
-| `POST /api/admin/missions`                        | 미션 생성 (관리자 전용)                                                 |
 | `GET /api/admin/users/[uid]/memory`               | admin memory/cluster view용 메모리 조회                                 |
 | `GET/POST /api/admin/users/[uid]/memory/clusters` | admin memory cluster 캐시 조회/생성                                     |
 
@@ -4755,3 +4754,27 @@ type ChatPlan = {
 - 원인: 두 증상 모두 memoryClustering.ts의 MAX_ITEMS=160. 클러스터링 입력이 최신순 상위 160개로 잘려 가장 오래된 활성 47개(=초기 세션 메모리: 온보딩 5, 101001 9, 301001 12, 203001 19 전부/대부분)가 어떤 클러스터에도 못 들어갔다. 세션 필터 뷰는 최신 캐시를 필터해 재사용하므로 초기 세션일수록 클러스터 커버리지가 0에 수렴했다. 캐시 stale 문제 아님(캐시 생성 후 신규 메모리 0개 확인).
 - 결정: MAX_ITEMS를 300으로 상향. soft-cap decay 곡선(입력 300에서 활성 ~133)대로면 160도 충분하지만, decay 튜닝 이전 참여자(활성 207 관측)를 덮기 위함. 300개 입력도 O(n^2) 유사도 계산과 임베딩 캐시(문서 저장) 기준 비용 문제 없음.
 - 검증: 해당 사용자 재생성 후 16 clusters / 695 edges / itemIds 합집합 207 = 활성 전부 포함, 미션별 제외 0개. 다른 사용자는 모두 160 미만이라 영향 없음.
+
+### 15.291 Remove mission create and edit features from admin `[implemented 2026-07-17]`
+
+- 배경: 미션 셋업이 확정되어 관리자 페이지에서 미션을 새로 만들거나 수정할 일이 없어졌다. 관리자 페이지 최적화의 일환으로 제거.
+- 제거: /admin 헤더의 새 미션 버튼, 미션 카드의 연필 편집 버튼과 인라인 편집 UI(제목/설명/디바이스/제한시간/콘텐츠/이미지 업로드), 관련 상태와 헬퍼(editingId, editFields, startEdit, saveEdit, updateEditOption, asset 업로드/삭제 헬퍼, normalizeOptions, createEmptyOption, EMPTY_FORM, 콘텐츠 이미지 미리보기 Dialog). 페이지/라우트 삭제: src/app/admin/new, /api/admin/missions, /api/admin/mission-assets.
+- 유지: 미션 목록 조회, 참여자 보기, 미션 삭제(X), 온보딩 설정 카드, 조회용 /api/mission-assets(main 세션 썸네일 제공).
+- Firestore missions 데이터와 저장된 assetImages는 그대로이며 main 세션에서 계속 사용된다.
+
+### 15.292 Remove admin missions tab entirely `[implemented 2026-07-17]`
+
+- 배경: 15.291로 생성·수정이 빠진 뒤 미션 탭에 남은 것은 목록/삭제/온보딩 제한시간 설정/미션별 참여자 모달뿐이었고, 운영상 필요 없다고 판단해 탭 자체를 제거했다. /admin은 유저 목록 단일 화면이 된다.
+- 제거: 유저/미션 Tabs 구조(adminSection), 미션 목록 카드와 미션 삭제(X), 온보딩 설정 카드(제한 시간 저장 UI)와 saveOnboardingSettings, 미션별/온보딩 참여자 모달과 openParticipants, openOnboardingParticipants, hydrateParticipantReviewStatus, requestDeleteUserData, deleteUserData. DestructiveAdminAction은 all-memory 단일 타입으로 축소.
+- 유지: missions 컬렉션 로드(onSnapshot)와 missionTitle, onboardingSettings 로드(/api/onboarding GET) — 유저 카드의 미션 제목/제한 시간 표시에 계속 쓰인다. /api/onboarding PATCH 라우트는 남아 있으나 UI 진입점 없음(필요 시 API 직접 호출).
+- 세션 열람 view-as와 리뷰 상태 표시는 유저 카드 미션 행에서 계속 제공된다.
+
+### 15.293 Personalize memory page header and badge session counts `[implemented 2026-07-17]`
+
+- MemoryClusterPage 헤더 제목을 전체 메모리 데이터 대신 (사용자 이름)의 메모리로 표시. 이름은 /api/memory/all과 /api/admin/users/[uid]/memory 응답에 추가한 displayName을 사용하고, self 뷰는 auth displayName으로 폴백, admin 뷰는 이름이 없으면 기존 제목 유지.
+- 세션 누적 필터 칩의 메모리 개수(전체 포함)를 currentColor 40% 테두리의 rounded-full 배지로 감싸 날짜와 시각적으로 구분.
+
+### 15.294 Fix chat tab count and show raw input on before-session cards `[implemented 2026-07-17]`
+
+- 채팅 탭 뱃지가 messages.length(user+assistant 합산)를 표시해 대화 턴 수의 정확히 2배로 보였다. 실제 세션 데이터로 확인: 182 = user 91 + assistant 91, 중복 저장 아님. 뱃지를 user 메시지 수(턴 수) 기준으로 변경.
+- 세션 이전 탭의 memory card가 Episodic/Semantic만 표시했는데, 파생 원본인 memory.input을 원문 필드로 카드 맨 위에 추가. 상단의 원래 입력한 내용 블록(profile_memories 원문)은 기존대로 유지.

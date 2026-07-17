@@ -24,7 +24,12 @@ export async function GET(request: Request) {
       ? profile.missionOrder.map(String)
       : [];
 
-    return Response.json({ memories, missionOrder });
+    return Response.json({
+      memories,
+      missionOrder,
+      displayName:
+        typeof profile?.displayName === "string" ? profile.displayName : null,
+    });
   } catch (err) {
     console.error("[api/memory/all]", err);
     return Response.json({ error: "failed to load memories" }, { status: 500 });

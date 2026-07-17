@@ -6,22 +6,13 @@ import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import {
   ArrowLeftIcon,
-  ArrowRightIcon,
-  SmartphoneIcon,
-  MonitorIcon,
   XIcon,
-  PencilIcon,
-  UsersIcon,
 } from "lucide-react";
-import { Spinner } from "@/components/ui/spinner";
 import { toast } from "sonner";
 import { getIdToken, onAuthStateChanged } from "firebase/auth";
 import {
   collection,
   onSnapshot,
-  deleteDoc,
-  doc,
-  updateDoc,
   query,
   orderBy,
   getDocs,
@@ -41,16 +32,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Textarea } from "@/components/ui/textarea";
 import { AdminDataTable } from "@/components/admin/admin-data-table";
 import {
   AdminUserCard,
@@ -127,15 +109,11 @@ type MemoryViewTab =
   | "table"
   | "clusters"
   | "retrievals";
-type DestructiveAdminAction =
-  | { type: "mission"; missionId: string; title: string }
-  | {
-      type: "participant-records";
-      participant: Participant;
-      missionId: string;
-      label: string;
-    }
-  | { type: "all-memory"; userId: string; version: string };
+type DestructiveAdminAction = {
+  type: "all-memory";
+  userId: string;
+  version: string;
+};
 
 type MemoryCluster = {
   id: string;
@@ -182,47 +160,6 @@ type AssetImage = {
   note?: string;
 };
 
-const ASSET_IMAGE_ACCEPT = "image/png,image/jpeg,image/webp";
-const ASSET_IMAGE_TYPE_ERROR = "PNG, JPG, WebP 이미지만 업로드할 수 있습니다.";
-const SUPPORTED_ASSET_IMAGE_TYPES = new Set(ASSET_IMAGE_ACCEPT.split(","));
-
-function isSupportedAssetImage(file: File) {
-  return SUPPORTED_ASSET_IMAGE_TYPES.has(file.type);
-}
-
-async function uploadMissionAsset(
-  file: File,
-  token: string,
-): Promise<AssetImage> {
-  const form = new FormData();
-  form.append("file", file);
-  const res = await fetch("/api/admin/mission-assets", {
-    method: "POST",
-    headers: { Authorization: `Bearer ${token}` },
-    body: form,
-  });
-  const data = await res.json().catch(() => null);
-  if (!res.ok) {
-    throw new Error(data?.error ?? "콘텐츠 이미지 업로드에 실패했습니다.");
-  }
-  return data as AssetImage;
-}
-
-async function deleteMissionAsset(path: string, token: string) {
-  const res = await fetch("/api/admin/mission-assets", {
-    method: "DELETE",
-    headers: {
-      Authorization: `Bearer ${token}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ path }),
-  });
-  if (!res.ok) {
-    const data = await res.json().catch(() => null);
-    throw new Error(data?.error ?? "콘텐츠 이미지 삭제에 실패했습니다.");
-  }
-}
-
 type MissionOption = {
   id: string;
   title: string;
@@ -247,51 +184,6 @@ type OnboardingSettings = {
 
 function defaultOnboardingSettings(): OnboardingSettings {
   return { durationMinutes: 20 };
-}
-
-function createEmptyOption(): MissionOption {
-  return {
-    id: crypto.randomUUID(),
-    title: "",
-    description: "",
-    content: "",
-    assetImages: [],
-  };
-}
-
-function missionAssetProxyUrl(path?: string) {
-  const objectName = String(path ?? "").trim();
-  if (!objectName.startsWith("mission-assets/")) return "";
-  const base =
-    typeof window === "undefined" ? "http://localhost" : window.location.origin;
-  const url = new URL("/api/mission-assets", base);
-  url.searchParams.set("path", objectName);
-  return url.toString();
-}
-
-function normalizeAssetImage(image: AssetImage) {
-  const path = typeof image?.path === "string" ? image.path : "";
-  const proxyUrl = missionAssetProxyUrl(path);
-  return {
-    url: proxyUrl || (typeof image?.url === "string" ? image.url : ""),
-    path,
-    note: typeof image?.note === "string" ? image.note : "",
-  };
-}
-
-function normalizeOptions(options?: MissionOption[]) {
-  return (options ?? []).map((option) => ({
-    id: option.id || crypto.randomUUID(),
-    title: option.title ?? "",
-    description: option.description ?? "",
-    content: option.content ?? "",
-    assetImages: Array.isArray(option.assetImages)
-      ? option.assetImages
-          .map((image) => normalizeAssetImage(image))
-          .filter((image) => /^https?:\/\//i.test(image.url))
-          .slice(0, 12)
-      : [],
-  }));
 }
 
 function semanticItems(row: AdminMemoryRow) {
@@ -397,34 +289,10 @@ function stableHash(value: string) {
   return (hash >>> 0).toString(36);
 }
 
-const EMPTY_FORM = {
-  title: "",
-  description: "",
-  device: "desktop" as Device,
-  options: [createEmptyOption()],
-};
-
 export default function AdminPage() {
   const router = useRouter();
   const [ready, setReady] = useState(false);
-  const [adminSection, setAdminSection] = useState<"users" | "missions">(
-    "users",
-  );
   const [missions, setMissions] = useState<Mission[]>([]);
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [editFields, setEditFields] = useState<Partial<Mission>>({});
-  const [isUploadingMissionAssets, setIsUploadingMissionAssets] =
-    useState(false);
-  const [participantsMissionId, setParticipantsMissionId] = useState<
-    string | null
-  >(null);
-  const [participants, setParticipants] = useState<Participant[]>([]);
-  const [isLoadingParticipants, setIsLoadingParticipants] = useState(false);
-  // Google profile photos (lh3.googleusercontent.com) intermittently 403/429,
-  // so track loads that fail and fall back to the initial-letter badge.
-  const [failedAvatarIds, setFailedAvatarIds] = useState<Set<string>>(
-    () => new Set(),
-  );
   const [adminUsers, setAdminUsers] = useState<AdminUser[]>([]);
   const [isLoadingUsers, setIsLoadingUsers] = useState(false);
   const [memoryModal, setMemoryModal] = useState<{
@@ -481,11 +349,6 @@ export default function AdminPage() {
   const [isDeletingMemory, setIsDeletingMemory] = useState(false);
   const [onboardingSettings, setOnboardingSettings] =
     useState<OnboardingSettings>(defaultOnboardingSettings);
-  const [isSavingOnboardingSettings, setIsSavingOnboardingSettings] =
-    useState(false);
-  const [previewAssetImage, setPreviewAssetImage] = useState<AssetImage | null>(
-    null,
-  );
   const [destructiveAction, setDestructiveAction] =
     useState<DestructiveAdminAction | null>(null);
 
@@ -515,218 +378,6 @@ export default function AdminPage() {
       document.body.style.overflow = previousOverflow;
     };
   }, [memoryModal]);
-
-  const requestDeleteMission = (mission: Mission) => {
-    setDestructiveAction({
-      type: "mission",
-      missionId: mission.id,
-      title: mission.title,
-    });
-  };
-
-  const deleteMission = async (id: string) => {
-    try {
-      await deleteDoc(doc(db, "missions", id));
-      toast.success("미션을 삭제했어요.");
-    } catch (error) {
-      console.error("[admin] mission delete failed", error);
-      toast.error("미션 삭제에 실패했습니다.");
-    }
-  };
-
-  const startEdit = (mission: Mission) => {
-    setEditingId(mission.id);
-    setEditFields({
-      title: mission.title,
-      description: mission.description,
-      device: mission.device ?? "desktop",
-      durationMinutes: mission.durationMinutes ?? 30,
-      options:
-        normalizeOptions(mission.options).length > 0
-          ? normalizeOptions(mission.options)
-          : [createEmptyOption()],
-    });
-  };
-
-  const saveEdit = async (id: string) => {
-    if (editFields.title?.trim()) {
-      const clean = <T,>(v: T): T =>
-        JSON.parse(
-          JSON.stringify(v, (_, val) => (val === undefined ? null : val)),
-        );
-      await updateDoc(
-        doc(db, "missions", id),
-        clean({
-          title: editFields.title.trim(),
-          description: editFields.description?.trim() ?? "",
-          device: editFields.device ?? "desktop",
-          durationMinutes:
-            (editFields.durationMinutes as number) > 0
-              ? editFields.durationMinutes
-              : null,
-          options: normalizeOptions(
-            editFields.options as MissionOption[],
-          ).filter((option) => option.title.trim()),
-        }),
-      );
-    }
-    setEditingId(null);
-  };
-
-  const hydrateParticipantReviewStatus = async (
-    missionId: string,
-    participantRows: Participant[],
-  ) => {
-    const adminUser = firebaseAuth.currentUser;
-    const token = adminUser ? await getIdToken(adminUser) : null;
-    if (!token) return participantRows;
-    await Promise.all(
-      participantRows.map(async (participant) => {
-        const response = await fetch(
-          `/api/memory/review-feedback?missionId=${encodeURIComponent(
-            missionId,
-          )}&targetUid=${encodeURIComponent(participant.id)}`,
-          { headers: { Authorization: `Bearer ${token}` } },
-        ).catch(() => null);
-        if (!response?.ok) return;
-        const data = (await response.json().catch(() => null)) as {
-          feedback?: { submittedAt?: number | null } | null;
-        } | null;
-        participant.memoryReviewSubmittedAt =
-          data?.feedback?.submittedAt ?? null;
-      }),
-    );
-    return participantRows;
-  };
-
-  const openParticipants = async (missionId: string) => {
-    setParticipantsMissionId(missionId);
-    setParticipants([]);
-    setIsLoadingParticipants(true);
-    try {
-      const snap = await getDocs(
-        collection(db, "missions", missionId, "participants"),
-      );
-      const participantRows = snap.docs.map((d) => {
-        const participant = { id: d.id, ...d.data() } as Participant;
-        participant.isAdmin = isAdminEmail(participant.email);
-        return participant;
-      });
-      const statuses = await fetchOnboardingStatuses(
-        participantRows.map((participant) => participant.id),
-      );
-      participantRows.forEach((participant) => {
-        participant.onboardingStatus =
-          statuses[participant.id]?.onboardingStatus ?? "unknown";
-        participant.stitchApiGroup =
-          statuses[participant.id]?.stitchApiGroup;
-      });
-      await hydrateParticipantReviewStatus(missionId, participantRows);
-      setParticipants(participantRows);
-    } finally {
-      setIsLoadingParticipants(false);
-    }
-  };
-
-  const openOnboardingParticipants = async () => {
-    setParticipantsMissionId(ONBOARDING_MISSION_ID);
-    setParticipants([]);
-    setIsLoadingParticipants(true);
-    try {
-      const participantRows = adminUsers.map((user) => ({ ...user }));
-      await hydrateParticipantReviewStatus(
-        ONBOARDING_MISSION_ID,
-        participantRows,
-      );
-      setParticipants(participantRows);
-    } finally {
-      setIsLoadingParticipants(false);
-    }
-  };
-
-  const requestDeleteUserData = (participant: Participant) => {
-    const targetMissionId = participantsMissionId;
-    if (!targetMissionId) {
-      toast.error("삭제할 미션 정보가 없습니다.");
-      return;
-    }
-    const label =
-      participant.displayName ?? participant.email ?? participant.id;
-    setDestructiveAction({
-      type: "participant-records",
-      participant,
-      missionId: targetMissionId,
-      label,
-    });
-  };
-
-  const deleteUserData = async (
-    participant: Participant,
-    targetMissionId: string,
-  ) => {
-    try {
-      const currentUser = firebaseAuth.currentUser;
-      if (!currentUser) {
-        toast.error("관리자 인증 정보가 없습니다. 다시 로그인해주세요.");
-        return;
-      }
-      const token = await getIdToken(currentUser, true);
-      const res = await fetch(
-        `/api/admin/users/${encodeURIComponent(participant.id)}?recordsOnly=1&missionId=${encodeURIComponent(targetMissionId)}`,
-        {
-          method: "DELETE",
-          headers: { Authorization: `Bearer ${token}` },
-        },
-      );
-      if (!res.ok) {
-        const data = await res.json().catch(() => null);
-        toast.error(data?.error ?? "유저 데이터 삭제에 실패했습니다.");
-        return;
-      }
-      const data = await res.json().catch(() => null);
-      toast.success("미션 기록 삭제가 완료됐습니다.", {
-        description: [
-          `세션 ${data?.deletedSessionMissions ?? 0}개`,
-          `참여 기록 ${data?.deletedParticipantRecords ?? 0}개`,
-          `memoryDrafts ${data?.deletedMemoryDrafts ?? 0}개`,
-          `reviewTurns ${data?.deletedReviewTurns ?? 0}개`,
-          `메모리 ${data?.deletedMemories ?? 0}개`,
-          `클러스터 ${data?.deletedMemoryClusters ?? 0}개`,
-        ].join(" · "),
-      });
-    } catch (error) {
-      console.error("[admin] user delete failed", error);
-      toast.error("유저 데이터 삭제 중 오류가 발생했습니다.");
-      return;
-    }
-
-    const resetUser = (user: AdminUser) => ({
-      ...user,
-      missionIds:
-        targetMissionId !== ONBOARDING_MISSION_ID
-          ? user.missionIds.filter((missionId) => missionId !== targetMissionId)
-          : user.missionIds,
-      sessionMissionIds: user.sessionMissionIds.filter(
-        (missionId) => missionId !== targetMissionId,
-      ),
-      onboardingStatus:
-        targetMissionId === ONBOARDING_MISSION_ID
-          ? ("required" as const)
-          : user.onboardingStatus,
-    });
-    setAdminUsers((prev) =>
-      prev.map((p) => (p.id === participant.id ? resetUser(p) : p)),
-    );
-    setParticipants((prev) =>
-      targetMissionId === ONBOARDING_MISSION_ID
-        ? prev.map((p) =>
-            p.id === participant.id
-              ? { ...p, onboardingStatus: "required" as const }
-              : p,
-          )
-        : prev.filter((p) => p.id !== participant.id),
-    );
-  };
 
   const missionTitle = (missionId: string) =>
     missionId === ONBOARDING_MISSION_ID
@@ -798,36 +449,6 @@ export default function AdminPage() {
     setOnboardingSettings({
       durationMinutes: Number(data.durationMinutes) || 20,
     });
-  };
-
-  const saveOnboardingSettings = async () => {
-    const token = await getAdminToken();
-    if (!token) {
-      toast.error("관리자 인증 정보가 없습니다. 다시 로그인해주세요.");
-      return;
-    }
-    setIsSavingOnboardingSettings(true);
-    try {
-      const res = await fetch("/api/onboarding", {
-        method: "PATCH",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(onboardingSettings),
-      });
-      if (!res.ok) {
-        const data = await res.json().catch(() => null);
-        throw new Error(data?.error ?? `온보딩 설정 저장 실패 (${res.status})`);
-      }
-      await loadOnboardingSettings();
-      toast.success("온보딩 설정을 저장했어요.");
-    } catch (error) {
-      console.error("[admin] onboarding settings save failed", error);
-      toast.error("온보딩 설정 저장에 실패했습니다.");
-    } finally {
-      setIsSavingOnboardingSettings(false);
-    }
   };
 
   const deleteAllMemory = async (userId: string, version: string) => {
@@ -1088,123 +709,6 @@ export default function AdminPage() {
     if (!ready) return;
     loadOnboardingSettings();
   }, [ready]);
-
-  const closeParticipants = () => {
-    setParticipantsMissionId(null);
-    setParticipants([]);
-    setIsLoadingParticipants(false);
-  };
-
-  const updateEditOption = (id: string, changes: Partial<MissionOption>) => {
-    setEditFields((prev) => {
-      const options = normalizeOptions(prev.options as MissionOption[]);
-      return {
-        ...prev,
-        options: options.map((option) =>
-          option.id === id ? { ...option, ...changes } : option,
-        ),
-      };
-    });
-  };
-
-  const updateMissionAssetImage = (
-    optionId: string,
-    imagePath: string,
-    changes: Partial<AssetImage>,
-  ) => {
-    setEditFields((prev) => {
-      const options = normalizeOptions(prev.options as MissionOption[]);
-      return {
-        ...prev,
-        options: options.map((option) =>
-          option.id === optionId
-            ? {
-                ...option,
-                assetImages: (option.assetImages ?? []).map((image) =>
-                  image.path === imagePath ? { ...image, ...changes } : image,
-                ),
-              }
-            : option,
-        ),
-      };
-    });
-  };
-
-  const uploadMissionAssetImages = async (optionId: string, files: File[]) => {
-    if (files.length === 0) return;
-    const validFiles = files.filter(isSupportedAssetImage);
-    if (validFiles.length === 0) {
-      toast.error(ASSET_IMAGE_TYPE_ERROR);
-      return;
-    }
-    if (validFiles.length < files.length) {
-      toast.error(ASSET_IMAGE_TYPE_ERROR);
-    }
-    setIsUploadingMissionAssets(true);
-    try {
-      const user = firebaseAuth.currentUser;
-      if (!user) throw new Error("로그인이 필요합니다.");
-      const token = await getIdToken(user);
-      const uploaded: AssetImage[] = [];
-      for (const file of validFiles) {
-        uploaded.push(await uploadMissionAsset(file, token));
-      }
-      if (uploaded.length === 0) return;
-      setEditFields((prev) => {
-        const options = normalizeOptions(prev.options as MissionOption[]);
-        return {
-          ...prev,
-          options: options.map((option) =>
-            option.id === optionId
-              ? {
-                  ...option,
-                  assetImages: [
-                    ...(option.assetImages ?? []),
-                    ...uploaded,
-                  ].slice(0, 12),
-                }
-              : option,
-          ),
-        };
-      });
-      toast.success("콘텐츠 이미지를 추가했어요.");
-    } catch (error) {
-      console.error("[admin] mission asset upload failed", error);
-      toast.error("콘텐츠 이미지 업로드에 실패했습니다.");
-    } finally {
-      setIsUploadingMissionAssets(false);
-    }
-  };
-
-  const removeMissionAssetImage = async (
-    optionId: string,
-    image: AssetImage,
-  ) => {
-    setEditFields((prev) => {
-      const options = normalizeOptions(prev.options as MissionOption[]);
-      return {
-        ...prev,
-        options: options.map((option) =>
-          option.id === optionId
-            ? {
-                ...option,
-                assetImages: (option.assetImages ?? []).filter(
-                  (item) => item.path !== image.path || item.url !== image.url,
-                ),
-              }
-            : option,
-        ),
-      };
-    });
-    if (image.path) {
-      const user = firebaseAuth.currentUser;
-      const token = user ? await getIdToken(user) : null;
-      if (!token) return;
-      await deleteMissionAsset(image.path, token).catch((error) => {
-        console.warn("[admin] mission asset delete failed", error);
-      });
-    }
-  };
 
   const versionMemoryRows = useMemo(
     () =>
@@ -1611,42 +1115,19 @@ export default function AdminPage() {
   };
 
   const destructiveDialogCopy = destructiveAction
-    ? destructiveAction.type === "mission"
-      ? {
-          title: "미션을 삭제할까요?",
-          description: `${destructiveAction.title} 미션이 목록에서 제거됩니다. 참여자 데이터와 연결된 세션은 이 작업에서 삭제하지 않습니다.`,
-          actionLabel: "미션 삭제",
-        }
-      : destructiveAction.type === "participant-records"
-        ? {
-            title: "미션 기록을 삭제할까요?",
-            description: `${destructiveAction.label} 사용자의 ${missionTitle(destructiveAction.missionId)} 기록만 삭제합니다. 해당 미션 세션, memoryDrafts/reviewTurns, 이 미션에서 생성된 장기 메모리와 클러스터 캐시를 삭제하며, 유저 정보와 다른 미션 기록은 유지됩니다.`,
-            actionLabel: "기록 삭제",
-          }
-        : destructiveAction.type === "all-memory"
-          ? {
-              title: "메모리를 전체 삭제할까요?",
-              description: `선택한 사용자의 v${destructiveAction.version} 메모리를 전체 삭제합니다. 이 작업은 되돌릴 수 없습니다.`,
-              actionLabel: "메모리 삭제",
-            }
-          : null
+    ? {
+        title: "메모리를 전체 삭제할까요?",
+        description: `선택한 사용자의 v${destructiveAction.version} 메모리를 전체 삭제합니다. 이 작업은 되돌릴 수 없습니다.`,
+        actionLabel: "메모리 삭제",
+      }
     : null;
 
   const runDestructiveAction = async () => {
     if (!destructiveAction) return;
     const action = destructiveAction;
     setDestructiveAction(null);
-    if (action.type === "mission") {
-      await deleteMission(action.missionId);
-      return;
-    }
-    if (action.type === "participant-records") {
-      await deleteUserData(action.participant, action.missionId);
-      return;
-    }
     if (action.type === "all-memory") {
       await deleteAllMemory(action.userId, action.version);
-      return;
     }
   };
 
@@ -1683,38 +1164,6 @@ export default function AdminPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-      <Dialog
-        open={Boolean(previewAssetImage)}
-        onOpenChange={(open) => {
-          if (!open) setPreviewAssetImage(null);
-        }}
-      >
-        <DialogContent
-          aria-describedby="asset-image-preview-description"
-          className="max-w-5xl overflow-hidden p-0"
-        >
-          {previewAssetImage && (
-            <>
-              <DialogHeader className="border-b border-border px-4 py-3 pr-12">
-                <DialogTitle className="leading-snug">
-                  {previewAssetImage.note?.trim() || "콘텐츠 이미지"}
-                </DialogTitle>
-                <DialogDescription id="asset-image-preview-description">
-                  미션 콘텐츠 자산 원본 미리보기
-                </DialogDescription>
-              </DialogHeader>
-              <div className="flex max-h-[calc(100vh-10rem)] items-center justify-center bg-muted p-4">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  src={previewAssetImage.url}
-                  alt={previewAssetImage.note?.trim() || "콘텐츠 이미지"}
-                  className="max-h-[calc(100vh-12rem)] max-w-full rounded-lg object-contain"
-                />
-              </div>
-            </>
-          )}
-        </DialogContent>
-      </Dialog>
       {/* Memory modal */}
       {memoryModal && (
         <div
@@ -2104,29 +1553,11 @@ export default function AdminPage() {
               관리자 페이지
             </h1>
           </div>
-          <Link
-            href="/admin/new"
-            className="rounded-2xl bg-primary px-5 py-2.5 text-sm font-semibold text-primary-foreground transition hover:bg-primary/90"
-          >
-            + 새 미션
-          </Link>
         </div>
       </div>
 
       <div className="mx-auto max-w-5xl px-4 py-10 lg:px-10">
-        <Tabs
-          value={adminSection}
-          onValueChange={(value) =>
-            setAdminSection(value === "missions" ? "missions" : "users")
-          }
-        >
-          <TabsList variant="line">
-            <TabsTrigger value="users">유저</TabsTrigger>
-            <TabsTrigger value="missions">미션</TabsTrigger>
-          </TabsList>
-
-          <TabsContent value="users" className="space-y-8">
-            <section className="space-y-4">
+        <section className="space-y-4">
               <div className="flex items-center justify-between">
                 <div>
                   <h2 className="text-lg font-semibold text-foreground">
@@ -2171,584 +1602,10 @@ export default function AdminPage() {
                   ))}
                 </div>
               )}
-            </section>
-          </TabsContent>
+        </section>
 
-          <TabsContent value="missions" className="space-y-8">
-            <section className="space-y-4">
-              <div className="flex items-center justify-between">
-                <h2 className="text-lg font-semibold text-foreground">
-                  미션 목록
-                </h2>
-                <span className="text-sm text-muted-foreground">
-                  {missions.length}개
-                </span>
-              </div>
-
-              <div className="rounded-2xl border border-border bg-card p-4 shadow-sm">
-                <div className="mb-3 flex items-center justify-between gap-3">
-                  <div>
-                    <p className="text-xs font-semibold text-muted-foreground">
-                      온보딩 설정
-                    </p>
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      유저 {adminUsers.length}명
-                    </p>
-                  </div>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    onClick={openOnboardingParticipants}
-                    className="rounded-full text-muted-foreground"
-                    title="온보딩 유저 보기"
-                    aria-label="온보딩 유저 보기"
-                  >
-                    <UsersIcon size={16} />
-                  </Button>
-                </div>
-                <div className="flex flex-wrap items-end gap-3">
-                  <label className="space-y-1 text-xs font-semibold text-muted-foreground">
-                    제한 시간
-                    <div className="flex items-center gap-2">
-                      <Input
-                        type="number"
-                        min={1}
-                        value={onboardingSettings.durationMinutes}
-                        onChange={(e) =>
-                          setOnboardingSettings((prev) => ({
-                            ...prev,
-                            durationMinutes: Number(e.target.value) || 20,
-                          }))
-                        }
-                        className="w-24"
-                      />
-                      <span className="text-sm font-normal text-muted-foreground">
-                        분
-                      </span>
-                    </div>
-                  </label>
-                  <Button
-                    type="button"
-                    onClick={saveOnboardingSettings}
-                    disabled={isSavingOnboardingSettings}
-                    className="rounded-2xl px-5"
-                  >
-                    {isSavingOnboardingSettings ? "저장 중..." : "저장"}
-                  </Button>
-                </div>
-              </div>
-
-              {missions.length === 0 ? (
-                <div className="flex h-40 items-center justify-center rounded-3xl border border-dashed border-border bg-card text-sm text-muted-foreground">
-                  아직 미션이 없습니다. 첫 미션을 만들어보세요.
-                </div>
-              ) : (
-                <div className="space-y-3">
-                  {missions.map((mission) => {
-                    const isEditing = editingId === mission.id;
-
-                    return (
-                      <div
-                        key={mission.id}
-                        className="rounded-3xl border border-border bg-card px-6 py-5 shadow-sm"
-                      >
-                        <div className="flex items-start gap-3">
-                          <div className="flex-1 min-w-0 space-y-3">
-                            {isEditing ? (
-                              <>
-                                <Input
-                                  autoFocus
-                                  value={editFields.title ?? ""}
-                                  onChange={(e) =>
-                                    setEditFields((p) => ({
-                                      ...p,
-                                      title: e.target.value,
-                                    }))
-                                  }
-                                  onKeyDown={(e) => {
-                                    if (e.key === "Escape") setEditingId(null);
-                                  }}
-                                  placeholder="미션 제목"
-                                  className="text-sm font-semibold"
-                                />
-                                <Textarea
-                                  value={editFields.description ?? ""}
-                                  onChange={(e) =>
-                                    setEditFields((p) => ({
-                                      ...p,
-                                      description: e.target.value,
-                                    }))
-                                  }
-                                  placeholder="미션 설명 (선택)"
-                                  rows={2}
-                                  className="resize-none text-sm text-muted-foreground"
-                                />
-                                <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                                  <span>디바이스</span>
-                                  {(["desktop", "mobile"] as Device[]).map(
-                                    (d) => (
-                                      <button
-                                        key={d}
-                                        type="button"
-                                        onClick={() =>
-                                          setEditFields((p) => ({
-                                            ...p,
-                                            device: d,
-                                          }))
-                                        }
-                                        className={`rounded-lg border px-3 py-1 text-xs font-semibold transition ${
-                                          (editFields.device ?? "desktop") === d
-                                            ? "border-primary bg-primary text-primary-foreground"
-                                            : "border-border text-muted-foreground hover:bg-muted"
-                                        }`}
-                                      >
-                                        {d === "desktop" ? "PC" : "모바일"}
-                                      </button>
-                                    ),
-                                  )}
-                                </div>
-                                <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                                  <span>제한 시간 (분)</span>
-                                  <Input
-                                    type="number"
-                                    min={0}
-                                    value={
-                                      (editFields.durationMinutes as number) ??
-                                      30
-                                    }
-                                    onChange={(e) =>
-                                      setEditFields((p) => ({
-                                        ...p,
-                                        durationMinutes: Number(e.target.value),
-                                      }))
-                                    }
-                                    className="w-20 text-xs"
-                                  />
-                                  <span className="text-muted-foreground">
-                                    (0 = 제한 없음)
-                                  </span>
-                                </div>
-                                {/* Single standalone mission content (data stays as
-                                options[0]; the option-selection mechanic was
-                                removed, so there is exactly one content block). */}
-                                {(() => {
-                                  const opt =
-                                    normalizeOptions(
-                                      editFields.options as MissionOption[],
-                                    )[0] ?? createEmptyOption();
-                                  return (
-                                    <div className="space-y-2 rounded-2xl border border-border bg-muted p-3">
-                                      <p className="text-xs font-semibold text-muted-foreground">
-                                        미션 콘텐츠
-                                      </p>
-                                      <Input
-                                        value={opt.title}
-                                        onChange={(e) =>
-                                          updateEditOption(opt.id, {
-                                            title: e.target.value,
-                                          })
-                                        }
-                                        placeholder="주제/브랜드 이름 (예: 🌙 Zzzly)"
-                                        className="text-xs"
-                                      />
-                                      <Textarea
-                                        value={opt.description}
-                                        onChange={(e) =>
-                                          updateEditOption(opt.id, {
-                                            description: e.target.value,
-                                          })
-                                        }
-                                        placeholder="한 줄 설명"
-                                        rows={2}
-                                        className="resize-none text-xs"
-                                      />
-                                      <div className="space-y-1.5">
-                                        <p className="text-xs font-semibold text-muted-foreground">
-                                          콘텐츠 (마크다운)
-                                        </p>
-                                        <Textarea
-                                          value={opt.content}
-                                          onChange={(e) =>
-                                            updateEditOption(opt.id, {
-                                              content: e.target.value,
-                                            })
-                                          }
-                                          placeholder={"## 서비스 개요\n- ..."}
-                                          rows={4}
-                                          className="resize-y font-mono text-xs"
-                                        />
-                                      </div>
-                                      <div className="space-y-2">
-                                        <p className="text-xs font-semibold text-muted-foreground">
-                                          콘텐츠 이미지
-                                        </p>
-                                        <p className="text-xs text-muted-foreground">
-                                          실제 상품 사진이나 UI 캡쳐를 넣어두면
-                                          Stitch 목업 생성 시 콘텐츠 자산으로
-                                          활용합니다.
-                                        </p>
-                                        {(opt.assetImages?.length ?? 0) > 0 && (
-                                          <div className="space-y-2">
-                                            {(opt.assetImages ?? []).map(
-                                              (image) => (
-                                                <div
-                                                  key={image.path || image.url}
-                                                  className="flex flex-col gap-2 rounded-xl border border-border bg-background p-2 sm:flex-row"
-                                                >
-                                                  <div className="group relative h-24 w-full shrink-0 overflow-hidden rounded-lg bg-muted sm:w-24">
-                                                    <button
-                                                      type="button"
-                                                      onClick={() =>
-                                                        setPreviewAssetImage(
-                                                          image,
-                                                        )
-                                                      }
-                                                      className="block h-full w-full cursor-zoom-in"
-                                                      aria-label={`크게 보기: ${
-                                                        image.note?.trim() ||
-                                                        "콘텐츠 이미지"
-                                                      }`}
-                                                    >
-                                                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                                                      <img
-                                                        src={image.url}
-                                                        alt={
-                                                          image.note?.trim() ||
-                                                          "콘텐츠 이미지"
-                                                        }
-                                                        className="h-full w-full object-cover transition duration-150 group-hover:scale-105"
-                                                      />
-                                                    </button>
-                                                    <button
-                                                      type="button"
-                                                      onClick={() =>
-                                                        void removeMissionAssetImage(
-                                                          opt.id,
-                                                          image,
-                                                        )
-                                                      }
-                                                      className="absolute right-1 top-1 rounded-full bg-background/90 p-1 text-foreground opacity-0 shadow-sm transition group-hover:opacity-100"
-                                                      aria-label="콘텐츠 이미지 삭제"
-                                                    >
-                                                      <XIcon size={12} />
-                                                    </button>
-                                                  </div>
-                                                  <Textarea
-                                                    value={image.note ?? ""}
-                                                    onChange={(e) =>
-                                                      updateMissionAssetImage(
-                                                        opt.id,
-                                                        image.path,
-                                                        {
-                                                          note: e.target.value,
-                                                        },
-                                                      )
-                                                    }
-                                                    placeholder="이미지 설명: 예) 린넨 셔츠 대표 상품 사진, 상품 카드에 사용"
-                                                    rows={2}
-                                                    className="min-h-24 resize-none text-xs"
-                                                  />
-                                                </div>
-                                              ),
-                                            )}
-                                          </div>
-                                        )}
-                                        <label className="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-dashed border-border px-3 py-2 text-xs font-medium text-muted-foreground transition hover:bg-background">
-                                          {isUploadingMissionAssets ? (
-                                            <>
-                                              <Spinner className="size-3" />
-                                              업로드 중...
-                                            </>
-                                          ) : (
-                                            <>이미지 추가</>
-                                          )}
-                                          <input
-                                            type="file"
-                                            accept={ASSET_IMAGE_ACCEPT}
-                                            multiple
-                                            className="hidden"
-                                            disabled={isUploadingMissionAssets}
-                                            onChange={(e) => {
-                                              const files = Array.from(
-                                                e.currentTarget.files ?? [],
-                                              );
-                                              void uploadMissionAssetImages(
-                                                opt.id,
-                                                files,
-                                              );
-                                              e.target.value = "";
-                                            }}
-                                          />
-                                        </label>
-                                      </div>
-                                    </div>
-                                  );
-                                })()}
-                                <div className="flex gap-2">
-                                  <Button
-                                    type="button"
-                                    size="sm"
-                                    onClick={() => saveEdit(mission.id)}
-                                    disabled={isUploadingMissionAssets}
-                                    className="rounded-xl px-4 text-xs"
-                                  >
-                                    저장
-                                  </Button>
-                                  <Button
-                                    type="button"
-                                    variant="outline"
-                                    size="sm"
-                                    onClick={() => setEditingId(null)}
-                                    className="rounded-xl px-4 text-xs"
-                                  >
-                                    취소
-                                  </Button>
-                                </div>
-                              </>
-                            ) : (
-                              <>
-                                <div className="flex items-center gap-3">
-                                  <p className="text-sm font-semibold text-foreground truncate">
-                                    {mission.title}
-                                  </p>
-                                  <Badge
-                                    variant="secondary"
-                                    className="shrink-0 rounded-full"
-                                  >
-                                    {(mission.device ?? "desktop") ===
-                                    "desktop" ? (
-                                      <>
-                                        <MonitorIcon
-                                          size={12}
-                                          className="inline"
-                                        />{" "}
-                                        PC
-                                      </>
-                                    ) : (
-                                      <>
-                                        <SmartphoneIcon
-                                          size={12}
-                                          className="inline"
-                                        />{" "}
-                                        모바일
-                                      </>
-                                    )}
-                                  </Badge>
-                                </div>
-                                {mission.description && (
-                                  <p className="text-xs text-muted-foreground leading-relaxed">
-                                    {mission.description}
-                                  </p>
-                                )}
-                                <p className="text-xs text-muted-foreground">
-                                  {mission.options?.[0]?.title ||
-                                    "콘텐츠 미설정"}
-                                </p>
-                              </>
-                            )}
-                          </div>
-
-                          {!isEditing && (
-                            <div className="flex shrink-0 items-center gap-1">
-                              <Button
-                                type="button"
-                                variant="ghost"
-                                size="icon"
-                                onClick={() => openParticipants(mission.id)}
-                                className="rounded-full text-muted-foreground"
-                                title="참여자 보기"
-                                aria-label="참여자 보기"
-                              >
-                                <UsersIcon size={16} />
-                              </Button>
-                              <Button
-                                type="button"
-                                variant="ghost"
-                                size="icon"
-                                onClick={() => startEdit(mission)}
-                                className="rounded-full text-muted-foreground"
-                                title="수정"
-                                aria-label="미션 수정"
-                              >
-                                <PencilIcon size={16} />
-                              </Button>
-                              <Button
-                                type="button"
-                                variant="ghost"
-                                size="icon"
-                                onClick={() => requestDeleteMission(mission)}
-                                className="rounded-full text-muted-foreground hover:bg-red-50 hover:text-red-400"
-                                title="삭제"
-                                aria-label="미션 삭제"
-                              >
-                                <XIcon size={16} />
-                              </Button>
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </section>
-          </TabsContent>
-        </Tabs>
       </div>
 
-      {/* Participants modal */}
-      {participantsMissionId && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-6 backdrop-blur-sm"
-          onClick={closeParticipants}
-        >
-          <div
-            className="flex max-h-[calc(100vh-3rem)] w-full max-w-sm flex-col rounded-3xl bg-card p-6 shadow-2xl"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex shrink-0 items-center justify-between">
-              <h3 className="text-lg font-semibold text-foreground">
-                {missionTitle(participantsMissionId)} 참여자
-              </h3>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                onClick={closeParticipants}
-                className="rounded-full text-muted-foreground"
-                aria-label="참여자 목록 닫기"
-              >
-                ✕
-              </Button>
-            </div>
-            <div className="mt-4 min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
-              {isLoadingParticipants ? (
-                <div className="flex items-center justify-center gap-2 py-8 text-sm text-muted-foreground">
-                  <Spinner className="size-4" />
-                  참여자 불러오는 중...
-                </div>
-              ) : participants.length === 0 ? (
-                <div className="flex items-center justify-center py-8 text-sm text-muted-foreground">
-                  아직 유저 데이터가 없습니다.
-                </div>
-              ) : (
-                participants.map((p) => {
-                  return (
-                    <div
-                      key={p.id}
-                      className="flex items-center gap-3 rounded-2xl border border-border px-4 py-3"
-                    >
-                      {p.photoURL && !failedAvatarIds.has(p.id) ? (
-                        <img
-                          src={p.photoURL}
-                          alt=""
-                          referrerPolicy="no-referrer"
-                          onError={() =>
-                            setFailedAvatarIds((prev) => {
-                              const next = new Set(prev);
-                              next.add(p.id);
-                              return next;
-                            })
-                          }
-                          className="h-8 w-8 rounded-full object-cover"
-                        />
-                      ) : (
-                        <div className="flex h-8 w-8 items-center justify-center rounded-full bg-primary text-xs font-semibold text-primary-foreground">
-                          {(p.displayName ?? p.email ?? "?")
-                            .charAt(0)
-                            .toUpperCase()}
-                        </div>
-                      )}
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate text-sm font-semibold text-foreground">
-                          {p.displayName ?? p.email ?? p.id}
-                        </p>
-                        {p.displayName && p.email && (
-                          <p className="truncate text-xs text-muted-foreground">
-                            {p.email}
-                          </p>
-                        )}
-                        <div className="mt-1 flex flex-wrap items-center gap-1.5">
-                          {p.isAdmin && (
-                            <Badge
-                              variant="outline"
-                              className="rounded-full border-transparent bg-indigo-50 text-indigo-700"
-                            >
-                              관리자
-                            </Badge>
-                          )}
-                          {p.stitchApiGroup && (
-                            <Badge
-                              variant="outline"
-                              className={
-                                p.stitchApiGroup === "A"
-                                  ? "rounded-full border-emerald-200 bg-emerald-50 text-emerald-700"
-                                  : "rounded-full border-sky-200 bg-sky-50 text-sky-700"
-                              }
-                            >
-                              Stitch {p.stitchApiGroup}
-                            </Badge>
-                          )}
-                          <Badge
-                            variant="outline"
-                            className={
-                              p.memoryReviewSubmittedAt
-                                ? "rounded-full text-muted-foreground"
-                                : "rounded-full border-amber-200 bg-amber-50 text-amber-700"
-                            }
-                          >
-                            {p.memoryReviewSubmittedAt
-                              ? "리뷰 완료"
-                              : "리뷰 필요"}
-                          </Badge>
-                        </div>
-                      </div>
-                      <div className="ml-auto flex items-center gap-1">
-                        <Link
-                          href={`/main/${participantsMissionId}?viewAs=${p.id}`}
-                          className="rounded-full p-1.5 text-muted-foreground transition hover:bg-muted hover:text-foreground"
-                          onClick={closeParticipants}
-                          title="세션 보기"
-                        >
-                          <ArrowRightIcon size={14} />
-                        </Link>
-                        <Link
-                          href={`/main/${participantsMissionId}?viewAs=${p.id}&review=1`}
-                          className="rounded-full px-2 py-1 text-[11px] font-semibold text-indigo-400 transition hover:bg-indigo-50 hover:text-indigo-700"
-                          onClick={closeParticipants}
-                          title="리뷰 보기"
-                        >
-                          리뷰
-                        </Link>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => requestDeleteUserData(p)}
-                          className="rounded-full text-muted-foreground hover:bg-red-50 hover:text-red-500"
-                          title={
-                            p.isAdmin
-                              ? "관리자 미션 기록 삭제"
-                              : "미션 기록 삭제"
-                          }
-                          aria-label={
-                            p.isAdmin
-                              ? "관리자 미션 기록 삭제"
-                              : "미션 기록 삭제"
-                          }
-                        >
-                          <XIcon size={14} />
-                        </Button>
-                      </div>
-                    </div>
-                  );
-                })
-              )}
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

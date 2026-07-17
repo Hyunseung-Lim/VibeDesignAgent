@@ -108,6 +108,7 @@ export function MemoryClusterPage({
   );
   const [showInactiveMemories, setShowInactiveMemories] = useState(true);
   const [loadError, setLoadError] = useState(false);
+  const [subjectName, setSubjectName] = useState<string | null>(null);
   const [missionTitleById, setMissionTitleById] = useState<
     Record<string, string>
   >({});
@@ -173,6 +174,13 @@ export function MemoryClusterPage({
           Array.isArray(memData?.missionOrder)
             ? memData.missionOrder.map(String)
             : [],
+        );
+        setSubjectName(
+          typeof memData?.displayName === "string" && memData.displayName.trim()
+            ? memData.displayName.trim()
+            : targetUserId
+              ? null
+              : (user.displayName ?? null),
         );
         applyClusterData(clusterData);
         setLoadError(false);
@@ -486,14 +494,9 @@ export function MemoryClusterPage({
             <ArrowLeftIcon size={18} />
           </Button>
 
-          <div className="flex min-w-0 items-baseline gap-2">
-            <p className="shrink-0 text-base font-semibold text-foreground">
-              전체 메모리 데이터
-            </p>
-            <p className="truncate text-[10px] text-muted-foreground/70">
-              keyword · episodic · semantic · link
-            </p>
-          </div>
+          <p className="min-w-0 truncate text-base font-semibold text-foreground">
+            {subjectName ? `${subjectName}의 메모리` : "전체 메모리 데이터"}
+          </p>
         </div>
       </div>
 
@@ -532,7 +535,7 @@ export function MemoryClusterPage({
           {sessionFilterOptions.length > 1 ? (
             <div className="flex shrink-0 items-center gap-2 overflow-x-auto border-b border-border bg-card px-4 py-2.5">
               <span className="shrink-0 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-                세션<span className="ml-1 normal-case text-[10px] font-normal opacity-70">(이전까지 누적)</span>
+                세션
               </span>
               <button
                 type="button"
@@ -545,7 +548,9 @@ export function MemoryClusterPage({
                 )}
               >
                 전체
-                <span className="ml-1.5 opacity-70">{memories.length}</span>
+                <span className="ml-1.5 inline-flex min-w-5 items-center justify-center rounded-full border border-current/40 px-1.5 text-[10px] leading-4 tabular-nums opacity-80">
+                  {memories.length}
+                </span>
               </button>
               {sessionFilterOptions.map((option) => {
                 const title = option.missionId
@@ -567,7 +572,9 @@ export function MemoryClusterPage({
                   >
                     {sessionFilterLabel(option.missionId, title)}
                     {date && <span className="ml-1.5 opacity-70">{date}</span>}
-                    <span className="ml-1.5 opacity-70">{option.count}</span>
+                    <span className="ml-1.5 inline-flex min-w-5 items-center justify-center rounded-full border border-current/40 px-1.5 text-[10px] leading-4 tabular-nums opacity-80">
+                      {option.count}
+                    </span>
                   </button>
                 );
               })}

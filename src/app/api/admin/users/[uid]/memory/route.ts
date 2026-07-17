@@ -90,6 +90,8 @@ export async function GET(
   return Response.json({
     memories,
     missionOrder,
+    displayName:
+      typeof profile?.displayName === "string" ? profile.displayName : null,
     counts: {
       "0.1.2": memories.length,
     },

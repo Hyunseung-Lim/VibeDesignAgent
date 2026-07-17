@@ -10038,7 +10038,9 @@ export default function MainScreenPage() {
             width={chatWidth}
             showReviewTabs={showReviewAnnotations}
             activeTab={rightPanelTab}
-            messageCount={messages.length}
+            messageCount={
+              messages.filter((message) => message.role === "user").length
+            }
             beforeMemoryCount={beforeSessionMemoryImpact.availableCount}
             showScrollToBottom={showScrollToBottom}
             onTabChange={setRightPanelTab}
@@ -10078,6 +10080,9 @@ export default function MainScreenPage() {
                           key={memory.id}
                           summary={memorySummaryText(memory)}
                           fields={[
+                            memory.input
+                              ? { label: "원문", value: memory.input }
+                              : null,
                             memory.episodic
                               ? { label: "Episodic", value: memory.episodic }
                               : null,
