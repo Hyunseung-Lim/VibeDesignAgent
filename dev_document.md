@@ -98,7 +98,7 @@
 - 검색당 3개씩 누적 표시 (삭제 가능, confirm 팝업)
 - 검색 중에는 해당 assistant chat bubble 안에 작은 로딩 pill을 표시한다
 - 중복 제외/빈 결과/검색 실패 메시지는 Reference 섹션이 아니라 해당 assistant chat bubble의 "레퍼런스 검색 결과"로 표시한다
-- 레퍼런스 선택(인용) 후 메시지 전송 시 이미지를 base64로 서버에서 변환해 chat provider에 전달
+- `[stale 2026-07-17: 현행 /api/chat은 이미지 픽셀을 provider에 전달하지 않는다. 인용 레퍼런스는 제목/URL 텍스트, 첨부 스타일 이미지는 present/name 메타데이터의 텍스트 프롬프트만 전달되며, 이미지 자체는 레퍼런스 검색 vision 분석(/api/references)과 Stitch 목업 생성에서만 사용된다. sanitizeRawPrompt는 프롬프트 내 base64를 제거한다]`
 - 인용된 레퍼런스 URL도 시스템 컨텍스트로 전달. OpenAI provider에서는 웹 검색으로 방문 가능
 - **검색 모드 분기**: `inferReferenceMode(query)`로 "style" vs "product" 모드를 분류한 뒤, 두 모드 모두 `searchWebReferences(mode, ...)` 단일 OpenAI `web_search_preview` 경로로 검색한다. 모드는 시스템 프롬프트(style: `referenceStyleSearchPrompt`, product: `referenceProductSearchPrompt`)와 저품질 필터만 다르게 고른다 `[현행 2026-06-30 → 15.172]`
   - 썸네일은 `hydrateReferenceMetadata()`가 검색 모드별 전략으로 확보한다. product 모드는 실제 페이지 구조를 보여주도록 Microlink desktop screenshot URL을 우선하고 검증된 페이지 이미지로 폴백한다. style 모드는 검색 결과 `imageUrl`, 페이지 메타(og/twitter/link/json-ld), HTML 이미지 후보를 서버에서 검증해 우선하고 screenshot으로 폴백한다(전용 이미지 검색 없음). 모든 카드의 `searchProvider`는 `openai-web` `[현행 2026-07-16 → 15.272]`
@@ -4803,3 +4803,24 @@ type ChatPlan = {
 - 수정: 신규 GET /api/users/me/progress가 SESSION_PROGRESS_FIELDS projection(공용 상수 src/lib/server/sessionProgress.ts, admin progress route와 공유)과 memoryReviewFeedback.submittedAt을 한 번에 반환. 로비는 mount 시 1회 fetch + visibilitychange/focus 시 refetch로 대체(실시간 구독 제거 — 세션에서 돌아오는 시나리오는 focus refetch가 커버).
 - 검증: heavy 사용자 기준 1.3KB 응답(세션 6개 + 리뷰 6건), 상태값 전수 일치, /lobby 200.
 - 미션 페이지 검수 결과(미구현): persistSessionSnapshot이 1.5초 debounce 후 세션 문서 전체(messages/artboards/activityLog)를 setDoc으로 재업로드한다. 세션 후반 문서가 수 MB일 때 저장마다 그만큼 업로드된다. 스냅샷 데이터 모델 자체라 실험 중 변경은 위험 — 연구 종료 후 messages/activityLog subcollection 분리 또는 delta 저장 검토. 초기 세션 문서 로드와 미션 제목 getDocs는 필요/소형이라 현행 유지.
+
+### 15.299 Show all inactive memories in session review with session badge `[implemented 2026-07-17]`
+
+- 배경: 세션 리뷰의 비활성 그룹은 세션 관련 비활성(해당 미션 생성/참조/승격/참조된 것의 중복본 + weight 0)만 세어 /agent의 전체 기준(archivedAt 또는 weight 0)과 개수가 달랐다(예: 2 vs 1 — 이전 미션에서 auto-duplicate로 정리된 메모리가 리뷰에서 빠짐).
+- 변경: 리뷰 오버레이의 isInactiveGraphMemory를 전체 기준으로 확장해 /agent와 같은 비활성 집합을 표시한다. 이번 세션으로 인한 비활성(기존 세션 관련 기준)은 비활성 행의 +N 배지(클러스터 행의 +n과 같은 indigo 칩)로 구분 표시한다. MemoryClusterList에 inactiveAddedCount prop 추가 — /agent는 전달하지 않아 변화 없음.
+- before 페이즈 숨김 규칙과 changed 필터는 세션 관련 아카이브 기준을 유지하고, 비활성 필터와 all 필터만 전체 기준을 따른다.
+
+### 15.300 Keep note payload parsing inside its own action block `[implemented 2026-07-17]`
+
+- 증상: 새 시안을 추가하고 디자인 스타일을 먼저 작성하면 Design Brief에 디자인 스타일 내용이 그대로 저장됨(실제 세션 데이터로 확인 — 시안 3 create의 output이 style_create output과 동일).
+- 원인: extractJsonActionPayload가 태그 위치 이후 전체 텍스트에서 첫 { 를 찾았다. 모델이 [CREATE_NOTE: 시안 2]처럼 JSON 없는 payload를 내고 뒤에 [CREATE_DESIGN_SPEC: {content: 스타일}]이 따라오면, CREATE_NOTE 파싱이 design spec의 JSON을 자기 payload로 잘못 집어 브리프 description이 스타일 마크다운이 됐다.
+- 수정: 태그와 { 사이에 공백 외 문자가 있으면 JSON 채택을 거부하고 plain 파싱으로 폴백. 제목만 있는 CREATE_NOTE는 thin brief로 파싱되어 기존 resolveDesignBriefPayload 복구 경로(assistant 본문 또는 mission recovery)를 탄다. CREATE_NOTE/UPDATE_NOTE/CREATE_DESIGN_SPEC/EDIT_DESIGN_SPEC 공용 함수라 네 태그 모두 같은 가드를 받는다.
+- 검증: 실패 턴 형태 재현 스크립트로 before(스타일 오염)/after(시안 2로 파싱) 확인, 정상 JSON payload와 design spec 자체 파싱은 동일 결과.
+
+### 15.301 Send attached images to the chat model as vision input `[implemented 2026-07-17]`
+
+- 배경: /api/chat은 첨부 이미지의 픽셀을 provider에 전달하지 않았다(present/name 메타데이터의 텍스트 프롬프트만). 이미지 내용 질문에 모델이 맥락으로 답을 지어내는 환각이 발생(예: 데스크톱 4열 PLP 스크린샷을 모바일 2열 12개로 답변).
+- 구현: 클라이언트가 styleImageContext.dataUrl로 첨부 이미지를 전송. 서버는 extractStyleImageDataUrl로 검증(image/png|jpeg|webp|gif, 8MB 상한)한 뒤 provider 호출 직전에만 마지막 user 메시지에 주입 — OpenAI Responses input_image(detail high), Anthropic image block(base64). normalizeStyleImageContext(메타데이터)와 분리해 reviewTurns/프롬프트 로그에는 base64가 저장되지 않는다. sanitizeRawPrompt 경로도 텍스트만 다뤄 기존과 동일.
+- 범위: 현재 턴의 첨부 이미지만 vision으로 전달(히스토리의 과거 이미지는 재전송하지 않음 — 토큰 비용 상한). 인용 레퍼런스 카드의 원격 이미지는 기존대로 제목/URL 텍스트만.
+- chatAttachedStyleImagePrompt 문구를 이미지를 직접 볼 수 있다는 전제로 갱신하고, 보이는 것에 근거해 답하되 판독 불가 시 추측하지 말라는 지시 추가.
+- 검증: 5개 사각형(3+2 배치) 테스트 PNG를 dev 서버 /api/chat에 첨부해 개수와 배치(오른쪽 아래 빈 칸 포함)를 정확히 답하는 것 확인. 모델 조사: 기본 모델 gpt-5.4는 MMMU-Pro 81.2 수준의 vision을 갖춰 충분하며, 문제는 모델이 아니라 이미지 미전달이었다. 고밀도 스크린샷 정밀 판독이 필요하면 detail을 original(최대 10.24MP)로 올리는 옵션이 있다.

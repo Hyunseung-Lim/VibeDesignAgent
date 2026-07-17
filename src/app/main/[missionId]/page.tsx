@@ -1464,6 +1464,14 @@ function extractJsonActionPayload(
 
   const payloadStart = text.indexOf("{", start);
   if (payloadStart === -1) return null;
+  // JSON payload는 이 태그 블록 안의 것이어야 한다. 태그와 { 사이에 공백 외
+  // 내용이 있으면(예: [CREATE_NOTE: 시안 2] 뒤에 오는 다른 액션의 JSON) 뒤
+  // 블록의 JSON을 이 태그의 payload로 잘못 집는 것이므로 plain 파싱에 맡긴다.
+  const betweenTagAndBrace = text.slice(
+    start + `[${tag}:`.length,
+    payloadStart,
+  );
+  if (betweenTagAndBrace.trim()) return null;
 
   let depth = 0;
   let inString = false;
@@ -5679,6 +5687,8 @@ export default function MainScreenPage() {
             ? {
                 present: true,
                 name: attachedStyleImage?.name,
+                // 서버가 vision 입력으로 provider에 직접 전달한다(15.301).
+                dataUrl: styleImageForTurn,
               }
             : undefined,
           review: {
@@ -8578,23 +8588,29 @@ export default function MainScreenPage() {
     );
     const snapshotItemIds = new Set(activeClusterSnapshot.itemIds);
     const shouldUseSnapshotItems = !activeClusterSnapshot.isFallback;
-    const isInactiveGraphMemory = (
+    // 비활성 그룹은 /agent와 같은 전체 기준(archivedAt 존재 또는 weight 0)으로
+    // 표시한다. 이번 세션으로 인한 비활성(세션 관련 아카이브/weight 0 도달)은
+    // 그룹 행의 +N 배지로 따로 센다(15.299).
+    const isSessionScopedInactive = (
       memory: (typeof cumulativeGraphMemories)[number],
     ) =>
       sessionArchivedIds.has(memory.id) ||
       (memory.weight != null && memory.weight <= 0);
+    const isInactiveGraphMemory = (
+      memory: (typeof cumulativeGraphMemories)[number],
+    ) => Boolean(memory.archivedAt) || isSessionScopedInactive(memory);
     const isVisibleGraphMemory = (
       memory: (typeof cumulativeGraphMemories)[number],
       includeInactive: boolean,
     ) => {
       const referenced = referencedByMemoryId.get(memory.id);
       const isPromoted = promotedIds.has(memory.id);
-      // 비활성 = auto-duplicate 아카이브 또는 idle decay로 weight 0 도달.
-      // 둘 다 클러스터 스냅샷 입력에서 제외되므로, after 페이즈에서 예외로
+      // 비활성은 클러스터 스냅샷 입력에서 제외되므로, after 페이즈에서 예외로
       // 살려 비활성 메모리 그룹에 dimmed로 표시한다.
-      const isArchived = sessionArchivedIds.has(memory.id);
+      const isArchivedSession = sessionArchivedIds.has(memory.id);
+      const isArchivedAny = Boolean(memory.archivedAt) || isArchivedSession;
       const isInactiveWeight = memory.weight != null && memory.weight <= 0;
-      const isInactive = isArchived || isInactiveWeight;
+      const isInactive = isArchivedAny || isInactiveWeight;
       if (isInactive && !includeInactive) return false;
       if (
         shouldUseSnapshotItems &&
@@ -8604,7 +8620,7 @@ export default function MainScreenPage() {
         return false;
       }
       if (memoryGraphPhase === "before" && isPromoted) return false;
-      if (memoryGraphPhase === "before" && isArchived && !referenced) {
+      if (memoryGraphPhase === "before" && isArchivedAny && !referenced) {
         return false;
       }
       if (memoryGraphFilter === "all") return true;
@@ -8612,7 +8628,7 @@ export default function MainScreenPage() {
         return (
           Boolean(referenced) ||
           isPromoted ||
-          isArchived ||
+          isArchivedSession ||
           (isInactiveWeight && memoryGraphPhase === "after")
         );
       }
@@ -8627,6 +8643,12 @@ export default function MainScreenPage() {
     const inactiveVisibleCount = cumulativeGraphMemories.filter(
       (memory) =>
         isInactiveGraphMemory(memory) && isVisibleGraphMemory(memory, true),
+    ).length;
+    // 이번 세션으로 인해 비활성된 것만 +N 배지로 표시 (그 외는 이전 세션에서
+    // 이미 정리된 누적 비활성).
+    const inactiveAddedCount = cumulativeGraphMemories.filter(
+      (memory) =>
+        isSessionScopedInactive(memory) && isVisibleGraphMemory(memory, true),
     ).length;
     const visibleMemoryIds = new Set(visibleMemoryItems.map((item) => item.id));
     const inactiveMemoryIds = new Set(
@@ -8859,6 +8881,7 @@ export default function MainScreenPage() {
             nodeCount={graphItems.length}
             edgeCount={visibleGraphEdges.length}
             inactiveMemoryCount={inactiveVisibleCount}
+            inactiveAddedCount={inactiveAddedCount}
             inactiveMemoriesSelected={
               selectedClusterId === "session-inactive"
             }

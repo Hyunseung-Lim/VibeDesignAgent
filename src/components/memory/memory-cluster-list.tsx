@@ -57,6 +57,9 @@ type MemoryClusterListProps = {
   nodeCount?: number;
   edgeCount?: number;
   inactiveMemoryCount?: number;
+  // 이번 세션에서 새로 비활성된 수. 클러스터 행의 +n 배지와 같은 형식으로
+  // 비활성 행에 표시한다.
+  inactiveAddedCount?: number;
   inactiveMemoriesSelected?: boolean;
   showInactiveMemories?: boolean;
   onSelectInactiveMemories?: () => void;
@@ -82,6 +85,7 @@ export function MemoryClusterList({
   nodeCount,
   edgeCount,
   inactiveMemoryCount = 0,
+  inactiveAddedCount = 0,
   inactiveMemoriesSelected = false,
   showInactiveMemories = false,
   onSelectInactiveMemories,
@@ -385,10 +389,18 @@ export function MemoryClusterList({
               className="flex h-full min-w-0 flex-1 cursor-pointer items-center gap-2 rounded-l-lg px-2.5 text-left text-[11px] font-semibold transition hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
             >
               <CircleOffIcon size={14} aria-hidden="true" />
-              <span className="min-w-0 flex-1 truncate">비활성 메모리</span>
+              <span className="min-w-0 truncate">비활성 메모리</span>
               <span className="shrink-0 tabular-nums text-muted-foreground">
                 {inactiveMemoryCount}
               </span>
+              {inactiveAddedCount > 0 ? (
+                <span
+                  className="ml-auto shrink-0 rounded-full bg-indigo-100 px-1.5 py-0.5 text-[10px] font-bold text-indigo-700"
+                  title={`이번 세션에 ${inactiveAddedCount}개 추가됨`}
+                >
+                  +{inactiveAddedCount}
+                </span>
+              ) : null}
             </button>
             {onToggleInactiveMemories ? (
               <button

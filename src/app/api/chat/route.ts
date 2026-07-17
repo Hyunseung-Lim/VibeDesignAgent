@@ -394,6 +394,27 @@ function normalizeStyleImageContext(value: unknown) {
   };
 }
 
+// 첨부 이미지 픽셀은 vision 입력으로 provider 호출 직전에만 주입한다.
+// normalizeStyleImageContext(메타데이터)와 분리해 reviewTurns/프롬프트 로그에
+// base64가 저장되지 않게 한다(15.301).
+const STYLE_IMAGE_DATA_URL_PATTERN =
+  /^data:image\/(?:png|jpeg|jpg|webp|gif);base64,[A-Za-z0-9+/=]+$/;
+const MAX_STYLE_IMAGE_DATA_URL_LENGTH = 8 * 1024 * 1024;
+
+function extractStyleImageDataUrl(value: unknown): string | null {
+  if (!value || typeof value !== "object") return null;
+  const raw = (value as Record<string, unknown>).dataUrl;
+  if (typeof raw !== "string") return null;
+  const trimmed = raw.trim();
+  if (
+    trimmed.length === 0 ||
+    trimmed.length > MAX_STYLE_IMAGE_DATA_URL_LENGTH
+  ) {
+    return null;
+  }
+  return STYLE_IMAGE_DATA_URL_PATTERN.test(trimmed) ? trimmed : null;
+}
+
 function forceRequestedCommand(
   plan: ChatPlan,
   command: ChatComposerCommandId | null,
@@ -516,10 +537,39 @@ function anthropicMessages(input: BuiltChatMessage[]) {
   return { system, messages };
 }
 
+// 첨부 이미지를 마지막 user 메시지에 vision part로 붙인다. 프롬프트 로그와
+// sanitize 경로는 텍스트만 다루므로, provider 입력 직전에만 변환한다.
+function openaiInputWithImage(
+  input: BuiltChatMessage[],
+  imageDataUrl: string | null,
+) {
+  if (!imageDataUrl) return input;
+  const lastUserIdx = input.findLastIndex(
+    (message) => message.role === "user",
+  );
+  if (lastUserIdx === -1) return input;
+  return input.map((message, index) =>
+    index === lastUserIdx
+      ? {
+          role: "user" as const,
+          content: [
+            { type: "input_text" as const, text: message.content },
+            {
+              type: "input_image" as const,
+              image_url: imageDataUrl,
+              detail: "high" as const,
+            },
+          ],
+        }
+      : message,
+  );
+}
+
 async function* createOpenAIChatStream(
   input: BuiltChatMessage[],
   hasRefUrls: boolean,
   allowWebSearch: boolean,
+  imageDataUrl: string | null,
 ): AsyncGenerator<ChatProviderStreamEvent> {
   const stream = await openai.responses.create({
     model: OPENAI_CHAT_MODEL,
@@ -532,7 +582,10 @@ async function* createOpenAIChatStream(
           tool_choice: hasRefUrls ? ("required" as const) : ("auto" as const),
         }
       : {}),
-    input,
+    input: openaiInputWithImage(
+      input,
+      imageDataUrl,
+    ) as Parameters<typeof openai.responses.create>[0]["input"],
     stream: true,
   });
 
@@ -567,12 +620,35 @@ async function* createOpenAIChatStream(
 
 async function* createAnthropicChatStream(
   input: BuiltChatMessage[],
+  imageDataUrl: string | null,
 ): AsyncGenerator<ChatProviderStreamEvent> {
   if (!process.env.ANTHROPIC_API_KEY) {
     throw new Error("ANTHROPIC_API_KEY is required when CHAT_RESPONSE_PROVIDER=anthropic");
   }
 
   const { system, messages } = anthropicMessages(input);
+  const imageMatch = imageDataUrl?.match(
+    /^data:(image\/[a-z]+);base64,(.+)$/,
+  );
+  if (imageMatch) {
+    const lastUserIdx = messages.findLastIndex(
+      (message) => message.role === "user",
+    );
+    if (lastUserIdx !== -1) {
+      const original = messages[lastUserIdx].content;
+      (messages[lastUserIdx] as { content: unknown }).content = [
+        {
+          type: "image",
+          source: {
+            type: "base64",
+            media_type: imageMatch[1] === "image/jpg" ? "image/jpeg" : imageMatch[1],
+            data: imageMatch[2],
+          },
+        },
+        { type: "text", text: original },
+      ];
+    }
+  }
   const response = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: {
@@ -659,10 +735,11 @@ function createChatResponseStream(
   hasRefUrls: boolean,
   provider: ChatResponseProvider,
   allowWebSearch: boolean,
+  imageDataUrl: string | null,
 ) {
   return provider === "anthropic"
-    ? createAnthropicChatStream(input)
-    : createOpenAIChatStream(input, hasRefUrls, allowWebSearch);
+    ? createAnthropicChatStream(input, imageDataUrl)
+    : createOpenAIChatStream(input, hasRefUrls, allowWebSearch, imageDataUrl);
 }
 
 function parseChatPlan(text: string): ChatPlan | null {
@@ -1018,11 +1095,13 @@ export async function POST(request: Request) {
       : null;
   const normalizedStyleImageContext =
     normalizeStyleImageContext(styleImageContext);
+  const styleImageDataUrl = extractStyleImageDataUrl(styleImageContext);
   if (normalizedStyleImageContext) {
     console.info(
       "[api/chat] attached style image context:",
       JSON.stringify({
         hasName: Boolean(normalizedStyleImageContext.name),
+        hasImageData: Boolean(styleImageDataUrl),
       }),
     );
   }
@@ -1555,6 +1634,7 @@ export async function POST(request: Request) {
     hasRefUrls,
     selectedResponseProvider,
     allowWebSearch,
+    styleImageDataUrl,
   );
 
   const encoder = new TextEncoder();

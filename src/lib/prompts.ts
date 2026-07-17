@@ -258,7 +258,7 @@ export function chatCurrentRequestPrompt() {
 
 export function chatAttachedStyleImagePrompt(name?: string) {
   const label = name?.trim() ? ` Filename: ${name.trim().slice(0, 200)}.` : "";
-  return `The latest user turn includes an attached reference/style image.${label} Treat the image requirement as satisfied: do not ask the user to upload or share a reference again. If the user's text says this, this feeling, like this, 이번엔 이런 느낌, or asks to make/generate using the attached image, route the turn as image-led mockup generation when an active design brief exists. The downstream Stitch step will receive the actual image pixels; this chat model only needs to acknowledge and plan around the attachment.`;
+  return `The latest user turn includes an attached reference/style image, and the image itself is part of this turn's input — you can see it directly.${label} Ground any statement about the image (layout, grid, colors, item counts, text) in what is actually visible; if something is not legible, say so instead of guessing. Treat the image requirement as satisfied: do not ask the user to upload or share a reference again. If the user's text says this, this feeling, like this, 이번엔 이런 느낌, or asks to make/generate using the attached image, route the turn as image-led mockup generation when an active design brief exists. The downstream Stitch step also receives the actual image pixels.`;
 }
 
 export function chatMockupHtmlPrompt(mockupHtml: string) {
