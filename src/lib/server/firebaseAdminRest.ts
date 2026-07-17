@@ -297,6 +297,7 @@ async function fetchFirestoreRead(
   url: string | URL,
   token: string,
   attempts = 3,
+  init: { method?: string; body?: string } = {},
 ) {
   let lastError: unknown = null;
   for (let attempt = 0; attempt < attempts; attempt++) {
@@ -306,7 +307,12 @@ async function fetchFirestoreRead(
     await acquireFirestoreReadSlot();
     try {
       const res = await fetch(url, {
-        headers: { Authorization: `Bearer ${token}` },
+        method: init.method ?? "GET",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          ...(init.body ? { "Content-Type": "application/json" } : {}),
+        },
+        body: init.body,
         signal: AbortSignal.timeout(FIRESTORE_READ_TIMEOUT_MS),
       });
       if (RETRYABLE_STATUS.has(res.status) && attempt < attempts - 1) {
@@ -321,6 +327,49 @@ async function fetchFirestoreRead(
     }
   }
   throw lastError;
+}
+
+// 컬렉션 하나를 runQuery 한 번으로 읽는다. selectFields를 주면 해당 필드만
+// projection해 messages 같은 대형 배열을 내려받지 않는다. 문서별 개별 GET(N+1)
+// 대신 사용할 것.
+export async function queryFirestoreCollection(
+  parentPath: string | null,
+  collectionId: string,
+  token: string,
+  selectFields?: string[],
+): Promise<
+  Array<{ id: string; fields: Record<string, FirestoreDecodedValue> }>
+> {
+  const parent = parentPath
+    ? `${firestoreBase()}/${parentPath}`
+    : firestoreBase();
+  const res = await fetchFirestoreRead(`${parent}:runQuery`, token, 3, {
+    method: "POST",
+    body: JSON.stringify({
+      structuredQuery: {
+        from: [{ collectionId }],
+        ...(selectFields && selectFields.length > 0
+          ? {
+              select: {
+                fields: selectFields.map((fieldPath) => ({ fieldPath })),
+              },
+            }
+          : {}),
+      },
+    }),
+  });
+  if (!res.ok) {
+    throw new Error(`Query ${parentPath ?? ""}/${collectionId} failed: ${res.status}`);
+  }
+  const rows = (await res.json()) as Array<{
+    document?: { name: string; fields?: Record<string, FirestoreValue> };
+  }>;
+  return rows
+    .filter((row) => row.document?.name)
+    .map((row) => ({
+      id: row.document!.name.split("/").at(-1) ?? "",
+      fields: decodeFirestoreFields(row.document!.fields),
+    }));
 }
 
 export async function listFirestoreDocumentIds(

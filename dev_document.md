@@ -4789,3 +4789,10 @@ type ChatPlan = {
 - 성능(검수 결과): listFirestoreDocumentIds가 field mask 없이 컬렉션을 list해 embedding 포함 전체 문서를 내려받고 id만 쓰고 버렸다. 215개 memory 사용자 기준 한 페이지 15.5MB(59개), 전체 나열에 약 60MB. mask.fieldPaths=__name__과 pageSize=300을 추가해 같은 나열이 66KB 한 페이지가 됐다. heavy 사용자 admin memory+clusters GET 5~6초에서 약 2초로, session-summary POST 5.5초에서 약 2.1초로 단축.
 - 남은 비효율(미구현): list 후 문서별 개별 GET(N+1) 패턴이 memoryItems 등 전반에 남아 있다. list를 fields 포함 단일 페이지 요청으로 바꾸면 회당 200여 회 왕복이 수 회로 줄어든다. 후속 과제.
 - graph memory 응답의 embedding 배열은 클라이언트 그래프 레이아웃 투영에 실제 사용되므로 제거 대상 아님.
+
+### 15.297 Aggregate admin user progress on the server `[implemented 2026-07-17]`
+
+- 문제: /admin 유저 목록이 모든 유저의 sessions/{uid}/missions 문서를 클라이언트 Firestore SDK로 통째로 다운로드했다(웹 SDK는 field mask 불가 — messages 등 포함 실측 9.3MB). 리뷰 제출 여부도 유저 x 완료 미션별 개별 HTTP 호출(~30회)이었다.
+- 수정: firebaseAdminRest.ts에 queryFirestoreCollection(runQuery + select projection, 재시도/semaphore 공유) 추가. 신규 GET /api/admin/users/progress가 uid별 세션 진행 스칼라 필드(status, timerStartedAt, startedAt, endedAt, selectedOptionId)와 memoryReviewFeedback.submittedAt을 한 번에 집계 반환. 클라이언트 loadUsers는 세션 getDocs 루프와 리뷰 fan-out을 이 호출 하나로 교체.
+- hasActivity 판정은 원래 messages 등 배열 존재도 참조했으나, 전 세션 실데이터 검증 결과 스칼라(selectedOptionId/timerStartedAt/startedAt)만으로 판정이 동일했다(세션 로드 시 selectedOptionId 자동 저장 때문). projection에서 배열 제외.
+- 검증: 응답 6.9KB(이전 9.3MB), warm 0.6초. 전체 문서 기반 판정과 26개 세션 전수 대조 mismatch 0, 리뷰 제출 문서 23건 포함 확인.
