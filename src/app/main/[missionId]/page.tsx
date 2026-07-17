@@ -3795,7 +3795,12 @@ export default function MainScreenPage() {
   const retrieveMemoryForQuery = useCallback(
     async (
       query: string,
-      options?: { interactionId?: string; userMessageId?: string },
+      options?: {
+        interactionId?: string;
+        userMessageId?: string;
+        // 사용자 발화 원문. 서버가 발화 우세 블렌드 임베딩에 사용한다(15.306).
+        utterance?: string;
+      },
     ): Promise<MemoryRetrievalResponse | null> => {
       if (isReadOnly || !missionId || !query.trim()) return null;
       const currentUser = firebaseAuth.currentUser;
@@ -3810,6 +3815,7 @@ export default function MainScreenPage() {
           },
           body: JSON.stringify({
             query,
+            utterance: options?.utterance,
             missionId,
             limit: 10,
             interactionId: options?.interactionId,
@@ -5604,6 +5610,7 @@ export default function MainScreenPage() {
       const memoryRetrieval = await retrieveMemoryForQuery(retrievalQuery, {
         interactionId: assistantId,
         userMessageId: userMsg.id,
+        utterance: text,
       });
       const retrievedMemory = memoryRetrieval?.retrieved ?? null;
       const isReferenceSearchTurn =

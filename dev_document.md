@@ -4849,3 +4849,12 @@ type ChatPlan = {
 - 배경: 15.301은 현재 턴의 첨부 이미지만 vision으로 전달해, 다음 턴의 후속 질문(머리색이 뭐야 그럼)에는 모델이 이미지를 볼 수 없었다. 매 턴 모든 이미지 재전송은 비용상 비효율.
 - 절충: 최근 12개 메시지 안에서 가장 최근에 첨부됐던 이미지 1장만 previousImageContext로 동반한다. OpenAI 입력에서 현재 턴 이미지는 detail high, 이전 이미지는 detail low(약 85토큰 고정)로 라벨을 붙여 구분 주입. 시스템 프롬프트로 이전 이미지는 참고용이며 이번 턴의 새 첨부로 취급하지 말 것(image-led 목업 라우팅 금지)을 명시 — planner의 hasAttachedStyleImage는 styleImageContext에만 반응하므로 라우팅 부작용 없음.
 - Anthropic legacy 경로도 image block으로 동일 지원. 검증: 이미지 없는 후속 턴에서 previousImageContext만으로 색/위치 질문(초록색, 윗줄 가운데)에 정확히 답하는 것 확인.
+
+### 15.306 Utterance-weighted retrieval and centroid cluster evidence `[implemented 2026-07-17, 15.284 개선]`
+
+- 검증 요청 배경: 15.284(cluster-aware hybrid v1)를 실데이터로 평가한 결과, 안전장치 4종은 노트대로 구현되어 있었으나(top2 보존, coverage 50%, fallback, 라벨/LLM 미사용) 실제 효과는 top-10 경계의 1개 스왑 수준이었고, 스왑 방향이 쿼리 특이 메모리(아이콘)를 밀어내고 크고 일반적인 클러스터 멤버를 넣는 쪽이었다.
+- 원인 규명(오프라인 A/B, Changhwi 활성 207개·16클러스터·실제 로그 쿼리 5개): 증거 공식이 아니라 쿼리 구성이 병목. retrievalQuery가 발화 + Mission + Active idea 연결이라 미션 보일러플레이트가 임베딩을 지배해, 발화의 변별 신호(아이콘, 라인)가 희석됐다. 발화만 임베딩하면 Refined Icon Details 멤버가 full-query 6~25위에서 1~5위로 상승. member-max(v1), raw centroid LOO, mean-centered, global-baseline guard 네 변형 모두 쿼리 병목은 못 넘었다.
+- 수정 1(쿼리): 클라이언트가 utterance(발화 원문)를 함께 전송하고, retrieve가 발화 0.6 + full query 0.4의 벡터 블렌드로 검색한다(단위 벡터 합의 cosine 순위 = 같은 비율의 cosine 가중합 순위). utterance가 없거나 query와 같으면 기존 full query 단독.
+- 수정 2(클러스터 증거): member-similarity 최대값 증거를 쿼리↔클러스터 centroid cosine으로 교체하고 후보 자신은 centroid에서 제외(leave-one-out). 쿼리 임베딩이 없으면 v1 증거로 폴백. retrievalRankingPolicy에 method(cluster_aware_hybrid_v2_centroid), clusterEvidence, queryComposition, utterance를 기록해 분석 스크립트가 정책 변화를 추적할 수 있게 함.
+- 평가 근거: 블렌드+v2에서 아이콘 쿼리 4종의 top-10이 Refined Icon Details 중심으로 재구성되고, 라인 얇게 쿼리는 Line Break Microcopy/Whitespace Tuning/Editorial이 섞인 구성이 됨. 단위 테스트 6/6(generic 클러스터 outlier 무시, 정렬 클러스터 uplift 케이스 포함).
+- 런타임 확인 방법: dev 서버 재시작 후 채팅 1턴을 보내면 memoryRetrievalLogs 최신 문서의 retrievalRankingPolicy.queryComposition이 utterance_0.6_full_query_0.4_vector_blend로 기록된다.

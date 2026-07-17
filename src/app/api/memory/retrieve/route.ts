@@ -401,12 +401,14 @@ export async function POST(request: Request) {
 
   const body = (await request.json().catch(() => ({}))) as {
     query?: unknown;
+    utterance?: unknown;
     missionId?: unknown;
     limit?: unknown;
     interactionId?: unknown;
     userMessageId?: unknown;
   };
   const query = String(body.query ?? "").trim();
+  const utterance = String(body.utterance ?? "").trim();
   const missionId = String(body.missionId ?? "").trim();
   const interactionId = String(body.interactionId ?? "")
     .trim()
@@ -431,7 +433,21 @@ export async function POST(request: Request) {
   try {
     const token = await getFirebaseAccessToken();
     const now = Date.now();
-    const [queryEmbedding] = await embedMemoryTexts([query]);
+    // 검색 벡터는 사용자 발화를 우세하게 블렌드한다. full query는 미션/시안
+    // 보일러플레이트가 지배해 발화의 변별 신호(예: 아이콘)가 희석됐고, 그
+    // 결과 미션-일반 메모리가 상위를 차지했다. 발화 0.6 + full 0.4 벡터 합의
+    // cosine 순위는 개별 cosine의 같은 비율 가중합 순위와 동일하다(15.306).
+    const useUtteranceBlend =
+      utterance.length > 0 && utterance !== query;
+    const embeddings = await embedMemoryTexts(
+      useUtteranceBlend ? [query, utterance] : [query],
+    );
+    const fullQueryEmbedding = embeddings[0];
+    const queryEmbedding = useUtteranceBlend
+      ? fullQueryEmbedding.map(
+          (value, index) => 0.4 * value + 0.6 * embeddings[1][index],
+        )
+      : fullQueryEmbedding;
 
     const { candidates, totalMemoryCount } = await loadCandidates(
       user.localId,
@@ -468,7 +484,12 @@ export async function POST(request: Request) {
         clusterError,
       );
     }
-    const clusterRanking = rankMemoriesWithClusters(ranked, clusters, limit);
+    const clusterRanking = rankMemoriesWithClusters(
+      ranked,
+      clusters,
+      limit,
+      queryEmbedding,
+    );
     retrieved = clusterRanking.items;
     const scoreDeltas = await updateRetrievedWeights(retrieved, token, now);
     // Decay every memory that was NOT retrieved this turn (usage-based forgetting).
@@ -495,6 +516,7 @@ export async function POST(request: Request) {
       `users/${user.localId}/${RETRIEVAL_LOG_COLLECTION}/${retrievalLogId(now, query)}`,
       {
         query: query.slice(0, 1000),
+        utterance: utterance ? utterance.slice(0, 500) : null,
         interactionId: interactionId || null,
         userMessageId: userMessageId || null,
         queryEmbeddingModel: MEMORY_EMBEDDING_MODEL,
@@ -502,11 +524,19 @@ export async function POST(request: Request) {
         memoryVersion: "0.1.2",
         retrievalRankingPolicy: {
           method: clusterRanking.usedClusterRanking
-            ? "cluster_aware_hybrid_v1"
+            ? clusterRanking.evidenceMode === "query_centroid"
+              ? "cluster_aware_hybrid_v2_centroid"
+              : "cluster_aware_hybrid_v1"
             : "global_cosine_fallback",
           individualSimilarityWeight: 0.8,
           clusterEvidenceWeight: 0.2,
-          clusterEvidence: "0.7_max_similarity_plus_0.3_top3_mean",
+          clusterEvidence:
+            clusterRanking.evidenceMode === "query_centroid"
+              ? "query_to_cluster_centroid_cosine_leave_one_out"
+              : "0.7_max_similarity_plus_0.3_top3_mean",
+          queryComposition: useUtteranceBlend
+            ? "utterance_0.6_full_query_0.4_vector_blend"
+            : "full_query_only",
           globalSafeguardCount: 2,
           beforeSession: "same_similarity_ranking_as_other_memories",
           currentBeforeSession:
