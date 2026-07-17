@@ -16,7 +16,11 @@ import { loadUserMemoryItems } from "@/lib/server/memoryItems";
 export const EMBEDDING_MODEL = MEMORY_EMBEDDING_MODEL;
 export const LABEL_MODEL = "gpt-5.4-mini";
 export const MAX_GRAPH_CLUSTER_COUNT = 16;
-export const MAX_ITEMS = 160;
+// 클러스터링 입력 상한. 최신순 상위 N개만 입력되므로, 활성 메모리가 이 값을
+// 넘는 사용자는 가장 오래된 메모리(=초기 세션)가 클러스터 밖 회색 노드로
+// 남는다. soft-cap decay 곡선(입력 300에서 활성 ~133 유지)을 넘어서는 decay
+// 튜닝 이전 참여자(활성 207 관측)까지 덮도록 300으로 상향(15.290).
+export const MAX_ITEMS = 300;
 export const CLUSTER_COLOR_PALETTE_SIZE = 12;
 export const GRAPH_MIN_SIMILARITY_QUANTILE = 0.85;
 export const GRAPH_STRONG_SIMILARITY_QUANTILE = 0.97;

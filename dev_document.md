@@ -4740,3 +4740,18 @@ type ChatPlan = {
 - 원인 2(클라이언트): MemoryClusterPage.loadData가 !ok 응답을 null로 삼켜 실패를 빈 데이터(0개 클러스터)처럼 렌더링했다. 에러 표시도 재시도 수단도 없었다.
 - 수정: src/lib/server/firebaseAdminRest.ts에 fetchFirestoreRead(3회, backoff, 429/5xx/네트워크 오류 대상)를 추가해 listFirestoreDocumentIds와 getFirestoreDocument 읽기 경로에 적용. src/app/agent/page.tsx의 loadData는 fetchJsonWithRetry(1회 재시도)로 바꾸고 실패 시 loadError 상태로 다시 시도 버튼이 있는 에러 화면을 표시한다.
 - 검증: 실행 중인 dev 서버에 admin ID token으로 self/admin cluster GET을 반복 호출(수정 전 5회 중 2회 500 → 수정 후 cold recompile 강제 포함 30/30 성공).
+
+### 15.289 Cap concurrent Firestore reads and add per-attempt timeout `[implemented 2026-07-17]`
+
+- 증상: 15.288 이후에도 admin이 메모리가 많은 사용자(215개 문서)의 memory를 볼 때 session-summary POST가 36초 걸려 500. 원인은 connect ETIMEDOUT(34.128.x.x:443) — 여러 route가 Promise.all로 문서 수백 개를 무제한 병렬 REST 조회하면서 동시 TLS 연결 폭주로 SYN이 drop됐다. 이 상태에서는 재시도도 같은 폭주 속으로 들어가 소용이 없었다.
+- 수정: src/lib/server/firebaseAdminRest.ts의 fetchFirestoreRead에 모든 읽기가 공유하는 semaphore(동시 12개)와 시도당 10초 AbortSignal timeout을 추가. listFirestoreDocumentIds와 getFirestoreDocument를 쓰는 모든 route(메모리 조회, 클러스터, session-summary 등)가 호출부 수정 없이 적용받는다.
+- 참고: Next dev는 route별로 모듈을 분리 컴파일하므로 semaphore는 route bundle 단위다. 한 페이지가 route 2개를 동시에 부르면 최대 24개 연결 — 수백 개 무제한 대비 충분히 낮다.
+- 검증: 215개 memory 사용자로 admin memory GET + clusters GET 동시 6라운드(12/12 성공, 5~6초), session-summary POST 3회(3/3 성공, ~5.5초).
+
+### 15.290 Raise clustering input cap to 300 `[implemented 2026-07-17]`
+
+- 증상 1: 활성 메모리 207개 사용자의 memory 화면에서 비활성은 8개뿐인데 클러스터에 속하지 않는 회색 노드가 47개 표시됨.
+- 증상 2: 같은 사용자의 이전 세션 필터(초기 날짜)를 선택하면 클러스터가 거의 표시되지 않음.
+- 원인: 두 증상 모두 memoryClustering.ts의 MAX_ITEMS=160. 클러스터링 입력이 최신순 상위 160개로 잘려 가장 오래된 활성 47개(=초기 세션 메모리: 온보딩 5, 101001 9, 301001 12, 203001 19 전부/대부분)가 어떤 클러스터에도 못 들어갔다. 세션 필터 뷰는 최신 캐시를 필터해 재사용하므로 초기 세션일수록 클러스터 커버리지가 0에 수렴했다. 캐시 stale 문제 아님(캐시 생성 후 신규 메모리 0개 확인).
+- 결정: MAX_ITEMS를 300으로 상향. soft-cap decay 곡선(입력 300에서 활성 ~133)대로면 160도 충분하지만, decay 튜닝 이전 참여자(활성 207 관측)를 덮기 위함. 300개 입력도 O(n^2) 유사도 계산과 임베딩 캐시(문서 저장) 기준 비용 문제 없음.
+- 검증: 해당 사용자 재생성 후 16 clusters / 695 edges / itemIds 합집합 207 = 활성 전부 포함, 미션별 제외 0개. 다른 사용자는 모두 160 미만이라 영향 없음.

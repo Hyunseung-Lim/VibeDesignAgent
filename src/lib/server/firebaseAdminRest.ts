@@ -265,10 +265,33 @@ export function firestoreBase() {
   return `https://firestore.googleapis.com/v1/projects/${projectId}/databases/(default)/documents`;
 }
 
-// Firestore 읽기는 요청당 수십 개의 병렬 REST 호출로 이뤄져 transient 오류
-// (429/5xx, 소켓 오류) 하나만 나도 라우트 전체가 500이 된다. 읽기 호출에
+// Firestore 읽기는 요청당 수십~수백 개의 병렬 REST 호출로 이뤄져 transient
+// 오류(429/5xx, 소켓 오류) 하나만 나도 라우트 전체가 500이 된다. 읽기 호출에
 // 한해 짧은 backoff 재시도로 흡수한다.
+// 또한 메모리가 많은 사용자는 문서 수백 개를 Promise.all로 한꺼번에 조회하는데,
+// 무제한 병렬 TLS 연결이 connect ETIMEDOUT을 유발했다(15.289). 모든 읽기가
+// 공유하는 semaphore로 동시 연결 수를 제한하고, 시도당 타임아웃으로 한 번의
+// hang이 요청 전체를 수십 초 붙잡지 않게 한다.
 const RETRYABLE_STATUS = new Set([429, 500, 502, 503, 504]);
+const MAX_CONCURRENT_FIRESTORE_READS = 12;
+const FIRESTORE_READ_TIMEOUT_MS = 10_000;
+
+let activeFirestoreReads = 0;
+const firestoreReadQueue: Array<() => void> = [];
+
+async function acquireFirestoreReadSlot() {
+  if (activeFirestoreReads < MAX_CONCURRENT_FIRESTORE_READS) {
+    activeFirestoreReads += 1;
+    return;
+  }
+  await new Promise<void>((resolve) => firestoreReadQueue.push(resolve));
+}
+
+function releaseFirestoreReadSlot() {
+  const next = firestoreReadQueue.shift();
+  if (next) next();
+  else activeFirestoreReads -= 1;
+}
 
 async function fetchFirestoreRead(
   url: string | URL,
@@ -278,11 +301,13 @@ async function fetchFirestoreRead(
   let lastError: unknown = null;
   for (let attempt = 0; attempt < attempts; attempt++) {
     if (attempt > 0) {
-      await new Promise((resolve) => setTimeout(resolve, 250 * attempt));
+      await new Promise((resolve) => setTimeout(resolve, 400 * attempt));
     }
+    await acquireFirestoreReadSlot();
     try {
       const res = await fetch(url, {
         headers: { Authorization: `Bearer ${token}` },
+        signal: AbortSignal.timeout(FIRESTORE_READ_TIMEOUT_MS),
       });
       if (RETRYABLE_STATUS.has(res.status) && attempt < attempts - 1) {
         lastError = new Error(`Firestore read failed: ${res.status}`);
@@ -291,6 +316,8 @@ async function fetchFirestoreRead(
       return res;
     } catch (error) {
       lastError = error;
+    } finally {
+      releaseFirestoreReadSlot();
     }
   }
   throw lastError;
