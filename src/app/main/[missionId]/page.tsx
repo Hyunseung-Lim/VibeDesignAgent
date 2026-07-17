@@ -2539,6 +2539,7 @@ type MemoryReviewIntroPanelProps = {
 
 const MEMORY_REVIEW_INTRO_KEYS = {
   sessionUnderstanding: "session_understanding",
+  designPreference: "design_preference_understanding",
   memoryHelpfulness: "memory_helpfulness",
   futureMemory: "future_memory_freeform",
 } as const;
@@ -2570,6 +2571,13 @@ function MemoryReviewIntroPanel({
         MEMORY_REVIEW_INTRO_KEYS.sessionUnderstanding,
       ),
   );
+  const [preferenceRating, setPreferenceRating] = useState<number | null>(
+    () =>
+      initialReviewRating(
+        initialAnswers,
+        MEMORY_REVIEW_INTRO_KEYS.designPreference,
+      ),
+  );
   const [helpfulnessRating, setHelpfulnessRating] = useState<number | null>(
     () =>
       initialReviewRating(
@@ -2586,12 +2594,16 @@ function MemoryReviewIntroPanel({
     setUnderstandingRating(value);
   }, []);
 
+  const selectPreferenceRating = useCallback((value: number) => {
+    setPreferenceRating(value);
+  }, []);
+
   const selectHelpfulnessRating = useCallback((value: number) => {
     setHelpfulnessRating(value);
   }, []);
 
   const ratingButtonClass = (selected: boolean) =>
-    `h-9 w-9 rounded-full border text-sm font-semibold transition ${
+    `h-8 w-8 rounded-full border text-sm font-semibold transition ${
       selected
         ? "border-slate-900 bg-slate-900 text-white"
         : "border-slate-200 bg-white text-slate-600 hover:border-slate-400 hover:bg-white hover:text-slate-950"
@@ -2599,6 +2611,7 @@ function MemoryReviewIntroPanel({
 
   const canContinue =
     understandingRating !== null &&
+    preferenceRating !== null &&
     helpfulnessRating !== null &&
     futureMemoryText.trim().length > 0;
 
@@ -2607,6 +2620,10 @@ function MemoryReviewIntroPanel({
     const answers: MemoryReviewAnswers = {
       [MEMORY_REVIEW_INTRO_KEYS.sessionUnderstanding]: {
         text: String(understandingRating),
+        mentions: [],
+      },
+      [MEMORY_REVIEW_INTRO_KEYS.designPreference]: {
+        text: String(preferenceRating),
         mentions: [],
       },
       [MEMORY_REVIEW_INTRO_KEYS.memoryHelpfulness]: {
@@ -2631,8 +2648,8 @@ function MemoryReviewIntroPanel({
     value: number | null,
     onSelect: (value: number) => void,
   ) => (
-    <div className="space-y-2.5">
-      <div className="flex justify-between gap-2">
+    <div className="space-y-1.5">
+      <div className="flex justify-between gap-1.5">
         {Array.from({ length: 7 }, (_, index) => index + 1).map((score) => (
           <button
             key={score}
@@ -2646,7 +2663,7 @@ function MemoryReviewIntroPanel({
           </button>
         ))}
       </div>
-      <div className="grid grid-cols-3 text-[11px] font-medium leading-tight text-slate-500">
+      <div className="grid grid-cols-3 text-[10px] font-medium leading-tight text-slate-400">
         <span>1 전혀 아니다</span>
         <span className="text-center">4 보통</span>
         <span className="text-right">7 매우 그렇다</span>
@@ -2658,42 +2675,49 @@ function MemoryReviewIntroPanel({
     <section className="shrink-0 border-b border-slate-300 bg-slate-100 px-4 py-2 lg:px-6">
       <div className="mx-auto max-w-[100rem] overflow-hidden rounded-lg border border-slate-200 bg-white shadow-[0_8px_18px_rgba(15,23,42,0.08)]">
       <div className="flex items-center gap-3 border-b border-slate-200 px-5 py-2.5">
-        <div className="min-w-0">
-          <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+        <div className="flex min-w-0 items-baseline gap-2">
+          <p className="shrink-0 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
             Review Part 1
           </p>
-          <h2 className="text-base font-semibold tracking-normal text-slate-950">
+          <span className="text-slate-300">·</span>
+          <h2 className="truncate text-base font-semibold tracking-normal text-slate-950">
             오늘 세션 돌아보기
           </h2>
-          <p className="mt-1 text-xs leading-snug text-slate-500">
-            채팅을 보면서 오늘 세션에서 무엇을 기억하면 좋을지 먼저 정리해 주세요.
-          </p>
         </div>
       </div>
-      <div className="grid gap-3 px-5 py-3 lg:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">
-        <div className="grid gap-3">
-          <section className="space-y-2.5 rounded-lg border border-slate-200 bg-slate-50/70 p-3">
-            <p className="text-sm font-semibold leading-snug text-slate-800">
-              1. 오늘 세션에서, 에이전트가 내 취향과 작업 방식을 잘 이해하고 있다고 느꼈습니다.
-            </p>
-            {renderRatingRow(
-              understandingRating,
-              selectUnderstandingRating,
-            )}
-          </section>
-          <section className="space-y-2.5 rounded-lg border border-slate-200 bg-slate-50/70 p-3">
-            <p className="text-sm font-semibold leading-snug text-slate-800">
-              2. 오늘 세션에서, 에이전트의 메모리 덕분에 작업이 더 수월했습니다.
-            </p>
-            {renderRatingRow(
-              helpfulnessRating,
-              selectHelpfulnessRating,
-            )}
-          </section>
+      <div className="space-y-2.5 px-5 py-2.5">
+        <div className="grid gap-2.5 md:grid-cols-3">
+        <section className="flex flex-col justify-between gap-2 rounded-lg border border-slate-200 bg-slate-50/70 p-2.5">
+          <p className="text-[13px] font-semibold leading-snug text-slate-800">
+            1. 오늘 세션에서, 에이전트가 내 작업 방식을 잘 이해하고 있다고 느꼈습니다.
+          </p>
+          {renderRatingRow(
+            understandingRating,
+            selectUnderstandingRating,
+          )}
+        </section>
+        <section className="flex flex-col justify-between gap-2 rounded-lg border border-slate-200 bg-slate-50/70 p-2.5">
+          <p className="text-[13px] font-semibold leading-snug text-slate-800">
+            2. 에이전트가 내 디자인 취향과 선호를 잘 이해하고 있다고 느꼈습니다.
+          </p>
+          {renderRatingRow(
+            preferenceRating,
+            selectPreferenceRating,
+          )}
+        </section>
+        <section className="flex flex-col justify-between gap-2 rounded-lg border border-slate-200 bg-slate-50/70 p-2.5">
+          <p className="text-[13px] font-semibold leading-snug text-slate-800">
+            3. 에이전트의 메모리 덕분에 협업이 더 수월했습니다.
+          </p>
+          {renderRatingRow(
+            helpfulnessRating,
+            selectHelpfulnessRating,
+          )}
+        </section>
         </div>
-        <section className="flex min-h-0 flex-col space-y-2 rounded-lg border border-slate-200 bg-slate-50/70 p-3">
-          <p className="text-sm font-semibold leading-snug text-slate-800">
-            3. 오늘 세션 내용 중, 에이전트가 앞으로 기억해 주었으면 하는 것들을 최대한 많이, 자세하게 적어주세요.
+        <section className="flex min-h-0 flex-col space-y-1.5 rounded-lg border border-slate-200 bg-slate-50/70 p-2.5">
+          <p className="text-[13px] font-semibold leading-snug text-slate-800">
+            4. 오늘 세션 내용 중, 에이전트가 앞으로 기억해 주었으면 하는 것들을 최대한 많이, 자세하게 적어주세요.
           </p>
           <Textarea
             value={futureMemoryText}
@@ -2701,7 +2725,7 @@ function MemoryReviewIntroPanel({
               setFutureMemoryText(event.target.value);
             }}
             placeholder="예: 내가 반복해서 요청한 방식, 좋았던 결과, 다음 작업에도 이어졌으면 하는 기준"
-            className="min-h-24 flex-1 resize-none text-sm leading-relaxed"
+            className="min-h-16 flex-1 resize-none text-sm leading-relaxed"
           />
         </section>
       </div>
@@ -5671,6 +5695,24 @@ export default function MainScreenPage() {
                 dataUrl: styleImageForTurn,
               }
             : undefined,
+          // 최근 턴에서 첨부했던 이미지 1장을 참고용 저해상도로 동반해
+          // 후속 질문(아까 그 이미지에서...)에 답할 수 있게 한다(15.305).
+          previousImageContext: (() => {
+            const previous = [...messages]
+              .slice(-12)
+              .reverse()
+              .find(
+                (message) =>
+                  message.role === "user" && message.styleImage?.dataUrl,
+              )?.styleImage;
+            return previous?.dataUrl && previous.dataUrl !== styleImageForTurn
+              ? {
+                  present: true,
+                  name: previous.name,
+                  dataUrl: previous.dataUrl,
+                }
+              : undefined;
+          })(),
           review: {
             missionId,
             turnId: assistantId,
@@ -8954,7 +8996,7 @@ export default function MainScreenPage() {
                 memoryReviewAnswers?.[MEMORY_REVIEW_INTRO_KEYS.futureMemory]
                   ?.text ?? ""
               }
-              startNumber={4}
+              startNumber={5}
               saveStatus={memoryReviewSaveStatus}
               submittedAt={memoryReviewSubmittedAt}
               readOnly={isViewingAsAdmin}

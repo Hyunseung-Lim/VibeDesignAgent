@@ -32,7 +32,8 @@ function reasonKey(questionId: string) {
 const REVIEW_QUESTIONS: ReviewQuestion[] = [
   {
     id: "expected_memory_present",
-    label: "메모리를 둘러보며, 기대했던 대로 기억된 내용이 있나요?",
+    label:
+      "메모리를 둘러보며, 기억하기를 기대했던 내용이 실제로 기억되어 있는지 확인해주세요. 어떤 내용들이 이에 해당하나요?",
     allowNone: true,
     placeholder: "어떤 내용인지 적어주세요",
   },
@@ -113,12 +114,17 @@ type MemoryReviewPanelProps = {
 const PART1_QUESTIONS: { key: string; label: string; rating: boolean }[] = [
   {
     key: "session_understanding",
-    label: "에이전트가 내 취향과 작업 방식을 잘 이해하고 있다고 느꼈다",
+    label: "에이전트가 내 작업 방식을 잘 이해하고 있다고 느꼈다",
+    rating: true,
+  },
+  {
+    key: "design_preference_understanding",
+    label: "에이전트가 내 디자인 취향과 선호를 잘 이해하고 있다고 느꼈다",
     rating: true,
   },
   {
     key: "memory_helpfulness",
-    label: "에이전트의 메모리 덕분에 작업이 더 수월했다",
+    label: "에이전트의 메모리 덕분에 협업이 더 수월했다",
     rating: true,
   },
   {
@@ -856,7 +862,7 @@ export function MemoryReviewPanel({
           </div>
         ) : (
           <p className="mt-2 text-sm font-medium leading-relaxed text-slate-600">
-            3번에서 적은 답변과 실제로 저장된 정보를 비교해서 아래 질문에
+            4번에서 적은 답변과 실제로 저장된 정보를 비교해서 아래 질문에
             답해주세요.{" "}
             <span className="text-slate-400">
               (@ 입력 후 왼쪽 메모리뷰에서 항목을 선택해 언급할 수 있어요)

@@ -537,39 +537,54 @@ function anthropicMessages(input: BuiltChatMessage[]) {
   return { system, messages };
 }
 
+type ChatVisionImages = {
+  // 이번 턴에 첨부된 이미지 — 정밀 판독이 필요하므로 detail high.
+  current: string | null;
+  // 최근 턴에서 첨부했던 이미지 — 후속 질문 대응용 저비용 detail low.
+  previous: string | null;
+};
+
 // 첨부 이미지를 마지막 user 메시지에 vision part로 붙인다. 프롬프트 로그와
 // sanitize 경로는 텍스트만 다루므로, provider 입력 직전에만 변환한다.
 function openaiInputWithImage(
   input: BuiltChatMessage[],
-  imageDataUrl: string | null,
+  images: ChatVisionImages,
 ) {
-  if (!imageDataUrl) return input;
+  if (!images.current && !images.previous) return input;
   const lastUserIdx = input.findLastIndex(
     (message) => message.role === "user",
   );
   if (lastUserIdx === -1) return input;
-  return input.map((message, index) =>
-    index === lastUserIdx
-      ? {
-          role: "user" as const,
-          content: [
-            { type: "input_text" as const, text: message.content },
-            {
-              type: "input_image" as const,
-              image_url: imageDataUrl,
-              detail: "high" as const,
-            },
-          ],
-        }
-      : message,
-  );
+  return input.map((message, index) => {
+    if (index !== lastUserIdx) return message;
+    const parts: Array<
+      | { type: "input_text"; text: string }
+      | { type: "input_image"; image_url: string; detail: "high" | "low" }
+    > = [{ type: "input_text", text: message.content }];
+    if (images.current) {
+      parts.push(
+        { type: "input_text", text: "[이번 턴에 첨부된 이미지]" },
+        { type: "input_image", image_url: images.current, detail: "high" },
+      );
+    }
+    if (images.previous) {
+      parts.push(
+        {
+          type: "input_text",
+          text: "[참고용: 이전 턴에서 첨부했던 이미지 (저해상도)]",
+        },
+        { type: "input_image", image_url: images.previous, detail: "low" },
+      );
+    }
+    return { role: "user" as const, content: parts };
+  });
 }
 
 async function* createOpenAIChatStream(
   input: BuiltChatMessage[],
   hasRefUrls: boolean,
   allowWebSearch: boolean,
-  imageDataUrl: string | null,
+  images: ChatVisionImages,
 ): AsyncGenerator<ChatProviderStreamEvent> {
   const stream = await openai.responses.create({
     model: OPENAI_CHAT_MODEL,
@@ -584,7 +599,7 @@ async function* createOpenAIChatStream(
       : {}),
     input: openaiInputWithImage(
       input,
-      imageDataUrl,
+      images,
     ) as Parameters<typeof openai.responses.create>[0]["input"],
     stream: true,
   });
@@ -618,33 +633,40 @@ async function* createOpenAIChatStream(
   }
 }
 
+function anthropicImageBlock(dataUrl: string) {
+  const match = dataUrl.match(/^data:(image\/[a-z]+);base64,(.+)$/);
+  if (!match) return null;
+  return {
+    type: "image" as const,
+    source: {
+      type: "base64" as const,
+      media_type: match[1] === "image/jpg" ? "image/jpeg" : match[1],
+      data: match[2],
+    },
+  };
+}
+
 async function* createAnthropicChatStream(
   input: BuiltChatMessage[],
-  imageDataUrl: string | null,
+  images: ChatVisionImages,
 ): AsyncGenerator<ChatProviderStreamEvent> {
   if (!process.env.ANTHROPIC_API_KEY) {
     throw new Error("ANTHROPIC_API_KEY is required when CHAT_RESPONSE_PROVIDER=anthropic");
   }
 
   const { system, messages } = anthropicMessages(input);
-  const imageMatch = imageDataUrl?.match(
-    /^data:(image\/[a-z]+);base64,(.+)$/,
-  );
-  if (imageMatch) {
+  const imageBlocks = [
+    images.current ? anthropicImageBlock(images.current) : null,
+    images.previous ? anthropicImageBlock(images.previous) : null,
+  ].filter(Boolean);
+  if (imageBlocks.length > 0) {
     const lastUserIdx = messages.findLastIndex(
       (message) => message.role === "user",
     );
     if (lastUserIdx !== -1) {
       const original = messages[lastUserIdx].content;
       (messages[lastUserIdx] as { content: unknown }).content = [
-        {
-          type: "image",
-          source: {
-            type: "base64",
-            media_type: imageMatch[1] === "image/jpg" ? "image/jpeg" : imageMatch[1],
-            data: imageMatch[2],
-          },
-        },
+        ...imageBlocks,
         { type: "text", text: original },
       ];
     }
@@ -735,11 +757,11 @@ function createChatResponseStream(
   hasRefUrls: boolean,
   provider: ChatResponseProvider,
   allowWebSearch: boolean,
-  imageDataUrl: string | null,
+  images: ChatVisionImages,
 ) {
   return provider === "anthropic"
-    ? createAnthropicChatStream(input, imageDataUrl)
-    : createOpenAIChatStream(input, hasRefUrls, allowWebSearch, imageDataUrl);
+    ? createAnthropicChatStream(input, images)
+    : createOpenAIChatStream(input, hasRefUrls, allowWebSearch, images);
 }
 
 function parseChatPlan(text: string): ChatPlan | null {
@@ -1074,6 +1096,7 @@ export async function POST(request: Request) {
     requestedCommand,
     mentionedArtifact,
     styleImageContext,
+    previousImageContext,
   } = await request.json();
   const requestedCommandId = normalizeRequestedCommand(requestedCommand);
   const mentionRecord =
@@ -1096,6 +1119,7 @@ export async function POST(request: Request) {
   const normalizedStyleImageContext =
     normalizeStyleImageContext(styleImageContext);
   const styleImageDataUrl = extractStyleImageDataUrl(styleImageContext);
+  const previousImageDataUrl = extractStyleImageDataUrl(previousImageContext);
   if (normalizedStyleImageContext) {
     console.info(
       "[api/chat] attached style image context:",
@@ -1491,6 +1515,16 @@ export async function POST(request: Request) {
     });
   }
 
+  if (previousImageDataUrl) {
+    markContext("previousImageContext");
+    systemMessages.push({
+      role: "system",
+      label: "previousImageContext",
+      content:
+        "An image the user attached in an EARLIER turn is re-included in this turn's input at reduced detail, labeled 참고용. Use it to answer follow-up questions about that image. Do NOT treat it as a new attachment for this turn: it does not satisfy image-led mockup requirements and must not trigger image-led routing by itself.",
+    });
+  }
+
   // Late in the system stack, right before currentRequest, where this-turn
   // behavioral instructions get the most weight (15.266).
   if (promptPlan.memoryDirectives.length > 0) {
@@ -1634,7 +1668,7 @@ export async function POST(request: Request) {
     hasRefUrls,
     selectedResponseProvider,
     allowWebSearch,
-    styleImageDataUrl,
+    { current: styleImageDataUrl, previous: previousImageDataUrl },
   );
 
   const encoder = new TextEncoder();

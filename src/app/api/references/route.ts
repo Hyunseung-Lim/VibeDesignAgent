@@ -15,7 +15,11 @@ const FINAL_REFERENCE_COUNT = 3;
 // Upper bound when the user asks for a specific number of references. Keeps
 // "100개" style requests from degrading search quality / flooding the panel.
 const MAX_REFERENCE_COUNT = 6;
-const REFERENCE_SCREENSHOT_TIMEOUT_MS = 18_000;
+// Microlink 콜드 렌더는 무거운 커머스 페이지 기준 실측 ~20초라 어차피 첫
+// 조회는 기다릴 수 없다. abort해도 Microlink가 렌더를 마저 끝내 캐시하므로
+// 12초로 끊고 직접 이미지로 폴백하면, 같은 URL의 다음 검색부터는 캐시가
+// 즉시 응답한다(15.304).
+const REFERENCE_SCREENSHOT_TIMEOUT_MS = 12_000;
 const REFERENCE_IMAGE_CHECK_TIMEOUT_MS = 5_000;
 
 export const maxDuration = 120;
@@ -358,11 +362,14 @@ async function fallbackReferenceImageUrl(
   strategy: ThumbnailStrategy,
 ) {
   if (strategy === "screenshot-first") {
+    // 스크린샷을 기다리는 동안 직접 이미지 검증을 병렬로 진행해, 스크린샷
+    // 실패/타임아웃 시 추가 대기 없이 즉시 폴백한다.
+    const directImagePromise = firstVerifiedImageUrl(
+      uniqueImageCandidates([reference.imageUrl ?? ""], baseUrl),
+    ).catch(() => "");
     const screenshotUrl = await screenshotFallbackUrl(reference);
     if (screenshotUrl) return screenshotUrl;
-    return firstVerifiedImageUrl(
-      uniqueImageCandidates([reference.imageUrl ?? ""], baseUrl),
-    );
+    return directImagePromise;
   }
   const directImage = await firstVerifiedImageUrl(
     uniqueImageCandidates([reference.imageUrl ?? ""], baseUrl),
@@ -376,9 +383,12 @@ async function selectReferenceThumbnail(params: {
   strategy: ThumbnailStrategy;
 }) {
   if (params.strategy === "screenshot-first") {
+    const directImagePromise = firstVerifiedImageUrl(
+      params.imageCandidates,
+    ).catch(() => "");
     const screenshotUrl = await screenshotFallbackUrl(params.reference);
     if (screenshotUrl) return screenshotUrl;
-    return firstVerifiedImageUrl(params.imageCandidates);
+    return directImagePromise;
   }
   const verifiedImage = await firstVerifiedImageUrl(params.imageCandidates);
   return verifiedImage || screenshotFallbackUrl(params.reference);
@@ -819,10 +829,12 @@ async function searchWebReferences(
         );
       },
     );
-    // Limit concurrency to 3 to avoid hammering external sites simultaneously
+    // Limit concurrency to 3 to avoid hammering external sites simultaneously.
+    // 이미지 확보에 실패해도 카드는 그대로 반환되므로, 실제 반환할 후보만
+    // hydrate한다(여분 hydrate는 외부 호출 낭비 — 15.304).
     const hydrated = await withConcurrency(
       parsed
-        .slice(0, 6)
+        .slice(0, targetCount)
         .map((ref) => () => hydrateReferenceMetadata(ref, thumbnailStrategy)),
       3,
     );
