@@ -5,19 +5,9 @@ import {
   queryFirestoreCollection,
   verifyFirebaseIdToken,
 } from "@/lib/server/firebaseAdminRest";
+import { SESSION_PROGRESS_FIELDS } from "@/lib/server/sessionProgress";
 
 export const runtime = "nodejs";
-
-// missionProgressFromSession이 참조하는 스칼라 필드만 projection한다.
-// messages/ideas/artboards/references 배열은 내려받지 않는다 — 실데이터 검증
-// 결과 hasActivity 판정은 아래 스칼라만으로 동일하다(15.297).
-const SESSION_PROGRESS_FIELDS = [
-  "status",
-  "timerStartedAt",
-  "startedAt",
-  "endedAt",
-  "selectedOptionId",
-];
 
 export async function GET(request: Request) {
   const requester = await verifyFirebaseIdToken(request);

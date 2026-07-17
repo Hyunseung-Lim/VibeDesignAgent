@@ -147,81 +147,69 @@ export default function LobbyPage() {
     });
   }, [router]);
 
+  // Session progress + review submission from one projected endpoint.
+  // (Previously an onSnapshot over the user's full session docs — multi-MB for
+  // long sessions since the client SDK cannot mask fields — plus a per-mission
+  // review-feedback fetch fan-out.) Realtime is replaced by a refetch whenever
+  // the tab regains focus, which covers returning from a session.
   useEffect(() => {
     if (!userId) {
       setMissionProgressById({});
-      return;
-    }
-    return onSnapshot(
-      collection(db, "sessions", userId, "missions"),
-      (snap) => {
-        setMissionProgressById(
-          Object.fromEntries(
-            snap.docs.map((d) => [
-              d.id,
-              missionProgressFromSession(d.data() as Record<string, unknown>),
-            ]),
-          ),
-        );
-      },
-      () => setMissionProgressById({}),
-    );
-  }, [userId]);
-
-  useEffect(() => {
-    if (!userId) {
-      setReviewSubmittedByMissionId({});
-      return;
-    }
-    const completedMissionIds = Object.entries(missionProgressById)
-      .filter(([, progress]) => progress.status === "completed")
-      .map(([missionId]) => missionId);
-    if (
-      !isCheckingOnboarding &&
-      !isOnboardingRequired &&
-      !completedMissionIds.includes(ONBOARDING_MISSION_ID)
-    ) {
-      completedMissionIds.unshift(ONBOARDING_MISSION_ID);
-    }
-    if (completedMissionIds.length === 0) {
       setReviewSubmittedByMissionId({});
       return;
     }
     let cancelled = false;
-    const currentUser = firebaseAuth.currentUser;
-    if (!currentUser) return;
-    getIdToken(currentUser)
-      .then((token) =>
-        Promise.all(
-          completedMissionIds.map(async (missionId) => {
-            const response = await fetch(
-              `/api/memory/review-feedback?missionId=${encodeURIComponent(missionId)}`,
-              { headers: { Authorization: `Bearer ${token}` } },
-            ).catch(() => null);
-            if (!response?.ok) return [missionId, false] as const;
-            const data = (await response.json().catch(() => null)) as {
-              feedback?: { submittedAt?: number | null } | null;
-            } | null;
-            return [missionId, Boolean(data?.feedback?.submittedAt)] as const;
-          }),
-        ),
-      )
-      .then((entries) => {
+    const load = async () => {
+      const currentUser = firebaseAuth.currentUser;
+      if (!currentUser) return;
+      try {
+        const token = await getIdToken(currentUser);
+        const res = await fetch("/api/users/me/progress", {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!res.ok) throw new Error(`progress failed: ${res.status}`);
+        const data = await res.json();
         if (cancelled) return;
-        setReviewSubmittedByMissionId(Object.fromEntries(entries));
-      })
-      .catch(() => {
-        if (!cancelled) setReviewSubmittedByMissionId({});
-      });
+        const missions = (data?.missions ?? {}) as Record<
+          string,
+          Record<string, unknown>
+        >;
+        setMissionProgressById(
+          Object.fromEntries(
+            Object.entries(missions).map(([missionId, fields]) => [
+              missionId,
+              missionProgressFromSession(fields),
+            ]),
+          ),
+        );
+        const review = (data?.reviewSubmittedAt ?? {}) as Record<
+          string,
+          number | null
+        >;
+        setReviewSubmittedByMissionId(
+          Object.fromEntries(
+            Object.entries(review).map(([missionId, submittedAt]) => [
+              missionId,
+              Boolean(submittedAt),
+            ]),
+          ),
+        );
+      } catch (err) {
+        console.error("[lobby] progress load failed", err);
+      }
+    };
+    void load();
+    const refresh = () => {
+      if (document.visibilityState === "visible") void load();
+    };
+    document.addEventListener("visibilitychange", refresh);
+    window.addEventListener("focus", refresh);
     return () => {
       cancelled = true;
+      document.removeEventListener("visibilitychange", refresh);
+      window.removeEventListener("focus", refresh);
     };
-  }, [
-    isCheckingOnboarding,
-    isOnboardingRequired,
-    missionProgressById,
-    userId,
-  ]);
+  }, [userId]);
 
   useEffect(() => {
     const q = query(collection(db, "missions"), orderBy("createdAt", "asc"));

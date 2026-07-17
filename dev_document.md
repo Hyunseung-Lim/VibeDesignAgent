@@ -4796,3 +4796,10 @@ type ChatPlan = {
 - 수정: firebaseAdminRest.ts에 queryFirestoreCollection(runQuery + select projection, 재시도/semaphore 공유) 추가. 신규 GET /api/admin/users/progress가 uid별 세션 진행 스칼라 필드(status, timerStartedAt, startedAt, endedAt, selectedOptionId)와 memoryReviewFeedback.submittedAt을 한 번에 집계 반환. 클라이언트 loadUsers는 세션 getDocs 루프와 리뷰 fan-out을 이 호출 하나로 교체.
 - hasActivity 판정은 원래 messages 등 배열 존재도 참조했으나, 전 세션 실데이터 검증 결과 스칼라(selectedOptionId/timerStartedAt/startedAt)만으로 판정이 동일했다(세션 로드 시 selectedOptionId 자동 저장 때문). projection에서 배열 제외.
 - 검증: 응답 6.9KB(이전 9.3MB), warm 0.6초. 전체 문서 기반 판정과 26개 세션 전수 대조 mismatch 0, 리뷰 제출 문서 23건 포함 확인.
+
+### 15.298 Lobby progress via projected self endpoint `[implemented 2026-07-17]`
+
+- 문제: 로비가 자기 세션 진행상황을 onSnapshot(sessions/{uid}/missions)로 구독해 messages 포함 전체 문서를 다운로드했다(장기 참여자 기준 수 MB). 리뷰 제출 여부도 완료 미션별 review-feedback 개별 fetch였다.
+- 수정: 신규 GET /api/users/me/progress가 SESSION_PROGRESS_FIELDS projection(공용 상수 src/lib/server/sessionProgress.ts, admin progress route와 공유)과 memoryReviewFeedback.submittedAt을 한 번에 반환. 로비는 mount 시 1회 fetch + visibilitychange/focus 시 refetch로 대체(실시간 구독 제거 — 세션에서 돌아오는 시나리오는 focus refetch가 커버).
+- 검증: heavy 사용자 기준 1.3KB 응답(세션 6개 + 리뷰 6건), 상태값 전수 일치, /lobby 200.
+- 미션 페이지 검수 결과(미구현): persistSessionSnapshot이 1.5초 debounce 후 세션 문서 전체(messages/artboards/activityLog)를 setDoc으로 재업로드한다. 세션 후반 문서가 수 MB일 때 저장마다 그만큼 업로드된다. 스냅샷 데이터 모델 자체라 실험 중 변경은 위험 — 연구 종료 후 messages/activityLog subcollection 분리 또는 delta 저장 검토. 초기 세션 문서 로드와 미션 제목 getDocs는 필요/소형이라 현행 유지.
