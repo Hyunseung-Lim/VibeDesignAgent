@@ -4864,4 +4864,11 @@ type ChatPlan = {
 - 배경: planner의 memorySimilaritySignal 임계값(0.48/0.44/0.39)은 구 full-query 임베딩 스케일 기준이었다. 15.306의 발화 0.6 블렌드는 보일러플레이트 인플레이션이 빠져 유사도가 전반적으로 낮아진다(실측 top-10 중앙값 0.446→0.383) — 그대로 두면 대부분의 메모리가 mid-low/low로 강등되어 반영도가 급락한다.
 - 보정: 실제 retrieval 로그 15개 쿼리의 top-10 유사도 150개 샘플로 밴드 비율 보존값(0.442/0.357/0.314)을 구한 뒤, 소폭 완화한 0.43/0.35/0.30으로 설정. 결과 밴드: high 26%→33%, low 11%→6%, 중간 밴드 유지. top1 메모리는 60%가 high, 100%가 mid-high 이상.
 - 적극화(프롬프트): relevant에 여러 mid-low가 같은 선호를 가리키는 경우를 추가, strong에 다수 mid-high 정렬 케이스 추가, 인접 레벨 사이에서는 높은 쪽 선택 지시. memoryDirectives는 clearly applies에서 plausibly applies(mid-high 이상)로 완화하고 빈 배열보다 구체적 directive 1개를 선호하도록 변경. 금지 규칙(이전 작업 반복, 현재 요청과 충돌, 요청 재진술)은 유지.
-- 참고: 계측 중 rhuB(참여자 Changhwi)의 memories_0_1_2와 memoryRetrievalLogs가 0건으로 확인됨 — admin의 세션 백업 후 삭제/메모리 전체 삭제 동작 범위와 일치(연구자 수동 정리로 추정). 이번 보정은 임현승 데이터 기준.
+- 참고: 계측 중 rhuB(참여자 Changhwi)의 memories_0_1_2와 memoryRetrievalLogs가 0건으로 확인됨 — 15.308의 참여자 데이터 백업 후 정리 결과와 일치한다. 이번 보정은 임현승 데이터 기준.
+
+### 15.308 Back up and clear non-protected participant app data `[implemented 2026-07-17]`
+
+- 운영 범위: 보호 이메일 2개의 데이터는 제외하고 나머지 14개 사용자 프로필을 현재 대상으로 고정해 백업 후 앱 데이터를 정리했다. 후속 요청으로 14개 Firestore 사용자 프로필도 삭제해 어드민 사용자 목록에서 제거했다. Firebase Auth 계정은 유지했다.
+- 스키마 정합성: scripts/backup_users.py와 scripts/wipe_users.py에 현행 memoryClusterSnapshots를 추가하고, 백업에 sessions 사용자 루트와 missions 참여 문서를 포함했다. 백업은 사용자별 집계 summary를 기록하며 이메일 해석 실패가 하나라도 있으면 오류 종료한다. wipe_users.py는 보호 이메일을 dry-run과 write 모두에서 강제로 제외한다.
+- 백업: exports/full-backup/20260717T122002Z에 사용자별 Firestore JSON을 만들고 동일 이름의 tar.gz 단일 export를 생성했다. Stitch credential이 로컬에 없어 원격 HTML 재조회는 생략됐지만 세션 문서의 artboard HTML snapshot은 Firestore JSON에 포함된다. JSON 전수 파싱, 사용자 14명, 보호 이메일 미포함, gzip 무결성을 확인했다.
+- 삭제/검증: 백업 집계와 사전 dry-run이 1,836건으로 일치한 뒤 동일한 명시 이메일 목록에만 write를 실행했다. 후속 dry-run에서 대상 14명의 잔여 앱 데이터 0건을 확인했고, delete-profile 모드로 백업에 포함된 프로필 14개를 추가 삭제했다. 보호 사용자 2명은 세션·메모리·클러스터·참여 문서와 프로필이 남아 있음을 별도 읽기 검증했다.

@@ -9,13 +9,15 @@ Deletes (Auth accounts are NOT touched, only their data):
   - users/{uid}/profile_memories/{mid} (+ revisions)
   - users/{uid}/memoryRetrievalLogs
   - users/{uid}/memoryClusters
+  - users/{uid}/memoryClusterSnapshots
   - Storage: presentations/{uid}/*
 
 Usage:
     python3 scripts/wipe_users.py <email> [<email> ...]            # dry run (counts only)
     python3 scripts/wipe_users.py <email> [<email> ...] --write    # actually delete
+    python3 scripts/wipe_users.py <email> [<email> ...] --delete-profile --write
     python3 scripts/wipe_users.py --all-participants               # dry run all users with app data
-    python3 scripts/wipe_users.py --all-participants --write       # delete all users with app data
+    python3 scripts/wipe_users.py --all-participants --delete-profile --write
 """
 
 import sys
@@ -36,9 +38,10 @@ USER_SUBCOLLECTIONS = [
     "referenceSourceAnalyses",
     "memoryRetrievalLogs",
     "memoryClusters",
+    "memoryClusterSnapshots",
 ]
 SESSION_SUBCOLLECTIONS = ["memoryDrafts", "reviewTurns"]
-ADMIN_EMAILS = {"03leesun@gmail.com", "charlie9807@gmail.com"}
+PROTECTED_EMAILS = {"03leesun@gmail.com", "charlie9807@gmail.com"}
 
 firebase_admin.initialize_app(
     credentials.Certificate(KEY_FILE), {"storageBucket": STORAGE_BUCKET}
@@ -82,7 +85,7 @@ def resolve_all_participants() -> list[tuple[str, str]]:
     return sorted(targets, key=lambda pair: pair[1].lower())
 
 
-def wipe_user(uid: str, email: str, write: bool) -> dict:
+def wipe_user(uid: str, email: str, write: bool, delete_profile: bool = False) -> dict:
     counts = {}
 
     # sessions: missions + missionRuns, each with subcollections, then the docs
@@ -125,26 +128,33 @@ def wipe_user(uid: str, email: str, write: bool) -> dict:
     counts["users/profile_memories"] = pm_total
     counts["users/profile_memories/*revisions"] = rev_total
 
-    # Profile fields live on the users/{uid} document itself. Auth identity is
-    # kept, but onboarding and mission order are removed for a clean slate.
+    # The Firestore profile controls whether a user appears in admin. Firebase
+    # Auth identity is never deleted by this script.
     profile = user_root.get()
     profile_data = profile.to_dict() or {} if profile.exists else {}
-    had_onboarding_completed = "onboardingCompleted" in profile_data
-    had_onboarding_completed_at = "onboardingCompletedAt" in profile_data
-    had_mission_order = "missionOrder" in profile_data
-    counts["users/onboardingCompleted(delete)"] = 1 if had_onboarding_completed else 0
-    counts["users/onboardingCompletedAt(delete)"] = (
-        1 if had_onboarding_completed_at else 0
-    )
-    counts["users/missionOrder(reset)"] = 1 if had_mission_order else 0
-    if write and profile.exists:
-        user_root.update(
-            {
-                "missionOrder": firestore.DELETE_FIELD,
-                "onboardingCompleted": firestore.DELETE_FIELD,
-                "onboardingCompletedAt": firestore.DELETE_FIELD,
-            }
+    if delete_profile:
+        counts["users/profile"] = 1 if profile.exists else 0
+        if write and profile.exists:
+            user_root.delete()
+    else:
+        had_onboarding_completed = "onboardingCompleted" in profile_data
+        had_onboarding_completed_at = "onboardingCompletedAt" in profile_data
+        had_mission_order = "missionOrder" in profile_data
+        counts["users/onboardingCompleted(delete)"] = (
+            1 if had_onboarding_completed else 0
         )
+        counts["users/onboardingCompletedAt(delete)"] = (
+            1 if had_onboarding_completed_at else 0
+        )
+        counts["users/missionOrder(reset)"] = 1 if had_mission_order else 0
+        if write and profile.exists:
+            user_root.update(
+                {
+                    "missionOrder": firestore.DELETE_FIELD,
+                    "onboardingCompleted": firestore.DELETE_FIELD,
+                    "onboardingCompletedAt": firestore.DELETE_FIELD,
+                }
+            )
 
     # mission participation records: missions/{missionId}/participants/{uid}
     # (drives the admin user/mission list; lives outside sessions/ and users/)
@@ -174,6 +184,7 @@ def wipe_user(uid: str, email: str, write: bool) -> dict:
 def main():
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
     write = "--write" in sys.argv
+    delete_profile = "--delete-profile" in sys.argv
     all_participants = "--all-participants" in sys.argv
     if not args:
         if not all_participants:
@@ -195,13 +206,20 @@ def main():
                 print(f"\n  ! {email}: cannot resolve uid ({exc}) — skipped")
         print(f"Mode: {mode}\nTargets: {', '.join(email for _, email in targets)}")
 
-    admin_targets = [email for _, email in targets if email in ADMIN_EMAILS]
-    if admin_targets:
-        print(f"Admin emails included: {', '.join(admin_targets)}")
+    protected_targets = [
+        email for _, email in targets if email.lower() in PROTECTED_EMAILS
+    ]
+    if protected_targets:
+        print(f"Protected emails excluded: {', '.join(protected_targets)}")
+        targets = [
+            (uid, email)
+            for uid, email in targets
+            if email.lower() not in PROTECTED_EMAILS
+        ]
 
     grand = 0
     for uid, email in targets:
-        counts = wipe_user(uid, email, write)
+        counts = wipe_user(uid, email, write, delete_profile)
         grand += sum(counts.values())
 
     print(f"\n{'Deleted' if write else 'Would delete'} {grand} documents/files total.")

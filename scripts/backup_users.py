@@ -12,7 +12,10 @@ later, then deleted safely:
   - users/{uid}/referenceSourceAnalyses
   - users/{uid}/memoryRetrievalLogs
   - users/{uid}/memoryClusters
+  - users/{uid}/memoryClusterSnapshots
   - users/{uid} root profile document
+  - sessions/{uid} root document
+  - missions/{missionId}/participants/{uid}
   - Storage: presentations/{uid}/*       (+ file metadata in firestore.json)
   - Stitch mockup HTML (re-fetched from Stitch, which session docs do NOT store)
 
@@ -80,6 +83,21 @@ def dump_profile_memories(uid: str) -> dict:
     return out
 
 
+def dump_participant_records(uid: str) -> list:
+    out = []
+    for mission_doc in db.collection("missions").stream():
+        participant = mission_doc.reference.collection("participants").document(uid).get()
+        if participant.exists:
+            out.append(
+                {
+                    "missionId": mission_doc.id,
+                    "id": participant.id,
+                    **(participant.to_dict() or {}),
+                }
+            )
+    return out
+
+
 def session_export_for_html(missions: dict, runs: dict) -> dict:
     """Shape sessions in the export_sessions.py format the HTML exporter expects."""
     out = {}
@@ -101,14 +119,20 @@ def backup_user(uid: str, email: str, base_dir: Path) -> dict:
 
     missions = dump_session_docs(uid, "missions")
     runs = dump_session_docs(uid, "missionRuns")
+    session_root = db.collection("sessions").document(uid).get()
     user_profile = user_ref.get().to_dict() or {}
+    participant_records = dump_participant_records(uid)
 
     payload = {
         "uid": uid,
         "email": email,
         "exportedAt": datetime.now(timezone.utc).isoformat(),
         "userProfile": user_profile,
-        "sessions": {"missions": missions, "missionRuns": runs},
+        "sessions": {
+            "root": session_root.to_dict() or {} if session_root.exists else None,
+            "missions": missions,
+            "missionRuns": runs,
+        },
         "memories": {
             "memories_0_1_2": dump_collection(user_ref.collection("memories_0_1_2")),
             "memories_0_1_1": dump_collection(user_ref.collection("memories_0_1_1")),
@@ -124,6 +148,10 @@ def backup_user(uid: str, email: str, base_dir: Path) -> dict:
         ),
         "memoryRetrievalLogs": dump_collection(user_ref.collection("memoryRetrievalLogs")),
         "memoryClusters": dump_collection(user_ref.collection("memoryClusters")),
+        "memoryClusterSnapshots": dump_collection(
+            user_ref.collection("memoryClusterSnapshots")
+        ),
+        "participantRecords": participant_records,
         "storageFiles": [],
     }
 
@@ -158,10 +186,18 @@ def backup_user(uid: str, email: str, base_dir: Path) -> dict:
         "referenceAnalyses": len(payload["referenceSourceAnalyses"]),
         "retrievalLogs": len(payload["memoryRetrievalLogs"]),
         "clusters": len(payload["memoryClusters"]),
+        "clusterSnapshots": len(payload["memoryClusterSnapshots"]),
+        "participantRecords": len(participant_records),
         "presentationFiles": len(payload["storageFiles"]),
     }
     print(f"  {email}: " + ", ".join(f"{k}={v}" for k, v in counts.items()))
-    return {"email": email, "missions": missions, "runs": runs}
+    return {
+        "email": email,
+        "uid": uid,
+        "missions": missions,
+        "runs": runs,
+        "counts": counts,
+    }
 
 
 def main():
@@ -176,13 +212,22 @@ def main():
     print(f"Complete backup → {base_dir}\n")
 
     sessions_for_html = {}
+    summary = {
+        "exportedAt": datetime.now(timezone.utc).isoformat(),
+        "users": [],
+    }
+    failures = []
     for email in emails:
         try:
             uid = auth.get_user_by_email(email).uid
         except Exception as exc:
             print(f"  ! {email}: cannot resolve uid ({exc}) — skipped")
+            failures.append(email)
             continue
         result = backup_user(uid, email, base_dir)
+        summary["users"].append(
+            {"uid": result["uid"], "email": email, "counts": result["counts"]}
+        )
         sessions_for_html[email] = session_export_for_html(
             result["missions"],
             result["runs"],
@@ -192,6 +237,13 @@ def main():
     sessions_path = base_dir / "sessions.json"
     with open(sessions_path, "w", encoding="utf-8") as f:
         json.dump(sessions_for_html, f, ensure_ascii=False, indent=2, default=str)
+
+    with open(base_dir / "summary.json", "w", encoding="utf-8") as f:
+        json.dump(summary, f, ensure_ascii=False, indent=2, default=str)
+
+    if failures:
+        print(f"\nBackup incomplete; unresolved users: {', '.join(failures)}")
+        sys.exit(2)
 
     print("\nFetching Stitch HTML...")
     env = {
