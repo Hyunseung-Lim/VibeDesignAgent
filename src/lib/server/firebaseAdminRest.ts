@@ -265,6 +265,37 @@ export function firestoreBase() {
   return `https://firestore.googleapis.com/v1/projects/${projectId}/databases/(default)/documents`;
 }
 
+// Firestore 읽기는 요청당 수십 개의 병렬 REST 호출로 이뤄져 transient 오류
+// (429/5xx, 소켓 오류) 하나만 나도 라우트 전체가 500이 된다. 읽기 호출에
+// 한해 짧은 backoff 재시도로 흡수한다.
+const RETRYABLE_STATUS = new Set([429, 500, 502, 503, 504]);
+
+async function fetchFirestoreRead(
+  url: string | URL,
+  token: string,
+  attempts = 3,
+) {
+  let lastError: unknown = null;
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    if (attempt > 0) {
+      await new Promise((resolve) => setTimeout(resolve, 250 * attempt));
+    }
+    try {
+      const res = await fetch(url, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (RETRYABLE_STATUS.has(res.status) && attempt < attempts - 1) {
+        lastError = new Error(`Firestore read failed: ${res.status}`);
+        continue;
+      }
+      return res;
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError;
+}
+
 export async function listFirestoreDocumentIds(
   collectionPath: string,
   token: string,
@@ -275,9 +306,7 @@ export async function listFirestoreDocumentIds(
   do {
     const url = new URL(`${firestoreBase()}/${collectionPath}`);
     if (pageToken) url.searchParams.set("pageToken", pageToken);
-    const res = await fetch(url, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
+    const res = await fetchFirestoreRead(url, token);
     if (res.status === 404) return ids;
     if (!res.ok) throw new Error(`List ${collectionPath} failed: ${res.status}`);
     const data = (await res.json()) as {
@@ -359,9 +388,7 @@ export function decodeFirestoreFields(
 }
 
 export async function getFirestoreDocument(documentPath: string, token: string) {
-  const res = await fetch(`${firestoreBase()}/${documentPath}`, {
-    headers: { Authorization: `Bearer ${token}` },
-  });
+  const res = await fetchFirestoreRead(`${firestoreBase()}/${documentPath}`, token);
   if (res.status === 404) return null;
   if (!res.ok) throw new Error(`Get ${documentPath} failed: ${res.status}`);
   const data = (await res.json()) as {

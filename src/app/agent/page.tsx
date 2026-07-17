@@ -107,6 +107,7 @@ export function MemoryClusterPage({
     null,
   );
   const [showInactiveMemories, setShowInactiveMemories] = useState(true);
+  const [loadError, setLoadError] = useState(false);
   const [missionTitleById, setMissionTitleById] = useState<
     Record<string, string>
   >({});
@@ -138,16 +139,31 @@ export function MemoryClusterPage({
     );
   };
 
+  // 로드 실패를 빈 데이터로 오인 표시하지 않도록 !ok 응답은 reject하고,
+  // cold route/transient 오류는 1회 재시도로 흡수한다.
+  const fetchJsonWithRetry = async (
+    url: string,
+    headers: Record<string, string>,
+  ) => {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const res = await fetch(url, { headers });
+        if (res.ok) return res.json();
+        if (attempt === 1) throw new Error(`${url} failed: ${res.status}`);
+      } catch (error) {
+        if (attempt === 1) throw error;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 400));
+    }
+    throw new Error(`${url} failed`);
+  };
+
   const loadData = (user: import("firebase/auth").User) =>
     getIdToken(user).then((token) => {
       const headers = { Authorization: `Bearer ${token}` };
       return Promise.all([
-        fetch(memoryEndpoint, { headers }).then((r) =>
-          r.ok ? r.json() : null,
-        ),
-        fetch(clustersEndpoint, { headers }).then((r) =>
-          r.ok ? r.json() : null,
-        ),
+        fetchJsonWithRetry(memoryEndpoint, headers),
+        fetchJsonWithRetry(clustersEndpoint, headers),
       ]).then(([memData, clusterData]) => {
         const mems: MemoryItem[] = Array.isArray(memData?.memories)
           ? memData.memories
@@ -159,8 +175,22 @@ export function MemoryClusterPage({
             : [],
         );
         applyClusterData(clusterData);
+        setLoadError(false);
       });
     });
+
+  const handleRetryLoad = () => {
+    if (!currentUser || loading) return;
+    setLoading(true);
+    setLoadError(false);
+    loadData(currentUser)
+      .catch((err) => {
+        console.error("[agent] reload failed", err);
+        setLoadError(true);
+        toast.error("메모리 데이터를 불러오지 못했어요.");
+      })
+      .finally(() => setLoading(false));
+  };
 
   const handleRegenerate = async () => {
     if (!currentUser || isRegenerating) return;
@@ -213,6 +243,7 @@ export function MemoryClusterPage({
       loadData(user)
         .catch((err) => {
           console.error("[agent] load failed", err);
+          setLoadError(true);
         })
         .finally(() => setLoading(false));
     });
@@ -469,6 +500,22 @@ export function MemoryClusterPage({
       {loading ? (
         <div className="flex items-center justify-center py-24 text-sm text-muted-foreground">
           불러오는 중...
+        </div>
+      ) : loadError ? (
+        <div className="flex flex-col items-center justify-center gap-3 py-24">
+          <p className="text-sm text-muted-foreground">
+            메모리 데이터를 불러오지 못했습니다. 일시적인 서버 오류일 수
+            있어요.
+          </p>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={handleRetryLoad}
+            className="cursor-pointer rounded-full px-4"
+          >
+            다시 시도
+          </Button>
         </div>
       ) : clusters.length === 0 && inactiveFilteredItems.length === 0 ? (
         <div>

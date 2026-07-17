@@ -37,12 +37,6 @@ const REVIEW_QUESTIONS: ReviewQuestion[] = [
     placeholder: "어떤 내용인지 적어주세요",
   },
   {
-    id: "memory_activity_review",
-    label:
-      "메모리 중 비활성화하고 싶거나, 활성화하고 싶은 메모리를 설정해주세요.",
-    type: "memory-activity",
-  },
-  {
     id: "wrong_or_unnecessary_memory",
     label:
       "반대로, 틀렸거나, 필요 없거나, 바란 것과 다르게 기억된 정보가 있나요? (어떻게 저장되었어야 하나요?)",
@@ -63,6 +57,12 @@ const REVIEW_QUESTIONS: ReviewQuestion[] = [
     allowNone: true,
     placeholder:
       "예: 직접 고치고 싶다, 말해서 고치게 하고 싶다, 이후 작업을 보며 스스로 반영했으면 한다",
+  },
+  {
+    id: "memory_activity_review",
+    label:
+      "메모리 중 비활성화하고 싶거나, 활성화하고 싶은 메모리를 설정해주세요.",
+    type: "memory-activity",
   },
   {
     id: "overall_memory_accuracy",
