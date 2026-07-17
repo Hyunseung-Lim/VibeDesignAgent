@@ -4778,3 +4778,14 @@ type ChatPlan = {
 
 - 채팅 탭 뱃지가 messages.length(user+assistant 합산)를 표시해 대화 턴 수의 정확히 2배로 보였다. 실제 세션 데이터로 확인: 182 = user 91 + assistant 91, 중복 저장 아님. 뱃지를 user 메시지 수(턴 수) 기준으로 변경.
 - 세션 이전 탭의 memory card가 Episodic/Semantic만 표시했는데, 파생 원본인 memory.input을 원문 필드로 카드 맨 위에 추가. 상단의 원래 입력한 내용 블록(profile_memories 원문)은 기존대로 유지.
+
+### 15.295 Unify all session time limits to 30 minutes `[implemented 2026-07-17]`
+
+- 데이터 변경(코드 변경 없음): Firestore missions 9개의 durationMinutes를 모두 30으로 통일(Skein만 25에서 변경, 나머지는 이미 30), settings/onboarding.durationMinutes를 15에서 30으로 변경. 온보딩 설정 UI는 15.292에서 제거되어 service account 스크립트로 직접 patch.
+
+### 15.296 Show loading state in memory review and mask Firestore list calls `[implemented 2026-07-17]`
+
+- 로딩 UI: session-summary fetch 동안 리뷰 오버레이와 세션 이전 탭이 빈 summary를 그대로 렌더해 메모리가 없다고 표시됐다. isSessionMemorySummaryLoading 상태를 추가해 두 곳 모두 메모리를 불러오는 중입니다로 표시.
+- 성능(검수 결과): listFirestoreDocumentIds가 field mask 없이 컬렉션을 list해 embedding 포함 전체 문서를 내려받고 id만 쓰고 버렸다. 215개 memory 사용자 기준 한 페이지 15.5MB(59개), 전체 나열에 약 60MB. mask.fieldPaths=__name__과 pageSize=300을 추가해 같은 나열이 66KB 한 페이지가 됐다. heavy 사용자 admin memory+clusters GET 5~6초에서 약 2초로, session-summary POST 5.5초에서 약 2.1초로 단축.
+- 남은 비효율(미구현): list 후 문서별 개별 GET(N+1) 패턴이 memoryItems 등 전반에 남아 있다. list를 fields 포함 단일 페이지 요청으로 바꾸면 회당 200여 회 왕복이 수 회로 줄어든다. 후속 과제.
+- graph memory 응답의 embedding 배열은 클라이언트 그래프 레이아웃 투영에 실제 사용되므로 제거 대상 아님.

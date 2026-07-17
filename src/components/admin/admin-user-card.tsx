@@ -177,8 +177,13 @@ export function AdminUserCard({
               {user.email}
             </p>
           )}
-          <p className="mt-1 text-[11px] text-muted-foreground">{user.id}</p>
         </div>
+        <Link
+          href={`/admin/users/${encodeURIComponent(user.id)}/memory`}
+          className="h-auto shrink-0 rounded-md px-3 py-1.5 text-[11px] font-semibold text-indigo-500 hover:bg-indigo-50 hover:text-indigo-700 hover:no-underline"
+        >
+          메모리 보기 →
+        </Link>
       </div>
 
       <div className="mt-4">
@@ -285,14 +290,6 @@ export function AdminUserCard({
         )}
       </div>
 
-      <div className="mt-4 flex flex-wrap items-center gap-2">
-        <Link
-          href={`/admin/users/${encodeURIComponent(user.id)}/memory`}
-          className="h-auto rounded-md px-3 py-1.5 text-[11px] font-semibold text-indigo-500 hover:bg-indigo-50 hover:text-indigo-700 hover:no-underline disabled:text-muted-foreground"
-        >
-          메모리 보기 →
-        </Link>
-      </div>
     </div>
   );
 }

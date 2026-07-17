@@ -332,6 +332,10 @@ export async function listFirestoreDocumentIds(
 
   do {
     const url = new URL(`${firestoreBase()}/${collectionPath}`);
+    // id만 필요하다. mask 없이 list하면 Firestore가 embedding을 포함한 전체
+    // 문서를 반환해 한 페이지에 수 MB를 내려받고 버리게 된다(15.296).
+    url.searchParams.set("mask.fieldPaths", "__name__");
+    url.searchParams.set("pageSize", "300");
     if (pageToken) url.searchParams.set("pageToken", pageToken);
     const res = await fetchFirestoreRead(url, token);
     if (res.status === 404) return ids;

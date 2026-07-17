@@ -3105,6 +3105,8 @@ export default function MainScreenPage() {
   >({});
   const [sessionMemorySummary, setSessionMemorySummary] =
     useState<SessionMemorySummary>(EMPTY_SESSION_MEMORY_SUMMARY);
+  const [isSessionMemorySummaryLoading, setIsSessionMemorySummaryLoading] =
+    useState(false);
   const [rightPanelTab, setRightPanelTab] = useState<"before" | "chat">(
     isReviewMode ? "before" : "chat",
   );
@@ -4448,6 +4450,7 @@ export default function MainScreenPage() {
     setSessionMemorySummary(EMPTY_SESSION_MEMORY_SUMMARY);
     sessionMemorySummaryKeyRef.current = summaryKey;
     let cancelled = false;
+    setIsSessionMemorySummaryLoading(true);
     getIdToken(currentUser)
       .then((token) =>
         fetchSessionMemorySummary(token, targetSessionUserId, missionId),
@@ -4458,6 +4461,9 @@ export default function MainScreenPage() {
       })
       .catch(() => {
         if (!cancelled) setSessionMemorySummary(EMPTY_SESSION_MEMORY_SUMMARY);
+      })
+      .finally(() => {
+        if (!cancelled) setIsSessionMemorySummaryLoading(false);
       });
     return () => {
       cancelled = true;
@@ -8552,6 +8558,15 @@ export default function MainScreenPage() {
     : activeClusterSnapshot.graphEdges;
   const renderSessionImpactGraph = (variant: "panel" | "overlay" = "overlay") => {
     const isOverlay = variant === "overlay";
+    if (isSessionMemorySummaryLoading) {
+      return (
+        <div className="flex h-full w-full items-center justify-center">
+          <p className="rounded-lg bg-slate-50 px-4 py-3 text-sm text-slate-400">
+            메모리를 불러오는 중입니다...
+          </p>
+        </div>
+      );
+    }
     const referencedByMemoryId = new Map(
       sessionMemorySummary.referenced.map((item) => [item.memoryId, item]),
     );
@@ -10050,7 +10065,18 @@ export default function MainScreenPage() {
             }}
           >
             {/* Before-session memory panel */}
-            {showReviewAnnotations && rightPanelTab === "before" && (
+            {showReviewAnnotations &&
+              rightPanelTab === "before" &&
+              isSessionMemorySummaryLoading && (
+                <div className="flex min-h-0 flex-1 items-center justify-center p-5">
+                  <p className="text-xs text-slate-400">
+                    메모리를 불러오는 중입니다...
+                  </p>
+                </div>
+              )}
+            {showReviewAnnotations &&
+              rightPanelTab === "before" &&
+              !isSessionMemorySummaryLoading && (
               <div className="min-h-0 flex-1 overflow-y-auto p-5">
                 {/* Original raw input — shown once at top */}
                 {(() => {
