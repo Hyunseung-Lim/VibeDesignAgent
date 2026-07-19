@@ -466,6 +466,12 @@ FIREBASE_MEASUREMENT_ID
 - 수정 1 (client): MemoryReviewIntroPanel을 memoryReviewAnswers null 여부로 key를 줘서 로드 완료 시점에 1회 리마운트 — 저장된 답변을 lazy 초기값이 다시 읽음.
 - 수정 2 (server): review-feedback POST가 answers 맵을 통째로 교체하던 것을 키 단위 병합으로 변경. 빈 텍스트가 저장된 답을 덮어쓰지 않음 — 파트1/파트2 어느 쪽의 저장도 상대 파트를 지울 수 없다는 불변식.
 
+### 10.11 admin 메모리 리뷰 답변 집계 뷰 (2026-07-19)
+
+- GET /api/admin/review-feedback: 전체 사용자의 memoryReviewFeedback 문서를 모아 반환 (admin 전용).
+- /admin 본문을 유저/리뷰 답변 두 탭(line variant)으로 구분. 리뷰 답변 탭은 참가자별 > 세션별 카드 목록 — 카드에 평점 4개(이해/취향/도움/정확) 미니 배지와 자유입력 한 줄 프리뷰를 노출해 목록에서 바로 스캔 가능. 카드 본문 클릭은 전체 문항 Dialog 모달, 카드/모달의 세션 보기 버튼은 해당 미션 세션 view-as 화면(/main/{missionId}?viewAs={uid})으로 이동. 참가자 Select 필터와 제출됨만 토글 제공. 문항 정의는 memory-review-panel.tsx의 PART1_QUESTIONS/REVIEW_QUESTIONS를 export해 재사용 (문항 문구의 source of truth는 그 파일).
+- 참고: 2026-07-17 이전 저장분에는 design_preference_understanding 문항이 없음 (문항 추가 전 응답) — 해당 답변은 "미응답"으로 표시되며 결측이 정상.
+
 ---
 
 ## 11. Decision / Implementation Log — 메모리 Retrieval / Forgetting 개발 계획 `[implemented / partially superseded]`

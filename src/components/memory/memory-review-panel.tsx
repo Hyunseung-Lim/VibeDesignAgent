@@ -7,7 +7,7 @@ import {
 } from "react";
 import { CheckIcon } from "lucide-react";
 
-type ReviewQuestion = {
+export type ReviewQuestion = {
   id: string;
   label: string;
   allowNone?: boolean;
@@ -25,11 +25,11 @@ const NONE_CONFLICT_QUESTION_IDS = [
   "missing_memory",
 ];
 
-function reasonKey(questionId: string) {
+export function reasonKey(questionId: string) {
   return `${questionId}_reason`;
 }
 
-const REVIEW_QUESTIONS: ReviewQuestion[] = [
+export const REVIEW_QUESTIONS: ReviewQuestion[] = [
   {
     id: "expected_memory_present",
     label:
@@ -111,7 +111,7 @@ type MemoryReviewPanelProps = {
 
 // Part 1 (오늘 세션 돌아보기) answer keys — same contract as
 // MEMORY_REVIEW_INTRO_KEYS in /main/[missionId].
-const PART1_QUESTIONS: { key: string; label: string; rating: boolean }[] = [
+export const PART1_QUESTIONS: { key: string; label: string; rating: boolean }[] = [
   {
     key: "session_understanding",
     label: "에이전트가 내 작업 방식을 잘 이해하고 있다고 느꼈다",

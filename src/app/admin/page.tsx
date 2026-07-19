@@ -34,6 +34,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { AdminDataTable } from "@/components/admin/admin-data-table";
 import {
   AdminUserCard,
@@ -46,6 +47,10 @@ import {
   formatScore,
   type MemoryRetrievalLog,
 } from "@/components/admin/memory-log-views";
+import {
+  ReviewFeedbackView,
+  type AdminReviewFeedbackRow,
+} from "@/components/admin/review-feedback-view";
 import { MemoryClusterList } from "@/components/memory/memory-cluster-list";
 import { MemoryClusterSidePanel } from "@/components/memory/memory-cluster-side-panel";
 import type { MemoryItem } from "@/components/memory/memory-cluster-types";
@@ -294,6 +299,13 @@ function stableHash(value: string) {
 export default function AdminPage() {
   const router = useRouter();
   const [ready, setReady] = useState(false);
+  const [reviewFeedbackRows, setReviewFeedbackRows] = useState<
+    AdminReviewFeedbackRow[]
+  >([]);
+  const [isLoadingReviewFeedback, setIsLoadingReviewFeedback] = useState(false);
+  const [reviewFeedbackError, setReviewFeedbackError] = useState<string | null>(
+    null,
+  );
   const [missions, setMissions] = useState<Mission[]>([]);
   const [adminUsers, setAdminUsers] = useState<AdminUser[]>([]);
   const [isLoadingUsers, setIsLoadingUsers] = useState(false);
@@ -664,6 +676,33 @@ export default function AdminPage() {
   useEffect(() => {
     if (!ready) return;
     loadOnboardingSettings();
+  }, [ready]);
+
+  const loadReviewFeedback = async () => {
+    setIsLoadingReviewFeedback(true);
+    setReviewFeedbackError(null);
+    try {
+      const token = await getAdminToken();
+      if (!token) throw new Error("no_token");
+      const response = await fetch("/api/admin/review-feedback", {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!response.ok) throw new Error(`load_failed_${response.status}`);
+      const data = (await response.json()) as {
+        rows?: AdminReviewFeedbackRow[];
+      };
+      setReviewFeedbackRows(Array.isArray(data.rows) ? data.rows : []);
+    } catch {
+      setReviewFeedbackError("리뷰 답변을 불러오지 못했습니다.");
+    } finally {
+      setIsLoadingReviewFeedback(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!ready) return;
+    loadReviewFeedback();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready]);
 
   const versionMemoryRows = useMemo(
@@ -1514,7 +1553,12 @@ export default function AdminPage() {
       </div>
 
       <div className="mx-auto max-w-5xl px-4 py-10 lg:px-10">
-        <section className="space-y-4">
+        <Tabs defaultValue="users">
+          <TabsList variant="line">
+            <TabsTrigger value="users">유저</TabsTrigger>
+            <TabsTrigger value="reviews">리뷰 답변</TabsTrigger>
+          </TabsList>
+          <TabsContent value="users" className="space-y-4 pt-6">
               <div className="flex items-center justify-between">
                 <div>
                   <h2 className="text-lg font-semibold text-foreground">
@@ -1571,7 +1615,60 @@ export default function AdminPage() {
                   ))}
                 </div>
               )}
-        </section>
+          </TabsContent>
+
+          <TabsContent value="reviews" className="space-y-4 pt-6">
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 className="text-lg font-semibold text-foreground">
+                메모리 리뷰 답변
+              </h2>
+              <p className="text-sm text-muted-foreground">
+                참가자들이 세션 리뷰(파트1·파트2)에서 제출한 답변을 세션별로
+                모아봅니다.
+              </p>
+            </div>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={loadReviewFeedback}
+              disabled={isLoadingReviewFeedback}
+              className="rounded-2xl px-4 text-sm"
+            >
+              {isLoadingReviewFeedback ? (
+                <>
+                  <Spinner className="size-3.5" />
+                  불러오는 중...
+                </>
+              ) : (
+                "새로고침"
+              )}
+            </Button>
+          </div>
+
+          {reviewFeedbackError ? (
+            <div className="flex h-32 items-center justify-center rounded-3xl border border-dashed border-border bg-card text-sm text-destructive">
+              {reviewFeedbackError}
+            </div>
+          ) : reviewFeedbackRows.length === 0 ? (
+            <div className="flex h-32 items-center justify-center gap-2 rounded-3xl border border-dashed border-border bg-card text-sm text-muted-foreground">
+              {isLoadingReviewFeedback ? (
+                <>
+                  <Spinner />
+                  리뷰 답변을 불러오는 중입니다.
+                </>
+              ) : (
+                "아직 제출된 리뷰 답변이 없습니다."
+              )}
+            </div>
+          ) : (
+            <ReviewFeedbackView
+              rows={reviewFeedbackRows}
+              missionTitle={missionTitle}
+            />
+          )}
+          </TabsContent>
+        </Tabs>
 
       </div>
 
