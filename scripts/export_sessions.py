@@ -3,9 +3,12 @@ VibeDesignAgent — Session Data Exporter
 Usage:
     pip install firebase-admin
     python scripts/export_sessions.py
+Env:
+    EXPORT_OUTPUT_DIR    — output directory (default: exports)
+    EXPORT_SKIP_ASSETS=1 — skip presentation images + Stitch HTML (Firestore JSON only)
 Output:
     exports/sessions.json                          — all participant session data
-    exports/memories.json                          — all confirmed user memory data
+    exports/memories.json                          — confirmed memories + review feedback + cluster snapshots
     exports/presentations/{email}/{missionTitle}/  — pitch deck slides per participant
     exports/stitch-html/                           — Stitch-backed artboard HTML snapshots
 """
@@ -22,7 +25,8 @@ from firebase_admin import credentials, firestore, storage, auth
 # ── Config ────────────────────────────────────────────────────────────────────
 KEY_FILE = "vibedesignagent-key.json"
 STORAGE_BUCKET = "vibedesignagent.firebasestorage.app"
-OUTPUT_DIR = Path("exports")
+OUTPUT_DIR = Path(os.environ.get("EXPORT_OUTPUT_DIR", "exports"))
+SKIP_ASSETS = os.environ.get("EXPORT_SKIP_ASSETS") == "1"
 MEMORY_SCHEMA_VERSION = "0.1.0"
 
 # ── Init ──────────────────────────────────────────────────────────────────────
@@ -32,8 +36,8 @@ firebase_admin.initialize_app(cred, {"storageBucket": STORAGE_BUCKET})
 db = firestore.client()
 bucket = storage.bucket()
 
-OUTPUT_DIR.mkdir(exist_ok=True)
-(OUTPUT_DIR / "presentations").mkdir(exist_ok=True)
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+(OUTPUT_DIR / "presentations").mkdir(parents=True, exist_ok=True)
 
 
 def safe_name(s: str, fallback: str) -> str:
@@ -198,23 +202,65 @@ def export_memories(uid_to_email: dict):
         user_ref = db.collection("users").document(uid)
         episodic = export_collection_documents(user_ref.collection("episodicMemories"))
         semantic = export_collection_documents(user_ref.collection("semanticMemories"))
-        if not episodic and not semantic:
+        # Current confirmed memory items live in versioned collections
+        # (src/lib/server/memoryItems.ts MEMORY_COLLECTION) — the legacy
+        # episodic/semantic collections above are kept for old exports only.
+        confirmed = export_collection_documents(user_ref.collection("memories_0_1_2"))
+        confirmed_prev = export_collection_documents(
+            user_ref.collection("memories_0_1_1")
+        )
+        review_feedback = export_collection_documents(
+            user_ref.collection("memoryReviewFeedback")
+        )
+        cluster_snapshots = export_collection_documents(
+            user_ref.collection("memoryClusterSnapshots")
+        )
+        cluster_caches = export_collection_documents(
+            user_ref.collection("memoryClusters")
+        )
+        if not (
+            episodic
+            or semantic
+            or confirmed
+            or confirmed_prev
+            or review_feedback
+            or cluster_snapshots
+            or cluster_caches
+        ):
             continue
         memories_data[email] = {
             "uid": uid,
             "schemaVersion": MEMORY_SCHEMA_VERSION,
             "episodicMemories": episodic,
             "semanticMemories": semantic,
+            "memories_0_1_2": confirmed,
+            "memories_0_1_1": confirmed_prev,
+            "memoryReviewFeedback": review_feedback,
+            "memoryClusterSnapshots": cluster_snapshots,
+            "memoryClusters": cluster_caches,
         }
         print(
-            f"  ✓ {email} — {len(episodic)} episodic, {len(semantic)} semantic"
+            f"  ✓ {email} — {len(confirmed)} confirmed (0_1_2), "
+            f"{len(confirmed_prev)} prev (0_1_1), "
+            f"{len(episodic)} episodic, {len(semantic)} semantic, "
+            f"{len(review_feedback)} review feedback, "
+            f"{len(cluster_snapshots)} cluster snapshots, "
+            f"{len(cluster_caches)} cluster caches"
         )
 
     export_payload = {
         "_meta": {
             "kind": "memory-export",
             "schemaVersion": MEMORY_SCHEMA_VERSION,
-            "sourceCollections": ["episodicMemories", "semanticMemories"],
+            "sourceCollections": [
+                "episodicMemories",
+                "semanticMemories",
+                "memories_0_1_2",
+                "memories_0_1_1",
+                "memoryReviewFeedback",
+                "memoryClusterSnapshots",
+                "memoryClusters",
+            ],
             "exportedAt": datetime.now(timezone.utc).isoformat(),
         },
         "users": memories_data,
@@ -268,10 +314,14 @@ def export_stitch_html_snapshots():
         print("  Stitch HTML export skipped: script not found.")
         return
 
+    env = os.environ.copy()
+    env.setdefault("STITCH_SESSIONS_PATH", str((OUTPUT_DIR / "sessions.json").resolve()))
+    env.setdefault("STITCH_HTML_OUT", str((OUTPUT_DIR / "stitch-html").resolve()))
     result = subprocess.run(
         ["node", str(script_path)],
         check=False,
         text=True,
+        env=env,
     )
     if result.returncode != 0:
         print(f"  Stitch HTML export failed with exit code {result.returncode}.")
@@ -303,6 +353,18 @@ def summarize(sessions_data: dict, memories_data: dict):
         len(user.get("semanticMemories", []))
         for user in memories_data.values()
     )
+    total_confirmed = sum(
+        len(user.get("memories_0_1_2", []))
+        for user in memories_data.values()
+    )
+    total_review_feedback = sum(
+        len(user.get("memoryReviewFeedback", []))
+        for user in memories_data.values()
+    )
+    total_cluster_snapshots = sum(
+        len(user.get("memoryClusterSnapshots", []))
+        for user in memories_data.values()
+    )
     print(f"\n{'='*40}")
     print(f"Participants : {total_users}")
     print(f"Sessions     : {total_sessions}")
@@ -311,13 +373,19 @@ def summarize(sessions_data: dict, memories_data: dict):
     print(f"Memory drafts: {total_memory_drafts}")
     print(f"Episodic mem.: {total_episodic}")
     print(f"Semantic mem.: {total_semantic}")
+    print(f"Confirmed mem: {total_confirmed}")
+    print(f"Review feedbk: {total_review_feedback}")
+    print(f"Cluster snaps: {total_cluster_snapshots}")
     print(f"{'='*40}")
 
 
 if __name__ == "__main__":
     sessions, uid_to_email = export_sessions()
     memories = export_memories(uid_to_email)
-    export_presentation_images(uid_to_email)
-    export_stitch_html_snapshots()
+    if SKIP_ASSETS:
+        print("\nSkipping presentation images + Stitch HTML (EXPORT_SKIP_ASSETS=1).")
+    else:
+        export_presentation_images(uid_to_email)
+        export_stitch_html_snapshots()
     summarize(sessions, memories)
-    print("\nDone. Check the exports/ folder.")
+    print(f"\nDone. Check the {OUTPUT_DIR}/ folder.")

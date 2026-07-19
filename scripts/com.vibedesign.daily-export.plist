@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- VibeDesignAgent daily Firestore backup. Install:
+     cp scripts/com.vibedesign.daily-export.plist ~/Library/LaunchAgents/
+     launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.vibedesign.daily-export.plist
+     Runs scripts/daily_export.sh every day at 22:00; if the Mac is asleep at
+     that time, launchd runs it on the next wake. -->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.vibedesign.daily-export</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>/Users/sunmyeong/Documents/VibeDesignAgent/scripts/daily_export.sh</string>
+  </array>
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>22</integer>
+    <key>Minute</key>
+    <integer>0</integer>
+  </dict>
+  <key>StandardOutPath</key>
+  <string>/Users/sunmyeong/Documents/VibeDesignAgent/exports/daily/logs/launchd.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/sunmyeong/Documents/VibeDesignAgent/exports/daily/logs/launchd.log</string>
+</dict>
+</plist>

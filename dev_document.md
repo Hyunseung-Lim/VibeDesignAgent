@@ -340,11 +340,12 @@ type Idea = {
 
 | 스크립트                  | 기능                             |
 | ------------------------- | -------------------------------- |
-| `export_sessions.py`      | 전체 참가자 세션 데이터 내보내기 |
+| `export_sessions.py`      | 전체 참가자 세션 + 메모리 데이터 내보내기. memories.json에 확정 메모리 본체(memories_0_1_2와 직전 버전 0_1_1), legacy episodic/semantic, memoryReviewFeedback, memoryClusterSnapshots(미션별 before/after), memoryClusters 캐시 포함. `EXPORT_OUTPUT_DIR`로 출력 경로, `EXPORT_SKIP_ASSETS=1`로 이미지/Stitch HTML 생략 |
+| `daily_export.sh`         | 매일 Firestore JSON 백업을 `exports/daily/YYYY-MM-DD/`에 저장 (asset 제외, 기본 30일 보관 후 자동 삭제 — 3주 실험 기간 전체 커버). launchd `com.vibedesign.daily-export`(매일 22:00, 잠자기 중이면 다음 wake 때 실행)로 등록 — plist 원본은 `scripts/com.vibedesign.daily-export.plist` |
 | `delete_user_sessions.py` | 특정 사용자 세션 전체 삭제       |
 
 - Firebase Admin SDK 사용 (`vibedesignagent-key.json` 서비스 계정 키 필요)
-- 출력: `exports/sessions.json`
+- 출력: `exports/sessions.json`, `exports/memories.json`
 
 ---
 
