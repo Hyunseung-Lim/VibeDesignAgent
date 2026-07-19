@@ -152,7 +152,8 @@ function isWithinCumulative(
 const MemoryClusterGraph = dynamic(() => import("@/components/memory/memory-cluster-graph"), {
   ssr: false,
   loading: () => (
-    <div className="flex h-full min-h-96 items-center justify-center bg-white text-sm text-slate-400">
+    <div className="flex h-full min-h-96 items-center justify-center gap-2 bg-white text-sm text-slate-400">
+      <Spinner />
       Graph view loading...
     </div>
   ),
@@ -8600,7 +8601,8 @@ export default function MainScreenPage() {
     if (isSessionMemorySummaryLoading) {
       return (
         <div className="flex h-full w-full items-center justify-center">
-          <p className="rounded-lg bg-slate-50 px-4 py-3 text-sm text-slate-400">
+          <p className="flex items-center gap-2 rounded-lg bg-slate-50 px-4 py-3 text-sm text-slate-400">
+            <Spinner />
             메모리를 불러오는 중입니다...
           </p>
         </div>
@@ -10094,7 +10096,8 @@ export default function MainScreenPage() {
               rightPanelTab === "before" &&
               isSessionMemorySummaryLoading && (
                 <div className="flex min-h-0 flex-1 items-center justify-center p-5">
-                  <p className="text-xs text-slate-400">
+                  <p className="flex items-center gap-2 text-xs text-slate-400">
+                    <Spinner className="size-3.5" />
                     메모리를 불러오는 중입니다...
                   </p>
                 </div>

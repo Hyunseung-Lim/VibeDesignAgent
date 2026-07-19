@@ -11,6 +11,7 @@ import { ArrowLeftIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import { Spinner } from "@/components/ui/spinner";
 import { MemoryClusterEmptyState } from "@/components/memory/memory-cluster-empty-state";
 import { MemoryClusterList } from "@/components/memory/memory-cluster-list";
 import { MemoryClusterSidePanel } from "@/components/memory/memory-cluster-side-panel";
@@ -67,7 +68,8 @@ const MemoryClusterGraph = dynamic(
   {
     ssr: false,
     loading: () => (
-      <div className="flex h-full min-h-96 items-center justify-center bg-white text-sm text-slate-400">
+      <div className="flex h-full min-h-96 items-center justify-center gap-2 bg-white text-sm text-slate-400">
+        <Spinner />
         Graph view loading...
       </div>
     ),
@@ -501,7 +503,8 @@ export function MemoryClusterPage({
       </div>
 
       {loading ? (
-        <div className="flex items-center justify-center py-24 text-sm text-muted-foreground">
+        <div className="flex items-center justify-center gap-2 py-24 text-sm text-muted-foreground">
+          <Spinner />
           불러오는 중...
         </div>
       ) : loadError ? (

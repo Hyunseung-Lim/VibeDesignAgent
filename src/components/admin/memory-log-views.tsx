@@ -5,6 +5,7 @@
 
 import type { ReactNode } from "react";
 import { Badge } from "@/components/ui/badge";
+import { Spinner } from "@/components/ui/spinner";
 
 export type MemoryRetrievalItem = {
   id: string;
@@ -174,7 +175,12 @@ export function MemoryRetrievalsView({
         <>
           <ListErrorNotice message={error} />
           {isLoading ? (
-            <ListStatusText>Retrieval logs를 불러오는 중입니다.</ListStatusText>
+            <ListStatusText>
+              <span className="flex items-center gap-2">
+                <Spinner className="size-3.5" />
+                Retrieval logs를 불러오는 중입니다.
+              </span>
+            </ListStatusText>
           ) : logs.length === 0 ? (
             <ListStatusText>
               아직 retrieval log가 없습니다. 사용자가 채팅을 보내면 query와
@@ -221,7 +227,10 @@ export function MemoryRetrievalsView({
       detail={
         isLoading ? (
           <DetailPlaceholder>
-            Retrieval logs를 불러오는 중입니다.
+            <span className="flex items-center gap-2">
+              <Spinner />
+              Retrieval logs를 불러오는 중입니다.
+            </span>
           </DetailPlaceholder>
         ) : !selected ? (
           <DetailPlaceholder>선택된 retrieval log가 없습니다.</DetailPlaceholder>

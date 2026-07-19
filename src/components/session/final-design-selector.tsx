@@ -2,6 +2,8 @@
 
 import type { RefObject } from "react";
 
+import { Spinner } from "@/components/ui/spinner";
+
 type FinalDesignDevice = "desktop" | "mobile";
 
 export type FinalDesignIdea = {
@@ -110,7 +112,8 @@ export function FinalDesignSelector({
                             title={board.label}
                           />
                         ) : (
-                          <div className="flex h-full w-full items-center justify-center bg-slate-50 text-xs text-slate-400">
+                          <div className="flex h-full w-full items-center justify-center gap-2 bg-slate-50 text-xs text-slate-400">
+                            <Spinner className="size-3.5" />
                             로딩 중...
                           </div>
                         )}

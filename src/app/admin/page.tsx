@@ -33,6 +33,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Spinner } from "@/components/ui/spinner";
 import { AdminDataTable } from "@/components/admin/admin-data-table";
 import {
   AdminUserCard,
@@ -54,7 +55,8 @@ const MemoryClusterGraph = dynamic(
   {
     ssr: false,
     loading: () => (
-      <div className="flex h-112 min-h-96 items-center justify-center rounded-2xl border border-border bg-card text-sm text-muted-foreground shadow-sm">
+      <div className="flex h-112 min-h-96 items-center justify-center gap-2 rounded-2xl border border-border bg-card text-sm text-muted-foreground shadow-sm">
+        <Spinner />
         Graph view loading...
       </div>
     ),
@@ -1442,7 +1444,8 @@ export default function AdminPage() {
                   <div className="flex min-w-0 flex-1 overflow-hidden">
                     <div className="min-w-0 flex-1 overflow-hidden">
                       {isLoadingMemoryClusters ? (
-                        <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+                        <div className="flex h-full items-center justify-center gap-2 text-sm text-muted-foreground">
+                          <Spinner />
                           클러스터를 불러오는 중입니다.
                         </div>
                       ) : activeMemoryClusters.length === 0 ? (
@@ -1528,15 +1531,27 @@ export default function AdminPage() {
                   disabled={isLoadingUsers}
                   className="rounded-2xl px-4 text-sm"
                 >
-                  {isLoadingUsers ? "불러오는 중..." : "새로고침"}
+                  {isLoadingUsers ? (
+                    <>
+                      <Spinner className="size-3.5" />
+                      불러오는 중...
+                    </>
+                  ) : (
+                    "새로고침"
+                  )}
                 </Button>
               </div>
 
               {adminUsers.length === 0 ? (
-                <div className="flex h-32 items-center justify-center rounded-3xl border border-dashed border-border bg-card text-sm text-muted-foreground">
-                  {isLoadingUsers
-                    ? "유저 데이터를 불러오는 중입니다."
-                    : "아직 유저 데이터가 없습니다."}
+                <div className="flex h-32 items-center justify-center gap-2 rounded-3xl border border-dashed border-border bg-card text-sm text-muted-foreground">
+                  {isLoadingUsers ? (
+                    <>
+                      <Spinner />
+                      유저 데이터를 불러오는 중입니다.
+                    </>
+                  ) : (
+                    "아직 유저 데이터가 없습니다."
+                  )}
                 </div>
               ) : (
                 <div className="grid gap-3">
