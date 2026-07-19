@@ -460,6 +460,12 @@ FIREBASE_MEASUREMENT_ID
 - retrieval은 v0.1.2를 우선 사용하고, 새 데이터가 없으면 v0.1.1 semanticItems를 fallback adapter로 읽음
 - semantic이 있으면 semantic text를 embedding하고, 없으면 episodic text를 embedding fallback으로 사용
 
+### 10.10 리뷰 파트1 재진입 시 빈 화면 버그 수정 (2026-07-19)
+
+- 증상: 리뷰 제출 후 로비에서 재진입하면 파트1(인트로) 답변이 빈 채로 표시. 데이터는 Firestore에 정상 저장되어 있었고, 저장된 답변의 비동기 로드가 끝나기 전에 인트로 패널이 마운트되면 useState 초기값이 빈 값으로 고정되는 표시 버그.
+- 수정 1 (client): MemoryReviewIntroPanel을 memoryReviewAnswers null 여부로 key를 줘서 로드 완료 시점에 1회 리마운트 — 저장된 답변을 lazy 초기값이 다시 읽음.
+- 수정 2 (server): review-feedback POST가 answers 맵을 통째로 교체하던 것을 키 단위 병합으로 변경. 빈 텍스트가 저장된 답을 덮어쓰지 않음 — 파트1/파트2 어느 쪽의 저장도 상대 파트를 지울 수 없다는 불변식.
+
 ---
 
 ## 11. Decision / Implementation Log — 메모리 Retrieval / Forgetting 개발 계획 `[implemented / partially superseded]`

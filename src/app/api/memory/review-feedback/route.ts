@@ -76,13 +76,32 @@ function cleanAnswers(value: unknown): Record<string, ReviewAnswer> {
   );
 }
 
-function hasAnswerText(value: unknown) {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
-  return Object.values(value as Record<string, unknown>).some((rawAnswer) => {
-    if (!rawAnswer || typeof rawAnswer !== "object") return false;
-    const text = (rawAnswer as Record<string, unknown>).text;
-    return typeof text === "string" && text.trim().length > 0;
-  });
+function answerMap(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return value as Record<string, unknown>;
+}
+
+function answerText(value: unknown) {
+  if (!value || typeof value !== "object") return "";
+  const text = (value as Record<string, unknown>).text;
+  return typeof text === "string" ? text.trim() : "";
+}
+
+// Part 1 (intro) and Part 2 save through the same document but each client
+// payload may carry only its own part's keys — and a client that opened the
+// review before its saved answers finished loading can send stale-empty
+// values. Merge per key and never let an empty answer erase a stored one, so
+// neither part can wipe the other.
+function mergeAnswers(
+  previous: Record<string, unknown>,
+  incoming: Record<string, ReviewAnswer>,
+) {
+  const merged: Record<string, unknown> = { ...previous };
+  for (const [questionId, answer] of Object.entries(incoming)) {
+    if (!answer.text.trim() && answerText(merged[questionId])) continue;
+    merged[questionId] = answer;
+  }
+  return merged;
 }
 
 function feedbackPath(uid: string, missionId: string) {
@@ -137,15 +156,11 @@ export async function POST(request: Request) {
     feedbackPath(user.localId, missionId),
     token,
   )) as Record<string, unknown> | null;
-  const previousAnswers = previous?.answers;
-  const shouldPreservePreviousAnswers =
-    !hasAnswerText(answers) && hasAnswerText(previousAnswers);
-
   const payload = {
     uid: user.localId,
     missionId,
     schemaVersion: SCHEMA_VERSION,
-    answers: shouldPreservePreviousAnswers ? previousAnswers : answers,
+    answers: mergeAnswers(answerMap(previous?.answers), answers),
     updatedAt: now,
     submittedAt: submitted ? now : (previous?.submittedAt ?? null),
   };

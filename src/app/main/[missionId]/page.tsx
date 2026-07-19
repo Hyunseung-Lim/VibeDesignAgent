@@ -9497,6 +9497,13 @@ export default function MainScreenPage() {
 
       {isMemoryReviewIntroOpen && !isViewingAsAdmin && (
         <MemoryReviewIntroPanel
+          // Saved answers load asynchronously (auth restore + fetch), so this
+          // panel can mount before they arrive when the user opens the review
+          // right away — and it reads initialAnswers only in useState
+          // initializers. memoryReviewAnswers is null until that load
+          // resolves, so keying on it remounts the panel exactly once, at
+          // hydration, to pick up the stored Part 1 answers.
+          key={memoryReviewAnswers ? "hydrated" : "loading"}
           initialAnswers={memoryReviewAnswers}
           saveStatus={memoryReviewSaveStatus}
           onContinue={continueMemoryReviewFromIntro}
