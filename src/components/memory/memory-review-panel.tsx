@@ -92,6 +92,15 @@ type MentionRequest = {
   cursor: number;
 };
 
+export type MemoryReviewActivationEntry = {
+  memoryId: string;
+  active: boolean;
+  reason: string | null;
+  toggledAt: number | null;
+  /** 메모리 본문(semantic/episodic) 요약 — 없으면 memoryId를 표시한다. */
+  label: string | null;
+};
+
 type MemoryReviewPanelProps = {
   mentionTarget: MemoryReviewMentionTarget | null;
   onMentionModeChange: (active: boolean) => void;
@@ -104,6 +113,8 @@ type MemoryReviewPanelProps = {
   readOnly?: boolean;
   /** Admin view: show the Part 1 answers stored in initialAnswers above Part 2. */
   showPart1Summary?: boolean;
+  /** 이 리뷰에서 토글된 메모리 활성/비활성 목록 (참가자는 staging, admin은 저장분). */
+  memoryActivations?: MemoryReviewActivationEntry[];
   onAnswersChange?: (answers: MemoryReviewAnswers) => void;
   onSubmitFeedback?: (answers: MemoryReviewAnswers) => Promise<boolean> | boolean;
   onSubmitted?: () => void;
@@ -240,6 +251,7 @@ export function MemoryReviewPanel({
   submittedAt = null,
   readOnly = false,
   showPart1Summary = false,
+  memoryActivations = [],
   onAnswersChange,
   onSubmitFeedback,
   onSubmitted,
@@ -872,6 +884,54 @@ export function MemoryReviewPanel({
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-4">
+        {memoryActivations.length > 0 ? (
+          <div className="mb-4 rounded-lg border border-slate-200 bg-slate-50/70 px-3 py-2.5">
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+              메모리 활성/비활성 변경
+              <span className="ml-1 normal-case tracking-normal">
+                {submittedAt ? "· 제출 시 적용됨" : "· 제출 시 반영"}
+              </span>
+            </p>
+            <ul className="mt-2 space-y-1">
+              {memoryActivations.map((entry) => (
+                <li key={entry.memoryId} className="text-xs leading-relaxed">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      onMentionFocus({
+                        type: "memory",
+                        id: entry.memoryId,
+                        label: entry.label ?? entry.memoryId,
+                      })
+                    }
+                    className="w-full cursor-pointer rounded-md px-1 py-1 text-left transition hover:bg-slate-100"
+                    title="그래프에서 이 메모리 보기"
+                  >
+                    <span className="flex items-start gap-1.5">
+                      <span
+                        className={`mt-px shrink-0 rounded-full border px-1.5 py-0.5 text-[10px] font-semibold ${
+                          entry.active
+                            ? "border-indigo-200 bg-indigo-50 text-indigo-700"
+                            : "border-rose-200 bg-rose-50 text-rose-700"
+                        }`}
+                      >
+                        {entry.active ? "재활성화" : "비활성화"}
+                      </span>
+                      <span className="wrap-anywhere line-clamp-2 min-w-0 text-slate-700">
+                        {entry.label ?? entry.memoryId}
+                      </span>
+                    </span>
+                    {entry.reason ? (
+                      <span className="mt-0.5 block pl-0.5 text-[11px] leading-relaxed text-slate-500">
+                        사유: {entry.reason}
+                      </span>
+                    ) : null}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
         <div className="space-y-4">{REVIEW_QUESTIONS.map(renderQuestion)}</div>
       </div>
       <div className="flex items-center justify-between gap-3 border-t border-slate-200 px-4 py-3">

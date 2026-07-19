@@ -4906,3 +4906,15 @@ type ChatPlan = {
 
 - GET /api/admin/review-feedback 응답 rows에 memoryReviewFeedback 문서의 memoryActivations(states/events)를 포함했다.
 - 리뷰 답변 탭(10.11) 카드에 메모리 변경 N 배지(violet)를 추가하고, 상세 Dialog 하단에 메모리 활성/비활성 변경 섹션을 넣었다: 메모리별 최종 상태(재활성화 indigo/비활성화 rose 배지, memoryId, 사유, 토글 시각)와 제출 여부(제출 시 적용됨/제출 전 staging) 표시. undo가 있어 이력이 최종 상태보다 많으면 토글 이력 전체를 시간순으로 함께 보여준다. 토글 후 모두 되돌린 경우도 이력만 있는 상태로 표시된다.
+
+### 15.312 Admin review cards surface free-text answers inline `[implemented 2026-07-20]`
+
+- 페이지 피드백 반영: 리뷰 답변 탭 카드가 평점 배지만 보여주고 주관식은 모달을 열어야 보였다.
+- 카드의 자유입력 한 줄 프리뷰를 제거하고, 헤더 행 아래 border-top 구분선 뒤 2열 grid로 비어 있지 않은 주관식 답변 전체(자유입력 문항 + rating 이유)를 표시한다. 각 항목은 모달과 동일한 문항 번호 + truncate 라벨(title 툴팁) + line-clamp-2 본문이고, grid 클릭 시 기존 전체 문항 모달이 열린다.
+
+### 15.313 Review panel lists memory activation changes `[implemented 2026-07-20]`
+
+- 페이지 피드백 반영: Part 2 리뷰 패널에서도 이 리뷰에서 토글된 메모리 활성/비활성 목록이 보여야 한다.
+- MemoryReviewPanel 질문 목록 위에 메모리 활성/비활성 변경 카드를 추가했다: 항목별 재활성화(indigo)/비활성화(rose) 배지 + 메모리 본문 요약(semantic/episodic/input, 없으면 memoryId) 2줄 clamp + 비활성화 사유, 헤더에 제출 시 반영/제출 시 적용됨 구분.
+- 데이터 소스: 참가자의 진행 중 리뷰는 staging을 live로 반영하고(토글 즉시 갱신), admin viewAs와 제출된 리뷰는 feedback 문서의 memoryActivations.states를 표시 전용 상태로 읽는다. 제출 직후에는 staging을 비우기 전에 표시 전용 상태로 옮겨 목록이 유지된다.
+- 목록 항목 클릭 시 기존 mention focus 경로(onMentionFocus)로 그래프에서 해당 메모리의 소속 클러스터와 노드를 선택한다. focusReviewMention은 노드가 비활성 숨김 상태면 비활성 그룹 표시를 켜고 session-inactive 그룹을 선택하도록 보강했다.

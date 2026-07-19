@@ -3202,6 +3202,11 @@ export default function MainScreenPage() {
     Record<string, StagedMemoryActivation>
   >({});
   const memoryActivationEventsRef = useRef<MemoryActivationEvent[]>([]);
+  // Admin viewAs(또는 이미 제출된 리뷰)에서 표시 전용으로 읽는 토글 목록.
+  // 참가자 본인의 진행 중 리뷰는 stagedMemoryActivations가 live source다.
+  const [viewOnlyMemoryActivations, setViewOnlyMemoryActivations] = useState<
+    MemoryActivationEvent[]
+  >([]);
   const reviewGraphClustersRef = useRef<{ id: string; itemIds: string[] }[]>(
     [],
   );
@@ -3501,6 +3506,18 @@ export default function MainScreenPage() {
               body: JSON.stringify({ missionId, phases: ["after"] }),
             }).catch(() => {});
           }
+          // staging은 적용 완료로 비우되, 리뷰 패널의 변경 목록은 표시 전용
+          // 상태로 넘겨 제출 직후에도 계속 보이게 한다.
+          setViewOnlyMemoryActivations(
+            Object.entries(stagedMemoryActivationsRef.current).map(
+              ([memoryId, staged]) => ({
+                memoryId,
+                active: staged.active,
+                reason: staged.reason,
+                toggledAt: staged.toggledAt,
+              }),
+            ),
+          );
           stagedMemoryActivationsRef.current = {};
           setStagedMemoryActivations({});
         }
@@ -4691,6 +4708,58 @@ export default function MainScreenPage() {
     });
   }, [stagedMemoryActivations, sessionMemorySummary, reviewMemoryArchiveById]);
 
+  // 리뷰 패널에 보여줄 메모리 활성/비활성 변경 목록. 참가자의 진행 중
+  // 리뷰는 staging을 live로, admin viewAs와 제출된 리뷰는 저장분을 쓴다.
+  // 메모리 본문(semantic/episodic)을 붙여 memoryId 대신 읽을 수 있게 한다.
+  const memoryReviewActivationEntries = useMemo(() => {
+    const source: MemoryActivationEvent[] =
+      isViewingAsAdmin || memoryReviewSubmittedAt != null
+        ? viewOnlyMemoryActivations
+        : Object.entries(stagedMemoryActivations).map(
+            ([memoryId, staged]) => ({
+              memoryId,
+              active: staged.active,
+              reason: staged.reason,
+              toggledAt: staged.toggledAt,
+            }),
+          );
+    if (source.length === 0) return [];
+    const pools = [
+      sessionMemorySummary.graphMemories,
+      sessionMemorySummary.promoted,
+      sessionMemorySummary.referenced,
+    ];
+    const labelFor = (memoryId: string) => {
+      for (const pool of pools) {
+        const memory = pool.find(
+          (item) =>
+            item.id === memoryId ||
+            ("memoryId" in item && item.memoryId === memoryId),
+        );
+        if (memory) {
+          const label = (
+            memory.semantic ||
+            memory.episodic ||
+            memory.input ||
+            ""
+          ).trim();
+          if (label) return label;
+        }
+      }
+      return null;
+    };
+    return source
+      .slice()
+      .sort((a, b) => (a.toggledAt ?? 0) - (b.toggledAt ?? 0))
+      .map((entry) => ({ ...entry, label: labelFor(entry.memoryId) }));
+  }, [
+    isViewingAsAdmin,
+    memoryReviewSubmittedAt,
+    viewOnlyMemoryActivations,
+    stagedMemoryActivations,
+    sessionMemorySummary,
+  ]);
+
   // staged 재활성화가 있으면 그 상태를 가정한 after snapshot preview를 서버에
   // 계산시켜(저장 없음) 화면 클러스터에 즉시 반영한다. 토글 직후와 draft 복원
   // 재진입 양쪽을 이 effect 하나로 처리한다. staged 비활성화만으로는 다시
@@ -4813,6 +4882,7 @@ export default function MainScreenPage() {
       stagedMemoryActivationsRef.current = {};
       setStagedMemoryActivations({});
       memoryActivationEventsRef.current = [];
+      setViewOnlyMemoryActivations([]);
       return;
     }
     // On refresh the Firebase session restores asynchronously, so currentUser
@@ -4872,47 +4942,64 @@ export default function MainScreenPage() {
           memoryReviewAnswersRef.current = answers;
           memoryReviewDirtyRef.current = false;
           // 제출 전 draft에 남은 staged 토글을 복원한다. 제출된 리뷰는 이미
-          // 서버에 적용된 상태라 복원하지 않고, admin viewAs는 서버 baseline을
-          // 그대로 관찰한다. baseline은 summary overlay 시점에 다시 채운다.
-          const storedActivations =
-            !isViewingAsAdmin && !feedback?.submittedAt
-              ? feedback?.memoryActivations
-              : null;
-          const restoredStates: Record<string, StagedMemoryActivation> = {};
-          for (const [id, state] of Object.entries(
-            storedActivations?.states ?? {},
-          )) {
-            if (typeof state?.active !== "boolean") continue;
-            restoredStates[id] = {
-              active: state.active,
-              reason: typeof state.reason === "string" ? state.reason : null,
-              toggledAt:
-                typeof state.toggledAt === "number" ? state.toggledAt : 0,
-              baseline: null,
-            };
-          }
-          const restoredEvents: MemoryActivationEvent[] = (
-            storedActivations?.events ?? []
-          ).flatMap((event) =>
-            typeof event?.memoryId === "string" &&
-            typeof event?.active === "boolean"
+          // 서버에 적용된 상태라 staging을 복원하지 않고, admin viewAs는 서버
+          // baseline을 그대로 관찰한다 — 두 경우 모두 토글 목록은 표시 전용
+          // 상태로만 보관한다. baseline은 summary overlay 시점에 다시 채운다.
+          const parsedStates: MemoryActivationEvent[] = Object.entries(
+            feedback?.memoryActivations?.states ?? {},
+          ).flatMap(([id, state]) =>
+            typeof state?.active === "boolean"
               ? [
                   {
-                    memoryId: event.memoryId,
-                    active: event.active,
+                    memoryId: id,
+                    active: state.active,
                     reason:
-                      typeof event.reason === "string" ? event.reason : null,
+                      typeof state.reason === "string" ? state.reason : null,
                     toggledAt:
-                      typeof event.toggledAt === "number"
-                        ? event.toggledAt
+                      typeof state.toggledAt === "number"
+                        ? state.toggledAt
                         : 0,
                   },
                 ]
               : [],
           );
+          const restoreStaging = !isViewingAsAdmin && !feedback?.submittedAt;
+          const restoredStates: Record<string, StagedMemoryActivation> = {};
+          if (restoreStaging) {
+            for (const entry of parsedStates) {
+              restoredStates[entry.memoryId] = {
+                active: entry.active,
+                reason: entry.reason,
+                toggledAt: entry.toggledAt,
+                baseline: null,
+              };
+            }
+          }
+          const restoredEvents: MemoryActivationEvent[] = restoreStaging
+            ? (feedback?.memoryActivations?.events ?? []).flatMap((event) =>
+                typeof event?.memoryId === "string" &&
+                typeof event?.active === "boolean"
+                  ? [
+                      {
+                        memoryId: event.memoryId,
+                        active: event.active,
+                        reason:
+                          typeof event.reason === "string"
+                            ? event.reason
+                            : null,
+                        toggledAt:
+                          typeof event.toggledAt === "number"
+                            ? event.toggledAt
+                            : 0,
+                      },
+                    ]
+                  : [],
+              )
+            : [];
           stagedMemoryActivationsRef.current = restoredStates;
           setStagedMemoryActivations(restoredStates);
           memoryActivationEventsRef.current = restoredEvents;
+          setViewOnlyMemoryActivations(restoreStaging ? [] : parsedStates);
           memoryReviewSaveKeyRef.current = JSON.stringify({
             answers,
             memoryActivations: {
@@ -9285,6 +9372,14 @@ export default function MainScreenPage() {
         }
         if (graphItems.some((item) => item.id === target.id)) {
           setSelectedGraphMemoryId(target.id);
+          return;
+        }
+        // 비활성 노드 숨김 상태에서 focus하면 (예: 리뷰 패널의 활성/비활성
+        // 변경 목록 클릭) 비활성 그룹을 드러내고 선택한다.
+        if (cumulativeGraphMemories.some((memory) => memory.id === target.id)) {
+          setShowInactiveGraphMemories(true);
+          setSelectedSessionGraphClusterId("session-inactive");
+          setSelectedGraphMemoryId(target.id);
         }
       };
       const addedCountByClusterId: Record<string, number> = {};
@@ -9424,6 +9519,7 @@ export default function MainScreenPage() {
               submittedAt={memoryReviewSubmittedAt}
               readOnly={isViewingAsAdmin}
               showPart1Summary={isViewingAsAdmin}
+              memoryActivations={memoryReviewActivationEntries}
               onAnswersChange={handleMemoryReviewAnswersChange}
               onSubmitFeedback={
                 isViewingAsAdmin

@@ -127,15 +127,41 @@ function answerText(row: AdminReviewFeedbackRow, key: string) {
   return row.answers[key]?.text ?? "";
 }
 
-function previewText(row: AdminReviewFeedbackRow) {
-  const preferred = answerText(row, "future_memory_freeform").trim();
-  if (preferred) return preferred;
-  for (const question of REVIEW_QUESTIONS) {
-    if (question.type) continue;
-    const text = answerText(row, question.id).trim();
-    if (text) return text;
+// 카드에서 한눈에 보여줄 주관식(자유입력 + rating 이유) 문항. 번호는 모달의
+// 문항 번호와 일치하도록 rating 문항도 세면서 매긴다.
+function buildCardTextRows(): QuestionRow[] {
+  const rows: QuestionRow[] = [];
+  let number = 1;
+  for (const question of PART1_QUESTIONS) {
+    const questionNumber = number++;
+    if (!question.rating) {
+      rows.push({
+        key: question.key,
+        label: question.label,
+        kind: "text",
+        number: questionNumber,
+      });
+    }
   }
-  return "";
+  for (const question of REVIEW_QUESTIONS) {
+    const questionNumber = number++;
+    if (question.type === "rating") {
+      rows.push({
+        key: reasonKey(question.id),
+        label: `${question.label} — 이유`,
+        kind: "reason",
+        number: questionNumber,
+      });
+    } else {
+      rows.push({
+        key: question.id,
+        label: question.label,
+        kind: "text",
+        number: questionNumber,
+      });
+    }
+  }
+  return rows;
 }
 
 function sessionHref(row: AdminReviewFeedbackRow) {
@@ -351,6 +377,7 @@ export function ReviewFeedbackView({
   missionTitle: (missionId: string) => string;
 }) {
   const questionRows = useMemo(() => buildQuestionRows(), []);
+  const cardTextRows = useMemo(() => buildCardTextRows(), []);
   const [participantFilter, setParticipantFilter] = useState("all");
   const [submittedOnly, setSubmittedOnly] = useState(false);
   const [detailRow, setDetailRow] = useState<AdminReviewFeedbackRow | null>(null);
@@ -425,48 +452,74 @@ export function ReviewFeedbackView({
               </p>
               <div className="grid gap-2">
                 {userRows.map((row) => {
-                  const preview = previewText(row);
                   const activationCount = activationStates(row).length;
+                  const textAnswers = cardTextRows
+                    .map((question) => ({
+                      ...question,
+                      text: answerText(row, question.key).trim(),
+                    }))
+                    .filter((question) => question.text);
                   return (
                     <div
                       key={`${row.uid}:${row.missionId}`}
-                      className="flex items-center gap-3 rounded-2xl border border-border bg-card px-4 py-3 transition hover:border-ring/40"
+                      className="rounded-2xl border border-border bg-card px-4 py-3 transition hover:border-ring/40"
                     >
-                      <button
-                        type="button"
-                        onClick={() => setDetailRow(row)}
-                        className="min-w-0 flex-1 cursor-pointer text-left"
-                      >
-                        <p className="truncate text-sm font-semibold text-foreground">
-                          {missionTitle(row.missionId)}
-                          {row.updatedAt && (
-                            <span className="ml-2 text-xs font-normal text-muted-foreground">
-                              {formatDateTime(row.updatedAt)}
-                            </span>
-                          )}
-                        </p>
-                        {preview && (
-                          <p className="mt-1 truncate text-xs text-muted-foreground">
-                            {preview}
-                          </p>
-                        )}
-                      </button>
-                      <HeaderRatingBadges row={row} />
-                      {activationCount > 0 ? (
-                        <Badge
-                          variant="secondary"
-                          className="shrink-0 rounded-full border-violet-200 bg-violet-50 text-violet-700"
+                      <div className="flex items-center gap-3">
+                        <button
+                          type="button"
+                          onClick={() => setDetailRow(row)}
+                          className="min-w-0 flex-1 cursor-pointer text-left"
                         >
-                          메모리 변경 {activationCount}
+                          <p className="truncate text-sm font-semibold text-foreground">
+                            {missionTitle(row.missionId)}
+                            {row.updatedAt && (
+                              <span className="ml-2 text-xs font-normal text-muted-foreground">
+                                {formatDateTime(row.updatedAt)}
+                              </span>
+                            )}
+                          </p>
+                        </button>
+                        <HeaderRatingBadges row={row} />
+                        {activationCount > 0 ? (
+                          <Badge
+                            variant="secondary"
+                            className="shrink-0 rounded-full border-violet-200 bg-violet-50 text-violet-700"
+                          >
+                            메모리 변경 {activationCount}
+                          </Badge>
+                        ) : null}
+                        <Badge
+                          variant={row.submittedAt ? "default" : "secondary"}
+                          className="shrink-0 rounded-full"
+                        >
+                          {row.submittedAt ? "제출됨" : "임시저장"}
                         </Badge>
+                        <SessionLink row={row} />
+                      </div>
+                      {textAnswers.length > 0 ? (
+                        <button
+                          type="button"
+                          onClick={() => setDetailRow(row)}
+                          className="mt-2.5 grid w-full cursor-pointer gap-x-5 gap-y-2 border-t border-border/60 pt-2.5 text-left sm:grid-cols-2"
+                        >
+                          {textAnswers.map((question) => (
+                            <span key={question.key} className="min-w-0">
+                              <span
+                                className="block truncate text-[10px] font-medium text-muted-foreground/70"
+                                title={question.label}
+                              >
+                                {question.number != null
+                                  ? `${question.number}. `
+                                  : ""}
+                                {question.label}
+                              </span>
+                              <span className="line-clamp-2 text-xs leading-relaxed text-foreground/90">
+                                {question.text}
+                              </span>
+                            </span>
+                          ))}
+                        </button>
                       ) : null}
-                      <Badge
-                        variant={row.submittedAt ? "default" : "secondary"}
-                        className="shrink-0 rounded-full"
-                      >
-                        {row.submittedAt ? "제출됨" : "임시저장"}
-                      </Badge>
-                      <SessionLink row={row} />
                     </div>
                   );
                 })}
