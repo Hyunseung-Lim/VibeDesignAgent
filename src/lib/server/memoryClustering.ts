@@ -1068,6 +1068,63 @@ export async function generateAndStoreSessionClusterSnapshots(
   };
 }
 
+// 리뷰 staging 중 활성/비활성 토글을 가정한 after snapshot 미리보기.
+// Firestore에는 아무것도 저장하지 않는다 — 저장된 snapshot과 memory 문서는
+// 리뷰 제출 전까지 그대로 유지되고, 제출 후 실제 재생성이 덮어쓴다.
+export async function generateSessionClusterSnapshotPreview(
+  uid: string,
+  missionId: string,
+  missionOrder: string[],
+  token: string,
+  subjectName?: string,
+  variant: ClusteringInputVariant = CLUSTERING_INPUT_VARIANT,
+  assumeActiveMemoryIds: string[] = [],
+  assumeInactiveMemoryIds: string[] = [],
+): Promise<StoredClusterSnapshot> {
+  const assumeActive = new Set(assumeActiveMemoryIds);
+  const assumeInactive = new Set(assumeInactiveMemoryIds);
+  const memories = (
+    await loadUserMemoryItems(uid, token, {
+      includeArchived: true,
+      includeInactive: true,
+    })
+  ).filter((item) => {
+    if (assumeInactive.has(item.id)) return false;
+    if (assumeActive.has(item.id)) return true;
+    return !item.archivedAt && !item.inactive;
+  });
+  const storedSnapshots = await loadSessionClusterSnapshots(
+    uid,
+    missionId,
+    token,
+  );
+  let previousPhaseClusters =
+    storedSnapshots.after?.graphClusters ??
+    storedSnapshots.before?.graphClusters ??
+    [];
+  if (previousPhaseClusters.length === 0) {
+    const previousClusterDoc = await loadLatestStoredClusterDoc(uid, token, variant, {
+      currentMethodOnly: false,
+    });
+    previousPhaseClusters = previousClusterDoc?.graphClusters ?? [];
+  }
+  const items = snapshotItems(memories, missionId, missionOrder, "after");
+  const { graphClusters: generatedGraphClusters, graphEdges } =
+    await generateClusterGraph(items, token, subjectName, previousPhaseClusters);
+  return {
+    phase: "after",
+    missionId,
+    itemIds: items.map((item) => item.id),
+    itemSignature: items.length > 0 ? memoryClusterItemSignature(items) : null,
+    graphClusters: assignStableClusterColors(
+      generatedGraphClusters,
+      previousPhaseClusters,
+    ),
+    graphEdges,
+    generatedAt: Date.now(),
+  };
+}
+
 function parseStoredClusterSnapshot(
   missionId: string,
   phase: ClusterSnapshotPhase,

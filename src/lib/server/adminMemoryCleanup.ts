@@ -8,6 +8,7 @@ export const ADMIN_MEMORY_COLLECTION = "memories_0_1_2";
 export const ADMIN_MEMORY_CLUSTER_COLLECTION = "memoryClusters";
 export const ADMIN_MEMORY_CLUSTER_SNAPSHOT_COLLECTION = "memoryClusterSnapshots";
 export const ADMIN_MEMORY_RETRIEVAL_LOG_COLLECTION = "memoryRetrievalLogs";
+export const ADMIN_MEMORY_ACTIVATION_LOG_COLLECTION = "memoryActivationLogs";
 
 function sourceMissionId(doc: Record<string, unknown>) {
   const source = doc.source;
@@ -94,6 +95,21 @@ export async function deleteMissionScopedMemoryData(
     ),
   );
 
+  const activationLogIds = await matchingMissionDocumentIds(
+    uid,
+    ADMIN_MEMORY_ACTIVATION_LOG_COLLECTION,
+    missionId,
+    token,
+  );
+  await Promise.all(
+    activationLogIds.map((id) =>
+      deleteFirestoreDocument(
+        `users/${uid}/${ADMIN_MEMORY_ACTIVATION_LOG_COLLECTION}/${id}`,
+        token,
+      ),
+    ),
+  );
+
   // Cluster documents are cache entries over the full memory item signature.
   // Once any mission-scoped memory is removed, every old cluster cache can be
   // stale, so clear them all and let /agent regenerate on demand.
@@ -122,5 +138,6 @@ export async function deleteMissionScopedMemoryData(
     deletedMemoryClusters,
     deletedMemoryClusterSnapshots: memoryClusterSnapshotIds.length,
     deletedMemoryRetrievalLogs: retrievalLogIds.length,
+    deletedMemoryActivationLogs: activationLogIds.length,
   };
 }

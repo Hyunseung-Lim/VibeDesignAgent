@@ -525,6 +525,14 @@ export function MemoryClusterSidePanel({
                             비활성
                           </Badge>
                         ) : null}
+                        {item.pendingActivation ? (
+                          <Badge
+                            variant="secondary"
+                            className="rounded-full border-amber-200 bg-amber-50 text-amber-700"
+                          >
+                            제출 시 반영
+                          </Badge>
+                        ) : null}
                         {weightLabel ? (
                           <span className="ml-auto shrink-0 text-[10px] font-semibold uppercase tabular-nums text-slate-400">
                             weight {weightLabel}

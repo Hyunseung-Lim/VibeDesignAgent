@@ -21,6 +21,7 @@ const USER_MEMORY_COLLECTIONS = [
   "memoryClusters",
   "memoryClusterSnapshots",
   "memoryRetrievalLogs",
+  "memoryActivationLogs",
 ] as const;
 
 function safeName(value: string, fallback: string) {
@@ -375,6 +376,7 @@ export async function POST(
     deletedMemoryClusters: deletedMemoryData.memoryClusters,
     deletedMemoryClusterSnapshots: deletedMemoryData.memoryClusterSnapshots,
     deletedMemoryRetrievalLogs: deletedMemoryData.memoryRetrievalLogs,
+    deletedMemoryActivationLogs: deletedMemoryData.memoryActivationLogs,
     deletedParticipantRecords,
     deletedStorageFiles,
   });

@@ -218,6 +218,9 @@ def export_memories(uid_to_email: dict):
         cluster_caches = export_collection_documents(
             user_ref.collection("memoryClusters")
         )
+        activation_logs = export_collection_documents(
+            user_ref.collection("memoryActivationLogs")
+        )
         if not (
             episodic
             or semantic
@@ -226,6 +229,7 @@ def export_memories(uid_to_email: dict):
             or review_feedback
             or cluster_snapshots
             or cluster_caches
+            or activation_logs
         ):
             continue
         memories_data[email] = {
@@ -238,6 +242,7 @@ def export_memories(uid_to_email: dict):
             "memoryReviewFeedback": review_feedback,
             "memoryClusterSnapshots": cluster_snapshots,
             "memoryClusters": cluster_caches,
+            "memoryActivationLogs": activation_logs,
         }
         print(
             f"  ✓ {email} — {len(confirmed)} confirmed (0_1_2), "
@@ -245,7 +250,8 @@ def export_memories(uid_to_email: dict):
             f"{len(episodic)} episodic, {len(semantic)} semantic, "
             f"{len(review_feedback)} review feedback, "
             f"{len(cluster_snapshots)} cluster snapshots, "
-            f"{len(cluster_caches)} cluster caches"
+            f"{len(cluster_caches)} cluster caches, "
+            f"{len(activation_logs)} activation logs"
         )
 
     export_payload = {
@@ -260,6 +266,7 @@ def export_memories(uid_to_email: dict):
                 "memoryReviewFeedback",
                 "memoryClusterSnapshots",
                 "memoryClusters",
+                "memoryActivationLogs",
             ],
             "exportedAt": datetime.now(timezone.utc).isoformat(),
         },

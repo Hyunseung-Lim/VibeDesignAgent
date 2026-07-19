@@ -8,6 +8,7 @@ Deletes (Auth accounts are NOT touched, only their data):
   - users/{uid}/memories_0_1_2, memories_0_1_1, episodicMemories, semanticMemories
   - users/{uid}/profile_memories/{mid} (+ revisions)
   - users/{uid}/memoryRetrievalLogs
+  - users/{uid}/memoryActivationLogs
   - users/{uid}/memoryClusters
   - users/{uid}/memoryClusterSnapshots
   - Storage: presentations/{uid}/*
@@ -37,6 +38,7 @@ USER_SUBCOLLECTIONS = [
     "memoryReviewFeedback",
     "referenceSourceAnalyses",
     "memoryRetrievalLogs",
+    "memoryActivationLogs",
     "memoryClusters",
     "memoryClusterSnapshots",
 ]

@@ -9,12 +9,27 @@ import {
   CLUSTERING_INPUT_VARIANT,
   MEMORY_VERSION,
   generateAndStoreSessionClusterSnapshots,
+  generateSessionClusterSnapshotPreview,
 } from "@/lib/server/memoryClustering";
 
 export const runtime = "nodejs";
 
+const MAX_PREVIEW_OVERRIDE_IDS = 100;
+
 function stringOrNull(value: unknown) {
   return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function idList(value: unknown) {
+  return Array.isArray(value)
+    ? Array.from(
+        new Set(
+          value
+            .map((item) => (typeof item === "string" ? item.trim() : ""))
+            .filter(Boolean),
+        ),
+      ).slice(0, MAX_PREVIEW_OVERRIDE_IDS)
+    : [];
 }
 
 export async function POST(request: Request) {
@@ -25,6 +40,7 @@ export async function POST(request: Request) {
     targetUid?: unknown;
     missionId?: unknown;
     phases?: unknown;
+    preview?: unknown;
   };
   const missionId = stringOrNull(body.missionId);
   if (!missionId) {
@@ -61,6 +77,28 @@ export async function POST(request: Request) {
     const subjectName = String(
       profile?.displayName ?? user.displayName ?? "",
     ).trim();
+
+    // Preview 모드: 리뷰 staging 중 토글을 가정한 after snapshot을 계산만 하고
+    // 저장하지 않는다. 실제 snapshot/memory 문서는 리뷰 제출 시 갱신된다.
+    if (body.preview && typeof body.preview === "object") {
+      const preview = body.preview as Record<string, unknown>;
+      const snapshot = await generateSessionClusterSnapshotPreview(
+        targetUid,
+        missionId,
+        missionOrder,
+        token,
+        subjectName,
+        CLUSTERING_INPUT_VARIANT,
+        idList(preview.assumeActiveMemoryIds),
+        idList(preview.assumeInactiveMemoryIds),
+      );
+      return Response.json({
+        snapshot,
+        variant: CLUSTERING_INPUT_VARIANT,
+        memoryVersion: MEMORY_VERSION,
+      });
+    }
+
     const snapshots = await generateAndStoreSessionClusterSnapshots(
       targetUid,
       missionId,

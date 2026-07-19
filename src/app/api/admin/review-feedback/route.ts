@@ -15,6 +15,20 @@ function numberOrNull(value: unknown) {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
+// 리뷰 중 staging된 활성/비활성 토글(states: 메모리별 최종 상태, events:
+// undo 포함 이력). 세부 필드 검증은 뷰가 하고 여기서는 형태만 거른다.
+function memoryActivationsField(value: unknown) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const raw = value as { states?: unknown; events?: unknown };
+  const states =
+    raw.states && typeof raw.states === "object" && !Array.isArray(raw.states)
+      ? (raw.states as Record<string, unknown>)
+      : {};
+  const events = Array.isArray(raw.events) ? raw.events : [];
+  if (Object.keys(states).length === 0 && events.length === 0) return null;
+  return { states, events };
+}
+
 export async function GET(request: Request) {
   const requester = await verifyFirebaseIdToken(request);
   if (!requester || !isAdminEmail(requester.email)) {
@@ -43,6 +57,7 @@ export async function GET(request: Request) {
           doc.fields.answers && typeof doc.fields.answers === "object"
             ? doc.fields.answers
             : {},
+        memoryActivations: memoryActivationsField(doc.fields.memoryActivations),
         submittedAt: numberOrNull(doc.fields.submittedAt),
         updatedAt: numberOrNull(doc.fields.updatedAt),
       }));

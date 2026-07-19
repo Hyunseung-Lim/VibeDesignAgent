@@ -31,9 +31,55 @@ export type AdminReviewFeedbackRow = {
   email: string | null;
   missionId: string;
   answers: Record<string, { text?: string; mentions?: unknown[] } | undefined>;
+  memoryActivations?: {
+    states?: Record<string, unknown>;
+    events?: unknown[];
+  } | null;
   submittedAt: number | null;
   updatedAt: number | null;
 };
+
+type MemoryActivationEntry = {
+  memoryId: string;
+  active: boolean;
+  reason: string | null;
+  toggledAt: number | null;
+};
+
+function activationEntry(
+  memoryId: string,
+  value: unknown,
+): MemoryActivationEntry | null {
+  if (!value || typeof value !== "object") return null;
+  const raw = value as { active?: unknown; reason?: unknown; toggledAt?: unknown };
+  if (typeof raw.active !== "boolean") return null;
+  return {
+    memoryId,
+    active: raw.active,
+    reason: typeof raw.reason === "string" && raw.reason.trim() ? raw.reason : null,
+    toggledAt: typeof raw.toggledAt === "number" ? raw.toggledAt : null,
+  };
+}
+
+// 메모리별 최종 토글 상태 (제출 시 실제 적용되는 것).
+function activationStates(row: AdminReviewFeedbackRow) {
+  return Object.entries(row.memoryActivations?.states ?? {})
+    .flatMap(([memoryId, value]) => activationEntry(memoryId, value) ?? [])
+    .sort((a, b) => (a.toggledAt ?? 0) - (b.toggledAt ?? 0));
+}
+
+// undo까지 포함한 토글 이력 전체 (시간순).
+function activationEvents(row: AdminReviewFeedbackRow) {
+  return (row.memoryActivations?.events ?? [])
+    .flatMap((value) => {
+      if (!value || typeof value !== "object") return [];
+      const raw = value as { memoryId?: unknown };
+      return typeof raw.memoryId === "string"
+        ? (activationEntry(raw.memoryId, value) ?? [])
+        : [];
+    })
+    .sort((a, b) => (a.toggledAt ?? 0) - (b.toggledAt ?? 0));
+}
 
 type QuestionRow = {
   key: string;
@@ -181,6 +227,8 @@ function ReviewFeedbackDetail({
   const extraKeys = Object.keys(row.answers).filter(
     (key) => !knownKeys.has(key) && answerText(row, key).trim(),
   );
+  const states = activationStates(row);
+  const events = activationEvents(row);
 
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
@@ -222,6 +270,73 @@ function ReviewFeedbackDetail({
               <AnswerValue kind="text" text={answerText(row, key)} />
             </div>
           ))}
+          {states.length > 0 || events.length > 0 ? (
+            <div className="grid gap-2 border-t border-border pt-4 text-sm">
+              <p className="text-xs font-semibold text-muted-foreground">
+                메모리 활성/비활성 변경
+                <span className="ml-1 font-normal">
+                  {row.submittedAt ? "· 제출 시 적용됨" : "· 제출 전 staging"}
+                </span>
+              </p>
+              {states.length === 0 ? (
+                <p className="text-xs text-muted-foreground/70">
+                  토글 후 모두 되돌려서 적용된 변경은 없습니다.
+                </p>
+              ) : (
+                states.map((entry) => (
+                  <div
+                    key={entry.memoryId}
+                    className="rounded-lg border border-border bg-muted/40 px-3 py-2"
+                  >
+                    <div className="flex items-center gap-2">
+                      <Badge
+                        variant="secondary"
+                        className={cn(
+                          "shrink-0 rounded-full",
+                          entry.active
+                            ? "border-indigo-200 bg-indigo-50 text-indigo-700"
+                            : "border-rose-200 bg-rose-50 text-rose-700",
+                        )}
+                      >
+                        {entry.active ? "재활성화" : "비활성화"}
+                      </Badge>
+                      <span className="min-w-0 truncate font-mono text-[11px] text-muted-foreground">
+                        {entry.memoryId}
+                      </span>
+                      {entry.toggledAt ? (
+                        <span className="ml-auto shrink-0 text-[11px] tabular-nums text-muted-foreground">
+                          {formatDateTime(entry.toggledAt)}
+                        </span>
+                      ) : null}
+                    </div>
+                    {entry.reason ? (
+                      <p className="mt-1 text-xs leading-relaxed text-foreground">
+                        사유: {entry.reason}
+                      </p>
+                    ) : null}
+                  </div>
+                ))
+              )}
+              {events.length > states.length ? (
+                <div className="grid gap-1">
+                  <p className="text-[11px] font-semibold text-muted-foreground">
+                    토글 이력 {events.length}회 (되돌림 포함)
+                  </p>
+                  {events.map((event, index) => (
+                    <p
+                      key={`${event.memoryId}:${event.toggledAt ?? index}`}
+                      className="truncate text-[11px] text-muted-foreground"
+                    >
+                      {event.toggledAt ? `${formatDateTime(event.toggledAt)} · ` : ""}
+                      {event.active ? "활성화" : "비활성화"}
+                      <span className="font-mono"> · {event.memoryId}</span>
+                      {event.reason ? ` · ${event.reason}` : ""}
+                    </p>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+          ) : null}
         </div>
       </DialogContent>
     </Dialog>
@@ -311,6 +426,7 @@ export function ReviewFeedbackView({
               <div className="grid gap-2">
                 {userRows.map((row) => {
                   const preview = previewText(row);
+                  const activationCount = activationStates(row).length;
                   return (
                     <div
                       key={`${row.uid}:${row.missionId}`}
@@ -336,6 +452,14 @@ export function ReviewFeedbackView({
                         )}
                       </button>
                       <HeaderRatingBadges row={row} />
+                      {activationCount > 0 ? (
+                        <Badge
+                          variant="secondary"
+                          className="shrink-0 rounded-full border-violet-200 bg-violet-50 text-violet-700"
+                        >
+                          메모리 변경 {activationCount}
+                        </Badge>
+                      ) : null}
                       <Badge
                         variant={row.submittedAt ? "default" : "secondary"}
                         className="shrink-0 rounded-full"

@@ -11,6 +11,7 @@ later, then deleted safely:
   - users/{uid}/memoryReviewFeedback
   - users/{uid}/referenceSourceAnalyses
   - users/{uid}/memoryRetrievalLogs
+  - users/{uid}/memoryActivationLogs
   - users/{uid}/memoryClusters
   - users/{uid}/memoryClusterSnapshots
   - users/{uid} root profile document
@@ -147,6 +148,9 @@ def backup_user(uid: str, email: str, base_dir: Path) -> dict:
             user_ref.collection("referenceSourceAnalyses")
         ),
         "memoryRetrievalLogs": dump_collection(user_ref.collection("memoryRetrievalLogs")),
+        "memoryActivationLogs": dump_collection(
+            user_ref.collection("memoryActivationLogs")
+        ),
         "memoryClusters": dump_collection(user_ref.collection("memoryClusters")),
         "memoryClusterSnapshots": dump_collection(
             user_ref.collection("memoryClusterSnapshots")
@@ -185,6 +189,7 @@ def backup_user(uid: str, email: str, base_dir: Path) -> dict:
         "reviewFeedback": len(payload["memoryReviewFeedback"]),
         "referenceAnalyses": len(payload["referenceSourceAnalyses"]),
         "retrievalLogs": len(payload["memoryRetrievalLogs"]),
+        "activationLogs": len(payload["memoryActivationLogs"]),
         "clusters": len(payload["memoryClusters"]),
         "clusterSnapshots": len(payload["memoryClusterSnapshots"]),
         "participantRecords": len(participant_records),

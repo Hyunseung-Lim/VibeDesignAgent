@@ -298,6 +298,29 @@ type ReviewMemoryArchiveStatus = {
   } | null;
 };
 
+// 리뷰 중 활성/비활성 토글의 staging 항목. baseline은 undo 시 서버 상태
+// 표시를 복원하기 위한 클라이언트 전용 값이라 draft에는 저장하지 않는다
+// (재진입 시 서버 summary가 곧 baseline이므로 overlay 때 다시 채운다).
+type StagedMemoryActivation = {
+  active: boolean;
+  reason: string | null;
+  toggledAt: number;
+  baseline: {
+    weight: number | null;
+    archivedAt: number | null;
+    archiveReason: string | null;
+    inactiveReason: string | null;
+    inactiveReasonDetail: string | null;
+  } | null;
+};
+
+type MemoryActivationEvent = {
+  memoryId: string;
+  active: boolean;
+  reason: string | null;
+  toggledAt: number;
+};
+
 type SessionMemoryItem = {
   id: string;
   episodic?: string | null;
@@ -3170,6 +3193,22 @@ export default function MainScreenPage() {
   const memoryReviewAnswersRef = useRef<MemoryReviewAnswers>({});
   const memoryReviewDirtyRef = useRef(false);
   const memoryReviewSaveKeyRef = useRef("");
+  // 활성/비활성 토글 staging. 제출 전까지 서버 메모리 문서를 건드리지 않고,
+  // 여기(및 review-feedback draft)에만 쌓아 둔다.
+  const [stagedMemoryActivations, setStagedMemoryActivations] = useState<
+    Record<string, StagedMemoryActivation>
+  >({});
+  const stagedMemoryActivationsRef = useRef<
+    Record<string, StagedMemoryActivation>
+  >({});
+  const memoryActivationEventsRef = useRef<MemoryActivationEvent[]>([]);
+  const reviewGraphClustersRef = useRef<{ id: string; itemIds: string[] }[]>(
+    [],
+  );
+  // staged 토글을 가정한 클러스터 preview 요청의 중복 방지 키와, preview
+  // 도착 후 소속 클러스터로 focus를 옮길 메모리.
+  const stagedClusterPreviewKeyRef = useRef("");
+  const pendingClusterFocusMemoryIdRef = useRef<string | null>(null);
   // Most recently obtained ID token, kept so the unload flush can fire a
   // keepalive request synchronously without awaiting getIdToken.
   const memoryReviewTokenRef = useRef<string | null>(null);
@@ -3399,7 +3438,22 @@ export default function MainScreenPage() {
         memoryReviewAnswersRef.current = nextAnswers;
         setMemoryReviewAnswers(nextAnswers);
       }
-      const payloadKey = JSON.stringify({ answers, submitted });
+      const memoryActivations = {
+        states: Object.fromEntries(
+          Object.entries(stagedMemoryActivationsRef.current).map(
+            ([id, staged]) => [
+              id,
+              {
+                active: staged.active,
+                reason: staged.reason,
+                toggledAt: staged.toggledAt,
+              },
+            ],
+          ),
+        ),
+        events: memoryActivationEventsRef.current,
+      };
+      const payloadKey = JSON.stringify({ answers, memoryActivations, submitted });
       if (!submitted && payloadKey === memoryReviewSaveKeyRef.current) {
         return true;
       }
@@ -3418,6 +3472,7 @@ export default function MainScreenPage() {
           body: JSON.stringify({
             missionId,
             answers,
+            memoryActivations,
             submitted,
           }),
         });
@@ -3429,6 +3484,26 @@ export default function MainScreenPage() {
         memoryReviewDirtyRef.current = false;
         setMemoryReviewSubmittedAt(data.feedback?.submittedAt ?? null);
         setMemoryReviewSaveStatus("saved");
+        if (submitted) {
+          // 제출로 재활성화가 실제 적용됐으면 after cluster snapshot을 한 번
+          // 재생성한다. 로비 이동을 막지 않는 best-effort 호출.
+          const hadReactivation = Object.values(
+            stagedMemoryActivationsRef.current,
+          ).some((staged) => staged.active);
+          if (hadReactivation) {
+            void fetch("/api/memory/session-clusters", {
+              method: "POST",
+              keepalive: true,
+              headers: {
+                Authorization: `Bearer ${token}`,
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({ missionId, phases: ["after"] }),
+            }).catch(() => {});
+          }
+          stagedMemoryActivationsRef.current = {};
+          setStagedMemoryActivations({});
+        }
         return true;
       } catch {
         setMemoryReviewSaveStatus("error");
@@ -3446,7 +3521,22 @@ export default function MainScreenPage() {
     const token = memoryReviewTokenRef.current;
     if (!token) return;
     const answers = memoryReviewAnswersRef.current;
-    const payloadKey = JSON.stringify({ answers, submitted: false });
+    const memoryActivations = {
+      states: Object.fromEntries(
+        Object.entries(stagedMemoryActivationsRef.current).map(
+          ([id, staged]) => [
+            id,
+            {
+              active: staged.active,
+              reason: staged.reason,
+              toggledAt: staged.toggledAt,
+            },
+          ],
+        ),
+      ),
+      events: memoryActivationEventsRef.current,
+    };
+    const payloadKey = JSON.stringify({ answers, memoryActivations, submitted: false });
     if (payloadKey === memoryReviewSaveKeyRef.current) return;
     try {
       void fetch("/api/memory/review-feedback", {
@@ -3456,7 +3546,12 @@ export default function MainScreenPage() {
           Authorization: `Bearer ${token}`,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ missionId, answers, submitted: false }),
+        body: JSON.stringify({
+          missionId,
+          answers,
+          memoryActivations,
+          submitted: false,
+        }),
       });
       memoryReviewSaveKeyRef.current = payloadKey;
       memoryReviewDirtyRef.current = false;
@@ -3496,137 +3591,156 @@ export default function MainScreenPage() {
     },
     [saveMemoryReviewFeedback],
   );
+  // 토글은 서버에 바로 쓰지 않고 staging만 한다. 제출 시 review-feedback
+  // 라우트가 최종 상태를 일괄 적용하고 토글 이력 전체를 memoryActivationLogs에
+  // 남긴다. baseline과 같은 상태로 되돌리면 staged 항목은 지우되(net no-op)
+  // 이벤트 이력에는 남긴다.
   const setMemoryActiveFromReview = useCallback(
-    async (memoryId: string, active: boolean, reason?: string) => {
-      if (isViewingAsAdmin) return false;
-      const currentUser = firebaseAuth.currentUser;
-      if (!currentUser) return false;
+    (memoryId: string, active: boolean, reason?: string) => {
+      if (isViewingAsAdmin || memoryReviewSubmittedAt != null) return false;
+      const trimmedReason = reason?.trim() || null;
+      if (!active && !trimmedReason) return false;
 
-      try {
-        const token = await getIdToken(currentUser);
-        const response = await fetch("/api/memory/active-state", {
-          method: "PATCH",
-          headers: {
-            Authorization: `Bearer ${token}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({ memoryId, active, reason }),
-        });
-        if (!response.ok) throw new Error(`active_state_failed_${response.status}`);
-        const data = (await response.json()) as {
-          status?: {
-            memoryId: string;
-            active: boolean;
-            archivedAt: number | null;
-            archiveReason: string | null;
-            inactiveReason: string | null;
-            inactiveReasonDetail: string | null;
-            weight: number | null;
-          };
+      const now = Date.now();
+      const matches = (memory: SessionMemoryItem) =>
+        memory.id === memoryId ||
+        ("memoryId" in memory && memory.memoryId === memoryId);
+      const existing = stagedMemoryActivationsRef.current[memoryId];
+      let baseline = existing?.baseline ?? null;
+      if (!baseline) {
+        const source =
+          sessionMemorySummary.graphMemories.find(matches) ??
+          sessionMemorySummary.promoted.find(matches) ??
+          sessionMemorySummary.referenced.find(matches) ??
+          null;
+        const archive = reviewMemoryArchiveById[memoryId];
+        baseline = {
+          weight: source?.weight ?? archive?.weight ?? null,
+          archivedAt: source?.archivedAt ?? archive?.archivedAt ?? null,
+          archiveReason:
+            source?.archiveReason ?? archive?.archiveReason ?? null,
+          inactiveReason:
+            source?.inactiveReason ?? archive?.inactiveReason ?? null,
+          inactiveReasonDetail:
+            source?.inactiveReasonDetail ??
+            archive?.inactiveReasonDetail ??
+            null,
         };
-        const status = data.status;
-        if (!status) throw new Error("active_state_missing_status");
+      }
+      // weight가 없는 legacy 문서는 active로 취급한다 (서버 기준과 동일).
+      const baselineActive =
+        !baseline.archivedAt &&
+        (baseline.weight == null || baseline.weight > 0);
 
-        const updateMemory = <T extends SessionMemoryItem>(memory: T): T =>
-          memory.id === memoryId ||
-          ("memoryId" in memory && memory.memoryId === memoryId)
+      memoryActivationEventsRef.current = [
+        ...memoryActivationEventsRef.current,
+        {
+          memoryId,
+          active,
+          reason: active ? null : trimmedReason,
+          toggledAt: now,
+        },
+      ].slice(-300);
+
+      const nextStaged = { ...stagedMemoryActivationsRef.current };
+      if (active === baselineActive) {
+        delete nextStaged[memoryId];
+      } else {
+        nextStaged[memoryId] = {
+          active,
+          reason: active ? null : trimmedReason,
+          toggledAt: now,
+          baseline,
+        };
+      }
+      stagedMemoryActivationsRef.current = nextStaged;
+      setStagedMemoryActivations(nextStaged);
+
+      const fields =
+        active === baselineActive
+          ? {
+              weight: baseline.weight,
+              archivedAt: baseline.archivedAt,
+              archiveReason: baseline.archiveReason,
+              inactiveReason: baseline.inactiveReason,
+              inactiveReasonDetail: baseline.inactiveReasonDetail,
+            }
+          : active
             ? {
-                ...memory,
-                weight: status.weight,
-                archivedAt: status.archivedAt,
-                archiveReason: status.archiveReason,
-                inactiveReason: status.inactiveReason,
-                inactiveReasonDetail: status.inactiveReasonDetail,
+                weight: 0.5,
+                archivedAt: null,
+                archiveReason: null,
+                inactiveReason: null,
+                inactiveReasonDetail: null,
               }
-            : memory;
-        setSessionMemorySummary((current) => ({
-          ...current,
-          graphMemories: current.graphMemories.map(updateMemory),
-          promoted: current.promoted.map(updateMemory),
-          referenced: current.referenced.map(updateMemory),
-        }));
-        setReviewMemoryArchiveById((current) => ({
-          ...current,
-          [memoryId]: {
-            ...(current[memoryId] ?? {
-              memoryId,
-              duplicateOf: null,
-              duplicate: null,
-            }),
-            archivedAt: status.archivedAt,
-            archiveReason: status.archiveReason,
-            inactive: !status.active && !status.archivedAt,
-            inactiveReason: status.inactiveReason,
-            inactiveReasonDetail: status.inactiveReasonDetail,
-            weight: status.weight,
-          },
-        }));
-        if (!active) {
+            : {
+                weight: 0,
+                archivedAt: baseline.archivedAt,
+                archiveReason: baseline.archiveReason,
+                inactiveReason: "user_disabled",
+                inactiveReasonDetail: trimmedReason,
+              };
+      const updateMemory = <T extends SessionMemoryItem>(memory: T): T =>
+        matches(memory) ? { ...memory, ...fields } : memory;
+      setSessionMemorySummary((current) => ({
+        ...current,
+        graphMemories: current.graphMemories.map(updateMemory),
+        promoted: current.promoted.map(updateMemory),
+        referenced: current.referenced.map(updateMemory),
+      }));
+      setReviewMemoryArchiveById((current) => ({
+        ...current,
+        [memoryId]: {
+          ...(current[memoryId] ?? {
+            memoryId,
+            duplicateOf: null,
+            duplicate: null,
+          }),
+          archivedAt: fields.archivedAt,
+          archiveReason: fields.archiveReason,
+          inactive:
+            !fields.archivedAt && fields.weight != null && fields.weight <= 0,
+          inactiveReason: fields.inactiveReason,
+          inactiveReasonDetail: fields.inactiveReasonDetail,
+          weight: fields.weight,
+        },
+      }));
+
+      if (!active) {
+        setShowInactiveGraphMemories(true);
+        setSelectedSessionGraphClusterId("session-inactive");
+      } else {
+        // preview 클러스터링이 도착하면 새 소속 클러스터로 focus를 옮긴다.
+        // 그 전까지는 기존 클러스터(있으면) 또는 비활성 그룹 자리에 활성
+        // 스타일 + 제출 시 반영 배지로 표시한다.
+        pendingClusterFocusMemoryIdRef.current = memoryId;
+        const containingCluster = reviewGraphClustersRef.current.find(
+          (cluster) => cluster.itemIds.includes(memoryId),
+        );
+        if (containingCluster) {
+          setSelectedSessionGraphClusterId(containingCluster.id);
+        } else {
           setShowInactiveGraphMemories(true);
           setSelectedSessionGraphClusterId("session-inactive");
         }
-        let clusterRefreshFailed = false;
-        if (active && missionId) {
-          try {
-            const clusterResponse = await fetch("/api/memory/session-clusters", {
-              method: "POST",
-              headers: {
-                Authorization: `Bearer ${token}`,
-                "Content-Type": "application/json",
-              },
-              body: JSON.stringify({ missionId, phases: ["after"] }),
-            });
-            if (!clusterResponse.ok) {
-              throw new Error(`cluster_refresh_failed_${clusterResponse.status}`);
-            }
-            const summaryTargetUid = targetSessionUserId ?? currentUser.uid;
-            const refreshedSummary = await fetchSessionMemorySummary(
-              token,
-              summaryTargetUid,
-              missionId,
-            );
-            setSessionMemorySummary(refreshedSummary);
-            sessionMemorySummaryKeyRef.current = sessionMemorySummaryKey(
-              summaryTargetUid,
-              missionId,
-            );
-            const containingCluster =
-              refreshedSummary.clusterSnapshots.after.graphClusters.find(
-                (cluster) => cluster.itemIds.includes(memoryId),
-              );
-            if (!containingCluster) {
-              clusterRefreshFailed = true;
-              setSelectedSessionGraphClusterId(null);
-            } else {
-              setSelectedSessionGraphClusterId(containingCluster.id);
-            }
-          } catch (clusterError) {
-            clusterRefreshFailed = true;
-            console.warn(
-              "[main] memory activated but cluster refresh failed",
-              clusterError,
-            );
-          }
-        }
-        if (active && clusterRefreshFailed) {
-          toast.warning(
-            "메모리는 활성화했지만 클러스터를 갱신하지 못했습니다.",
-          );
-        } else {
-          toast.success(
-            active
-              ? "메모리를 활성화하고 클러스터를 갱신했습니다."
-              : "메모리를 비활성화했습니다.",
-          );
-        }
-        return true;
-      } catch (error) {
-        console.error("[main] memory active state update failed", error);
-        toast.error("메모리 상태를 변경하지 못했습니다.");
-        return false;
       }
+
+      memoryReviewDirtyRef.current = true;
+      void saveMemoryReviewFeedback(false);
+      toast.success(
+        active
+          ? "메모리를 활성화로 표시했습니다. 리뷰 제출 시 반영됩니다."
+          : "메모리를 비활성화로 표시했습니다. 리뷰 제출 시 반영됩니다.",
+      );
+      return true;
     },
-    [isViewingAsAdmin, missionId, targetSessionUserId],
+    [
+      isViewingAsAdmin,
+      memoryReviewSubmittedAt,
+      sessionMemorySummary,
+      reviewMemoryArchiveById,
+      saveMemoryReviewFeedback,
+    ],
   );
   const activeOption =
     missionOptions.find((option) => option.id === selectedOptionId) ??
@@ -4489,6 +4603,203 @@ export default function MainScreenPage() {
     };
   }, [showReviewAnnotations, targetSessionUserId, missionId]);
 
+  // Draft에서 복원한 staged 토글을 서버에서 온 summary/archive-status 위에
+  // 다시 입힌다. summary fetch와 draft fetch 완료 순서가 어느 쪽이든 여기서
+  // 만난다. 변경이 없으면 기존 객체를 반환해 재실행 루프를 끊고, baseline이
+  // 비어 있는 항목(draft 복원분)은 덮어쓰기 직전의 서버 값으로 채운다.
+  useEffect(() => {
+    const staged = stagedMemoryActivationsRef.current;
+    if (Object.keys(staged).length === 0) return;
+    const stagedFields = (entry: StagedMemoryActivation) =>
+      entry.active
+        ? {
+            weight: 0.5,
+            archivedAt: null,
+            archiveReason: null,
+            inactiveReason: null,
+            inactiveReasonDetail: null,
+          }
+        : {
+            weight: 0,
+            inactiveReason: "user_disabled",
+            inactiveReasonDetail: entry.reason,
+          };
+    setSessionMemorySummary((current) => {
+      let changed = false;
+      const apply = <T extends SessionMemoryItem>(memory: T): T => {
+        const id =
+          "memoryId" in memory && typeof memory.memoryId === "string"
+            ? memory.memoryId
+            : memory.id;
+        const entry = staged[id] ?? staged[memory.id];
+        if (!entry) return memory;
+        if (!entry.baseline) {
+          entry.baseline = {
+            weight: memory.weight ?? null,
+            archivedAt: memory.archivedAt ?? null,
+            archiveReason: memory.archiveReason ?? null,
+            inactiveReason: memory.inactiveReason ?? null,
+            inactiveReasonDetail: memory.inactiveReasonDetail ?? null,
+          };
+        }
+        const fields = stagedFields(entry);
+        const same = Object.entries(fields).every(
+          ([key, value]) =>
+            ((memory as Record<string, unknown>)[key] ?? null) === value,
+        );
+        if (same) return memory;
+        changed = true;
+        return { ...memory, ...fields };
+      };
+      const next = {
+        ...current,
+        graphMemories: current.graphMemories.map(apply),
+        promoted: current.promoted.map(apply),
+        referenced: current.referenced.map(apply),
+      };
+      return changed ? next : current;
+    });
+    setReviewMemoryArchiveById((current) => {
+      let changed = false;
+      const next = { ...current };
+      for (const [id, entry] of Object.entries(staged)) {
+        const fields = stagedFields(entry);
+        const existing = next[id];
+        const overlaid = {
+          ...(existing ?? { memoryId: id, duplicateOf: null, duplicate: null }),
+          archivedAt: entry.active ? null : (existing?.archivedAt ?? null),
+          archiveReason: entry.active ? null : (existing?.archiveReason ?? null),
+          inactive: !entry.active,
+          inactiveReason: fields.inactiveReason,
+          inactiveReasonDetail: fields.inactiveReasonDetail,
+          weight: fields.weight,
+        };
+        if (
+          existing &&
+          existing.weight === overlaid.weight &&
+          existing.inactive === overlaid.inactive &&
+          existing.inactiveReason === overlaid.inactiveReason &&
+          existing.inactiveReasonDetail === overlaid.inactiveReasonDetail &&
+          existing.archivedAt === overlaid.archivedAt
+        ) {
+          continue;
+        }
+        next[id] = overlaid;
+        changed = true;
+      }
+      return changed ? next : current;
+    });
+  }, [stagedMemoryActivations, sessionMemorySummary, reviewMemoryArchiveById]);
+
+  // staged 재활성화가 있으면 그 상태를 가정한 after snapshot preview를 서버에
+  // 계산시켜(저장 없음) 화면 클러스터에 즉시 반영한다. 토글 직후와 draft 복원
+  // 재진입 양쪽을 이 effect 하나로 처리한다. staged 비활성화만으로는 다시
+  // 계산하지 않는다 — 클러스터 itemIds 필터가 화면에서 걸러낸다.
+  useEffect(() => {
+    if (
+      !showReviewAnnotations ||
+      !missionId ||
+      isViewingAsAdmin ||
+      memoryReviewSubmittedAt != null ||
+      isSessionMemorySummaryLoading
+    ) {
+      return;
+    }
+    const staged = stagedMemoryActivationsRef.current;
+    const assumeActiveMemoryIds = Object.entries(staged)
+      .filter(([, entry]) => entry.active)
+      .map(([id]) => id)
+      .sort();
+    if (assumeActiveMemoryIds.length === 0) return;
+    const previewKey = `${missionId}:${assumeActiveMemoryIds.join(",")}`;
+    if (stagedClusterPreviewKeyRef.current === previewKey) return;
+    const currentUser = firebaseAuth.currentUser;
+    if (!currentUser) return;
+    stagedClusterPreviewKeyRef.current = previewKey;
+    let cancelled = false;
+    (async () => {
+      try {
+        const token = await getIdToken(currentUser);
+        const assumeInactiveMemoryIds = Object.entries(
+          stagedMemoryActivationsRef.current,
+        )
+          .filter(([, entry]) => !entry.active)
+          .map(([id]) => id);
+        const response = await fetch("/api/memory/session-clusters", {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            missionId,
+            preview: { assumeActiveMemoryIds, assumeInactiveMemoryIds },
+          }),
+        });
+        if (!response.ok) {
+          throw new Error(`cluster_preview_failed_${response.status}`);
+        }
+        const data = (await response.json()) as { snapshot?: unknown };
+        if (cancelled || !data.snapshot || typeof data.snapshot !== "object") {
+          if (!cancelled) throw new Error("cluster_preview_missing_snapshot");
+          return;
+        }
+        const snapshot = data.snapshot as Record<string, unknown>;
+        setSessionMemorySummary((current) => ({
+          ...current,
+          clusterSnapshots: {
+            ...current.clusterSnapshots,
+            after: parseClusterSnapshot(
+              "after",
+              { ...snapshot, isFallback: false },
+              {
+                graphClusters: current.graphClusters,
+                graphEdges: current.graphEdges,
+              },
+            ),
+          },
+        }));
+        const focusMemoryId = pendingClusterFocusMemoryIdRef.current;
+        if (focusMemoryId) {
+          pendingClusterFocusMemoryIdRef.current = null;
+          const clusters = Array.isArray(snapshot.graphClusters)
+            ? (snapshot.graphClusters as Array<{
+                id?: unknown;
+                itemIds?: unknown;
+              }>)
+            : [];
+          const containing = clusters.find(
+            (cluster) =>
+              Array.isArray(cluster.itemIds) &&
+              cluster.itemIds.includes(focusMemoryId),
+          );
+          if (containing && typeof containing.id === "string") {
+            setSelectedSessionGraphClusterId(containing.id);
+            setSelectedGraphMemoryId(focusMemoryId);
+          }
+        }
+      } catch (error) {
+        if (cancelled) return;
+        // 실패해도 비활성 그룹 자리의 활성 스타일 + 배지 표시는 유지되고,
+        // 실제 반영은 제출 시 일어난다. 다음 토글에서 키가 바뀌면 재시도한다.
+        console.warn("[main] staged cluster preview failed", error);
+        toast.warning(
+          "클러스터 미리보기를 갱신하지 못했습니다. 제출 시 반영됩니다.",
+        );
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    showReviewAnnotations,
+    missionId,
+    isViewingAsAdmin,
+    memoryReviewSubmittedAt,
+    isSessionMemorySummaryLoading,
+    stagedMemoryActivations,
+  ]);
+
   useEffect(() => {
     // Admins viewing as a user (viewAs) load that user's feedback read-only;
     // reviewers load their own. Other modes have no feedback to show.
@@ -4499,6 +4810,9 @@ export default function MainScreenPage() {
       setMemoryReviewAnswers(null);
       setMemoryReviewSubmittedAt(null);
       setMemoryReviewSaveStatus("idle");
+      stagedMemoryActivationsRef.current = {};
+      setStagedMemoryActivations({});
+      memoryActivationEventsRef.current = [];
       return;
     }
     // On refresh the Firebase session restores asynchronously, so currentUser
@@ -4536,13 +4850,84 @@ export default function MainScreenPage() {
               ? (data.feedback as {
                   answers?: MemoryReviewAnswers;
                   submittedAt?: number | null;
+                  memoryActivations?: {
+                    states?: Record<
+                      string,
+                      {
+                        active?: unknown;
+                        reason?: unknown;
+                        toggledAt?: unknown;
+                      }
+                    >;
+                    events?: Array<{
+                      memoryId?: unknown;
+                      active?: unknown;
+                      reason?: unknown;
+                      toggledAt?: unknown;
+                    }>;
+                  } | null;
                 })
               : null;
           const answers = feedback?.answers ?? {};
           memoryReviewAnswersRef.current = answers;
           memoryReviewDirtyRef.current = false;
+          // 제출 전 draft에 남은 staged 토글을 복원한다. 제출된 리뷰는 이미
+          // 서버에 적용된 상태라 복원하지 않고, admin viewAs는 서버 baseline을
+          // 그대로 관찰한다. baseline은 summary overlay 시점에 다시 채운다.
+          const storedActivations =
+            !isViewingAsAdmin && !feedback?.submittedAt
+              ? feedback?.memoryActivations
+              : null;
+          const restoredStates: Record<string, StagedMemoryActivation> = {};
+          for (const [id, state] of Object.entries(
+            storedActivations?.states ?? {},
+          )) {
+            if (typeof state?.active !== "boolean") continue;
+            restoredStates[id] = {
+              active: state.active,
+              reason: typeof state.reason === "string" ? state.reason : null,
+              toggledAt:
+                typeof state.toggledAt === "number" ? state.toggledAt : 0,
+              baseline: null,
+            };
+          }
+          const restoredEvents: MemoryActivationEvent[] = (
+            storedActivations?.events ?? []
+          ).flatMap((event) =>
+            typeof event?.memoryId === "string" &&
+            typeof event?.active === "boolean"
+              ? [
+                  {
+                    memoryId: event.memoryId,
+                    active: event.active,
+                    reason:
+                      typeof event.reason === "string" ? event.reason : null,
+                    toggledAt:
+                      typeof event.toggledAt === "number"
+                        ? event.toggledAt
+                        : 0,
+                  },
+                ]
+              : [],
+          );
+          stagedMemoryActivationsRef.current = restoredStates;
+          setStagedMemoryActivations(restoredStates);
+          memoryActivationEventsRef.current = restoredEvents;
           memoryReviewSaveKeyRef.current = JSON.stringify({
             answers,
+            memoryActivations: {
+              states: Object.fromEntries(
+                Object.entries(restoredStates).map(([id, staged]) => [
+                  id,
+                  {
+                    active: staged.active,
+                    reason: staged.reason,
+                    toggledAt: staged.toggledAt,
+                  },
+                ]),
+              ),
+              events: restoredEvents,
+            },
             submitted: false,
           });
           setMemoryReviewAnswers(answers);
@@ -8596,6 +8981,9 @@ export default function MainScreenPage() {
       ? legacyReviewClusters.graphEdges
       : sessionMemorySummary.graphEdges
     : activeClusterSnapshot.graphEdges;
+  // 재활성화 staging 시 소속 클러스터를 즉시 찾기 위한 참조 (토글 콜백은
+  // render 스코프의 클러스터 목록에 직접 접근할 수 없다).
+  reviewGraphClustersRef.current = reviewGraphClusters;
   const renderSessionImpactGraph = (variant: "panel" | "overlay" = "overlay") => {
     const isOverlay = variant === "overlay";
     if (isSessionMemorySummaryLoading) {
@@ -8630,6 +9018,17 @@ export default function MainScreenPage() {
     const isInactiveGraphMemory = (
       memory: (typeof cumulativeGraphMemories)[number],
     ) => Boolean(memory.archivedAt) || isSessionScopedInactive(memory);
+    // Staging으로 재활성화됐지만 어떤 클러스터 itemIds에도 없는 메모리
+    // (리뷰 이전부터 비활성이라 스냅샷 입력에서 빠졌던 것). 제출 후 클러스터
+    // 재생성 전까지 비활성 그룹 자리에 활성 스타일로 남긴다.
+    const allClusterItemIds = new Set(
+      reviewGraphClusters.flatMap((cluster) => cluster.itemIds),
+    );
+    const isStagedActiveUnclustered = (
+      memory: (typeof cumulativeGraphMemories)[number],
+    ) =>
+      stagedMemoryActivations[memory.id]?.active === true &&
+      !allClusterItemIds.has(memory.id);
     const isVisibleGraphMemory = (
       memory: (typeof cumulativeGraphMemories)[number],
       includeInactive: boolean,
@@ -8646,7 +9045,8 @@ export default function MainScreenPage() {
       if (
         shouldUseSnapshotItems &&
         !snapshotItemIds.has(memory.id) &&
-        !(isInactive && memoryGraphPhase === "after")
+        !(isInactive && memoryGraphPhase === "after") &&
+        !(isStagedActiveUnclustered(memory) && memoryGraphPhase === "after")
       ) {
         return false;
       }
@@ -8671,9 +9071,11 @@ export default function MainScreenPage() {
       isVisibleGraphMemory(memory, showInactiveGraphMemories),
     );
     // 토글 노출 판단: 토글이 켜져 있다고 가정할 때 보이는 비활성 노드 수.
+    // staged 재활성화로 비활성 그룹 자리에 남는 노드도 포함한다.
     const inactiveVisibleCount = cumulativeGraphMemories.filter(
       (memory) =>
-        isInactiveGraphMemory(memory) && isVisibleGraphMemory(memory, true),
+        (isInactiveGraphMemory(memory) || isStagedActiveUnclustered(memory)) &&
+        isVisibleGraphMemory(memory, true),
     ).length;
     // 이번 세션으로 인해 비활성된 것만 +N 배지로 표시 (그 외는 이전 세션에서
     // 이미 정리된 누적 비활성).
@@ -8729,6 +9131,11 @@ export default function MainScreenPage() {
         inactive: isInactiveGraphMemory(memory),
         inactiveReason: memory.inactiveReason ?? null,
         inactiveReasonDetail: memory.inactiveReasonDetail ?? null,
+        pendingActivation: stagedMemoryActivations[memory.id]
+          ? stagedMemoryActivations[memory.id].active
+            ? ("activate" as const)
+            : ("deactivate" as const)
+          : null,
         weight: phaseWeight ?? null,
         embedding: memory.embedding,
         keyword: memoryKeywords,
@@ -8752,9 +9159,16 @@ export default function MainScreenPage() {
         hideArea: false,
       }))
       .filter((cluster) => cluster.itemIds.length > 0);
+    const stagedActiveUnclusteredIds = new Set(
+      visibleMemoryItems
+        .filter(isStagedActiveUnclustered)
+        .map((memory) => memory.id),
+    );
     const inactiveUnclusteredMemoryIds = graphItems
       .map((item) => item.id)
-      .filter((id) => inactiveMemoryIds.has(id));
+      .filter(
+        (id) => inactiveMemoryIds.has(id) || stagedActiveUnclusteredIds.has(id),
+      );
     const graphClusters = [
       ...baseGraphClusters,
       {

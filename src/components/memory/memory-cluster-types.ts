@@ -67,6 +67,11 @@ export type ClusterGraphItem = {
   inactive?: boolean;
   inactiveReason?: string | null;
   inactiveReasonDetail?: string | null;
+  /**
+   * 리뷰에서 staging된 활성/비활성 토글. 제출 전까지 서버에 반영되지 않은
+   * 상태임을 카드 배지로 알리는 데 쓴다.
+   */
+  pendingActivation?: "activate" | "deactivate" | null;
   keyword: string[];
   keywords: string[];
   row: {
