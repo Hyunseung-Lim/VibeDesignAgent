@@ -4221,18 +4221,25 @@ export default function MainScreenPage() {
       const panel = missionPanelRef.current;
       if ((e.target as HTMLElement).closest("[data-cite-menu]")) return;
       if (!panel) return;
-      if (!panel.contains(e.target as Node)) {
-        hideCiteMenu();
-        return;
-      }
       requestAnimationFrame(() => {
         const selection = window.getSelection();
         const text = selection?.toString().trim();
-        if (!text || text.length < 2) {
+        if (!selection || selection.rangeCount === 0 || !text || text.length < 2) {
           hideCiteMenu();
           return;
         }
-        const range = selection!.getRangeAt(0);
+        // Gate on where the selected text lives, not where the pointer was
+        // released — selection drags routinely end outside the panel (past
+        // its edge, on the scrollbar, over the chat area), and that must
+        // not suppress the menu.
+        const range = selection.getRangeAt(0);
+        const container = range.commonAncestorContainer;
+        const containerElement =
+          container instanceof Element ? container : container.parentElement;
+        if (!containerElement || !panel.contains(containerElement)) {
+          hideCiteMenu();
+          return;
+        }
         const rect = range.getBoundingClientRect();
         if (!rect.width && !rect.height) return;
         showCiteMenu(rect.left + rect.width / 2, rect.top, text);
@@ -10359,8 +10366,12 @@ export default function MainScreenPage() {
             data-tour="content-panel"
             className="flex-1 space-y-5 overflow-y-auto bg-slate-50 px-6 pb-32 pt-6"
           >
-            <div className="sticky top-0 z-10 -mx-6 px-6 py-3">
-              <div className="flex w-fit items-center gap-1 rounded-2xl border border-slate-200 bg-white p-1 shadow-sm">
+            {/* pointer-events-none: this strip is transparent but spans the
+                full panel width; without it, a selection drag entering the
+                strip hit-tests this element (the panel's first child), which
+                snaps the selection focus to the start of the panel content. */}
+            <div className="pointer-events-none sticky top-0 z-10 -mx-6 px-6 py-3">
+              <div className="pointer-events-auto flex w-fit items-center gap-1 rounded-2xl border border-slate-200 bg-white p-1 shadow-sm">
                 {[
                   { id: "mission", label: "Mission", ref: missionSectionRef },
                   {

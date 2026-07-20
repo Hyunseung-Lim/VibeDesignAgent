@@ -1,5 +1,6 @@
 "use client";
 
+import type React from "react";
 import type { RefObject } from "react";
 import { ChevronDown } from "lucide-react";
 import ReactMarkdown from "react-markdown";
@@ -9,6 +10,65 @@ type IdeaNoteSectionProps = {
   description: string;
   expanded: boolean;
   onToggleExpanded: () => void;
+};
+
+// Module scope so component identities stay stable across renders — an
+// inline map hands ReactMarkdown new component types every render, which
+// remounts the whole markdown DOM (the page re-renders every second via
+// the session timer) and destroys any in-progress text selection.
+const markdownComponents = {
+  h1: ({ children }: { children?: React.ReactNode }) => (
+    <h1 className="mb-1 text-base font-bold text-slate-900">{children}</h1>
+  ),
+  h2: ({ children }: { children?: React.ReactNode }) => (
+    <h2 className="mb-1 mt-3 text-sm font-semibold text-slate-900">
+      {children}
+    </h2>
+  ),
+  h3: ({ children }: { children?: React.ReactNode }) => (
+    <h3 className="mb-1 mt-2 text-sm font-medium text-slate-800">
+      {children}
+    </h3>
+  ),
+  p: ({ children }: { children?: React.ReactNode }) => (
+    <p className="mb-2 leading-relaxed last:mb-0">{children}</p>
+  ),
+  ul: ({ children }: { children?: React.ReactNode }) => (
+    <ul className="mb-2 ml-4 list-disc space-y-1">{children}</ul>
+  ),
+  ol: ({ children }: { children?: React.ReactNode }) => (
+    <ol className="mb-2 ml-4 list-decimal space-y-1">{children}</ol>
+  ),
+  li: ({ children }: { children?: React.ReactNode }) => (
+    <li className="leading-relaxed">{children}</li>
+  ),
+  strong: ({ children }: { children?: React.ReactNode }) => (
+    <strong className="font-semibold text-slate-900">{children}</strong>
+  ),
+  em: ({ children }: { children?: React.ReactNode }) => (
+    <em className="italic text-slate-600">{children}</em>
+  ),
+  code: ({ children }: { children?: React.ReactNode }) => (
+    <code className="rounded bg-slate-200 px-1 py-0.5 font-mono text-xs text-slate-800">
+      {children}
+    </code>
+  ),
+  blockquote: ({ children }: { children?: React.ReactNode }) => (
+    <blockquote className="my-2 border-l-2 border-slate-300 pl-3 italic text-slate-500">
+      {children}
+    </blockquote>
+  ),
+  hr: () => <hr className="my-3 border-slate-200" />,
+  a: ({ href, children }: { href?: string; children?: React.ReactNode }) => (
+    <a
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="text-indigo-500 underline underline-offset-2 hover:text-indigo-700"
+    >
+      {children}
+    </a>
+  ),
 };
 
 export function IdeaNoteSection({
@@ -44,68 +104,7 @@ export function IdeaNoteSection({
         {expanded && (
           <div className="max-h-[60vh] space-y-2 overflow-y-auto border-t border-slate-100 px-5 py-4 text-sm text-slate-700">
           {description ? (
-            <ReactMarkdown
-              components={{
-                h1: ({ children }) => (
-                  <h1 className="mb-1 text-base font-bold text-slate-900">
-                    {children}
-                  </h1>
-                ),
-                h2: ({ children }) => (
-                  <h2 className="mb-1 mt-3 text-sm font-semibold text-slate-900">
-                    {children}
-                  </h2>
-                ),
-                h3: ({ children }) => (
-                  <h3 className="mb-1 mt-2 text-sm font-medium text-slate-800">
-                    {children}
-                  </h3>
-                ),
-                p: ({ children }) => (
-                  <p className="mb-2 leading-relaxed last:mb-0">{children}</p>
-                ),
-                ul: ({ children }) => (
-                  <ul className="mb-2 ml-4 list-disc space-y-1">{children}</ul>
-                ),
-                ol: ({ children }) => (
-                  <ol className="mb-2 ml-4 list-decimal space-y-1">
-                    {children}
-                  </ol>
-                ),
-                li: ({ children }) => (
-                  <li className="leading-relaxed">{children}</li>
-                ),
-                strong: ({ children }) => (
-                  <strong className="font-semibold text-slate-900">
-                    {children}
-                  </strong>
-                ),
-                em: ({ children }) => (
-                  <em className="italic text-slate-600">{children}</em>
-                ),
-                code: ({ children }) => (
-                  <code className="rounded bg-slate-200 px-1 py-0.5 font-mono text-xs text-slate-800">
-                    {children}
-                  </code>
-                ),
-                blockquote: ({ children }) => (
-                  <blockquote className="my-2 border-l-2 border-slate-300 pl-3 italic text-slate-500">
-                    {children}
-                  </blockquote>
-                ),
-                hr: () => <hr className="my-3 border-slate-200" />,
-                a: ({ href, children }) => (
-                  <a
-                    href={href}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-indigo-500 underline underline-offset-2 hover:text-indigo-700"
-                  >
-                    {children}
-                  </a>
-                ),
-              }}
-            >
+            <ReactMarkdown components={markdownComponents}>
               {description}
             </ReactMarkdown>
           ) : (

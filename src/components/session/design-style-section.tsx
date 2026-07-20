@@ -68,6 +68,82 @@ function withColorTokens(children: ReactNode): ReactNode {
   return children;
 }
 
+// Module scope so component identities stay stable across renders — an
+// inline map hands ReactMarkdown new component types every render, which
+// remounts the whole markdown DOM (the page re-renders every second via
+// the session timer) and destroys any in-progress text selection.
+const markdownComponents = {
+  h1: ({ children }: { children?: ReactNode }) => (
+    <h1 className="mb-2 mt-3 text-sm font-bold text-slate-900 first:mt-0">
+      {children}
+    </h1>
+  ),
+  h2: ({ children }: { children?: ReactNode }) => (
+    <h2 className="mb-1.5 mt-3 text-xs font-semibold uppercase text-slate-800 first:mt-0">
+      {children}
+    </h2>
+  ),
+  h3: ({ children }: { children?: ReactNode }) => (
+    <h3 className="mb-1 mt-2 text-xs font-semibold text-slate-700">
+      {children}
+    </h3>
+  ),
+  p: ({ children }: { children?: ReactNode }) => (
+    <p className="mb-1.5 leading-relaxed last:mb-0">
+      {withColorTokens(children)}
+    </p>
+  ),
+  ul: ({ children }: { children?: ReactNode }) => (
+    <ul className="mb-1.5 ml-4 list-disc space-y-0.5">{children}</ul>
+  ),
+  ol: ({ children }: { children?: ReactNode }) => (
+    <ol className="mb-1.5 ml-4 list-decimal space-y-0.5">{children}</ol>
+  ),
+  li: ({ children }: { children?: ReactNode }) => (
+    <li className="leading-relaxed">{withColorTokens(children)}</li>
+  ),
+  strong: ({ children }: { children?: ReactNode }) => (
+    <strong className="font-semibold text-slate-900">{children}</strong>
+  ),
+  em: ({ children }: { children?: ReactNode }) => (
+    <em className="italic text-slate-600">{children}</em>
+  ),
+  code: ({ children }: { children?: ReactNode }) => {
+    const text = String(children ?? "");
+    const trimmed = text.trim();
+    const isHex = /^#([0-9A-Fa-f]{6}|[0-9A-Fa-f]{3})$/.test(trimmed);
+    return (
+      <span className="inline-flex items-center gap-1 align-middle">
+        {isHex && (
+          <span
+            className="inline-block h-3 w-3 shrink-0 rounded-sm border border-black/10"
+            style={{ backgroundColor: trimmed }}
+          />
+        )}
+        <code className="rounded bg-white px-1.5 py-0.5 font-mono text-[10px] text-indigo-700">
+          {text}
+        </code>
+      </span>
+    );
+  },
+  blockquote: ({ children }: { children?: ReactNode }) => (
+    <blockquote className="my-2 border-l-2 border-slate-200 pl-3 italic text-slate-500">
+      {children}
+    </blockquote>
+  ),
+  hr: () => <hr className="my-2 border-slate-200" />,
+  a: ({ href, children }: { href?: string; children?: ReactNode }) => (
+    <a
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="text-indigo-600 underline underline-offset-2 hover:text-indigo-800"
+    >
+      {children}
+    </a>
+  ),
+};
+
 export function DesignStyleSection({
   sectionRef,
   style,
@@ -110,88 +186,7 @@ export function DesignStyleSection({
             ) : (
               <div className="space-y-3">
                 <div className="max-h-56 overflow-y-auto rounded-xl border border-slate-100 bg-slate-50 px-4 py-3 text-xs text-slate-600">
-                  <ReactMarkdown
-                    components={{
-                      h1: ({ children }) => (
-                        <h1 className="mb-2 mt-3 text-sm font-bold text-slate-900 first:mt-0">
-                          {children}
-                        </h1>
-                      ),
-                      h2: ({ children }) => (
-                        <h2 className="mb-1.5 mt-3 text-xs font-semibold uppercase text-slate-800 first:mt-0">
-                          {children}
-                        </h2>
-                      ),
-                      h3: ({ children }) => (
-                        <h3 className="mb-1 mt-2 text-xs font-semibold text-slate-700">
-                          {children}
-                        </h3>
-                      ),
-                      p: ({ children }) => (
-                        <p className="mb-1.5 leading-relaxed last:mb-0">
-                          {withColorTokens(children)}
-                        </p>
-                      ),
-                      ul: ({ children }) => (
-                        <ul className="mb-1.5 ml-4 list-disc space-y-0.5">
-                          {children}
-                        </ul>
-                      ),
-                      ol: ({ children }) => (
-                        <ol className="mb-1.5 ml-4 list-decimal space-y-0.5">
-                          {children}
-                        </ol>
-                      ),
-                      li: ({ children }) => (
-                        <li className="leading-relaxed">
-                          {withColorTokens(children)}
-                        </li>
-                      ),
-                      strong: ({ children }) => (
-                        <strong className="font-semibold text-slate-900">
-                          {children}
-                        </strong>
-                      ),
-                      em: ({ children }) => (
-                        <em className="italic text-slate-600">{children}</em>
-                      ),
-                      code: ({ children }) => {
-                        const text = String(children ?? "");
-                        const trimmed = text.trim();
-                        const isHex =
-                          /^#([0-9A-Fa-f]{6}|[0-9A-Fa-f]{3})$/.test(trimmed);
-                        return (
-                          <span className="inline-flex items-center gap-1 align-middle">
-                            {isHex && (
-                              <span
-                                className="inline-block h-3 w-3 shrink-0 rounded-sm border border-black/10"
-                                style={{ backgroundColor: trimmed }}
-                              />
-                            )}
-                            <code className="rounded bg-white px-1.5 py-0.5 font-mono text-[10px] text-indigo-700">
-                              {text}
-                            </code>
-                          </span>
-                        );
-                      },
-                      blockquote: ({ children }) => (
-                        <blockquote className="my-2 border-l-2 border-slate-200 pl-3 italic text-slate-500">
-                          {children}
-                        </blockquote>
-                      ),
-                      hr: () => <hr className="my-2 border-slate-200" />,
-                      a: ({ href, children }) => (
-                        <a
-                          href={href}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-indigo-600 underline underline-offset-2 hover:text-indigo-800"
-                        >
-                          {children}
-                        </a>
-                      ),
-                    }}
-                  >
+                  <ReactMarkdown components={markdownComponents}>
                     {style.content}
                   </ReactMarkdown>
                 </div>
