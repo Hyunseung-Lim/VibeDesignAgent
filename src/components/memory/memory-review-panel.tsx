@@ -834,15 +834,23 @@ export function MemoryReviewPanel({
 
   return (
     <aside className="relative m-3 ml-0 flex w-92 shrink-0 flex-col overflow-hidden rounded-lg border border-slate-200 bg-white shadow-xl xl:w-96">
+      {/* Part 1 summary is admin-only recap of a different section, so it
+          stays a separate capped-and-scrollable block up top (can grow with
+          arbitrarily long answer text). Part 2's own header belongs with
+          the Part 2 questions below — it's that section's intro, not a
+          sibling of Part 1 — so it now lives inside the same flex-1
+          scrollable body as the question list instead of being pinned here. */}
       {showPart1Summary && part1Answers.length > 0 ? (
-        <div className="shrink-0 border-b border-slate-200 bg-slate-50/70 px-4 py-3">
+        <div className="max-h-64 shrink-0 overflow-y-auto border-b-2 border-slate-300 bg-slate-50/70 px-4 py-3">
           <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">
             Review Part 1 · 오늘 세션 돌아보기
           </p>
           <dl className="mt-2 space-y-1.5">
             {part1Answers.map((question) => (
               <div key={question.key} className="text-xs leading-relaxed">
-                <dt className="font-medium text-slate-500">{question.label}</dt>
+                <dt className="font-medium text-slate-500">
+                  {question.label}
+                </dt>
                 <dd
                   className={
                     question.rating
@@ -857,43 +865,43 @@ export function MemoryReviewPanel({
           </dl>
         </div>
       ) : null}
-      <div className="border-b border-slate-200 px-4 py-4">
-        <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">
-          Review Part 2
-        </p>
-        <h2 className="mt-1 text-xl font-semibold tracking-normal text-slate-950">
-          메모리 리뷰하기
-        </h2>
-        {trimmedIntroMemoryText ? (
-          <div className="mt-2 space-y-2">
-            <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5">
-              <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">
-                기억해 주었으면 한 내용
-              </p>
-              <p className="mt-1 wrap-anywhere whitespace-pre-wrap text-sm font-semibold leading-relaxed text-slate-800">
-                {trimmedIntroMemoryText}
+
+      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-4">
+        <div className="mb-4">
+          <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+            Review Part 2
+          </p>
+          <h2 className="mt-1 text-xl font-semibold tracking-normal text-slate-950">
+            메모리 리뷰하기
+          </h2>
+          {trimmedIntroMemoryText ? (
+            <div className="mt-2 space-y-2">
+              <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5">
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+                  기억해 주었으면 한 내용
+                </p>
+                <p className="mt-1 wrap-anywhere whitespace-pre-wrap text-sm font-semibold leading-relaxed text-slate-800">
+                  {trimmedIntroMemoryText}
+                </p>
+              </div>
+              <p className="text-sm font-medium leading-relaxed text-slate-600">
+                입력해주신 기억할 정보와 실제로 저장된 정보를 비교해서 아래
+                질문에 답해주세요.{" "}
+                <span className="text-slate-400">
+                  (@ 입력 후 왼쪽 메모리뷰에서 항목을 선택해 언급할 수 있어요)
+                </span>
               </p>
             </div>
-            <p className="text-sm font-medium leading-relaxed text-slate-600">
-              입력해주신 기억할 정보와 실제로 저장된 정보를 비교해서 아래 질문에
+          ) : (
+            <p className="mt-2 text-sm font-medium leading-relaxed text-slate-600">
+              4번에서 적은 답변과 실제로 저장된 정보를 비교해서 아래 질문에
               답해주세요.{" "}
               <span className="text-slate-400">
                 (@ 입력 후 왼쪽 메모리뷰에서 항목을 선택해 언급할 수 있어요)
               </span>
             </p>
-          </div>
-        ) : (
-          <p className="mt-2 text-sm font-medium leading-relaxed text-slate-600">
-            4번에서 적은 답변과 실제로 저장된 정보를 비교해서 아래 질문에
-            답해주세요.{" "}
-            <span className="text-slate-400">
-              (@ 입력 후 왼쪽 메모리뷰에서 항목을 선택해 언급할 수 있어요)
-            </span>
-          </p>
-        )}
-      </div>
-
-      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-4">
+          )}
+        </div>
         {memoryActivations.length > 0 ? (
           <div className="mb-4 rounded-lg border border-slate-200 bg-slate-50/70 px-3 py-2.5">
             <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">
