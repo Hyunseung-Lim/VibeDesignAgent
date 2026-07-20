@@ -10,15 +10,20 @@ import {
   useState,
 } from "react";
 import {
+  $createLineBreakNode,
   $createParagraphNode,
   $createTextNode,
   $getRoot,
   $getSelection,
+  $isElementNode,
+  $isLineBreakNode,
   $isRangeSelection,
+  $isTextNode,
   COMMAND_PRIORITY_HIGH,
   KEY_DOWN_COMMAND,
   PASTE_COMMAND,
   type LexicalEditor,
+  type LexicalNode,
 } from "lexical";
 import { LexicalComposer } from "@lexical/react/LexicalComposer";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
@@ -253,14 +258,61 @@ function segmentStyle(kind: TokenSegment["kind"]) {
   return "";
 }
 
+// Shift+Enter inserts LineBreakNodes, so every helper that walks the
+// editor's inline content must treat a line break as a 1-character item —
+// counting only text nodes drops newlines from offsets and comparisons,
+// which snapped the caret back before the line break after Shift+Enter.
+type ExpectedInline =
+  | { type: "text"; text: string; style: string }
+  | { type: "linebreak" };
+
+function expectedInlineNodes(segments: TokenSegment[]): ExpectedInline[] {
+  const expected: ExpectedInline[] = [];
+  for (const segment of segments) {
+    const parts = segment.text.split("\n");
+    parts.forEach((part, index) => {
+      if (index > 0) expected.push({ type: "linebreak" });
+      if (part)
+        expected.push({
+          type: "text",
+          text: part,
+          style: segmentStyle(segment.kind),
+        });
+    });
+  }
+  return expected;
+}
+
+function inlineNodeSize(node: LexicalNode) {
+  if ($isLineBreakNode(node)) return 1;
+  if ($isTextNode(node)) return node.getTextContentSize();
+  return 0;
+}
+
 function editorSegmentsMatch(segments: TokenSegment[]) {
-  const textNodes = $getRoot().getAllTextNodes();
-  if (textNodes.length !== segments.length) return false;
-  return textNodes.every(
-    (node, index) =>
-      node.getTextContent() === segments[index]?.text &&
-      node.getStyle() === segmentStyle(segments[index]?.kind ?? "plain"),
-  );
+  const blocks = $getRoot().getChildren();
+  if (blocks.length !== 1) return false;
+  const block = blocks[0];
+  if (!$isElementNode(block)) return false;
+  const children = block.getChildren();
+  const expected = expectedInlineNodes(segments);
+  if (expected.length === 0) {
+    return (
+      children.length === 1 &&
+      $isTextNode(children[0]) &&
+      children[0].getTextContent() === ""
+    );
+  }
+  if (children.length !== expected.length) return false;
+  return children.every((child, index) => {
+    const item = expected[index];
+    if (item.type === "linebreak") return $isLineBreakNode(child);
+    return (
+      $isTextNode(child) &&
+      child.getTextContent() === item.text &&
+      child.getStyle() === item.style
+    );
+  });
 }
 
 function currentSelectionOffset() {
@@ -268,35 +320,64 @@ function currentSelectionOffset() {
   if (!$isRangeSelection(selection)) return null;
   const anchor = selection.anchor;
   const anchorNode = anchor.getNode();
-  const textNodes = $getRoot().getAllTextNodes();
   let offset = 0;
-  for (const node of textNodes) {
-    if (node.getKey() === anchorNode.getKey()) {
-      return offset + anchor.offset;
+  for (const block of $getRoot().getChildren()) {
+    if (!$isElementNode(block)) continue;
+    const children = block.getChildren();
+    // Element-point selection (e.g. the caret right after a line break):
+    // anchor.offset is a child index inside the block.
+    if (anchor.type === "element" && block.getKey() === anchorNode.getKey()) {
+      for (let i = 0; i < Math.min(anchor.offset, children.length); i += 1) {
+        offset += inlineNodeSize(children[i]);
+      }
+      return offset;
     }
-    offset += node.getTextContentSize();
+    for (const child of children) {
+      if (child.getKey() === anchorNode.getKey()) {
+        return offset + anchor.offset;
+      }
+      offset += inlineNodeSize(child);
+    }
   }
   return offset;
 }
 
 function selectTextOffset(offset: number) {
   const root = $getRoot();
-  const textNodes = root.getAllTextNodes();
-  if (textNodes.length === 0) {
+  const block = root.getFirstChild();
+  if (!$isElementNode(block)) {
     root.selectEnd();
     return;
   }
   let remaining = Math.max(0, offset);
-  for (const node of textNodes) {
-    const size = node.getTextContentSize();
-    if (remaining <= size) {
-      node.select(remaining, remaining);
-      return;
+  const children = block.getChildren();
+  for (let i = 0; i < children.length; i += 1) {
+    const child = children[i];
+    if ($isTextNode(child)) {
+      const size = child.getTextContentSize();
+      if (remaining <= size) {
+        child.select(remaining, remaining);
+        return;
+      }
+      remaining -= size;
+    } else if ($isLineBreakNode(child)) {
+      if (remaining === 0) {
+        block.select(i, i);
+        return;
+      }
+      remaining -= 1;
+      if (remaining === 0) {
+        // Right after this line break. If a text node follows, the loop
+        // places the caret at its offset 0; otherwise use an element point.
+        const next = children[i + 1];
+        if (!next || !$isTextNode(next)) {
+          block.select(i + 1, i + 1);
+          return;
+        }
+      }
     }
-    remaining -= size;
   }
-  const lastNode = textNodes[textNodes.length - 1];
-  lastNode.select(lastNode.getTextContentSize(), lastNode.getTextContentSize());
+  block.selectEnd();
 }
 
 function editorSelectionOffset(editor: LexicalEditor, fallback: number) {
@@ -318,13 +399,17 @@ function replaceEditorText(
   if (editorSegmentsMatch(segments)) return;
   root.clear();
   const paragraph = $createParagraphNode();
-  if (segments.length === 0) {
+  const expected = expectedInlineNodes(segments);
+  if (expected.length === 0) {
     paragraph.append($createTextNode(""));
   } else {
-    for (const segment of segments) {
-      const node = $createTextNode(segment.text);
-      const style = segmentStyle(segment.kind);
-      if (style) node.setStyle(style);
+    for (const item of expected) {
+      if (item.type === "linebreak") {
+        paragraph.append($createLineBreakNode());
+        continue;
+      }
+      const node = $createTextNode(item.text);
+      if (item.style) node.setStyle(item.style);
       paragraph.append(node);
     }
   }
