@@ -1,4 +1,5 @@
 import OpenAI from "openai";
+import { after } from "next/server";
 import {
   getFirebaseAccessToken,
   getFirestoreDocument,
@@ -251,73 +252,54 @@ async function enrichReferenceSources(
   };
 }
 
-export async function POST(request: Request) {
-  const user = await verifyFirebaseIdToken(request);
-  if (!user) return Response.json({ error: "unauthorized" }, { status: 401 });
+type AssistantFeedback = {
+  vote: "good" | "bad";
+  reason: string;
+  targetMessageId: string;
+  targetUserMessageId: string;
+  targetActionCategory: string;
+};
 
-  const body = (await request.json().catch(() => ({}))) as {
-    missionId?: string;
-    interactionId?: string;
-    input?: string;
-    output?: string;
-    timestamp?: number;
-    sources?: MemoryDraftSources;
-    finalDesign?: FinalDesignEnrichmentPayload;
-    assistantFeedback?: AssistantFeedbackMemoryPayload;
-  };
-  const missionId = body.missionId?.trim();
-  const interactionId = body.interactionId?.trim();
-  const fallbackInput = body.input?.trim() ?? "";
-  const output = body.output?.trim() ?? "";
-  if (!missionId || !interactionId || !fallbackInput || !output) {
-    return Response.json(
-      { error: "missionId, interactionId, input, and output required" },
-      { status: 400 },
-    );
-  }
+async function encodeAndSaveDraft(params: {
+  uid: string;
+  missionId: string;
+  interactionId: string;
+  fallbackInput: string;
+  output: string;
+  createdAt: number;
+  timestamp: number;
+  draftPath: string;
+  sources: MemoryDraftSources | undefined;
+  finalDesign: FinalDesignEnrichmentPayload | undefined;
+  assistantFeedback: AssistantFeedback | null;
+}) {
+  const {
+    uid,
+    missionId,
+    interactionId,
+    fallbackInput,
+    output,
+    createdAt,
+    timestamp,
+    draftPath,
+    sources,
+    finalDesign,
+    assistantFeedback,
+  } = params;
 
-  // Final-design selection turns carry the compared candidate mockups and the
-  // session chat. Run the input-enrichment pass so the encoded memory reflects
-  // the candidate comparison and the user's expressed preference instead of a
-  // bare label. Best-effort: fall back to the provided input on failure.
-  const enrichedInput = body.finalDesign
-    ? await buildFinalDesignMemoryInput(body.finalDesign)
+  // Final-design selection turns carry the compared candidate mockups
+  // and the session chat. Run the input-enrichment pass so the encoded
+  // memory reflects the candidate comparison and the user's expressed
+  // preference instead of a bare label. Best-effort: fall back to the
+  // provided input on failure.
+  const enrichedInput = finalDesign
+    ? await buildFinalDesignMemoryInput(finalDesign)
     : null;
   const input = enrichedInput || fallbackInput;
-  const assistantFeedback =
-    body.assistantFeedback?.vote === "good" ||
-    body.assistantFeedback?.vote === "bad"
-      ? {
-          vote: body.assistantFeedback.vote,
-          reason:
-            typeof body.assistantFeedback.reason === "string"
-              ? body.assistantFeedback.reason.trim().slice(0, 2000)
-              : "",
-          targetMessageId:
-            typeof body.assistantFeedback.targetMessageId === "string"
-              ? body.assistantFeedback.targetMessageId
-              : "",
-          targetUserMessageId:
-            typeof body.assistantFeedback.targetUserMessageId === "string"
-              ? body.assistantFeedback.targetUserMessageId
-              : "",
-          targetActionCategory:
-            typeof body.assistantFeedback.targetActionCategory === "string"
-              ? body.assistantFeedback.targetActionCategory
-              : "",
-        }
-      : null;
 
-  const createdAt = Date.now();
-  const timestamp = Number(body.timestamp ?? createdAt);
   const token = await getFirebaseAccessToken();
-  const draftPath = `sessions/${user.localId}/missions/${encodeURIComponent(missionId)}/memoryDrafts/${encodeURIComponent(interactionId)}`;
   const existingDraft = await getFirestoreDocument(draftPath, token);
-  const enriched = await enrichReferenceSources(
-    user.localId,
-    body.sources,
-    token,
-  );
+  const enriched = await enrichReferenceSources(uid, sources, token);
   const sourceFingerprint = memorySourceFingerprint(
     enriched.sources,
     input,
@@ -335,7 +317,7 @@ export async function POST(request: Request) {
       }
     : await normalizeMemorySources(enriched.sources, input, output);
   const [previousDraft, olderDraft] = await loadPreviousDrafts(
-    user.localId,
+    uid,
     missionId,
     timestamp,
     token,
@@ -396,7 +378,7 @@ export async function POST(request: Request) {
       : null;
   const assistantFeedbackWeightAdjustment = assistantFeedback
     ? await applyAssistantFeedbackWeightAdjustment({
-        uid: user.localId,
+        uid,
         missionId,
         vote: assistantFeedback.vote,
         targetMessageId: assistantFeedback.targetMessageId || null,
@@ -464,10 +446,121 @@ export async function POST(request: Request) {
       assistantFeedbackWeightAdjustment,
       status: "draft",
       createdAt,
+      lastRequestId: createdAt,
     },
     token,
     ["interpretationConfidence"],
   );
+}
 
-  return Response.json({ ok: true, memory: encoded });
+export async function POST(request: Request) {
+  const user = await verifyFirebaseIdToken(request);
+  if (!user) return Response.json({ error: "unauthorized" }, { status: 401 });
+
+  const body = (await request.json().catch(() => ({}))) as {
+    missionId?: string;
+    interactionId?: string;
+    input?: string;
+    output?: string;
+    timestamp?: number;
+    sources?: MemoryDraftSources;
+    finalDesign?: FinalDesignEnrichmentPayload;
+    assistantFeedback?: AssistantFeedbackMemoryPayload;
+  };
+  const missionId = body.missionId?.trim();
+  const interactionId = body.interactionId?.trim();
+  const fallbackInput = body.input?.trim() ?? "";
+  const output = body.output?.trim() ?? "";
+  if (!missionId || !interactionId || !fallbackInput || !output) {
+    return Response.json(
+      { error: "missionId, interactionId, input, and output required" },
+      { status: 400 },
+    );
+  }
+
+  const assistantFeedback: AssistantFeedback | null =
+    body.assistantFeedback?.vote === "good" ||
+    body.assistantFeedback?.vote === "bad"
+      ? {
+          vote: body.assistantFeedback.vote,
+          reason:
+            typeof body.assistantFeedback.reason === "string"
+              ? body.assistantFeedback.reason.trim().slice(0, 2000)
+              : "",
+          targetMessageId:
+            typeof body.assistantFeedback.targetMessageId === "string"
+              ? body.assistantFeedback.targetMessageId
+              : "",
+          targetUserMessageId:
+            typeof body.assistantFeedback.targetUserMessageId === "string"
+              ? body.assistantFeedback.targetUserMessageId
+              : "",
+          targetActionCategory:
+            typeof body.assistantFeedback.targetActionCategory === "string"
+              ? body.assistantFeedback.targetActionCategory
+              : "",
+        }
+      : null;
+
+  const createdAt = Date.now();
+  const timestamp = Number(body.timestamp ?? createdAt);
+  const draftPath = `sessions/${user.localId}/missions/${encodeURIComponent(missionId)}/memoryDrafts/${encodeURIComponent(interactionId)}`;
+
+  const pipelineParams = {
+    uid: user.localId,
+    missionId,
+    interactionId,
+    fallbackInput,
+    output,
+    createdAt,
+    timestamp,
+    draftPath,
+    sources: body.sources,
+    finalDesign: body.finalDesign,
+    assistantFeedback,
+  };
+
+  // Only the assistant-feedback (따봉/봉따) submission defers encoding to
+  // `after()` — that's the path with a UI dialog blocking on this request.
+  // Every other caller (final-design selection, note/reference edits, ...)
+  // keeps the original synchronous behavior: callers like completeSession
+  // immediately read the memoryDrafts collection afterward (see
+  // /api/memory/complete-session), so `ok: true` must still mean the draft
+  // is durably written, not just "accepted."
+  if (assistantFeedback) {
+    after(async () => {
+      try {
+        await encodeAndSaveDraft(pipelineParams);
+      } catch (error) {
+        console.error("[memory/drafts] background encode failed", error);
+        // Record the failure on the draft doc so a client that's still
+        // polling it (see watchMemoryDraftFailure in page.tsx) can show a
+        // real-time toast instead of silently losing the submission.
+        try {
+          const token = await getFirebaseAccessToken();
+          await patchFirestoreDocument(
+            draftPath,
+            {
+              status: "failed",
+              lastRequestId: createdAt,
+              errorMessage: String(
+                error instanceof Error ? error.message : error,
+              ).slice(0, 500),
+              failedAt: Date.now(),
+            },
+            token,
+          );
+        } catch (patchError) {
+          console.error(
+            "[memory/drafts] failed to record failure status",
+            patchError,
+          );
+        }
+      }
+    });
+    return Response.json({ ok: true, requestId: createdAt });
+  }
+
+  await encodeAndSaveDraft(pipelineParams);
+  return Response.json({ ok: true, requestId: createdAt });
 }

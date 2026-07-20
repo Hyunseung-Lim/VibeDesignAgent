@@ -3842,9 +3842,9 @@ export default function MainScreenPage() {
       assistantFeedback?: AssistantFeedbackMemoryPayload,
     ) => {
       if (isReadOnly || !missionId || !input.trim() || !output.trim())
-        return false;
+        return { ok: false, requestId: null };
       const currentUser = firebaseAuth.currentUser;
-      if (!currentUser) return false;
+      if (!currentUser) return { ok: false, requestId: null };
       try {
         const token = await getIdToken(currentUser);
         const response = await fetch("/api/memory/drafts", {
@@ -3867,13 +3867,84 @@ export default function MainScreenPage() {
         if (!response.ok) {
           throw new Error(`Memory draft failed: ${response.status}`);
         }
-        return true;
+        const data = (await response.json().catch(() => ({}))) as {
+          requestId?: number;
+        };
+        return { ok: true, requestId: data.requestId ?? null };
       } catch (error) {
         console.warn("Unable to encode memory draft", error);
-        return false;
+        return { ok: false, requestId: null };
       }
     },
     [isReadOnly, missionId],
+  );
+
+  // Assistant-feedback (따봉/봉따) memory-draft encoding runs in the
+  // background after the request returns (see `after()` in
+  // /api/memory/drafts, scoped to that path only). Track outstanding
+  // submissions here so (a) a background failure can still surface as a
+  // toast instead of silently vanishing, and (b) completeSession can wait
+  // for them before it snapshots memoryDrafts — otherwise a session ended
+  // right after a thumbs up/down could finalize before that feedback's
+  // memory is written, silently dropping it. `requestId` (the server's
+  // createdAt for this submission) disambiguates a poll from a stale draft.
+  const pendingMemoryDraftRequestsRef = useRef<Map<string, number>>(
+    new Map(),
+  );
+
+  const waitForMemoryDraftOutcome = useCallback(
+    async (interactionId: string, requestId: number | null) => {
+      if (!missionId || requestId == null) return null;
+      const currentUser = firebaseAuth.currentUser;
+      if (!currentUser) return null;
+      const POLL_INTERVAL_MS = 4000;
+      const MAX_WAIT_MS = 130_000;
+      const startedAt = Date.now();
+      while (Date.now() - startedAt < MAX_WAIT_MS) {
+        await new Promise((resolve) => window.setTimeout(resolve, POLL_INTERVAL_MS));
+        try {
+          const token = await getIdToken(currentUser);
+          const response = await fetch("/api/memory/drafts/status", {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${token}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ missionId, interactionId }),
+          });
+          if (response.ok) {
+            const data = (await response.json()) as {
+              status?: string | null;
+              lastRequestId?: number | null;
+              errorMessage?: string | null;
+            };
+            if (data.lastRequestId === requestId) return data;
+          }
+        } catch (error) {
+          console.warn("Unable to poll memory draft status", error);
+        }
+      }
+      return null;
+    },
+    [missionId],
+  );
+
+  const watchMemoryDraftFailure = useCallback(
+    (interactionId: string, requestId: number | null) => {
+      if (requestId == null) return;
+      pendingMemoryDraftRequestsRef.current.set(interactionId, requestId);
+      void waitForMemoryDraftOutcome(interactionId, requestId).then((data) => {
+        pendingMemoryDraftRequestsRef.current.delete(interactionId);
+        if (data?.status === "failed") {
+          toast.error(
+            data.errorMessage
+              ? `선호 표시 저장에 실패했어요: ${data.errorMessage}`
+              : "선호 표시를 저장하는 중 문제가 발생했어요.",
+          );
+        }
+      });
+    },
+    [waitForMemoryDraftOutcome],
   );
 
   const openAssistantFeedbackDialog = useCallback(
@@ -3927,9 +3998,10 @@ export default function MainScreenPage() {
         : "평가된 답변의 원래 질문: 없음",
     ].join("\n\n");
     const submittedAt = Date.now();
+    const feedbackInteractionId = `feedback-${assistantMessage.id}`;
     setIsSubmittingAssistantFeedback(true);
-    const ok = await encodeMemoryDraft(
-      `feedback-${assistantMessage.id}`,
+    const { ok, requestId } = await encodeMemoryDraft(
+      feedbackInteractionId,
       input,
       evaluatedAnswer,
       submittedAt,
@@ -3950,6 +4022,7 @@ export default function MainScreenPage() {
       toast.error("선호 표시를 저장하지 못했어요.");
       return;
     }
+    watchMemoryDraftFailure(feedbackInteractionId, requestId);
     setMessages((prev) =>
       prev.map((item) =>
         item.id === assistantMessage.id
@@ -3981,6 +4054,7 @@ export default function MainScreenPage() {
     encodeMemoryDraft,
     isSubmittingAssistantFeedback,
     messages,
+    watchMemoryDraftFailure,
   ]);
 
   const retrieveMemoryForQuery = useCallback(
@@ -8456,7 +8530,7 @@ export default function MainScreenPage() {
             }))
             .filter((m) => m.content.trim()),
         };
-        const finalMemoryCreated = await encodeMemoryDraft(
+        const { ok: finalMemoryCreated } = await encodeMemoryDraft(
           `final-design-selection-${finalBoard.id}`,
           `최종 디자인 확정: ${finalBoard.label}`,
           `artboardId: ${finalBoard.id} / 시안: ${finalIdea.title} / 생성일: ${
@@ -8471,6 +8545,19 @@ export default function MainScreenPage() {
         if (!finalMemoryCreated) {
           throw new Error("Unable to create the final-design memory draft.");
         }
+      }
+      // /api/memory/complete-session snapshots memoryDrafts once and never
+      // retries, so any assistant-feedback (따봉/봉따) draft still encoding
+      // in the background (see watchMemoryDraftFailure) must resolve first —
+      // otherwise ending the session right after a thumbs up/down would
+      // silently drop that feedback's memory.
+      if (pendingMemoryDraftRequestsRef.current.size > 0) {
+        await Promise.all(
+          Array.from(pendingMemoryDraftRequestsRef.current.entries()).map(
+            ([interactionId, requestId]) =>
+              waitForMemoryDraftOutcome(interactionId, requestId),
+          ),
+        );
       }
       const token = await getIdToken(currentUser, true);
       const res = await fetch("/api/memory/complete-session", {
