@@ -38,13 +38,6 @@ const EMPTY_IDEA_STEPS: TourStep[] = [
     body: "왼쪽 상단에서 이번 미션의 목표, 대상 디바이스, 구체적인 요구사항을 확인합니다. 에이전트와 작업할 때 계속 기준이 되는 정보예요.",
   },
   {
-    target: "content-panel",
-    fallbackTarget: "mission-brief",
-    title: "드래그해서 인용하기",
-    body: "미션 설명, 레퍼런스, 시안 내용 등 이 왼쪽 패널 어디서든 텍스트를 마우스로 드래그해 선택하면 인용 버튼이 나타납니다. 누르면 그 문장이 채팅 입력에 텍스트 인용으로 담겨, 특정 부분을 콕 집어 에이전트에게 요청할 수 있어요.",
-    demo: "drag-quote",
-  },
-  {
     target: "chat-panel",
     title: "채팅 공간",
     body: "오른쪽 채팅에서 에이전트에게 레퍼런스 탐색, 시안 작성, 디자인 스타일 정리, 목업 생성을 요청합니다. 선택한 레퍼런스나 화면 요소도 여기로 보낼 수 있어요.",
@@ -76,6 +69,13 @@ const EMPTY_IDEA_STEPS: TourStep[] = [
     body: "목업을 만든 뒤에는 이 영역에서 최종 디자인을 선택합니다. 세션을 종료하기 전에 어떤 결과물을 최종안으로 남길지 정하는 단계예요.",
   },
   {
+    target: "content-panel",
+    fallbackTarget: "mission-brief",
+    title: "드래그해서 인용하기",
+    body: "미션 설명, 레퍼런스, 시안 내용 등 이 왼쪽 패널 어디서든 텍스트를 마우스로 드래그해 선택하면 인용 버튼이 나타납니다. 누르면 그 문장이 채팅 입력에 텍스트 인용으로 담겨, 특정 부분을 콕 집어 에이전트에게 요청할 수 있어요.",
+    demo: "drag-quote",
+  },
+  {
     target: "session-timer",
     fallbackTarget: "session-finish",
     title: "타이머",
@@ -99,13 +99,6 @@ const IDEA_STEPS: TourStep[] = [
     target: "mission-brief",
     title: "미션 설명",
     body: "왼쪽 상단에서 이번 미션의 목표, 대상 디바이스, 구체적인 요구사항을 확인합니다. 에이전트와 작업할 때 계속 기준이 되는 정보예요.",
-  },
-  {
-    target: "content-panel",
-    fallbackTarget: "mission-brief",
-    title: "드래그해서 인용하기",
-    body: "미션 설명, 레퍼런스, 시안 내용 등 이 왼쪽 패널 어디서든 텍스트를 마우스로 드래그해 선택하면 인용 버튼이 나타납니다. 누르면 그 문장이 채팅 입력에 텍스트 인용으로 담겨, 특정 부분을 콕 집어 에이전트에게 요청할 수 있어요.",
-    demo: "drag-quote",
   },
   {
     target: "chat-panel",
@@ -157,6 +150,13 @@ const IDEA_STEPS: TourStep[] = [
     target: "final-design",
     title: "Final Design",
     body: "여러 시안과 목업 중 최종으로 남길 화면을 선택하는 곳입니다. 선택한 결과는 세션 종료 후 리뷰에서 확인할 수 있어요.",
+  },
+  {
+    target: "content-panel",
+    fallbackTarget: "mission-brief",
+    title: "드래그해서 인용하기",
+    body: "미션 설명, 레퍼런스, 시안 내용 등 이 왼쪽 패널 어디서든 텍스트를 마우스로 드래그해 선택하면 인용 버튼이 나타납니다. 누르면 그 문장이 채팅 입력에 텍스트 인용으로 담겨, 특정 부분을 콕 집어 에이전트에게 요청할 수 있어요.",
+    demo: "drag-quote",
   },
   {
     target: "session-timer",

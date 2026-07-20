@@ -4918,3 +4918,7 @@ type ChatPlan = {
 - MemoryReviewPanel 질문 목록 위에 메모리 활성/비활성 변경 카드를 추가했다: 항목별 재활성화(indigo)/비활성화(rose) 배지 + 메모리 본문 요약(semantic/episodic/input, 없으면 memoryId) 2줄 clamp + 비활성화 사유, 헤더에 제출 시 반영/제출 시 적용됨 구분.
 - 데이터 소스: 참가자의 진행 중 리뷰는 staging을 live로 반영하고(토글 즉시 갱신), admin viewAs와 제출된 리뷰는 feedback 문서의 memoryActivations.states를 표시 전용 상태로 읽는다. 제출 직후에는 staging을 비우기 전에 표시 전용 상태로 옮겨 목록이 유지된다.
 - 목록 항목 클릭 시 기존 mention focus 경로(onMentionFocus)로 그래프에서 해당 메모리의 소속 클러스터와 노드를 선택한다. focusReviewMention은 노드가 비활성 숨김 상태면 비활성 그룹 표시를 켜고 session-inactive 그룹을 선택하도록 보강했다.
+
+### 15.314 Move drag-to-quote tutorial step near the end `[implemented 2026-07-20]`
+
+- 드래그해서 인용하기 스텝을 두 시나리오 모두 2번째에서 Final Design 다음(타이머 직전)으로 이동했다 — 시안 있는 투어 기준 12번째. 화면 구조를 다 본 뒤 인터랙션 팁으로 배치해 초반 정보 부담을 줄인다. 문구와 drag-quote 데모는 그대로다. 스텝 순서의 source of truth는 src/components/session/session-product-tour.tsx의 EMPTY_IDEA_STEPS/IDEA_STEPS.

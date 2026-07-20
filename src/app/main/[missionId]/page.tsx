@@ -56,7 +56,10 @@ import {
   type AssistantFeedbackVote,
 } from "@/components/session/chat-bubble";
 import { ChatCapabilityCatalog } from "@/components/session/chat-capability-catalog";
-import { ChatInput, type ChatInputHandle } from "@/components/session/chat-input";
+import {
+  ChatInput,
+  type ChatInputHandle,
+} from "@/components/session/chat-input";
 import { Spinner } from "@/components/ui/spinner";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -149,15 +152,18 @@ function isWithinCumulative(
   return memIdx <= selIdx;
 }
 
-const MemoryClusterGraph = dynamic(() => import("@/components/memory/memory-cluster-graph"), {
-  ssr: false,
-  loading: () => (
-    <div className="flex h-full min-h-96 items-center justify-center gap-2 bg-white text-sm text-slate-400">
-      <Spinner />
-      Graph view loading...
-    </div>
-  ),
-});
+const MemoryClusterGraph = dynamic(
+  () => import("@/components/memory/memory-cluster-graph"),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="flex h-full min-h-96 items-center justify-center gap-2 bg-white text-sm text-slate-400">
+        <Spinner />
+        Graph view loading...
+      </div>
+    ),
+  },
+);
 
 type Message = {
   id: string;
@@ -469,12 +475,19 @@ type SessionMemorySummary = {
   retrievalLogs: SessionRetrievalLog[];
 };
 
-type MemoryGraphFilter = "changed" | "all" | "referenced" | "promoted" | "archived";
+type MemoryGraphFilter =
+  | "changed"
+  | "all"
+  | "referenced"
+  | "promoted"
+  | "archived";
 
-const EMPTY_CLUSTERS_BY_VARIANT: Record<ReviewClusterVariant, ReviewClusterBundle> =
-  {
-    "keyword-episodic-semantic-link": { graphClusters: [], graphEdges: [] },
-  };
+const EMPTY_CLUSTERS_BY_VARIANT: Record<
+  ReviewClusterVariant,
+  ReviewClusterBundle
+> = {
+  "keyword-episodic-semantic-link": { graphClusters: [], graphEdges: [] },
+};
 
 const EMPTY_CLUSTER_SNAPSHOT = (
   phase: "before" | "after",
@@ -616,22 +629,18 @@ async function fetchSessionMemorySummary(
                 : 0,
           }
         : { memoryCount: 0, totalDelta: 0 },
-    graphMemories: Array.isArray(data?.graphMemories)
-      ? data.graphMemories
-      : [],
-    graphClusters: Array.isArray(data?.graphClusters)
-      ? data.graphClusters
-      : [],
+    graphMemories: Array.isArray(data?.graphMemories) ? data.graphMemories : [],
+    graphClusters: Array.isArray(data?.graphClusters) ? data.graphClusters : [],
     graphEdges: Array.isArray(data?.graphEdges) ? data.graphEdges : [],
     clustersByVariant: parseClustersByVariant(data?.clustersByVariant),
     clusterSnapshots: parseClusterSnapshots(data?.clusterSnapshots, {
-      graphClusters: Array.isArray(data?.graphClusters) ? data.graphClusters : [],
+      graphClusters: Array.isArray(data?.graphClusters)
+        ? data.graphClusters
+        : [],
       graphEdges: Array.isArray(data?.graphEdges) ? data.graphEdges : [],
     }),
     missionOrder: Array.isArray(data?.missionOrder) ? data.missionOrder : [],
-    retrievalLogs: Array.isArray(data?.retrievalLogs)
-      ? data.retrievalLogs
-      : [],
+    retrievalLogs: Array.isArray(data?.retrievalLogs) ? data.retrievalLogs : [],
   };
 }
 
@@ -643,7 +652,8 @@ function parseClusterSnapshot(
   const source = (value ?? {}) as Partial<ReviewClusterSnapshot>;
   return {
     phase,
-    missionId: typeof source.missionId === "string" ? source.missionId : undefined,
+    missionId:
+      typeof source.missionId === "string" ? source.missionId : undefined,
     isFallback: source.isFallback === true,
     itemIds: Array.isArray(source.itemIds) ? source.itemIds.map(String) : [],
     itemSignature:
@@ -676,7 +686,9 @@ function parseClustersByVariant(
   const source = (value ?? {}) as Record<string, unknown>;
   return REVIEW_CLUSTER_VARIANTS.reduce(
     (acc, { value: variant }) => {
-      const bundle = source[variant] as Partial<ReviewClusterBundle> | undefined;
+      const bundle = source[variant] as
+        | Partial<ReviewClusterBundle>
+        | undefined;
       acc[variant] = {
         graphClusters: Array.isArray(bundle?.graphClusters)
           ? bundle.graphClusters
@@ -800,9 +812,7 @@ function missionAssetImageReference(
   };
 }
 
-function memorySourceLinkFromReference(
-  reference: Reference,
-): MemorySourceLink {
+function memorySourceLinkFromReference(reference: Reference): MemorySourceLink {
   return {
     title: reference.title,
     url: reference.url,
@@ -967,10 +977,7 @@ function serializePatchedDocument(originalHtml: string, doc: Document) {
     : serialized;
 }
 
-function findSelectedElementTarget(
-  html: string,
-  element: SelectedElement,
-) {
+function findSelectedElementTarget(html: string, element: SelectedElement) {
   if (typeof window === "undefined" || !html.trim()) return null;
   const doc = new DOMParser().parseFromString(html, "text/html");
   let target: Element | null = null;
@@ -1001,8 +1008,7 @@ function findSelectedElementTarget(
         candidates.find(
           (candidate) =>
             stripSelectionMarkers(candidate.outerHTML).trim() === selectedHtml,
-        ) ??
-        (candidates.length === 1 ? candidates[0] : null);
+        ) ?? (candidates.length === 1 ? candidates[0] : null);
     } catch {
       target = null;
     }
@@ -1012,10 +1018,7 @@ function findSelectedElementTarget(
   return { doc, target };
 }
 
-function removeSelectedElementFromHtml(
-  html: string,
-  element: SelectedElement,
-) {
+function removeSelectedElementFromHtml(html: string, element: SelectedElement) {
   const match = findSelectedElementTarget(html, element);
   if (!match) return null;
   match.target.remove();
@@ -1049,7 +1052,9 @@ function patchTextColor(target: Element, color: string) {
     }
   };
   apply(target);
-  target.querySelectorAll("h1,h2,h3,h4,h5,h6,p,span,a,button,li").forEach(apply);
+  target
+    .querySelectorAll("h1,h2,h3,h4,h5,h6,p,span,a,button,li")
+    .forEach(apply);
 }
 
 function patchFontFamily(target: Element, fontFamily: string) {
@@ -1170,7 +1175,9 @@ function selectedElementTargetPrompt(
     viewport
       ? `Mockup viewport: width=${viewport.width}, height=${viewport.height}`
       : "",
-    element.textContent ? `Visible text: ${element.textContent.slice(0, 1000)}` : "",
+    element.textContent
+      ? `Visible text: ${element.textContent.slice(0, 1000)}`
+      : "",
     `Selected HTML:\n${element.outerHTML.slice(0, 3000)}`,
   ]
     .filter(Boolean)
@@ -1235,7 +1242,7 @@ function quickHash(value: string) {
 function isSyntheticStitchScreenId(screenId?: string | null) {
   return Boolean(
     screenId?.startsWith("openai-asset-fallback-") ||
-      screenId?.startsWith("local-edit-fallback-"),
+    screenId?.startsWith("local-edit-fallback-"),
   );
 }
 
@@ -1248,7 +1255,6 @@ type UpdateNoteData = {
   title?: string;
   description?: string;
 };
-
 
 function canonicalReferenceUrl(value?: string) {
   if (!value) return "";
@@ -1343,7 +1349,9 @@ function buildReferencePreferenceContext(
       referencePurposeLabel: reference.referencePurposeLabel,
       signal: "strong_cited" as const,
     }));
-  const citedUrls = new Set(cited.map((reference) => reference.url).filter(Boolean));
+  const citedUrls = new Set(
+    cited.map((reference) => reference.url).filter(Boolean),
+  );
   const kept = shouldSuppressWeakKept
     ? []
     : references
@@ -1362,7 +1370,9 @@ function buildReferencePreferenceContext(
           signal: "weak_kept" as const,
         }));
   const deleted = activityLog
-    .filter((event) => event.section === "reference" && event.action === "delete")
+    .filter(
+      (event) => event.section === "reference" && event.action === "delete",
+    )
     .slice(-6)
     .map((event) => ({
       title: event.outputTitle,
@@ -1474,7 +1484,11 @@ async function fetchOnboardingMissionData() {
 
 function extractJsonActionPayload(
   text: string,
-  tag: "CREATE_NOTE" | "UPDATE_NOTE" | "CREATE_DESIGN_SPEC" | "EDIT_DESIGN_SPEC",
+  tag:
+    | "CREATE_NOTE"
+    | "UPDATE_NOTE"
+    | "CREATE_DESIGN_SPEC"
+    | "EDIT_DESIGN_SPEC",
 ) {
   const start = text.indexOf(`[${tag}:`);
   if (start === -1) return null;
@@ -1520,7 +1534,11 @@ function extractJsonActionPayload(
 
 function extractPlainNoteContent(
   text: string,
-  tag: "CREATE_NOTE" | "UPDATE_NOTE" | "CREATE_DESIGN_SPEC" | "EDIT_DESIGN_SPEC",
+  tag:
+    | "CREATE_NOTE"
+    | "UPDATE_NOTE"
+    | "CREATE_DESIGN_SPEC"
+    | "EDIT_DESIGN_SPEC",
 ): string | null {
   const marker = `[${tag}:`;
   const start = text.indexOf(marker);
@@ -1741,7 +1759,9 @@ function recoverThinDesignBrief(
   const mission = missionContext?.trim().slice(0, 5000);
   return [
     "## 목표와 맥락",
-    direction || request || "미션 요구사항을 충족하는 구체적인 디자인 시안을 만든다.",
+    direction ||
+      request ||
+      "미션 요구사항을 충족하는 구체적인 디자인 시안을 만든다.",
     mission ? `## 필수 요구사항\n${mission}` : "",
     request && request !== direction ? `## 사용자 요청\n${request}` : "",
     "## 핵심 경험과 화면 구성",
@@ -1776,11 +1796,7 @@ function resolveDesignBriefPayload(
 
   if (options?.allowMissionRecovery) {
     return {
-      description: recoverThinDesignBrief(
-        trimmed,
-        userRequest,
-        missionContext,
-      ),
+      description: recoverThinDesignBrief(trimmed, userRequest, missionContext),
       source: "mission_recovery" as const,
     };
   }
@@ -1795,10 +1811,12 @@ function shouldRecoverThinUpdateNote(
 ) {
   if (commandId === "create_idea") return true;
   if (activeIdea && !activeIdea.description.trim()) return true;
-  return /(?:디자인\s*)?브리프|design\s*brief|시안/i.test(userRequest) &&
+  return (
+    /(?:디자인\s*)?브리프|design\s*brief|시안/i.test(userRequest) &&
     /(?:만들|생성|작성|정리|써줘|만들어|create|generate|write)/i.test(
       userRequest,
-    );
+    )
+  );
 }
 
 function parseUpdateNoteBlock(text: string): UpdateNoteData | null {
@@ -1853,7 +1871,10 @@ function stripDesignSpecActionBlocks(content: string) {
   let result = content;
   for (;;) {
     const starts = [
-      { tag: "CREATE_DESIGN_SPEC", index: result.indexOf("[CREATE_DESIGN_SPEC:") },
+      {
+        tag: "CREATE_DESIGN_SPEC",
+        index: result.indexOf("[CREATE_DESIGN_SPEC:"),
+      },
       { tag: "EDIT_DESIGN_SPEC", index: result.indexOf("[EDIT_DESIGN_SPEC:") },
     ].filter((entry) => entry.index !== -1);
     const next = starts.sort((a, b) => a.index - b.index)[0];
@@ -1867,7 +1888,11 @@ function stripDesignSpecActionBlocks(content: string) {
     .trim();
 }
 
-function isConditionalDesignSpecOffer(text: string, start: number, end: number) {
+function isConditionalDesignSpecOffer(
+  text: string,
+  start: number,
+  end: number,
+) {
   const before = text.slice(Math.max(0, start - 260), start);
   const after = text.slice(end, Math.min(text.length, end + 260));
   if (
@@ -2079,7 +2104,9 @@ function shouldForkIdeaForStyleReference(
     /(이런|요런|이\s*느낌|느낌|스타일|무드|톤|방향|이미지|image|this)/i.test(
       normalized,
     );
-  return (remakeIntent && styleShift) || citedStyleRemake || attachedImageStyleRemake;
+  return (
+    (remakeIntent && styleShift) || citedStyleRemake || attachedImageStyleRemake
+  );
 }
 
 function fallbackDesignStyleFromStyleReference(
@@ -2131,8 +2158,9 @@ function productBriefForStyleFork(description: string) {
 
 function isMockupReadinessQuestion(text: string) {
   const normalized = text.trim().toLowerCase();
-  const mentionsMockup =
-    /(목업|시안|화면|디자인|mockup|screen|design)/i.test(normalized);
+  const mentionsMockup = /(목업|시안|화면|디자인|mockup|screen|design)/i.test(
+    normalized,
+  );
   if (!mentionsMockup) return false;
 
   const asksReadiness =
@@ -2204,8 +2232,20 @@ function parseRequestedReferenceCount(text: string): number | null {
     if (Number.isFinite(n) && n > 0) return n;
   }
   const KO: Record<string, number> = {
-    한: 1, 하나: 1, 두: 2, 둘: 2, 세: 3, 셋: 3, 네: 4, 넷: 4,
-    다섯: 5, 여섯: 6, 일곱: 7, 여덟: 8, 아홉: 9, 열: 10,
+    한: 1,
+    하나: 1,
+    두: 2,
+    둘: 2,
+    세: 3,
+    셋: 3,
+    네: 4,
+    넷: 4,
+    다섯: 5,
+    여섯: 6,
+    일곱: 7,
+    여덟: 8,
+    아홉: 9,
+    열: 10,
   };
   const ko = text.match(
     /(하나|한|둘|두|셋|세|넷|네|다섯|여섯|일곱|여덟|아홉|열)\s*(?:개|장|곳|군데)/,
@@ -2337,7 +2377,9 @@ function formatReferenceMemoryDetail(reference: Reference, index?: number) {
 function formatReferenceMemoryDetails(references: Reference[]) {
   return references
     .slice(0, 8)
-    .map((reference, index) => formatReferenceMemoryDetail(reference, index + 1))
+    .map((reference, index) =>
+      formatReferenceMemoryDetail(reference, index + 1),
+    )
     .join("\n\n");
 }
 
@@ -2438,7 +2480,10 @@ function compactEventTarget(item: SessionMemoryItem | ReviewTurnMemory) {
 
 function finalDesignEventSummary(item: SessionMemoryItem | ReviewTurnMemory) {
   const input = "input" in item ? item.input?.trim() : "";
-  const firstLine = input?.split(/\r?\n/).map((line) => line.trim()).find(Boolean);
+  const firstLine = input
+    ?.split(/\r?\n/)
+    .map((line) => line.trim())
+    .find(Boolean);
   if (firstLine) {
     const normalized = firstLine
       .replace(/^최종\s+디자인\s+확정\s*:/, "최종디자인 시안 확정:")
@@ -2527,7 +2572,8 @@ function retrievalLogForMessage(
   if (message.role !== "assistant" || !message.createdAt) return null;
   const reviewTurnId = message.reviewTurnId ?? message.id;
   const exactLog = retrievalLogs.find(
-    (log) => log.interactionId === reviewTurnId || log.interactionId === message.id,
+    (log) =>
+      log.interactionId === reviewTurnId || log.interactionId === message.id,
   );
   if (exactLog) return exactLog;
   const messageCreatedAt = message.createdAt;
@@ -2595,12 +2641,11 @@ function MemoryReviewIntroPanel({
         MEMORY_REVIEW_INTRO_KEYS.sessionUnderstanding,
       ),
   );
-  const [preferenceRating, setPreferenceRating] = useState<number | null>(
-    () =>
-      initialReviewRating(
-        initialAnswers,
-        MEMORY_REVIEW_INTRO_KEYS.designPreference,
-      ),
+  const [preferenceRating, setPreferenceRating] = useState<number | null>(() =>
+    initialReviewRating(
+      initialAnswers,
+      MEMORY_REVIEW_INTRO_KEYS.designPreference,
+    ),
   );
   const [helpfulnessRating, setHelpfulnessRating] = useState<number | null>(
     () =>
@@ -2698,80 +2743,74 @@ function MemoryReviewIntroPanel({
   return (
     <section className="shrink-0 border-b border-slate-300 bg-slate-100 px-4 py-2 lg:px-6">
       <div className="mx-auto max-w-[100rem] overflow-hidden rounded-lg border border-slate-200 bg-white shadow-[0_8px_18px_rgba(15,23,42,0.08)]">
-      <div className="flex items-center gap-3 border-b border-slate-200 px-5 py-2.5">
-        <div className="flex min-w-0 items-baseline gap-2">
-          <p className="shrink-0 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
-            Review Part 1
-          </p>
-          <span className="text-slate-300">·</span>
-          <h2 className="truncate text-base font-semibold tracking-normal text-slate-950">
-            오늘 세션 돌아보기
-          </h2>
+        <div className="flex items-center gap-3 border-b border-slate-200 px-5 py-2.5">
+          <div className="flex min-w-0 items-baseline gap-2">
+            <p className="shrink-0 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+              Review Part 1
+            </p>
+            <span className="text-slate-300">·</span>
+            <h2 className="truncate text-base font-semibold tracking-normal text-slate-950">
+              오늘 세션 돌아보기
+            </h2>
+          </div>
         </div>
-      </div>
-      <div className="space-y-2.5 px-5 py-2.5">
-        <div className="grid gap-2.5 md:grid-cols-3">
-        <section className="flex flex-col justify-between gap-2 rounded-lg border border-slate-200 bg-slate-50/70 p-2.5">
-          <p className="text-[13px] font-semibold leading-snug text-slate-800">
-            1. 오늘 세션에서, 에이전트가 내 작업 방식을 잘 이해하고 있다고 느꼈습니다.
-          </p>
-          {renderRatingRow(
-            understandingRating,
-            selectUnderstandingRating,
-          )}
-        </section>
-        <section className="flex flex-col justify-between gap-2 rounded-lg border border-slate-200 bg-slate-50/70 p-2.5">
-          <p className="text-[13px] font-semibold leading-snug text-slate-800">
-            2. 에이전트가 내 디자인 취향과 선호를 잘 이해하고 있다고 느꼈습니다.
-          </p>
-          {renderRatingRow(
-            preferenceRating,
-            selectPreferenceRating,
-          )}
-        </section>
-        <section className="flex flex-col justify-between gap-2 rounded-lg border border-slate-200 bg-slate-50/70 p-2.5">
-          <p className="text-[13px] font-semibold leading-snug text-slate-800">
-            3. 에이전트의 메모리 덕분에 협업이 더 수월했습니다.
-          </p>
-          {renderRatingRow(
-            helpfulnessRating,
-            selectHelpfulnessRating,
-          )}
-        </section>
+        <div className="space-y-2.5 px-5 py-2.5">
+          <div className="grid gap-2.5 md:grid-cols-3">
+            <section className="flex flex-col justify-between gap-2 rounded-lg border border-slate-200 bg-slate-50/70 p-2.5">
+              <p className="text-[13px] font-semibold leading-snug text-slate-800">
+                1. 오늘 세션에서, 에이전트가 내 작업 방식을 잘 이해하고 있다고
+                느꼈습니다.
+              </p>
+              {renderRatingRow(understandingRating, selectUnderstandingRating)}
+            </section>
+            <section className="flex flex-col justify-between gap-2 rounded-lg border border-slate-200 bg-slate-50/70 p-2.5">
+              <p className="text-[13px] font-semibold leading-snug text-slate-800">
+                2. 에이전트가 내 디자인 취향과 선호를 잘 이해하고 있다고
+                느꼈습니다.
+              </p>
+              {renderRatingRow(preferenceRating, selectPreferenceRating)}
+            </section>
+            <section className="flex flex-col justify-between gap-2 rounded-lg border border-slate-200 bg-slate-50/70 p-2.5">
+              <p className="text-[13px] font-semibold leading-snug text-slate-800">
+                3. 오늘 세션에서, 에이전트와의 협업이 수월했다고 느꼈습니다.
+              </p>
+              {renderRatingRow(helpfulnessRating, selectHelpfulnessRating)}
+            </section>
+          </div>
+          <section className="flex min-h-0 flex-col space-y-1.5 rounded-lg border border-slate-200 bg-slate-50/70 p-2.5">
+            <p className="text-[13px] font-semibold leading-snug text-slate-800">
+              4. 오늘 세션 내용 중, 에이전트가 앞으로 기억해 주었으면 하는
+              것들을 최대한 많이, 자세하게 적어주세요.
+            </p>
+            <Textarea
+              value={futureMemoryText}
+              onChange={(event) => {
+                setFutureMemoryText(event.target.value);
+              }}
+              placeholder="예: 내가 반복해서 요청한 방식, 좋았던 결과, 다음 작업에도 이어졌으면 하는 기준"
+              className="min-h-16 flex-1 resize-none text-sm leading-relaxed"
+            />
+          </section>
         </div>
-        <section className="flex min-h-0 flex-col space-y-1.5 rounded-lg border border-slate-200 bg-slate-50/70 p-2.5">
-          <p className="text-[13px] font-semibold leading-snug text-slate-800">
-            4. 오늘 세션 내용 중, 에이전트가 앞으로 기억해 주었으면 하는 것들을 최대한 많이, 자세하게 적어주세요.
+        <div className="flex items-center justify-between gap-3 border-t border-slate-200 px-4 py-2">
+          <p className="min-w-0 text-[11px] text-slate-400">
+            {saveStatus === "error"
+              ? "저장 실패"
+              : saveStatus === "saving" || isSaving
+                ? "저장 중..."
+                : saveStatus === "saved"
+                  ? "저장됨"
+                  : "Draft"}
           </p>
-          <Textarea
-            value={futureMemoryText}
-            onChange={(event) => {
-              setFutureMemoryText(event.target.value);
-            }}
-            placeholder="예: 내가 반복해서 요청한 방식, 좋았던 결과, 다음 작업에도 이어졌으면 하는 기준"
-            className="min-h-16 flex-1 resize-none text-sm leading-relaxed"
-          />
-        </section>
-      </div>
-      <div className="flex items-center justify-between gap-3 border-t border-slate-200 px-4 py-2">
-        <p className="min-w-0 text-[11px] text-slate-400">
-          {saveStatus === "error"
-            ? "저장 실패"
-            : saveStatus === "saving" || isSaving
-              ? "저장 중..."
-              : saveStatus === "saved"
-                ? "저장됨"
-                : "Draft"}
-        </p>
-        <button
-          type="button"
-          onClick={submitIntro}
-          disabled={!canContinue || isSaving || saveStatus === "saving"}
-          className="rounded-full bg-slate-900 px-4 py-1.5 text-xs font-semibold text-white transition hover:bg-slate-700 disabled:cursor-not-allowed disabled:bg-slate-300"
-        >
-          {isSaving ? "저장 중..." : "다음 →"}
-        </button>
-      </div>
+          <button
+            type="button"
+            onClick={submitIntro}
+            disabled={!canContinue || isSaving || saveStatus === "saving"}
+            className="rounded-full bg-slate-900 px-4 py-1.5 text-xs font-semibold text-white transition hover:bg-slate-700 disabled:cursor-not-allowed disabled:bg-slate-300"
+          >
+            {isSaving ? "저장 중..." : "다음 →"}
+          </button>
+        </div>
       </div>
     </section>
   );
@@ -2800,7 +2839,8 @@ function shouldShowMemoryEventCard(item: SessionMemoryItem) {
 function activityEventCategory(event: ActivityLogEvent) {
   if (event.section === "reference" && event.action === "delete")
     return "reference_delete";
-  if (event.section === "note" && event.action === "delete") return "note_delete";
+  if (event.section === "note" && event.action === "delete")
+    return "note_delete";
   if (event.section === "mockup" && event.action === "delete")
     return "mockup_delete";
   if (event.section === "feedback" && event.action === "submit")
@@ -2836,7 +2876,9 @@ function activityEventDetail(event: ActivityLogEvent) {
   if (activityEventCategory(event) === "preference_signal") {
     return [event.input, event.output].filter(Boolean).join(" · ");
   }
-  return event.outputTitle || event.output || event.input || event.link || event.id;
+  return (
+    event.outputTitle || event.output || event.input || event.link || event.id
+  );
 }
 
 function compareTimelineItems(a: ReviewTimelineItem, b: ReviewTimelineItem) {
@@ -2857,9 +2899,11 @@ function compareTimelineItems(a: ReviewTimelineItem, b: ReviewTimelineItem) {
   return a.type === "message" ? -1 : 1;
 }
 
-
 async function stitchResponseError(response: Response) {
-  const data = await response.clone().json().catch(() => null);
+  const data = await response
+    .clone()
+    .json()
+    .catch(() => null);
   if (data?.code === "stitch-auth") {
     return "Stitch 인증 정보가 만료되었거나 유효하지 않습니다. 서버의 Stitch 사용자 OAuth 설정을 확인해주세요.";
   }
@@ -3056,9 +3100,9 @@ export default function MainScreenPage() {
   // Stitch project-level design system synced from the active 시안's design
   // style. We track the applied style hash so /api/stitch only re-applies the
   // design system when the style content actually changes.
-  const [stitchDesignSystemId, setStitchDesignSystemId] = useState<string | null>(
-    null,
-  );
+  const [stitchDesignSystemId, setStitchDesignSystemId] = useState<
+    string | null
+  >(null);
   const [appliedDesignStyleHash, setAppliedDesignStyleHash] = useState<
     string | null
   >(null);
@@ -3132,9 +3176,9 @@ export default function MainScreenPage() {
   const [expandedChatPhaseIds, setExpandedChatPhaseIds] = useState<Set<string>>(
     () => new Set(),
   );
-  const [collapsedChatPhaseIds, setCollapsedChatPhaseIds] = useState<Set<string>>(
-    () => new Set(),
-  );
+  const [collapsedChatPhaseIds, setCollapsedChatPhaseIds] = useState<
+    Set<string>
+  >(() => new Set());
   const [rawPromptModal, setRawPromptModal] = useState<{
     turnId: string;
     rawPromptActual?: unknown;
@@ -3228,21 +3272,18 @@ export default function MainScreenPage() {
   const showReviewAnnotations = isReviewMode || isViewingAsAdmin;
   const hasSessionStarted = Boolean(
     timerStartedAt ||
-      messages.length > 0 ||
-      ideas.length > 0 ||
-      artboards.length > 0 ||
-      references.length > 0 ||
-      activityLog.length > 0,
+    messages.length > 0 ||
+    ideas.length > 0 ||
+    artboards.length > 0 ||
+    references.length > 0 ||
+    activityLog.length > 0,
   );
   const canShowProductTour =
     !isReadOnly && Boolean(selectedOptionId) && profileModalConfirmed;
 
-  const handleProductTourOpenChange = useCallback(
-    (open: boolean) => {
-      setIsProductTourOpen(open);
-    },
-    [],
-  );
+  const handleProductTourOpenChange = useCallback((open: boolean) => {
+    setIsProductTourOpen(open);
+  }, []);
 
   useEffect(() => {
     const panel = missionPanelRef.current;
@@ -3353,7 +3394,9 @@ export default function MainScreenPage() {
         return false;
       }
       seen.add(key);
-      return Boolean(item.episodic || item.semantic || item.input || item.output);
+      return Boolean(
+        item.episodic || item.semantic || item.input || item.output,
+      );
     });
     return [
       ...messages.map((message) => ({ type: "message" as const, message })),
@@ -3375,7 +3418,11 @@ export default function MainScreenPage() {
           sessionMemorySummary.missionOrder,
         ),
       ),
-    [sessionMemorySummary.graphMemories, sessionMemorySummary.missionOrder, missionId],
+    [
+      sessionMemorySummary.graphMemories,
+      sessionMemorySummary.missionOrder,
+      missionId,
+    ],
   );
   const sessionArchivedMemories = useMemo(() => {
     const referencedIds = new Set(
@@ -3391,13 +3438,15 @@ export default function MainScreenPage() {
       const duplicateOf = item.duplicateOf ?? item.duplicate?.memoryId ?? null;
       return Boolean(
         duplicateOf &&
-          (referencedIds.has(duplicateOf) || promotedIds.has(duplicateOf)),
+        (referencedIds.has(duplicateOf) || promotedIds.has(duplicateOf)),
       );
     });
   }, [sessionMemorySummary, cumulativeGraphMemories, missionId]);
   const beforeSessionMemoryImpact = useMemo(() => {
     const referencedByMemoryId = new Map(
-      sessionMemorySummary.referenced.map((item) => [item.memoryId, item] as const),
+      sessionMemorySummary.referenced.map(
+        (item) => [item.memoryId, item] as const,
+      ),
     );
     const promotedById = new Map(
       sessionMemorySummary.promoted.map((item) => [item.id, item] as const),
@@ -3458,7 +3507,11 @@ export default function MainScreenPage() {
         ),
         events: memoryActivationEventsRef.current,
       };
-      const payloadKey = JSON.stringify({ answers, memoryActivations, submitted });
+      const payloadKey = JSON.stringify({
+        answers,
+        memoryActivations,
+        submitted,
+      });
       if (!submitted && payloadKey === memoryReviewSaveKeyRef.current) {
         return true;
       }
@@ -3553,7 +3606,11 @@ export default function MainScreenPage() {
       ),
       events: memoryActivationEventsRef.current,
     };
-    const payloadKey = JSON.stringify({ answers, memoryActivations, submitted: false });
+    const payloadKey = JSON.stringify({
+      answers,
+      memoryActivations,
+      submitted: false,
+    });
     if (payloadKey === memoryReviewSaveKeyRef.current) return;
     try {
       void fetch("/api/memory/review-feedback", {
@@ -3853,7 +3910,9 @@ export default function MainScreenPage() {
     )
       .trim()
       .slice(0, 1000);
-    const evaluatedAnswer = cleanMessageContentForModel(assistantMessage.content)
+    const evaluatedAnswer = cleanMessageContentForModel(
+      assistantMessage.content,
+    )
       .trim()
       .slice(0, 6000);
     if (!evaluatedAnswer) {
@@ -4300,9 +4359,7 @@ export default function MainScreenPage() {
         (session?.artboards?.length ?? 0) > 0;
       if (sessionAlreadyStarted) setProfileModalConfirmed(true);
       setTimerEndedAt(
-        session?.endedAt && completed
-          ? Number(session.endedAt)
-          : null,
+        session?.endedAt && completed ? Number(session.endedAt) : null,
       );
 
       if (session?.messages) setMessages(session.messages);
@@ -4338,7 +4395,9 @@ export default function MainScreenPage() {
               ? session.stitchProjectId
               : undefined),
           htmlStatus:
-            !a.html && a.stitchScreenId && !isSyntheticStitchScreenId(a.stitchScreenId)
+            !a.html &&
+            a.stitchScreenId &&
+            !isSyntheticStitchScreenId(a.stitchScreenId)
               ? "pending"
               : a.htmlStatus,
         }));
@@ -4461,14 +4520,19 @@ export default function MainScreenPage() {
   // persona/brand was worked on and the content plumbing has an active option.
   const autoSelectedOptionRef = useRef(false);
   useEffect(() => {
-    if (isReadOnly || !isMissionContextReady || !sessionLoaded || sessionCompleted)
+    if (
+      isReadOnly ||
+      !isMissionContextReady ||
+      !sessionLoaded ||
+      sessionCompleted
+    )
       return;
     if (autoSelectedOptionRef.current) return;
     if (missionOptions.length === 1 && !selectedOptionId) {
       autoSelectedOptionRef.current = true;
       void chooseMissionOption(missionOptions[0]);
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     isReadOnly,
     isMissionContextReady,
@@ -4685,7 +4749,9 @@ export default function MainScreenPage() {
         const overlaid = {
           ...(existing ?? { memoryId: id, duplicateOf: null, duplicate: null }),
           archivedAt: entry.active ? null : (existing?.archivedAt ?? null),
-          archiveReason: entry.active ? null : (existing?.archiveReason ?? null),
+          archiveReason: entry.active
+            ? null
+            : (existing?.archiveReason ?? null),
           inactive: !entry.active,
           inactiveReason: fields.inactiveReason,
           inactiveReasonDetail: fields.inactiveReasonDetail,
@@ -4715,14 +4781,12 @@ export default function MainScreenPage() {
     const source: MemoryActivationEvent[] =
       isViewingAsAdmin || memoryReviewSubmittedAt != null
         ? viewOnlyMemoryActivations
-        : Object.entries(stagedMemoryActivations).map(
-            ([memoryId, staged]) => ({
-              memoryId,
-              active: staged.active,
-              reason: staged.reason,
-              toggledAt: staged.toggledAt,
-            }),
-          );
+        : Object.entries(stagedMemoryActivations).map(([memoryId, staged]) => ({
+            memoryId,
+            active: staged.active,
+            reason: staged.reason,
+            toggledAt: staged.toggledAt,
+          }));
     if (source.length === 0) return [];
     const pools = [
       sessionMemorySummary.graphMemories,
@@ -4956,9 +5020,7 @@ export default function MainScreenPage() {
                     reason:
                       typeof state.reason === "string" ? state.reason : null,
                     toggledAt:
-                      typeof state.toggledAt === "number"
-                        ? state.toggledAt
-                        : 0,
+                      typeof state.toggledAt === "number" ? state.toggledAt : 0,
                   },
                 ]
               : [],
@@ -5038,13 +5100,7 @@ export default function MainScreenPage() {
     return () => {
       cancelled = true;
     };
-  }, [
-    isReviewMode,
-    isViewingAsAdmin,
-    missionId,
-    userId,
-    targetSessionUserId,
-  ]);
+  }, [isReviewMode, isViewingAsAdmin, missionId, userId, targetSessionUserId]);
 
   // Flush pending edits before the page is torn down or backgrounded, so
   // unsubmitted answers are not lost on refresh (autosave was removed — saves
@@ -5108,7 +5164,9 @@ export default function MainScreenPage() {
           setReviewProfileRawMarkdown("");
         }
       });
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [showReviewAnnotations, targetSessionUserId, missionId]);
 
   // Load profile memories when mission context is ready (non-read-only only)
@@ -5127,7 +5185,9 @@ export default function MainScreenPage() {
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
         if (cancelled) return;
-        setProfileRawMarkdown(typeof data?.rawMarkdown === "string" ? data.rawMarkdown : "");
+        setProfileRawMarkdown(
+          typeof data?.rawMarkdown === "string" ? data.rawMarkdown : "",
+        );
       })
       .catch(() => {});
     return () => {
@@ -5593,7 +5653,8 @@ export default function MainScreenPage() {
       ...ideas.filter((idea) => idea.id !== activeIdeaId),
     ];
     return orderedIdeas.flatMap((idea) => {
-      const ideaNumber = ideas.findIndex((candidate) => candidate.id === idea.id) + 1;
+      const ideaNumber =
+        ideas.findIndex((candidate) => candidate.id === idea.id) + 1;
       const ideaLabel = idea.title.trim() || `시안 ${Math.max(ideaNumber, 1)}`;
       const options: ChatComposerMention[] = [
         {
@@ -5644,8 +5705,8 @@ export default function MainScreenPage() {
     );
     const hasImageLedSource = Boolean(
       attachedStyleImage ||
-        selectedReferences.some((reference) => reference.url) ||
-        extractFirstUrl(inputText),
+      selectedReferences.some((reference) => reference.url) ||
+      extractFirstUrl(inputText),
     );
     return CHAT_COMPOSER_COMMANDS.map((command) => {
       let disabledReason: string | undefined;
@@ -5891,9 +5952,9 @@ export default function MainScreenPage() {
     // wins. Snapshotted now because selectedReferences is cleared on send.
     const styleSourceUrlForTurn = styleImageForTurn
       ? null
-      : extractFirstUrl(text) ??
+      : (extractFirstUrl(text) ??
         selectedReferences.find((reference) => reference.url)?.url ??
-        null;
+        null);
     const userMsg: Message = {
       id: crypto.randomUUID(),
       role: "user",
@@ -6519,7 +6580,9 @@ export default function MainScreenPage() {
         const forkedIdea: Idea = {
           id: crypto.randomUUID(),
           title: nextDraftTitle(ideas),
-          description: productBriefForStyleFork(activeIdeaAtTurnStart.description),
+          description: productBriefForStyleFork(
+            activeIdeaAtTurnStart.description,
+          ),
           createdAt: Date.now(),
         };
         turnIdeaOverride = forkedIdea;
@@ -6537,8 +6600,7 @@ export default function MainScreenPage() {
         setActiveIdeaTab("idea");
         setMessages((prev) =>
           prev.map((m) =>
-            m.id === assistantId &&
-            !m.content.includes("새 시안으로 분리")
+            m.id === assistantId && !m.content.includes("새 시안으로 분리")
               ? {
                   ...m,
                   content: [
@@ -6619,7 +6681,8 @@ export default function MainScreenPage() {
         }
         appendActivityLog({
           section: "note",
-          action: designSpecBlock.action === "edit" ? "style_update" : "style_create",
+          action:
+            designSpecBlock.action === "edit" ? "style_update" : "style_create",
           input: text,
           output: designSpecContent,
           outputTitle: newSpec.title,
@@ -6656,7 +6719,10 @@ export default function MainScreenPage() {
         setIsDesignSpecOpen(true);
       }
 
-      const fetchRefBlock = findBracketActionBlock(fullText, "FETCH_REFERENCES");
+      const fetchRefBlock = findBracketActionBlock(
+        fullText,
+        "FETCH_REFERENCES",
+      );
       const appendReferenceResult = (result: ReferenceFetchResult) => {
         const imageCueSummary = buildImageStyleSearchCueSummary(
           result.imageStyleSearchCues,
@@ -6768,7 +6834,9 @@ export default function MainScreenPage() {
         !editBlock &&
         isExplicitNewMockupRequest(text);
       const selectedElementBoard = selectedElement
-        ? artboards.find((artboard) => artboard.id === selectedElement.artboardId)
+        ? artboards.find(
+            (artboard) => artboard.id === selectedElement.artboardId,
+          )
         : null;
       const shouldForceSelectedElementEdit =
         Boolean(generateBlock) &&
@@ -6849,7 +6917,7 @@ export default function MainScreenPage() {
           ideas.find((i) => i.id === effectiveActiveIdeaId) ??
           null;
         const parsedPrompt = normalizeMockupActionPrompt(
-            (effectiveGenerateMatch ?? effectiveEditMatch)?.payload ??
+          (effectiveGenerateMatch ?? effectiveEditMatch)?.payload ??
             (shouldAutoGenerateForkedStyleMockup
               ? FORKED_STYLE_MOCKUP_PROMPT
               : ""),
@@ -6952,9 +7020,10 @@ export default function MainScreenPage() {
           stitchCancelRequestedRef.current = false;
           const editTargetBoard = !isNew
             ? (selectedElementBoard ??
-                (activeArtboardId
-                  ? artboards.find((a) => a.id === activeArtboardId)
-                  : currentIdeaBoards.at(-1))) ?? null
+              (activeArtboardId
+                ? artboards.find((a) => a.id === activeArtboardId)
+                : currentIdeaBoards.at(-1)) ??
+              null)
             : null;
           const editTargetId = editTargetBoard?.id;
           const editScreenId = isSyntheticStitchScreenId(
@@ -6976,14 +7045,17 @@ export default function MainScreenPage() {
                 stitchAbortControllerRef.current = null;
               }
               const syntheticScreenId = `local-edit-fallback-${crypto.randomUUID()}`;
-              console.warn("[mockup] applied local selected-element fallback before Stitch", {
-                artboardId: editTargetBoard.id,
-                patchType: localPatch.patchType,
-                previousScreenId: editTargetBoard.stitchScreenId ?? null,
-                syntheticScreenId,
-                previousHtmlHash: quickHash(editTargetBoard.html),
-                nextHtmlHash: quickHash(localPatch.html),
-              });
+              console.warn(
+                "[mockup] applied local selected-element fallback before Stitch",
+                {
+                  artboardId: editTargetBoard.id,
+                  patchType: localPatch.patchType,
+                  previousScreenId: editTargetBoard.stitchScreenId ?? null,
+                  syntheticScreenId,
+                  previousHtmlHash: quickHash(editTargetBoard.html),
+                  nextHtmlHash: quickHash(localPatch.html),
+                },
+              );
               appendActivityLog({
                 section: "mockup",
                 action: "update",
@@ -7092,13 +7164,16 @@ export default function MainScreenPage() {
                     stitchAbortControllerRef.current = null;
                   }
                   const syntheticScreenId = `local-edit-fallback-${crypto.randomUUID()}`;
-                  console.warn("[mockup] applied LLM selected-element local edit", {
-                    artboardId: editTargetBoard.id,
-                    previousScreenId: editTargetBoard.stitchScreenId ?? null,
-                    syntheticScreenId,
-                    previousHtmlHash: quickHash(editTargetBoard.html),
-                    nextHtmlHash: quickHash(patchedHtml),
-                  });
+                  console.warn(
+                    "[mockup] applied LLM selected-element local edit",
+                    {
+                      artboardId: editTargetBoard.id,
+                      previousScreenId: editTargetBoard.stitchScreenId ?? null,
+                      syntheticScreenId,
+                      previousHtmlHash: quickHash(editTargetBoard.html),
+                      nextHtmlHash: quickHash(patchedHtml),
+                    },
+                  );
                   appendActivityLog({
                     section: "mockup",
                     action: "update",
@@ -7408,14 +7483,17 @@ export default function MainScreenPage() {
               );
               if (localPatch && localPatch.html !== editTargetBoard.html) {
                 const syntheticScreenId = `local-edit-fallback-${crypto.randomUUID()}`;
-                console.warn("[mockup] applied local selected-element fallback", {
-                  artboardId: editTargetBoard.id,
-                  patchType: localPatch.patchType,
-                  previousScreenId: editTargetBoard.stitchScreenId ?? null,
-                  syntheticScreenId,
-                  previousHtmlHash: quickHash(editTargetBoard.html),
-                  nextHtmlHash: quickHash(localPatch.html),
-                });
+                console.warn(
+                  "[mockup] applied local selected-element fallback",
+                  {
+                    artboardId: editTargetBoard.id,
+                    patchType: localPatch.patchType,
+                    previousScreenId: editTargetBoard.stitchScreenId ?? null,
+                    syntheticScreenId,
+                    previousHtmlHash: quickHash(editTargetBoard.html),
+                    nextHtmlHash: quickHash(localPatch.html),
+                  },
+                );
                 appendActivityLog({
                   section: "mockup",
                   action: "update",
@@ -7502,7 +7580,9 @@ export default function MainScreenPage() {
             (typeof data.html !== "string" || !data.html.trim()) &&
             !data.htmlPending
           ) {
-            throw new Error("Stitch가 표시할 수 있는 화면 HTML을 반환하지 않았습니다.");
+            throw new Error(
+              "Stitch가 표시할 수 있는 화면 HTML을 반환하지 않았습니다.",
+            );
           }
           setMockupProgress({ percent: 96, label: "아트보드 배치 중" });
           if (data.projectId) setStitchProjectId(data.projectId);
@@ -7678,15 +7758,14 @@ export default function MainScreenPage() {
               editCreatedNewScreen && !existingEditBoard
                 ? crypto.randomUUID()
                 : null;
-            const sameScreenEditBoard =
-              !editCreatedNewScreen
-                ? artboards.find(
-                    (a) =>
-                      a.id === targetId ||
-                      a.stitchScreenId === data.screenId ||
-                      (editScreenId && a.stitchScreenId === editScreenId),
-                  ) ?? null
-                : null;
+            const sameScreenEditBoard = !editCreatedNewScreen
+              ? (artboards.find(
+                  (a) =>
+                    a.id === targetId ||
+                    a.stitchScreenId === data.screenId ||
+                    (editScreenId && a.stitchScreenId === editScreenId),
+                ) ?? null)
+              : null;
             const sameScreenFallbackBoardId =
               !editCreatedNewScreen && !sameScreenEditBoard
                 ? crypto.randomUUID()
@@ -7706,8 +7785,7 @@ export default function MainScreenPage() {
               sameScreenEditBoardId: sameScreenEditBoard?.id ?? null,
               sameScreenFallbackBoardId,
               resultIdeaId,
-              htmlLength:
-                typeof data.html === "string" ? data.html.length : 0,
+              htmlLength: typeof data.html === "string" ? data.html.length : 0,
               htmlPending: Boolean(data.htmlPending),
             });
 
@@ -7724,26 +7802,32 @@ export default function MainScreenPage() {
                   const nextHtml =
                     typeof data.html === "string" && data.html
                       ? data.html
-                      : matched?.html ?? "";
+                      : (matched?.html ?? "");
                   const previousHtml = matched?.html ?? "";
-                  console.info("[mockup] applying edit HTML to existing artboard", {
-                    artboardId: matched?.id ?? null,
-                    previousScreenId: matched?.stitchScreenId ?? null,
-                    nextScreenId: data.screenId ?? null,
-                    ideaId: matched?.ideaId ?? null,
-                    previousHtmlLength: previousHtml.length,
-                    nextHtmlLength: nextHtml.length,
-                    htmlChanged: previousHtml !== nextHtml,
-                    previousHtmlHash: quickHash(previousHtml),
-                    nextHtmlHash: quickHash(nextHtml),
-                    htmlPending: Boolean(data.htmlPending),
-                  });
-                  if (previousHtml === nextHtml && nextHtml) {
-                    console.warn("[mockup] edit response HTML is identical to current artboard HTML", {
+                  console.info(
+                    "[mockup] applying edit HTML to existing artboard",
+                    {
                       artboardId: matched?.id ?? null,
-                      screenId: data.screenId ?? null,
-                      htmlHash: quickHash(nextHtml),
-                    });
+                      previousScreenId: matched?.stitchScreenId ?? null,
+                      nextScreenId: data.screenId ?? null,
+                      ideaId: matched?.ideaId ?? null,
+                      previousHtmlLength: previousHtml.length,
+                      nextHtmlLength: nextHtml.length,
+                      htmlChanged: previousHtml !== nextHtml,
+                      previousHtmlHash: quickHash(previousHtml),
+                      nextHtmlHash: quickHash(nextHtml),
+                      htmlPending: Boolean(data.htmlPending),
+                    },
+                  );
+                  if (previousHtml === nextHtml && nextHtml) {
+                    console.warn(
+                      "[mockup] edit response HTML is identical to current artboard HTML",
+                      {
+                        artboardId: matched?.id ?? null,
+                        screenId: data.screenId ?? null,
+                        htmlHash: quickHash(nextHtml),
+                      },
+                    );
                   }
                   return prev.map((a, index) =>
                     index === matchIndex
@@ -7753,7 +7837,9 @@ export default function MainScreenPage() {
                           stitchScreenId: data.screenId,
                           stitchProjectId: responseProjectId,
                           htmlStatus: data.htmlPending ? "pending" : undefined,
-                          htmlUpdatedAt: data.html ? Date.now() : a.htmlUpdatedAt,
+                          htmlUpdatedAt: data.html
+                            ? Date.now()
+                            : a.htmlUpdatedAt,
                         }
                       : a,
                   );
@@ -7769,14 +7855,17 @@ export default function MainScreenPage() {
                     DEVICE_SIZE[targetBoard.device ?? "desktop"].width +
                     ARTBOARD_GAP
                   : 0;
-                console.info("[mockup] edit result had no matching artboard; creating fallback", {
-                  artboardId: sameScreenFallbackBoardId,
-                  screenId: data.screenId ?? null,
-                  ideaId,
-                  htmlLength:
-                    typeof data.html === "string" ? data.html.length : 0,
-                  htmlPending: Boolean(data.htmlPending),
-                });
+                console.info(
+                  "[mockup] edit result had no matching artboard; creating fallback",
+                  {
+                    artboardId: sameScreenFallbackBoardId,
+                    screenId: data.screenId ?? null,
+                    ideaId,
+                    htmlLength:
+                      typeof data.html === "string" ? data.html.length : 0,
+                    htmlPending: Boolean(data.htmlPending),
+                  },
+                );
                 return [
                   ...prev,
                   {
@@ -7797,14 +7886,17 @@ export default function MainScreenPage() {
               }
 
               if (existingEditBoard) {
-                console.info("[mockup] applying edit HTML to existing new-screen artboard", {
-                  artboardId: existingEditBoard.id,
-                  screenId: data.screenId ?? null,
-                  ideaId: existingEditBoard.ideaId,
-                  htmlLength:
-                    typeof data.html === "string" ? data.html.length : 0,
-                  htmlPending: Boolean(data.htmlPending),
-                });
+                console.info(
+                  "[mockup] applying edit HTML to existing new-screen artboard",
+                  {
+                    artboardId: existingEditBoard.id,
+                    screenId: data.screenId ?? null,
+                    ideaId: existingEditBoard.ideaId,
+                    htmlLength:
+                      typeof data.html === "string" ? data.html.length : 0,
+                    htmlPending: Boolean(data.htmlPending),
+                  },
+                );
                 return prev.map((a) =>
                   a.id === existingEditBoard.id
                     ? {
@@ -7817,7 +7909,8 @@ export default function MainScreenPage() {
                 );
               }
 
-              const ideaId = effectiveActiveIdeaId ?? editTargetBoard?.ideaId ?? "";
+              const ideaId =
+                effectiveActiveIdeaId ?? editTargetBoard?.ideaId ?? "";
               const ideaBoards = prev.filter((a) => a.ideaId === ideaId);
               const targetBoard =
                 prev.find((a) => a.id === targetId) ??
@@ -7860,8 +7953,7 @@ export default function MainScreenPage() {
                 section: "mockup",
                 action: "update",
                 input: text,
-                output:
-                  "Stitch edit result HTML was applied to the artboard.",
+                output: "Stitch edit result HTML was applied to the artboard.",
                 outputTitle: "Stitch 목업 편집",
                 previousHtml: editTargetBoard?.html ?? "",
               });
@@ -7909,49 +8001,47 @@ export default function MainScreenPage() {
               if (!responseProjectId) {
                 setArtboards((prev) =>
                   prev.map((a) =>
-                    a.id === htmlTargetId
-                      ? { ...a, htmlStatus: "failed" }
-                      : a,
+                    a.id === htmlTargetId ? { ...a, htmlStatus: "failed" } : a,
                   ),
                 );
               } else {
                 fetchStitchScreenHtml(responseProjectId, data.screenId, {
                   ownerUid: targetSessionUserId ?? undefined,
                 })
-                .then((html) =>
-                  setArtboards((prev) => {
-                    console.info("[mockup] pending edit HTML resolved", {
-                      htmlTargetId,
-                      screenId: data.screenId ?? null,
-                      htmlLength: html.length,
-                    });
-                    return prev.map((a) =>
-                      a.id === htmlTargetId
-                        ? {
-                            ...a,
-                            html,
-                            stitchProjectId: responseProjectId,
-                            htmlStatus: undefined,
-                            htmlUpdatedAt: Date.now(),
-                          }
-                        : a,
-                    );
-                  }),
-                )
-                .catch((err) =>
-                  setArtboards((prev) => {
-                    console.warn("[mockup] pending edit HTML failed", {
-                      htmlTargetId,
-                      screenId: data.screenId ?? null,
-                      error: err instanceof Error ? err.message : String(err),
-                    });
-                    return prev.map((a) =>
-                      a.id === htmlTargetId
-                        ? { ...a, htmlStatus: "failed" }
-                        : a,
-                    );
-                  }),
-                );
+                  .then((html) =>
+                    setArtboards((prev) => {
+                      console.info("[mockup] pending edit HTML resolved", {
+                        htmlTargetId,
+                        screenId: data.screenId ?? null,
+                        htmlLength: html.length,
+                      });
+                      return prev.map((a) =>
+                        a.id === htmlTargetId
+                          ? {
+                              ...a,
+                              html,
+                              stitchProjectId: responseProjectId,
+                              htmlStatus: undefined,
+                              htmlUpdatedAt: Date.now(),
+                            }
+                          : a,
+                      );
+                    }),
+                  )
+                  .catch((err) =>
+                    setArtboards((prev) => {
+                      console.warn("[mockup] pending edit HTML failed", {
+                        htmlTargetId,
+                        screenId: data.screenId ?? null,
+                        error: err instanceof Error ? err.message : String(err),
+                      });
+                      return prev.map((a) =>
+                        a.id === htmlTargetId
+                          ? { ...a, htmlStatus: "failed" }
+                          : a,
+                      );
+                    }),
+                  );
               }
             }
           }
@@ -8000,7 +8090,6 @@ export default function MainScreenPage() {
           setMockupProgress(null);
         }
       }
-
     } catch (err) {
       const isTimeout =
         (err as Error)?.message === "timeout" ||
@@ -8270,9 +8359,7 @@ export default function MainScreenPage() {
       formatReferenceMemoryDetail(reference),
       Date.now(),
       {
-        links: [
-          memorySourceLinkFromReference(reference),
-        ],
+        links: [memorySourceLinkFromReference(reference)],
       },
     );
     setReferences((prev) =>
@@ -8339,10 +8426,10 @@ export default function MainScreenPage() {
       }
       await persistSessionSnapshot();
       const finalBoard = finalArtboardId
-        ? artboards.find((board) => board.id === finalArtboardId) ?? null
+        ? (artboards.find((board) => board.id === finalArtboardId) ?? null)
         : null;
       const finalIdea = finalBoard
-        ? ideas.find((idea) => idea.id === finalBoard.ideaId) ?? null
+        ? (ideas.find((idea) => idea.id === finalBoard.ideaId) ?? null)
         : null;
       if (finalBoard && finalIdea) {
         // Send every compared candidate mockup plus the session chat so the
@@ -8463,7 +8550,9 @@ export default function MainScreenPage() {
       completedSuccessfully = true;
     } catch (error) {
       console.warn("Unable to complete session", error);
-      toast.error("세션 종료 및 메모리 확정에 실패했습니다. 잠시 후 다시 시도해주세요.");
+      toast.error(
+        "세션 종료 및 메모리 확정에 실패했습니다. 잠시 후 다시 시도해주세요.",
+      );
     } finally {
       if (!completedSuccessfully) {
         setIsCompletingSession(false);
@@ -8790,11 +8879,12 @@ export default function MainScreenPage() {
       >
         {ideaArtboards.map((artboard) => {
           const isActive = artboard.id === activeArtboardId;
-          const artboardViewport =
-            DEVICE_SIZE[artboard.device ?? "desktop"];
+          const artboardViewport = DEVICE_SIZE[artboard.device ?? "desktop"];
           const artboardHeight = getArtboardRenderHeight(artboard);
           const artboardHtml = injectHeightReporter(
-            injectNoNavigation(injectSelectionScript(artboard.html, artboard.id)),
+            injectNoNavigation(
+              injectSelectionScript(artboard.html, artboard.id),
+            ),
             artboard.id,
             artboardViewport,
           );
@@ -8869,7 +8959,8 @@ export default function MainScreenPage() {
                   <div className="flex h-full w-full flex-col items-center justify-center gap-4 bg-zinc-900 text-zinc-300">
                     {artboard.htmlStatus === "failed" ? (
                       <p className="text-sm font-medium">
-                        화면을 불러오지 못했습니다. 페이지를 새로고침해 다시 시도해 주세요.
+                        화면을 불러오지 못했습니다. 페이지를 새로고침해 다시
+                        시도해 주세요.
                       </p>
                     ) : (
                       <>
@@ -9071,7 +9162,9 @@ export default function MainScreenPage() {
   // 재활성화 staging 시 소속 클러스터를 즉시 찾기 위한 참조 (토글 콜백은
   // render 스코프의 클러스터 목록에 직접 접근할 수 없다).
   reviewGraphClustersRef.current = reviewGraphClusters;
-  const renderSessionImpactGraph = (variant: "panel" | "overlay" = "overlay") => {
+  const renderSessionImpactGraph = (
+    variant: "panel" | "overlay" = "overlay",
+  ) => {
     const isOverlay = variant === "overlay";
     if (isSessionMemorySummaryLoading) {
       return (
@@ -9272,9 +9365,10 @@ export default function MainScreenPage() {
     ];
     const graphClusterIds = new Set(graphClusters.map((cluster) => cluster.id));
     const selectedClusterId =
-      selectedSessionGraphClusterId && graphClusterIds.has(selectedSessionGraphClusterId)
+      selectedSessionGraphClusterId &&
+      graphClusterIds.has(selectedSessionGraphClusterId)
         ? selectedSessionGraphClusterId
-        : graphClusters[0]?.id ?? null;
+        : (graphClusters[0]?.id ?? null);
 
     const emptyState = (
       <div className="flex h-full items-center justify-center">
@@ -9294,33 +9388,29 @@ export default function MainScreenPage() {
         graphClusters.find((cluster) => cluster.id === selectedClusterId) ??
         null;
       const selectedClusterItems = selectedCluster
-        ? graphItems.filter((item) =>
-            selectedCluster.itemIds.includes(item.id),
-          )
+        ? graphItems.filter((item) => selectedCluster.itemIds.includes(item.id))
         : [];
-      const sidePanelMemories = cumulativeGraphMemories.map(
-        (memory) => ({
-          id: memory.id,
-          episodic: memory.episodic ?? null,
-          semantic: memory.semantic ?? null,
-          input: memory.input ?? null,
-          output: memory.output ?? null,
-          originalInteractionContent: memory.originalInteractionContent ?? null,
-          action: memory.agentActionCategory ?? null,
-          preferenceSignal: memory.preferenceSignal ?? null,
-          sourceType: memory.sourceType ?? null,
-          keywords: Array.from(
-            new Set([...(memory.keyword ?? []), ...(memory.keywords ?? [])]),
-          ),
-          weight: memory.weight ?? null,
-          timestamp: memory.timestamp ?? null,
-          archivedAt: memory.archivedAt ?? null,
-          archiveReason: memory.archiveReason ?? null,
-          inactiveReason: memory.inactiveReason ?? null,
-          inactiveReasonDetail: memory.inactiveReasonDetail ?? null,
-          source: memory.source ?? null,
-        }),
-      );
+      const sidePanelMemories = cumulativeGraphMemories.map((memory) => ({
+        id: memory.id,
+        episodic: memory.episodic ?? null,
+        semantic: memory.semantic ?? null,
+        input: memory.input ?? null,
+        output: memory.output ?? null,
+        originalInteractionContent: memory.originalInteractionContent ?? null,
+        action: memory.agentActionCategory ?? null,
+        preferenceSignal: memory.preferenceSignal ?? null,
+        sourceType: memory.sourceType ?? null,
+        keywords: Array.from(
+          new Set([...(memory.keyword ?? []), ...(memory.keywords ?? [])]),
+        ),
+        weight: memory.weight ?? null,
+        timestamp: memory.timestamp ?? null,
+        archivedAt: memory.archivedAt ?? null,
+        archiveReason: memory.archiveReason ?? null,
+        inactiveReason: memory.inactiveReason ?? null,
+        inactiveReasonDetail: memory.inactiveReasonDetail ?? null,
+        source: memory.source ?? null,
+      }));
       const mentionMemoryLabel = (memory: {
         semantic?: string;
         episodic?: string;
@@ -9329,12 +9419,16 @@ export default function MainScreenPage() {
         action?: string;
         id: string;
       }) =>
-        (memory.semantic ||
+        (
+          memory.semantic ||
           memory.episodic ||
           memory.input ||
           memory.output ||
           memory.action ||
-          memory.id).replace(/\s+/g, " ").trim();
+          memory.id
+        )
+          .replace(/\s+/g, " ")
+          .trim();
       const selectReviewMentionMemory = (memoryId: string) => {
         setSelectedGraphMemoryId(memoryId);
         // 비활성 노드를 직접 선택해도 사이드 패널이 해당 보조 그룹을 유지한다.
@@ -9422,9 +9516,7 @@ export default function MainScreenPage() {
             edgeCount={visibleGraphEdges.length}
             inactiveMemoryCount={inactiveVisibleCount}
             inactiveAddedCount={inactiveAddedCount}
-            inactiveMemoriesSelected={
-              selectedClusterId === "session-inactive"
-            }
+            inactiveMemoriesSelected={selectedClusterId === "session-inactive"}
             showInactiveMemories={showInactiveGraphMemories}
             onSelectInactiveMemories={() => {
               setShowInactiveGraphMemories(true);
@@ -9494,7 +9586,8 @@ export default function MainScreenPage() {
                   onSelectCluster={setSelectedSessionGraphClusterId}
                   onSelectMemory={selectReviewMentionMemory}
                   getMissionLabel={(originMissionId) => {
-                    if (originMissionId === ONBOARDING_MISSION_ID) return "온보딩";
+                    if (originMissionId === ONBOARDING_MISSION_ID)
+                      return "온보딩";
                     if (originMissionId === missionId && missionTitle) {
                       return missionTitle;
                     }
@@ -9549,7 +9642,8 @@ export default function MainScreenPage() {
             </div>
             {graphClusters.length === 0 && (
               <div className="absolute right-3 top-10 z-10 max-w-64 rounded-lg border border-amber-100 bg-amber-50 px-3 py-2 text-[11px] leading-relaxed text-amber-700 shadow-sm">
-                클러스터 cache가 없습니다. Admin Memory의 cluster view에서 Regenerate를 실행하면 similarity 묶음으로 표시됩니다.
+                클러스터 cache가 없습니다. Admin Memory의 cluster view에서
+                Regenerate를 실행하면 similarity 묶음으로 표시됩니다.
               </div>
             )}
             <div className="h-full pt-14">
@@ -9562,10 +9656,12 @@ export default function MainScreenPage() {
                 onSelectMemory={(memoryId) => {
                   setSelectedGraphMemoryId(memoryId);
                   const referenced = referencedByMemoryId.get(memoryId);
-                  if (referenced) setSelectedReferencedMemoryId(referenced.memoryId);
+                  if (referenced)
+                    setSelectedReferencedMemoryId(referenced.memoryId);
                 }}
                 getMissionLabel={(originMissionId) => {
-                  if (originMissionId === ONBOARDING_MISSION_ID) return "온보딩";
+                  if (originMissionId === ONBOARDING_MISSION_ID)
+                    return "온보딩";
                   if (originMissionId === missionId && missionTitle) {
                     return missionTitle;
                   }
@@ -9618,7 +9714,9 @@ export default function MainScreenPage() {
   const isInitialSessionContextPending =
     !sessionLoaded || !isMissionContextReady;
   const assistantFeedbackDialogMessage = assistantFeedbackDraft
-    ? messages.find((message) => message.id === assistantFeedbackDraft.messageId)
+    ? messages.find(
+        (message) => message.id === assistantFeedbackDraft.messageId,
+      )
     : null;
   const assistantFeedbackDialogVoteLabel =
     assistantFeedbackDraft?.vote === "good" ? "좋아요" : "싫어요";
@@ -9917,7 +10015,9 @@ export default function MainScreenPage() {
                     }
                   }}
                   disabled={
-                    !hasSessionStarted || isCompletingSession || sessionCompleted
+                    !hasSessionStarted ||
+                    isCompletingSession ||
+                    sessionCompleted
                   }
                   className="rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-700 disabled:bg-slate-200 disabled:text-slate-500"
                 >
@@ -9926,8 +10026,8 @@ export default function MainScreenPage() {
                     : !hasSessionStarted
                       ? "세션 시작 전"
                       : isCompletingSession
-                      ? "메모리 확정 중..."
-                      : "세션 종료"}
+                        ? "메모리 확정 중..."
+                        : "세션 종료"}
                 </button>
               )}
             </div>
@@ -9973,8 +10073,8 @@ export default function MainScreenPage() {
                     ? isOnboardingMission
                       ? "온보딩이 완료되었어요"
                       : "세션이 저장되었어요"
-                    : SESSION_PROGRESS_MESSAGES[sessionCompletionStep] ??
-                      SESSION_PROGRESS_MESSAGES[0]}
+                    : (SESSION_PROGRESS_MESSAGES[sessionCompletionStep] ??
+                      SESSION_PROGRESS_MESSAGES[0])}
                 </p>
                 <p className="mt-1 text-xs text-slate-500">
                   {sessionCompletionReady
@@ -10041,7 +10141,11 @@ export default function MainScreenPage() {
             void chooseMissionOption(option);
           }}
         />
-      ) : !isReadOnly && isMissionContextReady && sessionLoaded && !sessionCompleted && !profileModalConfirmed ? (
+      ) : !isReadOnly &&
+        isMissionContextReady &&
+        sessionLoaded &&
+        !sessionCompleted &&
+        !profileModalConfirmed ? (
         /* Single-page setup: read mission, (optionally) add pre-session info, start.
            The former 1-2-3 steps were near-identical pages; merged into one scroll. */
         <main className="flex flex-1 flex-col overflow-hidden">
@@ -10219,7 +10323,9 @@ export default function MainScreenPage() {
             <div ref={missionSectionRef} className="scroll-mt-16">
               <MissionBriefSection
                 title={parentMissionTitle || missionTitle}
-                brief={parentMissionBrief || (!activeOption ? missionBrief : "")}
+                brief={
+                  parentMissionBrief || (!activeOption ? missionBrief : "")
+                }
                 option={activeOption}
                 device={device}
                 optionExpanded={isOptionExpanded}
@@ -10291,8 +10397,7 @@ export default function MainScreenPage() {
                 onSelectSection={setActiveIdeaTab}
               >
                 {(() => {
-                  const idea =
-                    ideas.find((i) => i.id === activeIdeaId) ?? null;
+                  const idea = ideas.find((i) => i.id === activeIdeaId) ?? null;
                   return (
                     <>
                       <IdeaNoteSection
@@ -10314,53 +10419,53 @@ export default function MainScreenPage() {
                   );
                 })()}
 
-              <MockupSection
-                sectionRef={mockupSectionRef}
-                hasArtboards={ideaArtboards.length > 0}
-                editMode={editMode}
-                selectedElements={selectedElements}
-                canvasScale={canvasScale}
-                activeArtboard={activeArtboard}
-                shouldRenderCanvas={shouldRenderMockupCanvas}
-                expanded={isMockupExpanded}
-                generating={isGeneratingCurrentIdeaMockup}
-                mockupOperation={mockupOperation}
-                readOnly={isReadOnly}
-                canvas={renderMockupCanvas()}
-                onToggleEditMode={() => {
-                  setEditMode((p) => {
-                    if (p) clearSelectedElement();
-                    return !p;
-                  });
-                }}
-                onClearSelectedElement={clearSelectedElement}
-                onFit={fitToCanvas}
-                onZoomIn={() =>
-                  setCanvasScale((scale) =>
-                    Math.min(scale * 1.2, MAX_CANVAS_SCALE),
-                  )
-                }
-                onZoomOut={() =>
-                  setCanvasScale((scale) =>
-                    Math.max(scale * 0.8, MIN_CANVAS_SCALE),
-                  )
-                }
-                onExport={() => {
-                  const html = activeArtboard?.html;
-                  if (!html) return;
-                  const blob = new Blob([html], {
-                    type: "text/html",
-                  });
-                  const url = URL.createObjectURL(blob);
-                  const a = document.createElement("a");
-                  a.href = url;
-                  a.download = `${activeArtboard?.label ?? "mockup"}.html`;
-                  a.click();
-                  URL.revokeObjectURL(url);
-                }}
-                onExpand={() => setIsMockupExpanded(true)}
-                onCancelGeneration={cancelMockupGeneration}
-              />
+                <MockupSection
+                  sectionRef={mockupSectionRef}
+                  hasArtboards={ideaArtboards.length > 0}
+                  editMode={editMode}
+                  selectedElements={selectedElements}
+                  canvasScale={canvasScale}
+                  activeArtboard={activeArtboard}
+                  shouldRenderCanvas={shouldRenderMockupCanvas}
+                  expanded={isMockupExpanded}
+                  generating={isGeneratingCurrentIdeaMockup}
+                  mockupOperation={mockupOperation}
+                  readOnly={isReadOnly}
+                  canvas={renderMockupCanvas()}
+                  onToggleEditMode={() => {
+                    setEditMode((p) => {
+                      if (p) clearSelectedElement();
+                      return !p;
+                    });
+                  }}
+                  onClearSelectedElement={clearSelectedElement}
+                  onFit={fitToCanvas}
+                  onZoomIn={() =>
+                    setCanvasScale((scale) =>
+                      Math.min(scale * 1.2, MAX_CANVAS_SCALE),
+                    )
+                  }
+                  onZoomOut={() =>
+                    setCanvasScale((scale) =>
+                      Math.max(scale * 0.8, MIN_CANVAS_SCALE),
+                    )
+                  }
+                  onExport={() => {
+                    const html = activeArtboard?.html;
+                    if (!html) return;
+                    const blob = new Blob([html], {
+                      type: "text/html",
+                    });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement("a");
+                    a.href = url;
+                    a.download = `${activeArtboard?.label ?? "mockup"}.html`;
+                    a.click();
+                    URL.revokeObjectURL(url);
+                  }}
+                  onExpand={() => setIsMockupExpanded(true)}
+                  onCancelGeneration={cancelMockupGeneration}
+                />
               </IdeaWorkspace>
             </div>
 
@@ -10508,14 +10613,15 @@ export default function MainScreenPage() {
                           >
                             <span className="font-semibold">
                               {isInactive
-                                ? archiveStatus.inactiveReason === "user_disabled"
+                                ? archiveStatus.inactiveReason ===
+                                  "user_disabled"
                                   ? `사용자가 직접 비활성화함${
                                       archiveStatus.inactiveReasonDetail
                                         ? ` · ${archiveStatus.inactiveReasonDetail}`
                                         : ""
                                     }`
                                   : "weight 0 inactive"
-                                : archiveStatus.archiveReason ?? "archived"}
+                                : (archiveStatus.archiveReason ?? "archived")}
                             </span>
                             {!isInactive && archiveStatus.duplicate && (
                               <p className="mt-1 wrap-break-word text-rose-500">
@@ -10533,53 +10639,54 @@ export default function MainScreenPage() {
           )}
 
           {/* Turn memory side panel */}
-          {reviewDetailModal?.mode === "turn-memory" && reviewDetailModal.turnDraft && (
-            <div className="flex w-72 shrink-0 flex-col overflow-hidden border-l border-slate-200 bg-white">
-              <div className="flex shrink-0 items-center justify-between border-b border-slate-200 px-4 py-3">
-                <div className="flex items-center gap-2">
-                  <BrainIcon size={14} className="shrink-0 text-violet-500" />
-                  <div>
-                    <p className="text-sm font-semibold text-slate-900">
-                      생성된 기억
-                    </p>
-                    <p className="text-xs text-slate-400">
-                      turn {reviewDetailModal.turnId.slice(0, 8)}
-                    </p>
+          {reviewDetailModal?.mode === "turn-memory" &&
+            reviewDetailModal.turnDraft && (
+              <div className="flex w-72 shrink-0 flex-col overflow-hidden border-l border-slate-200 bg-white">
+                <div className="flex shrink-0 items-center justify-between border-b border-slate-200 px-4 py-3">
+                  <div className="flex items-center gap-2">
+                    <BrainIcon size={14} className="shrink-0 text-violet-500" />
+                    <div>
+                      <p className="text-sm font-semibold text-slate-900">
+                        생성된 기억
+                      </p>
+                      <p className="text-xs text-slate-400">
+                        turn {reviewDetailModal.turnId.slice(0, 8)}
+                      </p>
+                    </div>
                   </div>
+                  <button
+                    type="button"
+                    onClick={() => setReviewDetailModal(null)}
+                    className="rounded-full p-1.5 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
+                    aria-label="기억 상세 닫기"
+                  >
+                    <XIcon size={14} />
+                  </button>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => setReviewDetailModal(null)}
-                  className="rounded-full p-1.5 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
-                  aria-label="기억 상세 닫기"
-                >
-                  <XIcon size={14} />
-                </button>
+                <div className="flex-1 space-y-3 overflow-y-auto p-4">
+                  {reviewDetailModal.turnDraft.episodic && (
+                    <div className="rounded-xl bg-slate-50 px-3 py-2.5">
+                      <p className="mb-1 text-[10px] font-bold uppercase text-slate-400">
+                        Episodic
+                      </p>
+                      <p className="text-xs leading-relaxed text-slate-700 whitespace-pre-wrap">
+                        {reviewDetailModal.turnDraft.episodic}
+                      </p>
+                    </div>
+                  )}
+                  {reviewDetailModal.turnDraft.semantic && (
+                    <div className="rounded-xl bg-violet-50 px-3 py-2.5">
+                      <p className="mb-1 text-[10px] font-bold uppercase text-violet-400">
+                        Semantic
+                      </p>
+                      <p className="text-xs leading-relaxed text-slate-700 whitespace-pre-wrap">
+                        {reviewDetailModal.turnDraft.semantic}
+                      </p>
+                    </div>
+                  )}
+                </div>
               </div>
-              <div className="flex-1 space-y-3 overflow-y-auto p-4">
-                {reviewDetailModal.turnDraft.episodic && (
-                  <div className="rounded-xl bg-slate-50 px-3 py-2.5">
-                    <p className="mb-1 text-[10px] font-bold uppercase text-slate-400">
-                      Episodic
-                    </p>
-                    <p className="text-xs leading-relaxed text-slate-700 whitespace-pre-wrap">
-                      {reviewDetailModal.turnDraft.episodic}
-                    </p>
-                  </div>
-                )}
-                {reviewDetailModal.turnDraft.semantic && (
-                  <div className="rounded-xl bg-violet-50 px-3 py-2.5">
-                    <p className="mb-1 text-[10px] font-bold uppercase text-violet-400">
-                      Semantic
-                    </p>
-                    <p className="text-xs leading-relaxed text-slate-700 whitespace-pre-wrap">
-                      {reviewDetailModal.turnDraft.semantic}
-                    </p>
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
+            )}
 
           {/* Resize handle between content and chat */}
           <div
@@ -10622,31 +10729,30 @@ export default function MainScreenPage() {
             {showReviewAnnotations &&
               rightPanelTab === "before" &&
               !isSessionMemorySummaryLoading && (
-              <div className="min-h-0 flex-1 overflow-y-auto p-5">
-                {/* Original raw input — shown once at top */}
-                {(() => {
-                  const rawInput =
-                    reviewProfileRawMarkdown.trim() ||
-                    reviewProfileItems
-                      .map((item) => item.input.trim())
-                      .filter(Boolean)
-                      .join("\n");
-                  return rawInput ? (
-                    <div className="mb-5 rounded-xl border border-slate-100 bg-slate-50 px-4 py-3">
-                      <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-slate-400">
-                        원래 입력한 내용
-                      </p>
-                      <p className="text-sm leading-relaxed text-slate-700">
-                        {rawInput}
-                      </p>
-                    </div>
-                  ) : null;
-                })()}
+                <div className="min-h-0 flex-1 overflow-y-auto p-5">
+                  {/* Original raw input — shown once at top */}
+                  {(() => {
+                    const rawInput =
+                      reviewProfileRawMarkdown.trim() ||
+                      reviewProfileItems
+                        .map((item) => item.input.trim())
+                        .filter(Boolean)
+                        .join("\n");
+                    return rawInput ? (
+                      <div className="mb-5 rounded-xl border border-slate-100 bg-slate-50 px-4 py-3">
+                        <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-slate-400">
+                          원래 입력한 내용
+                        </p>
+                        <p className="text-sm leading-relaxed text-slate-700">
+                          {rawInput}
+                        </p>
+                      </div>
+                    ) : null;
+                  })()}
 
-                {beforeSessionMemoryImpact.availableCount > 0 ? (
-                  <div className="space-y-3">
-                    {beforeSessionMemoryImpact.items.map(
-                      ({ memory }) => (
+                  {beforeSessionMemoryImpact.availableCount > 0 ? (
+                    <div className="space-y-3">
+                      {beforeSessionMemoryImpact.items.map(({ memory }) => (
                         <MemoryCard
                           key={memory.id}
                           summary={memorySummaryText(memory)}
@@ -10661,7 +10767,9 @@ export default function MainScreenPage() {
                               ? { label: "Semantic", value: memory.semantic }
                               : null,
                           ].filter(
-                            (field): field is { label: string; value: string } =>
+                            (
+                              field,
+                            ): field is { label: string; value: string } =>
                               field !== null,
                           )}
                           weightStrengthLabel={
@@ -10679,31 +10787,30 @@ export default function MainScreenPage() {
                             setIsMemoryDiffOpen(true);
                           }}
                         />
-                      ),
-                    )}
-                  </div>
-                ) : reviewProfileItems.length === 0 ? (
-                  <p className="text-xs text-slate-400">
-                    이 미션에 입력한 정보가 없습니다.
-                  </p>
-                ) : (
-                  <div className="space-y-2 rounded-xl border border-dashed border-slate-200 bg-slate-50 p-4">
-                    <p className="text-[11px] leading-relaxed text-slate-400">
-                      세션 전 입력은 있지만 아직 graph memory로 반영된 항목이
-                      없습니다.
+                      ))}
+                    </div>
+                  ) : reviewProfileItems.length === 0 ? (
+                    <p className="text-xs text-slate-400">
+                      이 미션에 입력한 정보가 없습니다.
                     </p>
-                    {reviewProfileItems.map((item) => (
-                      <div key={item.id} className="flex gap-3">
-                        <div className="mt-1 h-2 w-2 shrink-0 rounded-full bg-sky-400" />
-                        <p className="text-xs leading-relaxed text-slate-700">
-                          {item.input}
-                        </p>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
+                  ) : (
+                    <div className="space-y-2 rounded-xl border border-dashed border-slate-200 bg-slate-50 p-4">
+                      <p className="text-[11px] leading-relaxed text-slate-400">
+                        세션 전 입력은 있지만 아직 graph memory로 반영된 항목이
+                        없습니다.
+                      </p>
+                      {reviewProfileItems.map((item) => (
+                        <div key={item.id} className="flex gap-3">
+                          <div className="mt-1 h-2 w-2 shrink-0 rounded-full bg-sky-400" />
+                          <p className="text-xs leading-relaxed text-slate-700">
+                            {item.input}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
             {/* Messages */}
             <div
               ref={chatScrollRef}
@@ -10716,8 +10823,13 @@ export default function MainScreenPage() {
               {messages.length === 0 && (
                 <div className="flex h-full flex-col items-center justify-center gap-4 text-center text-sm text-slate-400">
                   <div className="flex flex-col gap-1">
-                    <p className="font-medium text-slate-500">디자인 에이전트</p>
-                    <p>레퍼런스 탐색, 시안, 디자인 스타일과 목업 생성을 도와드립니다.</p>
+                    <p className="font-medium text-slate-500">
+                      디자인 에이전트
+                    </p>
+                    <p>
+                      레퍼런스 탐색, 시안, 디자인 스타일과 목업 생성을
+                      도와드립니다.
+                    </p>
                   </div>
                   <div className="w-full max-w-sm rounded-2xl border border-slate-200 bg-white p-4 text-left">
                     <ChatCapabilityCatalog
@@ -10725,9 +10837,7 @@ export default function MainScreenPage() {
                       onPick={(command) => {
                         setComposerCommand(command);
                         setInputText((current) =>
-                          current.trim()
-                            ? current
-                            : `${command.label} `,
+                          current.trim() ? current : `${command.label} `,
                         );
                         chatInputRef.current?.focus();
                       }}
@@ -10790,18 +10900,23 @@ export default function MainScreenPage() {
                         sessionMemorySummary.retrievalLogs,
                       )
                     : null;
-                const turnMemoryDraft = showReviewAnnotations && msg.role === "assistant"
-                  ? sessionMemorySummary.drafts.find((d) => d.id === reviewTurnId) ??
-                    sessionMemorySummary.promoted.find(
-                      (d) => d.id === reviewTurnId || d.source?.draftId === reviewTurnId,
-                    )
-                  : null;
-                const isTurnSelected = reviewDetailModal?.mode === "turn-memory" && reviewDetailModal.turnId === reviewTurnId;
+                const turnMemoryDraft =
+                  showReviewAnnotations && msg.role === "assistant"
+                    ? (sessionMemorySummary.drafts.find(
+                        (d) => d.id === reviewTurnId,
+                      ) ??
+                      sessionMemorySummary.promoted.find(
+                        (d) =>
+                          d.id === reviewTurnId ||
+                          d.source?.draftId === reviewTurnId,
+                      ))
+                    : null;
+                const isTurnSelected =
+                  reviewDetailModal?.mode === "turn-memory" &&
+                  reviewDetailModal.turnId === reviewTurnId;
                 const streamingChatPhases =
-                  msg.role === "assistant" &&
-                  isLoading &&
-                  isLastMessage
-                    ? chatPhasesByMessageId[msg.id] ?? []
+                  msg.role === "assistant" && isLoading && isLastMessage
+                    ? (chatPhasesByMessageId[msg.id] ?? [])
                     : [];
                 const visibleChatPhases =
                   streamingChatPhases.length > 0
@@ -10810,10 +10925,9 @@ export default function MainScreenPage() {
                 const contentParts = processMessageContent(msg.content);
                 const isStreamingThis =
                   msg.role === "assistant" && isLoading && isLastMessage;
-                const isChatPhaseExpanded =
-                  isStreamingThis
-                    ? !collapsedChatPhaseIds.has(msg.id)
-                    : expandedChatPhaseIds.has(msg.id);
+                const isChatPhaseExpanded = isStreamingThis
+                  ? !collapsedChatPhaseIds.has(msg.id)
+                  : expandedChatPhaseIds.has(msg.id);
                 return (
                   <ChatBubble
                     key={msg.id}
@@ -10828,32 +10942,31 @@ export default function MainScreenPage() {
                     remarkPlugins={CHAT_REMARK_PLUGINS}
                     hasTurnMemory={Boolean(
                       msg.role === "assistant" &&
-                        turnMemoryDraft &&
-                        (turnMemoryDraft.episodic ||
-                          turnMemoryDraft.semantic),
+                      turnMemoryDraft &&
+                      (turnMemoryDraft.episodic || turnMemoryDraft.semantic),
                     )}
                     hasRawPrompt={Boolean(
                       msg.role === "assistant" &&
-                        isViewingAsAdmin &&
-                        (reviewTurn?.rawPromptActual != null ||
-                          reviewTurn?.rawPrompt != null),
+                      isViewingAsAdmin &&
+                      (reviewTurn?.rawPromptActual != null ||
+                        reviewTurn?.rawPrompt != null),
                     )}
                     hasRetrievalLog={Boolean(
                       msg.role === "assistant" &&
-                        isViewingAsAdmin &&
-                        retrievalLog,
+                      isViewingAsAdmin &&
+                      retrievalLog,
                     )}
                     feedbackVote={
                       msg.role === "assistant"
-                        ? msg.assistantFeedback?.vote ?? null
+                        ? (msg.assistantFeedback?.vote ?? null)
                         : null
                     }
                     canGiveFeedback={Boolean(
                       msg.role === "assistant" &&
-                        !isReadOnly &&
-                        !isStreamingThis &&
-                        !msg.error &&
-                        cleanMessageContentForModel(msg.content).trim(),
+                      !isReadOnly &&
+                      !isStreamingThis &&
+                      !msg.error &&
+                      cleanMessageContentForModel(msg.content).trim(),
                     )}
                     isReferenceLoading={
                       msg.role === "assistant" &&
@@ -10936,7 +11049,9 @@ export default function MainScreenPage() {
               missionContextReady={isMissionContextReady}
               generatingMockup={isGeneratingMockup}
               loading={isLoading}
-              generatingCurrentIdeaMockup={generatingMockupIdeaId === activeIdeaId}
+              generatingCurrentIdeaMockup={
+                generatingMockupIdeaId === activeIdeaId
+              }
               mockupOperation={mockupOperation}
               onClearSelectedElement={clearSelectedElement}
               onClearCitedTexts={() => updateCitedTexts([])}

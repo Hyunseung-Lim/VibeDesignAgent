@@ -46,8 +46,7 @@ export const REVIEW_QUESTIONS: ReviewQuestion[] = [
   },
   {
     id: "missing_memory",
-    label:
-      "혹시 기억되기를 바랐는데 없는 정보(또는 빠진 내용)가 있나요?",
+    label: "혹시 기억되기를 바랐는데 없는 정보(또는 빠진 내용)가 있나요?",
     allowNone: true,
     placeholder: "어떤 정보가 빠져 있는지 적어주세요",
   },
@@ -116,13 +115,19 @@ type MemoryReviewPanelProps = {
   /** 이 리뷰에서 토글된 메모리 활성/비활성 목록 (참가자는 staging, admin은 저장분). */
   memoryActivations?: MemoryReviewActivationEntry[];
   onAnswersChange?: (answers: MemoryReviewAnswers) => void;
-  onSubmitFeedback?: (answers: MemoryReviewAnswers) => Promise<boolean> | boolean;
+  onSubmitFeedback?: (
+    answers: MemoryReviewAnswers,
+  ) => Promise<boolean> | boolean;
   onSubmitted?: () => void;
 };
 
 // Part 1 (오늘 세션 돌아보기) answer keys — same contract as
 // MEMORY_REVIEW_INTRO_KEYS in /main/[missionId].
-export const PART1_QUESTIONS: { key: string; label: string; rating: boolean }[] = [
+export const PART1_QUESTIONS: {
+  key: string;
+  label: string;
+  rating: boolean;
+}[] = [
   {
     key: "session_understanding",
     label: "에이전트가 내 작업 방식을 잘 이해하고 있다고 느꼈다",
@@ -135,7 +140,7 @@ export const PART1_QUESTIONS: { key: string; label: string; rating: boolean }[] 
   },
   {
     key: "memory_helpfulness",
-    label: "에이전트의 메모리 덕분에 협업이 더 수월했다",
+    label: "오늘 세션에서, 에이전트와의 협업이 수월했다고 느꼈다",
     rating: true,
   },
   {
@@ -292,7 +297,8 @@ export function MemoryReviewPanel({
   );
   const noneConflictNumbers = NONE_CONFLICT_QUESTION_IDS.map(
     (id) =>
-      startNumber + REVIEW_QUESTIONS.findIndex((question) => question.id === id),
+      startNumber +
+      REVIEW_QUESTIONS.findIndex((question) => question.id === id),
   ).join("·");
 
   const submitPendingFeedback = async () => {
@@ -333,7 +339,10 @@ export function MemoryReviewPanel({
     for (const question of REVIEW_QUESTIONS) {
       if (question.type !== "rating") continue;
       const key = reasonKey(question.id);
-      entries.push([key, { text: answersRef.current[key] ?? "", mentions: [] }]);
+      entries.push([
+        key,
+        { text: answersRef.current[key] ?? "", mentions: [] },
+      ]);
     }
     return Object.fromEntries(entries);
   }, []);
@@ -537,9 +546,7 @@ export function MemoryReviewPanel({
   };
 
   const toggleMemoryActivityReview = (questionId: string) => {
-    const nextValue = answersRef.current[questionId]?.trim()
-      ? ""
-      : "확인 완료";
+    const nextValue = answersRef.current[questionId]?.trim() ? "" : "확인 완료";
     answersRef.current = {
       ...answersRef.current,
       [questionId]: nextValue,
@@ -572,7 +579,9 @@ export function MemoryReviewPanel({
     return (
       <textarea
         value={value}
-        onChange={(event) => updateRatingReason(question.id, event.target.value)}
+        onChange={(event) =>
+          updateRatingReason(question.id, event.target.value)
+        }
         placeholder="점수를 준 이유를 함께 적어주세요"
         className="min-h-16 w-full resize-none wrap-anywhere rounded-md border border-input bg-white px-3 py-2 text-xs leading-relaxed outline-none ring-offset-background placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
       />
@@ -641,30 +650,30 @@ export function MemoryReviewPanel({
         </p>
       </div>
     ) : (
-    <div key={question.id} className="space-y-1.5">
-      <span className="block text-sm font-medium leading-relaxed text-slate-700">
-        {startNumber + index}. {question.label}
-      </span>
-      <div
-        ref={(element) => {
-          editorRefs.current[question.id] = element;
-        }}
-        aria-label={question.label}
-        data-placeholder="응답 없음"
-        onClick={(event) => {
-          const mentionElement = (event.target as HTMLElement).closest(
-            "[data-mention-token]",
-          );
-          if (!mentionElement) return;
-          event.preventDefault();
-          event.stopPropagation();
-          const token = mentionElement.getAttribute("data-mention-token");
-          if (token) focusMentionToken(question.id, token);
-        }}
-        className="wrap-anywhere whitespace-pre-wrap text-xs leading-relaxed text-slate-700 empty:before:text-slate-300 empty:before:content-[attr(data-placeholder)]"
-      />
-    </div>
-  );
+      <div key={question.id} className="space-y-1.5">
+        <span className="block text-sm font-medium leading-relaxed text-slate-700">
+          {startNumber + index}. {question.label}
+        </span>
+        <div
+          ref={(element) => {
+            editorRefs.current[question.id] = element;
+          }}
+          aria-label={question.label}
+          data-placeholder="응답 없음"
+          onClick={(event) => {
+            const mentionElement = (event.target as HTMLElement).closest(
+              "[data-mention-token]",
+            );
+            if (!mentionElement) return;
+            event.preventDefault();
+            event.stopPropagation();
+            const token = mentionElement.getAttribute("data-mention-token");
+            if (token) focusMentionToken(question.id, token);
+          }}
+          className="wrap-anywhere whitespace-pre-wrap text-xs leading-relaxed text-slate-700 empty:before:text-slate-300 empty:before:content-[attr(data-placeholder)]"
+        />
+      </div>
+    );
 
   const renderQuestion = (question: ReviewQuestion, index: number) => {
     if (readOnly) return renderReadOnlyQuestion(question, index);
@@ -704,116 +713,117 @@ export function MemoryReviewPanel({
     }
     const isNone = Boolean(question.allowNone && noneSelected[question.id]);
     return (
-    <div key={question.id} className="space-y-1.5">
-      <span className="block text-sm font-medium leading-relaxed text-slate-700">
-        {startNumber + index}. {question.label}
-      </span>
-      {question.allowNone ? (
-        <button
-          type="button"
-          aria-pressed={isNone}
-          onClick={() => toggleNoneAnswer(question.id)}
-          className={`cursor-pointer rounded-full border px-2.5 py-1 text-[11px] font-semibold transition ${
-            isNone
-              ? "border-slate-900 bg-slate-900 text-white"
-              : "border-slate-200 bg-white text-slate-500 hover:border-slate-400 hover:text-slate-800"
-          }`}
-        >
-          없음
-        </button>
-      ) : null}
-      <div
-        ref={(element) => {
-          editorRefs.current[question.id] = element;
-        }}
-        role="textbox"
-        aria-label={question.label}
-        aria-multiline="true"
-        aria-disabled={isNone}
-        contentEditable={!isNone}
-        suppressContentEditableWarning
-        data-placeholder={question.placeholder ?? ""}
-        onInput={(event) =>
-          updateAnswerFromEditor(question.id, event.currentTarget)
-        }
-        onFocus={() => {
-          activeQuestionIdRef.current = question.id;
-        }}
-        onClick={(event) => {
-          const mentionElement = (event.target as HTMLElement).closest(
-            "[data-mention-token]",
-          );
-          if (!mentionElement) return;
-          event.preventDefault();
-          event.stopPropagation();
-          const token = mentionElement.getAttribute("data-mention-token");
-          if (token) focusMentionToken(question.id, token);
-        }}
-        onBlur={() => {
-          const element = editorRefs.current[question.id];
-          if (element) updateAnswerFromEditor(question.id, element);
-          if (activeQuestionIdRef.current === question.id) {
-            activeQuestionIdRef.current = null;
+      <div key={question.id} className="space-y-1.5">
+        <span className="block text-sm font-medium leading-relaxed text-slate-700">
+          {startNumber + index}. {question.label}
+        </span>
+        {question.allowNone ? (
+          <button
+            type="button"
+            aria-pressed={isNone}
+            onClick={() => toggleNoneAnswer(question.id)}
+            className={`cursor-pointer rounded-full border px-2.5 py-1 text-[11px] font-semibold transition ${
+              isNone
+                ? "border-slate-900 bg-slate-900 text-white"
+                : "border-slate-200 bg-white text-slate-500 hover:border-slate-400 hover:text-slate-800"
+            }`}
+          >
+            없음
+          </button>
+        ) : null}
+        <div
+          ref={(element) => {
+            editorRefs.current[question.id] = element;
+          }}
+          role="textbox"
+          aria-label={question.label}
+          aria-multiline="true"
+          aria-disabled={isNone}
+          contentEditable={!isNone}
+          suppressContentEditableWarning
+          data-placeholder={question.placeholder ?? ""}
+          onInput={(event) =>
+            updateAnswerFromEditor(question.id, event.currentTarget)
           }
-        }}
-        onMouseUp={(event) =>
-          updateMentionRequest(
-            question.id,
-            getEditableText(event.currentTarget),
-            caretOffset(event.currentTarget),
-          )
-        }
-        onKeyUp={(event) =>
-          updateMentionRequest(
-            question.id,
-            getEditableText(event.currentTarget),
-            caretOffset(event.currentTarget),
-          )
-        }
-        onKeyDown={(event) => {
-          const mentionElement = (event.target as HTMLElement).closest(
-            "[data-mention-token]",
-          );
-          if (
-            mentionElement &&
-            (event.key === "Enter" || event.key === " ")
-          ) {
+          onFocus={() => {
+            activeQuestionIdRef.current = question.id;
+          }}
+          onClick={(event) => {
+            const mentionElement = (event.target as HTMLElement).closest(
+              "[data-mention-token]",
+            );
+            if (!mentionElement) return;
             event.preventDefault();
             event.stopPropagation();
             const token = mentionElement.getAttribute("data-mention-token");
             if (token) focusMentionToken(question.id, token);
-            return;
+          }}
+          onBlur={() => {
+            const element = editorRefs.current[question.id];
+            if (element) updateAnswerFromEditor(question.id, element);
+            if (activeQuestionIdRef.current === question.id) {
+              activeQuestionIdRef.current = null;
+            }
+          }}
+          onMouseUp={(event) =>
+            updateMentionRequest(
+              question.id,
+              getEditableText(event.currentTarget),
+              caretOffset(event.currentTarget),
+            )
           }
-          if (event.key === "Escape" && mentionRequest) {
+          onKeyUp={(event) =>
+            updateMentionRequest(
+              question.id,
+              getEditableText(event.currentTarget),
+              caretOffset(event.currentTarget),
+            )
+          }
+          onKeyDown={(event) => {
+            const mentionElement = (event.target as HTMLElement).closest(
+              "[data-mention-token]",
+            );
+            if (
+              mentionElement &&
+              (event.key === "Enter" || event.key === " ")
+            ) {
+              event.preventDefault();
+              event.stopPropagation();
+              const token = mentionElement.getAttribute("data-mention-token");
+              if (token) focusMentionToken(question.id, token);
+              return;
+            }
+            if (event.key === "Escape" && mentionRequest) {
+              event.preventDefault();
+              setMentionRequest(null);
+            }
+            if (event.key === "Enter" && !event.shiftKey) {
+              event.preventDefault();
+              document.execCommand("insertLineBreak");
+            }
+          }}
+          onPaste={(event) => {
             event.preventDefault();
-            setMentionRequest(null);
-          }
-          if (event.key === "Enter" && !event.shiftKey) {
-            event.preventDefault();
-            document.execCommand("insertLineBreak");
-          }
-        }}
-        onPaste={(event) => {
-          event.preventDefault();
-          const text = event.clipboardData.getData("text/plain");
-          document.execCommand("insertText", false, text);
-        }}
-        className={`min-h-20 wrap-anywhere whitespace-pre-wrap rounded-md border border-input px-3 py-2 text-xs leading-relaxed outline-none ring-offset-background empty:before:pointer-events-none empty:before:text-muted-foreground empty:before:content-[attr(data-placeholder)] focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 ${
-          isNone
-            ? "pointer-events-none bg-slate-100 text-slate-400"
-            : "bg-white"
-        } ${
-          mentionRequest?.questionId === question.id
-            ? "border-amber-200 ring-2 ring-amber-100"
-            : ""
-        }`}
-      />
-      {mentionRequest?.questionId === question.id ? (
-        <p className="rounded-lg border border-amber-100 bg-amber-50 px-2.5 py-2 text-[11px] leading-relaxed text-amber-700">
-          왼쪽 메모리뷰에서 언급할 클러스터나 메모리를 선택하세요. Esc로 취소할 수 있습니다.
-        </p>
-      ) : null}
-    </div>
+            const text = event.clipboardData.getData("text/plain");
+            document.execCommand("insertText", false, text);
+          }}
+          className={`min-h-20 wrap-anywhere whitespace-pre-wrap rounded-md border border-input px-3 py-2 text-xs leading-relaxed outline-none ring-offset-background empty:before:pointer-events-none empty:before:text-muted-foreground empty:before:content-[attr(data-placeholder)] focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 ${
+            isNone
+              ? "pointer-events-none bg-slate-100 text-slate-400"
+              : "bg-white"
+          } ${
+            mentionRequest?.questionId === question.id
+              ? "border-amber-200 ring-2 ring-amber-100"
+              : ""
+          }`}
+        />
+        {mentionRequest?.questionId === question.id ? (
+          <p className="rounded-lg border border-amber-100 bg-amber-50 px-2.5 py-2 text-[11px] leading-relaxed text-amber-700">
+            왼쪽 메모리뷰에서 언급할 클러스터나 메모리를 선택하세요. Esc로
+            취소할 수 있습니다.
+          </p>
+        ) : null}
+      </div>
     );
   };
 
@@ -937,7 +947,9 @@ export function MemoryReviewPanel({
       <div className="flex items-center justify-between gap-3 border-t border-slate-200 px-4 py-3">
         <p
           className={`min-w-0 text-[11px] ${
-            !readOnly && allNoneConflict ? "font-semibold text-rose-500" : "text-slate-400"
+            !readOnly && allNoneConflict
+              ? "font-semibold text-rose-500"
+              : "text-slate-400"
           }`}
         >
           {readOnly
@@ -946,55 +958,55 @@ export function MemoryReviewPanel({
               : "읽기 전용"
             : saveStatus === "saving"
               ? "저장 중..."
-            : saveStatus === "error"
+              : saveStatus === "error"
                 ? "저장 실패"
                 : submittedAt
                   ? "제출 완료"
                   : allNoneConflict
                     ? `${noneConflictNumbers}번이 모두 없음일 수는 없어요. 하나 이상 작성해주세요.`
-                  : !allQuestionsAnswered
-                    ? "모든 항목 입력 후 제출할 수 있습니다."
-                  : saveStatus === "saved"
-                    ? "저장됨"
-                    : "Draft"}
+                    : !allQuestionsAnswered
+                      ? "모든 항목 입력 후 제출할 수 있습니다."
+                      : saveStatus === "saved"
+                        ? "저장됨"
+                        : "Draft"}
         </p>
         {readOnly ? null : (
-        <button
-          type="button"
-          onClick={async () => {
-            const payload = collectEditorAnswers();
-            onAnswersChange?.(payload);
-            if (!onSubmitFeedback) return;
-            if (
-              !REVIEW_QUESTIONS.every(
-                (question) =>
-                  payload[question.id]?.text.trim() &&
-                  (question.type !== "rating" ||
-                    payload[reasonKey(question.id)]?.text.trim()),
-              )
-            ) {
-              return;
+          <button
+            type="button"
+            onClick={async () => {
+              const payload = collectEditorAnswers();
+              onAnswersChange?.(payload);
+              if (!onSubmitFeedback) return;
+              if (
+                !REVIEW_QUESTIONS.every(
+                  (question) =>
+                    payload[question.id]?.text.trim() &&
+                    (question.type !== "rating" ||
+                      payload[reasonKey(question.id)]?.text.trim()),
+                )
+              ) {
+                return;
+              }
+              if (
+                NONE_CONFLICT_QUESTION_IDS.every(
+                  (id) => payload[id]?.text.trim() === NONE_ANSWER_TEXT,
+                )
+              ) {
+                return;
+              }
+              setPendingSubmitPayload(payload);
+            }}
+            disabled={
+              !onSubmitFeedback ||
+              !allQuestionsAnswered ||
+              allNoneConflict ||
+              saveStatus === "saving" ||
+              isSubmitting
             }
-            if (
-              NONE_CONFLICT_QUESTION_IDS.every(
-                (id) => payload[id]?.text.trim() === NONE_ANSWER_TEXT,
-              )
-            ) {
-              return;
-            }
-            setPendingSubmitPayload(payload);
-          }}
-          disabled={
-            !onSubmitFeedback ||
-            !allQuestionsAnswered ||
-            allNoneConflict ||
-            saveStatus === "saving" ||
-            isSubmitting
-          }
-          className="cursor-pointer rounded-full bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-slate-700 disabled:cursor-not-allowed disabled:bg-slate-300"
-        >
-          {isSubmitting ? "제출 중..." : "제출"}
-        </button>
+            className="cursor-pointer rounded-full bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-slate-700 disabled:cursor-not-allowed disabled:bg-slate-300"
+          >
+            {isSubmitting ? "제출 중..." : "제출"}
+          </button>
         )}
       </div>
       {pendingSubmitPayload && !readOnly ? (
