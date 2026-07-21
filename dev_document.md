@@ -61,6 +61,7 @@
 - 사용자 카드의 `세션 백업 후 삭제`는 세션/참여 기록/Storage 파일/장기 메모리(`memories_0_1_2`)/클러스터 캐시(`memoryClusters`)/세션 클러스터 snapshot(`memoryClusterSnapshots`)/retrieval logs를 백업 후 삭제한다 `[현행 2026-07-10 → 15.94/15.197]`
 - 사용자 카드는 1열 전체 폭으로 배치한다. 카드의 미션 영역은 온보딩을 첫 행에 두고 `missionOrder` 순서를 기준으로 참여/세션 미션을 보완한 단일 진행 목록이다. Lobby와 같은 session snapshot 판정으로 `대기`/`준비중`/`진행중`/`시간 초과`/`완료`를 표시하고, 온보딩 미션도 Lobby처럼 실제 세션 진행을 반영하되 완료 판정만 onboarding profile flag로 한다. Lobby의 순차 잠금 규칙(온보딩→`missionOrder` 순서, 첫 미완료가 `현재`, 그 이후는 `잠김`)도 같은 판정으로 계산해 `현재`/`잠김` 배지와 흐릿 처리로 표시한다(관리/조회용이라 잠금은 표시만 하고 링크는 막지 않음). 각 행의 미션 제목 링크는 `/main/{id}?viewAs={uid}`로 해당 세션을 읽기 전용 view-as로 연다. admin viewAs 세션의 헤더 뒤로가기 버튼은 `/admin`으로 돌아가며, read-only banner 안의 별도 `어드민으로 돌아가기` 링크는 두지 않는다(별도 리뷰 링크는 제거 — admin viewAs는 이미 읽기 전용+리뷰 탭 노출이라 `review=1`은 초기 탭만 바꿔 중복이었다) `[현행 2026-07-04 → 15.122/15.123/15.124/15.125/15.127/15.181]`
 - `[stale 2026-07-17 → 15.292: 참여자 모달과 개별 미션 기록 삭제 기능 제거(구 15.94/15.197 동작)]`
+- 유저 목록과 리뷰 답변 목록은 참가자를 먼저 보여주고, 관리자 계정(`ADMIN_EMAILS`)은 하단의 `관리자` 구분선 아래 별도 섹션으로 분리한다. 리뷰 답변의 참가자 드롭다운에서도 관리자는 뒤로 정렬되고 `· 관리자` 접미가 붙는다 `[현행 2026-07-21 → 15.320]` 참가자에게는 Firebase Auth 가입 시각(들어온 순서)으로 P1, P2, ... 번호를 부여해 이름 앞에 표시하고 P1이 상단에 오도록 정렬한다. 이 번호는 저장하지 않고 조회 시점에 파생하는 관리자 페이지 표시 전용 값이며 참가자 화면에는 노출되지 않는다 `[현행 2026-07-21 → 15.321]`
 - 유저 카드의 `메모리 보기`는 모달을 열지 않고 `/admin/users/[uid]/memory` 전용 페이지로 이동한다. 이 페이지는 `/agent`와 같은 `MemoryClusterPage`를 렌더링해 헤더, 세션 누적 필터, 좁은 cluster list, 좌측 cluster detail panel, similarity graph, empty/loading state를 동일하게 유지한다 `[현행 2026-06-27 → 15.130]`
 - Admin 대상 메모리 목록과 clustering API는 self `/agent` 경로와 같은 normalization 및 clustering helper를 사용한다. 같은 uid와 item signature에는 양쪽 화면이 같은 memory item, cache document, cluster membership/label을 읽는다 `[현행 2026-06-22 → 15.107]`
 
@@ -4957,3 +4958,14 @@ type ChatPlan = {
 - 수정(코드): 제출 시 staged 활성/비활성 변경이 하나라도 있으면 after 재생성을 호출하도록 조건 변경. 비활성화만 있어도 활성 집합이 바뀌므로 재생성해야 다음 세션 before(직전 종료 상태)와 이어진다.
 - 수정(데이터 backfill): 이상준의 102001_before를 15.318 규칙에 따라 onboarding_after와 동일 내용으로 교체(구 문서 백업: exports/backfill-sangjun-102001-before-20260721-144419). 온보딩 종료와 102001 시작 사이 활성 집합 변화가 없어 의미상 정확하고, 리뷰 mention 4건은 전부 after 파티션의 cluster id(before에 없는 07/08/09 포함)를 참조하므로 mention 무결성에 영향 없음.
 - 결정(2026-07-21, 사용자 확정): 이상준의 after(102001)는 재생성하지 않고 그대로 둔다. 제출된 리뷰가 보고 멘션한 화면은 불변 원칙이 우선이며, 다음 세션 경계에서 before(활성 36개)와 한 번 어긋나는 것은 리뷰에서 2건을 비활성화한 실제 상태 변화의 정직한 반영으로 수용한다. 일반화: 리뷰 제출로 비활성화가 생긴 세션의 after는 15.319 수정 이후 제출 시점에 재생성되므로 앞으로는 이 어긋남 자체가 생기지 않는다.
+
+### 15.320 Admin lists separate admin accounts below participants `[implemented 2026-07-21]`
+
+- 요청: 관리자 페이지의 유저 목록과 리뷰 답변에서 관리자 계정이 참가자와 섞여 보이지 않도록 하단에 따로 분리.
+- 수정: /admin 유저 탭은 adminUsers를 participantUsers/adminAccountUsers로 나눠 참가자 그리드 아래 관리자 N 구분선 섹션을 렌더한다. ReviewFeedbackView는 byUser 그룹을 참가자/관리자 그룹으로 나눠 관리자 그룹 시작 지점에 같은 구분선을 넣고, 참가자 필터 드롭다운도 관리자를 뒤로 정렬하며 · 관리자 접미를 표시한다. 관리자 판정은 기존 isAdminEmail(ADMIN_EMAILS)을 그대로 공유한다.
+
+### 15.321 Participant numbers by join order; vivian becomes admin `[implemented 2026-07-21]`
+
+- 요청: 이선명아트&테크놀로지학(vivian@u.sogang.ac.kr, Stitch A)을 관리자로 전환하고, 나머지 참가자는 들어온 순서대로 P1, P2, ... 번호를 붙여 P1이 상단으로 오게 정렬. 번호는 관리자 페이지에서만 보인다.
+- 수정: ADMIN_EMAILS에 vivian 추가(기존 참가 데이터는 그대로 두고 목록에서 관리자 섹션으로 이동). lookupAuthUserCreatedAt(identitytoolkit projects accounts:lookup, 서비스 계정 토큰)으로 Firebase Auth 가입 시각을 일괄 조회해 /api/admin/users가 비관리자 계정에 participantNumber를 부여한다. 유저 목록은 P번호 오름차순(번호 없으면 이름순) 정렬에 카드 이름 앞 P배지, 리뷰 답변은 그룹 헤더/드롭다운 라벨에 P번호 접두와 그룹 정렬을 적용한다. Auth 조회 실패 시 번호 없이 폴백.
+- 주의: 번호는 저장값이 아니라 조회 시점의 비관리자 집합에서 파생한다 — 계정(프로필 문서) 삭제나 ADMIN_EMAILS 변경 시 뒤 번호가 당겨질 수 있다. 참가자 식별번호를 논문 등에 고정 인용하려면 export 시점 스냅샷을 쓴다.

@@ -528,6 +528,8 @@ export default function AdminPage() {
           changes.onboardingStatus ?? prev?.onboardingStatus ?? "unknown",
         stitchApiGroup:
           changes.stitchApiGroup ?? prev?.stitchApiGroup,
+        participantNumber:
+          changes.participantNumber ?? prev?.participantNumber ?? null,
         isAdmin:
           changes.isAdmin ??
           prev?.isAdmin ??
@@ -560,6 +562,7 @@ export default function AdminPage() {
         stitchApiGroup: user.stitchApiGroup,
         isAdmin: user.isAdmin,
         missionOrder: user.missionOrder,
+        participantNumber: user.participantNumber,
       });
     });
 
@@ -657,12 +660,20 @@ export default function AdminPage() {
       onboardingStatus:
         statuses[user.id]?.onboardingStatus ?? user.onboardingStatus,
     }));
+    // 참가자는 P번호(들어온 순서) 오름차순으로 P1이 맨 위, 번호 없는 계정은
+    // 그 뒤 이름순, 관리자는 맨 뒤(렌더 시 하단 별도 섹션).
     setAdminUsers(
-      enrichedUsers.sort((a, b) =>
-        (a.displayName ?? a.email ?? a.id).localeCompare(
+      enrichedUsers.sort((a, b) => {
+        if (Boolean(a.isAdmin) !== Boolean(b.isAdmin)) {
+          return Number(Boolean(a.isAdmin)) - Number(Boolean(b.isAdmin));
+        }
+        const aNumber = a.participantNumber ?? Number.MAX_SAFE_INTEGER;
+        const bNumber = b.participantNumber ?? Number.MAX_SAFE_INTEGER;
+        if (aNumber !== bNumber) return aNumber - bNumber;
+        return (a.displayName ?? a.email ?? a.id).localeCompare(
           b.displayName ?? b.email ?? b.id,
-        ),
-      ),
+        );
+      }),
     );
     setIsLoadingUsers(false);
   };
@@ -1125,6 +1136,24 @@ export default function AdminPage() {
       await deleteAllMemory(action.userId, action.version);
     }
   };
+
+  // 유저 목록은 참가자를 먼저, 관리자 계정은 하단 별도 섹션으로 분리해 보여준다.
+  const participantUsers = adminUsers.filter((user) => !user.isAdmin);
+  const adminAccountUsers = adminUsers.filter((user) => user.isAdmin);
+  const renderAdminUserCard = (user: AdminUser) => (
+    <AdminUserCard
+      key={user.id}
+      user={user}
+      onboardingMissionId={ONBOARDING_MISSION_ID}
+      missionTitle={missionTitle}
+      missionDurationMinutes={(missionId) =>
+        missionId === ONBOARDING_MISSION_ID
+          ? onboardingSettings.durationMinutes
+          : missions.find((mission) => mission.id === missionId)
+              ?.durationMinutes ?? undefined
+      }
+    />
+  );
 
   if (!ready) return null;
 
@@ -1598,22 +1627,25 @@ export default function AdminPage() {
                   )}
                 </div>
               ) : (
-                <div className="grid gap-3">
-                  {adminUsers.map((user) => (
-                    <AdminUserCard
-                      key={user.id}
-                      user={user}
-                      onboardingMissionId={ONBOARDING_MISSION_ID}
-                      missionTitle={missionTitle}
-                      missionDurationMinutes={(missionId) =>
-                        missionId === ONBOARDING_MISSION_ID
-                          ? onboardingSettings.durationMinutes
-                          : missions.find((mission) => mission.id === missionId)
-                              ?.durationMinutes ?? undefined
-                      }
-                    />
-                  ))}
-                </div>
+                <>
+                  <div className="grid gap-3">
+                    {participantUsers.map(renderAdminUserCard)}
+                  </div>
+                  {adminAccountUsers.length > 0 ? (
+                    <>
+                      <div className="flex items-center gap-3 pt-2">
+                        <div className="h-px flex-1 bg-border" />
+                        <p className="text-xs font-semibold text-muted-foreground">
+                          관리자 {adminAccountUsers.length}
+                        </p>
+                        <div className="h-px flex-1 bg-border" />
+                      </div>
+                      <div className="grid gap-3">
+                        {adminAccountUsers.map(renderAdminUserCard)}
+                      </div>
+                    </>
+                  ) : null}
+                </>
               )}
           </TabsContent>
 
@@ -1665,6 +1697,12 @@ export default function AdminPage() {
             <ReviewFeedbackView
               rows={reviewFeedbackRows}
               missionTitle={missionTitle}
+              participantNumberByUid={Object.fromEntries(
+                adminUsers.map((user) => [
+                  user.id,
+                  user.participantNumber ?? null,
+                ]),
+              )}
             />
           )}
           </TabsContent>

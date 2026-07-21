@@ -19,6 +19,8 @@ export type Participant = {
   memoryReviewSubmittedAt?: number | null;
   isAdmin?: boolean;
   stitchApiGroup?: "A" | "B";
+  // 들어온(가입) 순서 기반 참가자 번호. 관리자 페이지 표시 전용, 관리자는 null.
+  participantNumber?: number | null;
 };
 
 export type AdminUser = Participant & {
@@ -148,6 +150,14 @@ export function AdminUserCard({
         )}
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
+            {user.participantNumber != null && (
+              <Badge
+                variant="outline"
+                className="rounded-full border-border bg-muted font-mono text-[11px] font-semibold text-foreground"
+              >
+                P{user.participantNumber}
+              </Badge>
+            )}
             <p className="truncate text-sm font-semibold text-foreground">
               {user.displayName ?? user.email ?? user.id}
             </p>

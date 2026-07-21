@@ -259,6 +259,48 @@ export async function verifyFirebaseIdToken(request: Request) {
   return data.users?.[0] ?? null;
 }
 
+// Firebase Auth 계정 생성 시각(ms) 일괄 조회. 관리자 페이지의 참가자 번호
+// (들어온 순서 P1, P2, ...) 산정에 쓴다. 실패 시 빈 결과로 폴백 가능하도록
+// 호출부에서 catch한다.
+export async function lookupAuthUserCreatedAt(
+  uids: string[],
+): Promise<Record<string, number>> {
+  if (uids.length === 0) return {};
+  const projectId = process.env.FIREBASE_PROJECT_ID;
+  if (!projectId) throw new Error("FIREBASE_PROJECT_ID missing");
+  // datastore scope 토큰은 identitytoolkit에서 403이 나므로 전용 scope로 발급.
+  const token = await getGoogleAccessToken(
+    "https://www.googleapis.com/auth/identitytoolkit",
+  );
+  const res = await fetch(
+    `https://identitytoolkit.googleapis.com/v1/projects/${projectId}/accounts:lookup`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ localId: uids }),
+    },
+  );
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(
+      `Auth accounts lookup failed: ${res.status} ${text.slice(0, 200)}`,
+    );
+  }
+  const data = (await res.json()) as {
+    users?: Array<{ localId?: string; createdAt?: string }>;
+  };
+  return Object.fromEntries(
+    (data.users ?? []).flatMap((user) =>
+      user.localId && user.createdAt && Number.isFinite(Number(user.createdAt))
+        ? [[user.localId, Number(user.createdAt)] as const]
+        : [],
+    ),
+  );
+}
+
 export function firestoreBase() {
   const projectId = process.env.FIREBASE_PROJECT_ID;
   if (!projectId) throw new Error("FIREBASE_PROJECT_ID missing");

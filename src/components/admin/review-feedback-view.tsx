@@ -19,6 +19,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
+import { isAdminEmail } from "@/lib/admin";
 import {
   PART1_QUESTIONS,
   REVIEW_QUESTIONS,
@@ -372,23 +373,45 @@ function ReviewFeedbackDetail({
 export function ReviewFeedbackView({
   rows,
   missionTitle,
+  participantNumberByUid,
 }: {
   rows: AdminReviewFeedbackRow[];
   missionTitle: (missionId: string) => string;
+  // 들어온 순서 기반 참가자 번호(P1, P2, ...). 관리자 페이지 표시 전용.
+  participantNumberByUid?: Record<string, number | null | undefined>;
 }) {
   const questionRows = useMemo(() => buildQuestionRows(), []);
   const cardTextRows = useMemo(() => buildCardTextRows(), []);
   const [participantFilter, setParticipantFilter] = useState("all");
+  const participantNumberOf = (uid: string) =>
+    participantNumberByUid?.[uid] ?? null;
+  const numberedLabel = (row: AdminReviewFeedbackRow) => {
+    const number = participantNumberOf(row.uid);
+    return `${number != null ? `P${number} · ` : ""}${participantLabel(row)}`;
+  };
   const [submittedOnly, setSubmittedOnly] = useState(false);
   const [detailRow, setDetailRow] = useState<AdminReviewFeedbackRow | null>(null);
 
   const participants = useMemo(() => {
-    const byUid = new Map<string, string>();
+    const byUid = new Map<string, { label: string; isAdmin: boolean }>();
     for (const row of rows) {
-      if (!byUid.has(row.uid)) byUid.set(row.uid, participantLabel(row));
+      if (!byUid.has(row.uid)) {
+        byUid.set(row.uid, {
+          label: numberedLabel(row),
+          isAdmin: isAdminEmail(row.email),
+        });
+      }
     }
-    return Array.from(byUid, ([uid, label]) => ({ uid, label }));
-  }, [rows]);
+    // 드롭다운은 P번호 오름차순, 관리자 계정은 참가자 뒤로 정렬한다.
+    return Array.from(byUid, ([uid, entry]) => ({ uid, ...entry })).sort(
+      (a, b) =>
+        Number(a.isAdmin) - Number(b.isAdmin) ||
+        (participantNumberOf(a.uid) ?? Number.MAX_SAFE_INTEGER) -
+          (participantNumberOf(b.uid) ?? Number.MAX_SAFE_INTEGER) ||
+        a.label.localeCompare(b.label),
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rows, participantNumberByUid]);
 
   const filteredRows = rows.filter(
     (row) =>
@@ -405,6 +428,18 @@ export function ReviewFeedbackView({
     }
     return Array.from(groups.values());
   }, [filteredRows]);
+  // 참가자 그룹을 P번호 순(P1 상단)으로 먼저, 관리자 계정 그룹은 하단 구분선
+  // 아래 별도 섹션으로.
+  const participantGroups = byUser
+    .filter((userRows) => !isAdminEmail(userRows[0].email))
+    .sort(
+      (a, b) =>
+        (participantNumberOf(a[0].uid) ?? Number.MAX_SAFE_INTEGER) -
+        (participantNumberOf(b[0].uid) ?? Number.MAX_SAFE_INTEGER),
+    );
+  const adminGroups = byUser.filter((userRows) =>
+    isAdminEmail(userRows[0].email),
+  );
 
   return (
     <div className="space-y-4">
@@ -418,6 +453,7 @@ export function ReviewFeedbackView({
             {participants.map((participant) => (
               <SelectItem key={participant.uid} value={participant.uid}>
                 {participant.label}
+                {participant.isAdmin ? " · 관리자" : ""}
               </SelectItem>
             ))}
           </SelectContent>
@@ -442,10 +478,19 @@ export function ReviewFeedbackView({
         </div>
       ) : (
         <div className="space-y-6">
-          {byUser.map((userRows) => (
+          {[...participantGroups, ...adminGroups].map((userRows) => (
             <div key={userRows[0].uid} className="space-y-2">
+              {userRows === adminGroups[0] ? (
+                <div className="flex items-center gap-3 pb-3 pt-1">
+                  <div className="h-px flex-1 bg-border" />
+                  <p className="text-xs font-semibold text-muted-foreground">
+                    관리자 {adminGroups.length}
+                  </p>
+                  <div className="h-px flex-1 bg-border" />
+                </div>
+              ) : null}
               <p className="text-sm font-semibold text-foreground">
-                {participantLabel(userRows[0])}
+                {numberedLabel(userRows[0])}
                 <span className="ml-2 text-xs font-normal text-muted-foreground">
                   세션 리뷰 {userRows.length}건
                 </span>
