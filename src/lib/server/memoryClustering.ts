@@ -1000,11 +1000,10 @@ function snapshotItems(
       if (!isWithinCumulativeMission(itemMissionId, missionId, missionOrder)) {
         return false;
       }
-      if (
-        phase === "before" &&
-        itemMissionId === missionId &&
-        item.sourceType !== "before_session"
-      ) {
+      // before 스냅샷은 직전 세션 종료 시점(after(N-1))과 동일해야 한다: 이번
+      // 미션에서 생긴 메모리는 사전정보(before_session) 파생을 포함해 전부
+      // 제외한다. 사전정보 파생 메모리는 after 스냅샷부터 나타난다 (15.318).
+      if (phase === "before" && itemMissionId === missionId) {
         return false;
       }
       return Boolean(item.episodic || item.semantic || item.keywords.length > 0);
