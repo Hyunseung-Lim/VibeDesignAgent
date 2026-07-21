@@ -63,6 +63,48 @@ function isInactiveMemory(memory: MemoryItem) {
   );
 }
 
+// 세션 종료 시 동결된 미션별 after snapshot. 세션 칩과 전체 탭은 이걸 그대로
+// 렌더해 세션 리뷰 overlay와 같은 클러스터를 보여준다.
+type AfterClusterSnapshot = {
+  missionId: string;
+  itemIds: string[];
+  clusters: MemoryCluster[];
+  edges: ClusterGraphEdge[];
+  generatedAt: number | null;
+};
+
+function parseAfterSnapshots(
+  value: unknown,
+): Record<string, AfterClusterSnapshot> {
+  if (!Array.isArray(value)) return {};
+  const result: Record<string, AfterClusterSnapshot> = {};
+  for (const raw of value) {
+    if (!raw || typeof raw !== "object") continue;
+    const data = raw as Record<string, unknown>;
+    const missionId =
+      typeof data.missionId === "string" && data.missionId.trim()
+        ? data.missionId.trim()
+        : null;
+    const clusters: MemoryCluster[] = Array.isArray(data.graphClusters)
+      ? (data.graphClusters as MemoryCluster[])
+      : [];
+    if (!missionId || clusters.length === 0) continue;
+    result[missionId] = {
+      missionId,
+      itemIds: Array.isArray(data.itemIds)
+        ? data.itemIds.map(String).filter(Boolean)
+        : [],
+      clusters,
+      edges: Array.isArray(data.graphEdges)
+        ? (data.graphEdges as ClusterGraphEdge[])
+        : [],
+      generatedAt:
+        typeof data.generatedAt === "number" ? data.generatedAt : null,
+    };
+  }
+  return result;
+}
+
 const MemoryClusterGraph = dynamic(
   () => import("@/components/memory/memory-cluster-graph"),
   {
@@ -118,11 +160,19 @@ export function MemoryClusterPage({
   const [clustersGeneratedAt, setClustersGeneratedAt] = useState<number | null>(
     null,
   );
+  const [afterSnapshots, setAfterSnapshots] = useState<
+    Record<string, AfterClusterSnapshot>
+  >({});
+  const [lastAfterMissionId, setLastAfterMissionId] = useState<string | null>(
+    null,
+  );
 
   const applyClusterData = (clusterData: {
     clusters?: unknown;
     edges?: unknown;
     generatedAt?: unknown;
+    afterSnapshots?: unknown;
+    lastAfterMissionId?: unknown;
   } | null) => {
     const cls: MemoryCluster[] = Array.isArray(clusterData?.clusters)
       ? clusterData.clusters
@@ -138,6 +188,13 @@ export function MemoryClusterPage({
     setClustersGeneratedAt(
       typeof clusterData?.generatedAt === "number"
         ? clusterData.generatedAt
+        : null,
+    );
+    setAfterSnapshots(parseAfterSnapshots(clusterData?.afterSnapshots));
+    setLastAfterMissionId(
+      typeof clusterData?.lastAfterMissionId === "string" &&
+        clusterData.lastAfterMissionId.trim()
+        ? clusterData.lastAfterMissionId.trim()
         : null,
     );
   };
@@ -316,6 +373,19 @@ export function MemoryClusterPage({
     [highlightMissionId, memories],
   );
 
+  // 세션 칩과 전체 탭에서 렌더할 동결 after snapshot. 전체(null)는 마지막 완료
+  // 세션의 snapshot을 그대로 쓴다 — +N 하이라이트만 없는 완전판. 세션 외 버킷과
+  // snapshot이 없는 미션만 기존 최신 캐시 node 필터로 폴백한다.
+  const activeSnapshot = useMemo(() => {
+    if (selectedSessionKey === NO_SESSION_KEY) return null;
+    const missionKey = selectedSessionKey ?? lastAfterMissionId;
+    return missionKey ? (afterSnapshots[missionKey] ?? null) : null;
+  }, [afterSnapshots, lastAfterMissionId, selectedSessionKey]);
+  const sourceClusters = activeSnapshot ? activeSnapshot.clusters : clusters;
+  const sourceClusterEdges = activeSnapshot
+    ? activeSnapshot.edges
+    : clusterEdges;
+
   const clusterItemIdSet = new Set(
     clusterItems.filter((item) => !item.inactive).map((item) => item.id),
   );
@@ -323,7 +393,8 @@ export function MemoryClusterPage({
   const matchedCount = totalClusterItemIds.filter((id) =>
     clusterItemIdSet.has(id),
   ).length;
-  const hasStaleCache = totalClusterItemIds.length > 0 && matchedCount === 0;
+  const hasStaleCache =
+    !activeSnapshot && totalClusterItemIds.length > 0 && matchedCount === 0;
 
   // Group memories by the session (mission) they were generated in, so the
   // graph/list/detail views can be narrowed down to a single session's nodes.
@@ -353,23 +424,33 @@ export function MemoryClusterPage({
   }, [memories]);
 
   // Cumulative: selecting a mission shows that mission plus every earlier one
-  // (onboarding base + prior missions). "전체"(null) shows all; the no-session
-  // bucket stays exact since those memories have no comparable mission.
-  const sessionFilteredClusterItems = useMemo(
-    () =>
-      !selectedSessionKey
-        ? clusterItems
-        : selectedSessionKey === NO_SESSION_KEY
-          ? clusterItems.filter((item) => !item.row.source?.missionId)
-          : clusterItems.filter((item) =>
-              isWithinCumulative(
-                item.row.source?.missionId,
-                selectedSessionKey,
-                missionOrder,
-              ),
-            ),
-    [clusterItems, missionOrder, selectedSessionKey],
-  );
+  // (onboarding base + prior missions). The no-session bucket stays exact since
+  // those memories have no comparable mission. "전체"(null) follows the last
+  // completed mission's snapshot scope when one exists, so it is identical to
+  // that session's view; without a snapshot it falls back to all memories.
+  const sessionFilteredClusterItems = useMemo(() => {
+    if (selectedSessionKey === NO_SESSION_KEY) {
+      return clusterItems.filter((item) => !item.row.source?.missionId);
+    }
+    const scopeMissionId = selectedSessionKey ?? activeSnapshot?.missionId ?? null;
+    const scoped = scopeMissionId
+      ? clusterItems.filter((item) =>
+          isWithinCumulative(
+            item.row.source?.missionId,
+            scopeMissionId,
+            missionOrder,
+          ),
+        )
+      : clusterItems;
+    if (!activeSnapshot) return scoped;
+    // 동결 snapshot 뷰의 노드 가시성은 리뷰 overlay와 동일: snapshot 멤버이거나
+    // 현재 비활성(비활성 그룹 표시용)인 메모리만 남긴다. snapshot 이후 상태가
+    // 바뀐 메모리(예: 나중에 재활성화)는 여기서 제외되어 리뷰와 같은 화면이 된다.
+    const snapshotItemIds = new Set(activeSnapshot.itemIds);
+    return scoped.filter(
+      (item) => snapshotItemIds.has(item.id) || item.inactive,
+    );
+  }, [activeSnapshot, clusterItems, missionOrder, selectedSessionKey]);
 
   const inactiveFilteredItems = useMemo(
     () => sessionFilteredClusterItems.filter((item) => item.inactive),
@@ -388,30 +469,32 @@ export function MemoryClusterPage({
   );
 
   // Narrow the cluster list (left panel) to clusters that still have at least
-  // one item within the selected session, with counts adjusted to match.
+  // one item within the selected session, with counts adjusted to match. The
+  // cluster source is the frozen snapshot when one is active, so membership and
+  // boundaries match the session review; the latest cache is fallback only.
   const filteredClusters = useMemo(() => {
     const idSet = new Set(
       sessionFilteredClusterItems
         .filter((item) => !item.inactive)
         .map((item) => item.id),
     );
-    return clusters
+    return sourceClusters
       .map((cluster) => {
         const itemIds = cluster.itemIds.filter((id) => idSet.has(id));
         return { ...cluster, itemIds, count: itemIds.length };
       })
       .filter((cluster) => cluster.itemIds.length > 0);
-  }, [clusters, sessionFilteredClusterItems]);
+  }, [sourceClusters, sessionFilteredClusterItems]);
   const filteredClusterEdges = useMemo(() => {
     const idSet = new Set(filteredClusterItems.map((item) => item.id));
-    return clusterEdges.filter(
+    return sourceClusterEdges.filter(
       (edge) =>
         idSet.has(edge.sourceId) &&
         idSet.has(edge.targetId) &&
         !inactiveMemoryIdSet.has(edge.sourceId) &&
         !inactiveMemoryIdSet.has(edge.targetId),
     );
-  }, [clusterEdges, filteredClusterItems, inactiveMemoryIdSet]);
+  }, [sourceClusterEdges, filteredClusterItems, inactiveMemoryIdSet]);
 
   const inactiveCluster = useMemo<MemoryCluster>(
     () => ({
@@ -523,7 +606,9 @@ export function MemoryClusterPage({
             다시 시도
           </Button>
         </div>
-      ) : clusters.length === 0 && inactiveFilteredItems.length === 0 ? (
+      ) : clusters.length === 0 &&
+        Object.keys(afterSnapshots).length === 0 &&
+        inactiveFilteredItems.length === 0 ? (
         <div>
           <MemoryClusterEmptyState
             canGenerate={
@@ -588,7 +673,9 @@ export function MemoryClusterPage({
             <MemoryClusterList
               clusters={filteredClusters}
               selectedClusterId={selectedClusterId}
-              generatedAt={clustersGeneratedAt}
+              generatedAt={
+                activeSnapshot ? activeSnapshot.generatedAt : clustersGeneratedAt
+              }
               hasStaleCache={hasStaleCache}
               isRegenerating={isRegenerating}
               onSelectCluster={(clusterId) => {

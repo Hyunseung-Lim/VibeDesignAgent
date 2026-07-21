@@ -2,7 +2,6 @@ import {
   getFirestoreDocument,
   listFirestoreDocumentIds,
 } from "@/lib/server/firebaseAdminRest";
-import type { ClusterInputItem } from "@/lib/server/memoryClustering";
 import {
   isInactiveMemoryWeight,
   memoryArchivedAt,
@@ -103,34 +102,3 @@ export async function loadUserMemoryItems(
     .sort((a, b) => (b.timestamp ?? 0) - (a.timestamp ?? 0));
 }
 
-export async function loadClusterInputItems(
-  uid: string,
-  token: string,
-  maxItems: number,
-): Promise<ClusterInputItem[]> {
-  const memories = await loadUserMemoryItems(uid, token);
-  return memories
-    .filter(
-      (item) =>
-        Boolean(item.episodic || item.semantic || item.keywords.length > 0),
-    )
-    .slice(0, maxItems)
-    .map((item) => ({
-      id: item.id,
-      path: item.path,
-      action: item.action ?? undefined,
-      preferenceSignal: item.preferenceSignal ?? null,
-      keyword: item.keywords,
-      episodic: item.episodic ?? undefined,
-      semantic: item.semantic ?? undefined,
-      input: item.input ?? undefined,
-      output: item.output ?? undefined,
-      originalInteractionContent: item.originalInteractionContent ?? undefined,
-      link: item.link ?? undefined,
-      sourceType: item.sourceType,
-      source: item.source,
-      embedding: item.embedding,
-      embeddingSource: item.embeddingSource,
-      timestamp: item.timestamp ?? 0,
-    }));
-}

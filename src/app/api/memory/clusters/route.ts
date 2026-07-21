@@ -3,17 +3,24 @@ import {
   getFirestoreDocument,
   verifyFirebaseIdToken,
 } from "@/lib/server/firebaseAdminRest";
-import { loadClusterInputItems } from "@/lib/server/memoryItems";
 import {
   MEMORY_VERSION,
-  MAX_ITEMS,
   generateAndStoreClusters,
+  loadAfterClusterSnapshots,
+  loadClusterInputItems,
   loadLatestStoredClusterDoc,
   memoryClusterItemSignature,
+  pickLatestAfterSnapshot,
   CLUSTERING_INPUT_VARIANT,
 } from "@/lib/server/memoryClustering";
 
 export const runtime = "nodejs";
+
+function profileMissionOrder(profile: Record<string, unknown> | null) {
+  return Array.isArray(profile?.missionOrder)
+    ? profile.missionOrder.map(String)
+    : [];
+}
 
 export async function GET(request: Request) {
   const user = await verifyFirebaseIdToken(request);
@@ -21,13 +28,17 @@ export async function GET(request: Request) {
   const variant = CLUSTERING_INPUT_VARIANT;
   try {
     const token = await getFirebaseAccessToken();
-    const items = await loadClusterInputItems(user.localId, token, MAX_ITEMS);
+    const profile = await getFirestoreDocument(`users/${user.localId}`, token);
+    const missionOrder = profileMissionOrder(profile);
+    const items = await loadClusterInputItems(user.localId, token, missionOrder);
     const itemSignature =
       items.length > 0 ? memoryClusterItemSignature(items) : null;
-    // Unified with the session review: always return the latest cache doc for
-    // this variant (by generatedAt), regardless of signature match. Both screens
-    // use this same rule so they resolve to the same document per variant.
-    // `stale` flags signature drift (current memory set no longer matches).
+    // Per-mission frozen after snapshots: the memory view renders these for the
+    // session chips and the 전체 tab (= last completed mission), so it matches
+    // the session review exactly. The latest cache doc stays as the fallback
+    // for missions without a snapshot; `stale` flags signature drift.
+    const afterSnapshots = await loadAfterClusterSnapshots(user.localId, token);
+    const lastAfter = pickLatestAfterSnapshot(afterSnapshots, missionOrder);
     const latest = await loadLatestStoredClusterDoc(
       user.localId,
       token,
@@ -38,6 +49,14 @@ export async function GET(request: Request) {
       edges: latest?.graphEdges ?? [],
       found: Boolean(latest?.graphClusters.length),
       stale: latest ? latest.itemSignature !== itemSignature : false,
+      afterSnapshots: afterSnapshots.map((snapshot) => ({
+        missionId: snapshot.missionId,
+        itemIds: snapshot.itemIds,
+        graphClusters: snapshot.graphClusters,
+        graphEdges: snapshot.graphEdges,
+        generatedAt: snapshot.generatedAt,
+      })),
+      lastAfterMissionId: lastAfter?.missionId ?? null,
       variant,
       memoryVersion: MEMORY_VERSION,
       itemSignature,
@@ -55,8 +74,12 @@ export async function POST(request: Request) {
   const variant = CLUSTERING_INPUT_VARIANT;
   try {
     const token = await getFirebaseAccessToken();
-    const items = await loadClusterInputItems(user.localId, token, MAX_ITEMS);
     const profile = await getFirestoreDocument(`users/${user.localId}`, token);
+    const items = await loadClusterInputItems(
+      user.localId,
+      token,
+      profileMissionOrder(profile),
+    );
     const subjectName = String(
       profile?.displayName ?? user.displayName ?? "",
     ).trim();

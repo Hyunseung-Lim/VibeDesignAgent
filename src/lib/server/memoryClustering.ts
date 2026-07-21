@@ -16,11 +16,6 @@ import { loadUserMemoryItems } from "@/lib/server/memoryItems";
 export const EMBEDDING_MODEL = MEMORY_EMBEDDING_MODEL;
 export const LABEL_MODEL = "gpt-5.4-mini";
 export const MAX_GRAPH_CLUSTER_COUNT = 16;
-// 클러스터링 입력 상한. 최신순 상위 N개만 입력되므로, 활성 메모리가 이 값을
-// 넘는 사용자는 가장 오래된 메모리(=초기 세션)가 클러스터 밖 회색 노드로
-// 남는다. soft-cap decay 곡선(입력 300에서 활성 ~133 유지)을 넘어서는 decay
-// 튜닝 이전 참여자(활성 207 관측)까지 덮도록 300으로 상향(15.290).
-export const MAX_ITEMS = 300;
 export const CLUSTER_COLOR_PALETTE_SIZE = 12;
 export const GRAPH_MIN_SIMILARITY_QUANTILE = 0.85;
 export const GRAPH_STRONG_SIMILARITY_QUANTILE = 0.97;
@@ -945,6 +940,54 @@ export function isWithinCumulativeMission(
   return memoryIndex <= selectedIndex;
 }
 
+// full 클러스터링과 세션 snapshot이 같은 모집단에서 출발하도록 강제하는 공통
+// 미션 스코프: 온보딩이거나 사용자 missionOrder에 있는 미션의 메모리만 입력이
+// 된다. source.missionId가 없거나 missionOrder 밖인 메모리는 snapshot의 누적
+// 필터(isWithinCumulativeMission)가 이미 제외하므로, full 쪽도 동일하게 제외해
+// 두 화면의 클러스터 입력 집합 차이를 없앤다 (15.315).
+export function isClusterScopeMission(
+  memoryMissionId: string | null | undefined,
+  missionOrder: string[],
+) {
+  if (memoryMissionId === ONBOARDING_MISSION_ID) return true;
+  if (!memoryMissionId) return false;
+  return missionOrder.includes(memoryMissionId);
+}
+
+// self/admin full 클러스터링 입력. snapshotItems와 같은 active 메모리 로더와
+// 미션 스코프를 공유하며, 개수 상한 없이 스코프 안 활성 메모리 전체를 넣는다.
+export async function loadClusterInputItems(
+  uid: string,
+  token: string,
+  missionOrder: string[],
+): Promise<ClusterInputItem[]> {
+  const memories = await loadUserMemoryItems(uid, token);
+  return memories
+    .filter(
+      (item) =>
+        isClusterScopeMission(sourceMissionId(item.source), missionOrder) &&
+        Boolean(item.episodic || item.semantic || item.keywords.length > 0),
+    )
+    .map((item) => ({
+      id: item.id,
+      path: item.path,
+      action: item.action ?? undefined,
+      preferenceSignal: item.preferenceSignal ?? null,
+      keyword: item.keywords,
+      episodic: item.episodic ?? undefined,
+      semantic: item.semantic ?? undefined,
+      input: item.input ?? undefined,
+      output: item.output ?? undefined,
+      originalInteractionContent: item.originalInteractionContent ?? undefined,
+      link: item.link ?? undefined,
+      sourceType: item.sourceType,
+      source: item.source,
+      embedding: item.embedding,
+      embeddingSource: item.embeddingSource,
+      timestamp: item.timestamp ?? 0,
+    }));
+}
+
 function snapshotItems(
   memories: Awaited<ReturnType<typeof loadUserMemoryItems>>,
   missionId: string,
@@ -966,7 +1009,6 @@ function snapshotItems(
       }
       return Boolean(item.episodic || item.semantic || item.keywords.length > 0);
     })
-    .slice(0, MAX_ITEMS)
     .map((item) => ({
       id: item.id,
       action: item.action ?? undefined,
@@ -1003,12 +1045,30 @@ export async function generateAndStoreSessionClusterSnapshots(
     { currentMethodOnly: false },
   );
   const snapshots: StoredClusterSnapshot[] = [];
-  const storedSnapshots = phases[0] === "after"
-    ? await loadSessionClusterSnapshots(uid, missionId, token)
-    : null;
+  const [storedSnapshots, allAfterSnapshots] = await Promise.all([
+    loadSessionClusterSnapshots(uid, missionId, token),
+    loadAfterClusterSnapshots(uid, token),
+  ]);
+  const priorAfterSnapshot = pickLatestAfterSnapshot(
+    allAfterSnapshots,
+    missionOrder,
+    missionId,
+  );
+  const clustersOrUndefined = (snapshot: StoredClusterSnapshot | null) =>
+    snapshot && snapshot.graphClusters.length > 0
+      ? snapshot.graphClusters
+      : undefined;
+  // 라벨/색 승계 계보는 snapshot 체인을 우선한다: after-only 재생성(리뷰 제출)은
+  // staging preview와 같은 순서(자기 after → before)를 따르고, 세션 종료 경로는
+  // 직전 미션의 after snapshot으로 잇는다. snapshot이 하나도 없을 때만 full
+  // 캐시로 폴백해, 세션 리뷰와 메모리 뷰가 같은 계보를 공유한다 (15.316).
   let previousPhaseClusters =
-    storedSnapshots?.before?.graphClusters ??
-    storedSnapshots?.after?.graphClusters ??
+    (phases[0] === "after"
+      ? clustersOrUndefined(storedSnapshots.after) ??
+        clustersOrUndefined(storedSnapshots.before)
+      : clustersOrUndefined(storedSnapshots.before) ??
+        clustersOrUndefined(storedSnapshots.after)) ??
+    priorAfterSnapshot?.graphClusters ??
     previousClusterDoc?.graphClusters ??
     [];
   for (const phase of phases) {
@@ -1163,4 +1223,64 @@ export async function loadSessionClusterSnapshots(
     ),
   );
   return { before, after };
+}
+
+// 사용자의 모든 after snapshot을 로드한다. /agent와 admin 메모리 뷰가 세션별
+// 동결 클러스터를 그대로 보여주는 데 쓴다. missionId/phase는 문서 필드를
+// 신뢰한다(doc id는 missionId가 sanitize되어 복원이 불완전할 수 있다).
+export async function loadAfterClusterSnapshots(
+  uid: string,
+  token: string,
+): Promise<StoredClusterSnapshot[]> {
+  const ids = await listFirestoreDocumentIds(
+    `users/${uid}/${CLUSTER_SNAPSHOT_COLLECTION}`,
+    token,
+  );
+  const docs = await Promise.all(
+    ids.map(async (id) => {
+      const data = ((await getFirestoreDocument(
+        `users/${uid}/${CLUSTER_SNAPSHOT_COLLECTION}/${encodeURIComponent(id)}`,
+        token,
+      )) ?? null) as Record<string, unknown> | null;
+      if (!data || data.phase !== "after") return null;
+      const missionId =
+        typeof data.missionId === "string" && data.missionId.trim()
+          ? data.missionId.trim()
+          : null;
+      if (!missionId) return null;
+      return parseStoredClusterSnapshot(missionId, "after", data);
+    }),
+  );
+  return docs.filter(
+    (snapshot): snapshot is StoredClusterSnapshot => Boolean(snapshot),
+  );
+}
+
+// missionOrder 기준으로 가장 뒤(=가장 최근에 완료된) 미션의 after snapshot을
+// 고른다. 온보딩은 missionOrder 앞에 오는 것으로 취급하고, missionOrder 밖
+// 미션은 그보다 뒤 순위가 될 수 없다. 리뷰 제출로 과거 미션 snapshot의
+// generatedAt이 더 최신이 될 수 있으므로 generatedAt은 동순위 tiebreak로만 쓴다.
+export function pickLatestAfterSnapshot(
+  snapshots: StoredClusterSnapshot[],
+  missionOrder: string[],
+  excludeMissionId?: string,
+): StoredClusterSnapshot | null {
+  const rank = (missionId: string) => {
+    if (missionId === ONBOARDING_MISSION_ID) return -1;
+    const index = missionOrder.indexOf(missionId);
+    return index === -1 ? -2 : index;
+  };
+  return (
+    snapshots
+      .filter(
+        (snapshot) =>
+          snapshot.missionId !== excludeMissionId &&
+          snapshot.graphClusters.length > 0,
+      )
+      .sort(
+        (a, b) =>
+          rank(b.missionId) - rank(a.missionId) ||
+          (b.generatedAt ?? 0) - (a.generatedAt ?? 0),
+      )[0] ?? null
+  );
 }
