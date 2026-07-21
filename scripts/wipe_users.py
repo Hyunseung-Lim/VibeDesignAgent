@@ -43,7 +43,12 @@ USER_SUBCOLLECTIONS = [
     "memoryClusterSnapshots",
 ]
 SESSION_SUBCOLLECTIONS = ["memoryDrafts", "reviewTurns"]
-PROTECTED_EMAILS = {"03leesun@gmail.com", "charlie9807@gmail.com"}
+# 관리자 계정 보호 목록 - src/lib/admin.ts의 ADMIN_EMAILS와 수동 동기화한다.
+PROTECTED_EMAILS = {
+    "03leesun@gmail.com",
+    "charlie9807@gmail.com",
+    "vivian@u.sogang.ac.kr",
+}
 
 firebase_admin.initialize_app(
     credentials.Certificate(KEY_FILE), {"storageBucket": STORAGE_BUCKET}
