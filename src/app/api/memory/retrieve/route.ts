@@ -27,15 +27,19 @@ const DEFAULT_LIMIT = 10;
 // Usage-based forgetting: every retrieval nudges down all memories that were
 // NOT retrieved this turn, so unused memories drift toward the floor while
 // repeatedly-used ones stay high. Wall-clock independent (safe for the 3-day
-// formative study). Replaces the old narrow near-miss decay which, in practice,
-// almost never fired — see scripts/analyze_memory_weights.py (weight only ever
-// rose: +835 vs -61 delta events across users, nothing below the 0.5 default).
-const IDLE_DECAY_WEIGHT_LOSS = 0.006;
-const IDLE_DECAY_MAX_WEIGHT_LOSS = 0.012;
+// formative study). Decay는 게이트가 아니라 상시 작동하는 컨트롤러다(15.322):
+// 활성 수가 목표 곡선보다 많으면 base→max 램프로 빨라지고, 적으면
+// base × (활성/목표)로 비례해 느려진다. 좋아요/싫어요로 weight가 출렁여도
+// 활성 풀이 목표 곡선으로 수렴하게 하는 장치.
+// 속도 상수(15.323): 유입 ~1.1개/턴 기준으로 미사용 0.5 메모리 수명이
+// ~56턴(3.5세션)이 되어 첫 사멸이 total 80-100 부근에서 나타나고, 평형
+// 활성 풀이 목표 곡선(100→85 등)을 실제로 추종하도록 조정된 값.
+const IDLE_DECAY_WEIGHT_LOSS = 0.009;
+const IDLE_DECAY_MAX_WEIGHT_LOSS = 0.018;
 const MIN_MEMORY_WEIGHT = 0;
-// Active-memory soft cap (15.283): start decay immediately above 70 memories,
-// reach 85 at 100 inputs, then grow more slowly along a square-root curve.
-// Target checkpoints: cap(200 total) ≈ 114, cap(300 total) ≈ 133.
+// Active-memory target curve (15.283/15.322): 총 70개까지 70, 100개에 85,
+// 이후 제곱근 곡선. 목표 체크포인트: total 100 → 85 (80-90), 200 → ~114
+// (110-120), 300 → ~133 (120-140).
 const ACTIVE_MEMORY_BASE_CAP = 70;
 const ACTIVE_MEMORY_LINEAR_END_COUNT = 100;
 const ACTIVE_MEMORY_LINEAR_END_CAP = 85;
@@ -301,16 +305,22 @@ function nextWeight(candidate: Candidate, wasRetrieved: boolean) {
 }
 
 function idleDecayWeightLoss(activeCount: number, totalMemoryCount: number) {
-  const cap = activeMemoryCap(totalMemoryCount);
-  if (activeCount <= cap) return 0;
-  // Ramp from the base loss to the max as the overshoot grows; saturated at
-  // 50 memories above the cap.
-  const overshootRatio = Math.min(1, (activeCount - cap) / 50);
+  if (activeCount <= 0) return 0;
+  const target = activeMemoryCap(totalMemoryCount);
+  if (activeCount >= target) {
+    // 목표 초과: base에서 max까지 램프, 초과분 50개에서 포화 (기존 유지).
+    const overshootRatio = Math.min(1, (activeCount - target) / 50);
+    return Number(
+      (
+        IDLE_DECAY_WEIGHT_LOSS +
+        (IDLE_DECAY_MAX_WEIGHT_LOSS - IDLE_DECAY_WEIGHT_LOSS) * overshootRatio
+      ).toFixed(6),
+    );
+  }
+  // 목표 미만: 멈추지 않고 활성/목표 비율만큼 비례 감속. 풀이 작을수록
+  // 천천히 잊고, 목표에 다가갈수록 base 속도에 수렴한다 (15.322).
   return Number(
-    (
-      IDLE_DECAY_WEIGHT_LOSS +
-      (IDLE_DECAY_MAX_WEIGHT_LOSS - IDLE_DECAY_WEIGHT_LOSS) * overshootRatio
-    ).toFixed(6),
+    ((IDLE_DECAY_WEIGHT_LOSS * activeCount) / target).toFixed(6),
   );
 }
 
