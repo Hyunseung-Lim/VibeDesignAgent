@@ -3065,6 +3065,8 @@ export default function MainScreenPage() {
   const [sessionCompleted, setSessionCompleted] = useState(false);
   const [showLobbyWarning, setShowLobbyWarning] = useState(false);
   const [showFinalDesignWarning, setShowFinalDesignWarning] = useState(false);
+  // 온보딩 제외 미션에서 제한 시간 전에 미션 종료를 누르면 한 번 확인한다 (15.325).
+  const [showEarlyEndWarning, setShowEarlyEndWarning] = useState(false);
   const [destructiveAction, setDestructiveAction] =
     useState<DestructiveSessionAction | null>(null);
   const [editMode, setEditMode] = useState(false);
@@ -3095,7 +3097,14 @@ export default function MainScreenPage() {
     string | null
   >(null);
   const [timerStartedAt, setTimerStartedAt] = useState<number | null>(null);
-  const [timerEndedAt, setTimerEndedAt] = useState<number | null>(null);
+  // 일시정지 누적 모델(15.326): timerElapsedMs는 확정된 누적 경과이고
+  // timerStartedAt은 현재 진행 중 구간의 시작(멈춤 상태면 null)이다.
+  // 총 경과 = timerElapsedMs + (진행 중이면 now - timerStartedAt).
+  const [timerElapsedMs, setTimerElapsedMs] = useState(0);
+  // 최초 시작 벽시계 시각 — 세션 meta/분석용으로만 보존한다.
+  const [timerFirstStartedAt, setTimerFirstStartedAt] = useState<number | null>(
+    null,
+  );
   const [timerDisplay, setTimerDisplay] = useState<string>("");
   const [activeLeftPanelSection, setActiveLeftPanelSection] = useState<
     "mission" | "reference" | "workspace" | "final"
@@ -3291,6 +3300,7 @@ export default function MainScreenPage() {
   const showReviewAnnotations = isReviewMode || isViewingAsAdmin;
   const hasSessionStarted = Boolean(
     timerStartedAt ||
+    timerElapsedMs > 0 ||
     messages.length > 0 ||
     ideas.length > 0 ||
     artboards.length > 0 ||
@@ -4457,14 +4467,12 @@ export default function MainScreenPage() {
         completed ||
         session?.status === "active" ||
         Number(session?.timerStartedAt ?? session?.startedAt ?? 0) > 0 ||
+        Number(session?.timerElapsedMs ?? 0) > 0 ||
         (session?.messages?.length ?? 0) > 0 ||
         (Array.isArray(session?.ideas) &&
           session.ideas.some(isMeaningfulSessionIdea)) ||
         (session?.artboards?.length ?? 0) > 0;
       if (sessionAlreadyStarted) setProfileModalConfirmed(true);
-      setTimerEndedAt(
-        session?.endedAt && completed ? Number(session.endedAt) : null,
-      );
 
       if (session?.messages) setMessages(session.messages);
       // Load ideas first so we can reference their IDs
@@ -4591,10 +4599,33 @@ export default function MainScreenPage() {
       if (session?.stitchProjectId) setStitchProjectId(session.stitchProjectId);
       if (session?.finalArtboardId) setFinalArtboardId(session.finalArtboardId);
 
-      const loadedTimerStartedAt = Number(
+      // 일시정지 누적 모델 로드(15.326): timerElapsedMs가 있으면 그 값을,
+      // 없는 legacy 문서는 벽시계 경과로 환산한다. 미완료 세션 재진입 시
+      // 새 구간을 열어 재개한다(admin viewAs는 관측 전용이라 재개하지 않음).
+      const loadedSegmentStartedAt = Number(
         session?.timerStartedAt ?? session?.startedAt ?? 0,
       );
-      if (loadedTimerStartedAt) setTimerStartedAt(loadedTimerStartedAt);
+      const legacyElapsedMs = loadedSegmentStartedAt
+        ? completed
+          ? Math.max(0, Number(session?.endedAt ?? 0) - loadedSegmentStartedAt)
+          : Math.max(0, Date.now() - loadedSegmentStartedAt)
+        : 0;
+      const loadedElapsedMs = Number.isFinite(Number(session?.timerElapsedMs))
+        ? Math.max(0, Number(session?.timerElapsedMs))
+        : legacyElapsedMs;
+      setTimerElapsedMs(loadedElapsedMs);
+      setTimerFirstStartedAt(
+        Number(session?.timerFirstStartedAt ?? 0) ||
+          loadedSegmentStartedAt ||
+          null,
+      );
+      if (
+        !completed &&
+        !isReadOnly &&
+        (loadedElapsedMs > 0 || loadedSegmentStartedAt)
+      ) {
+        setTimerStartedAt(Date.now());
+      }
       // Set selectedOptionId from session — only once at load
       if (session?.selectedOptionId) {
         setSelectedOptionId(session.selectedOptionId as string);
@@ -5300,14 +5331,28 @@ export default function MainScreenPage() {
   }, [isMissionContextReady, isReadOnly, missionId]);
 
   const persistSessionSnapshot = useCallback(
-    async (startedAtOverride?: number | null) => {
+    async (
+      startedAtOverride?: number | null,
+      options?: { pauseTimer?: boolean },
+    ) => {
       if (isReadOnly || !userId || !missionId) return;
-      const effectiveTimerStartedAt =
+      const segmentStartedAt =
         startedAtOverride === undefined ? timerStartedAt : startedAtOverride;
+      const nowMs = Date.now();
+      // 일시정지 누적 모델(15.326): 저장 시점마다 열려 있는 구간을 누적에 접어
+      // (timerElapsedMs) 기록하고 구간 시작을 저장 시각으로 갱신한다. 재진입
+      // 로드는 timerElapsedMs에서 이어서 새 구간을 열므로, 어떤 방식으로
+      // 이탈해도 손실은 마지막 저장 이후 구간으로 제한된다. pauseTimer면
+      // 구간을 닫아(timerStartedAt null) 일시정지 상태로 저장한다.
+      const foldedElapsedMs =
+        timerElapsedMs +
+        (segmentStartedAt ? Math.max(0, nowMs - segmentStartedAt) : 0);
+      const timerRunning = Boolean(segmentStartedAt) && !options?.pauseTimer;
+      const timerHasStarted = foldedElapsedMs > 0 || Boolean(segmentStartedAt);
       // 시작 전 draft 저장에는 손대지 않은 seed 시안을 포함하지 않는다. 저장된
       // seed가 다음 방문에서 시작 신호로 읽혀 setup을 건너뛰게 만들었다 (15.317).
       const ideasToSave =
-        effectiveTimerStartedAt || sessionCompleted
+        timerHasStarted || sessionCompleted
           ? ideas
           : ideas.filter(isMeaningfulSessionIdea);
       const hasSnapshotContent =
@@ -5319,7 +5364,7 @@ export default function MainScreenPage() {
         Boolean(missionTitle) ||
         Boolean(missionBrief) ||
         Boolean(selectedOptionId) ||
-        Boolean(effectiveTimerStartedAt);
+        timerHasStarted;
       if (!hasSnapshotContent) return;
       const artboardsToSave = artboards;
       await setDoc(
@@ -5337,14 +5382,17 @@ export default function MainScreenPage() {
           selectedDevice: device,
           stitchProjectId: stitchProjectId || null,
           finalArtboardId: finalArtboardId ?? null,
-          startedAt: effectiveTimerStartedAt ?? null,
-          timerStartedAt: effectiveTimerStartedAt ?? null,
+          startedAt: timerRunning ? nowMs : null,
+          timerStartedAt: timerRunning ? nowMs : null,
+          timerElapsedMs: foldedElapsedMs,
+          timerFirstStartedAt:
+            timerFirstStartedAt ?? segmentStartedAt ?? null,
           status: sessionCompleted
             ? "completed"
-            : effectiveTimerStartedAt
+            : timerHasStarted
               ? "active"
               : "draft",
-          updatedAt: Date.now(),
+          updatedAt: nowMs,
         }),
         { merge: true },
       );
@@ -5354,6 +5402,8 @@ export default function MainScreenPage() {
       userId,
       missionId,
       timerStartedAt,
+      timerElapsedMs,
+      timerFirstStartedAt,
       messages,
       artboards,
       references,
@@ -5408,14 +5458,33 @@ export default function MainScreenPage() {
       document.removeEventListener("visibilitychange", flushSessionIfHidden);
   }, [isReadOnly, persistSessionSnapshot]);
 
-  // Countdown / count-up timer
+  // 세션 화면을 떠나면(로비 이동 등 라우트 전환·탭 닫기) 타이머를 일시정지
+  // 상태로 저장한다. 재진입 시 로드가 timerElapsedMs에서 새 구간을 열어
+  // 재개한다. 탭 전환(visibility hidden)은 위 flush(진행 유지 체크포인트)만
+  // 하고 일시정지하지 않는다 (15.326).
+  const pauseTimerPersistRef = useRef<() => void>(() => {});
+  pauseTimerPersistRef.current = () => {
+    if (isReadOnly || sessionCompleted) return;
+    if (!timerStartedAt && timerElapsedMs <= 0) return;
+    void persistSessionSnapshot(undefined, { pauseTimer: true });
+  };
   useEffect(() => {
-    if (!timerStartedAt) {
+    const handlePageHide = () => pauseTimerPersistRef.current();
+    window.addEventListener("pagehide", handlePageHide);
+    return () => {
+      window.removeEventListener("pagehide", handlePageHide);
+      pauseTimerPersistRef.current();
+    };
+  }, []);
+
+  // Countdown / count-up timer — 일시정지 누적 모델의 총 경과 기준 (15.326).
+  useEffect(() => {
+    if (timerElapsedMs <= 0 && !timerStartedAt) {
       setTimerDisplay("");
       return;
     }
-    const displayForTime = (currentTime: number) => {
-      const elapsed = Math.max(0, currentTime - timerStartedAt);
+    const displayForElapsed = (elapsedMs: number) => {
+      const elapsed = Math.max(0, elapsedMs);
       if (missionDurationMinutes && missionDurationMinutes > 0) {
         const remaining = missionDurationMinutes * 60 * 1000 - elapsed;
         if (remaining <= 0) return "시간 종료";
@@ -5427,17 +5496,20 @@ export default function MainScreenPage() {
       const s = Math.floor((elapsed % 60000) / 1000);
       return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
     };
-    if (sessionCompleted && timerEndedAt) {
-      setTimerDisplay(displayForTime(timerEndedAt));
+    // 완료됐거나 일시정지 상태면 누적값으로 고정 표시.
+    if (sessionCompleted || !timerStartedAt) {
+      setTimerDisplay(displayForElapsed(timerElapsedMs));
       return;
     }
     const update = () => {
-      setTimerDisplay(displayForTime(Date.now()));
+      setTimerDisplay(
+        displayForElapsed(timerElapsedMs + (Date.now() - timerStartedAt)),
+      );
     };
     update();
     const id = setInterval(update, 1000);
     return () => clearInterval(id);
-  }, [timerStartedAt, timerEndedAt, sessionCompleted, missionDurationMinutes]);
+  }, [timerStartedAt, timerElapsedMs, sessionCompleted, missionDurationMinutes]);
 
   useEffect(() => {
     const el = chatScrollRef.current;
@@ -8484,7 +8556,6 @@ export default function MainScreenPage() {
     const nextDevice = option.device ?? device;
     setSelectedOptionId(option.id);
     setDevice(nextDevice);
-    setTimerEndedAt(null);
 
     setMissionTitle(option.title);
     setMissionBrief(optionBrief(option));
@@ -8624,7 +8695,12 @@ export default function MainScreenPage() {
           );
         }
       }
-      setTimerEndedAt(completedAt);
+      // 완료 시점의 총 경과를 접어 고정하고 진행 구간을 닫는다 (15.326).
+      setTimerElapsedMs(
+        timerElapsedMs +
+          (timerStartedAt ? Math.max(0, completedAt - timerStartedAt) : 0),
+      );
+      setTimerStartedAt(null);
       setSessionCompletionStep(1);
       const reviewTargetUid = userId ?? currentUser.uid;
       try {
@@ -8674,7 +8750,7 @@ export default function MainScreenPage() {
     } catch (error) {
       console.warn("Unable to complete session", error);
       toast.error(
-        "세션 종료 및 메모리 확정에 실패했습니다. 잠시 후 다시 시도해주세요.",
+        "미션 종료 및 메모리 확정에 실패했습니다. 잠시 후 다시 시도해주세요.",
       );
     } finally {
       if (!completedSuccessfully) {
@@ -8698,12 +8774,22 @@ export default function MainScreenPage() {
       viewedUserName: viewAsName ?? "",
       device,
       stitchProjectId,
-      timerStartedAt: timerStartedAt
-        ? new Date(timerStartedAt).toISOString()
+      timerStartedAt: timerFirstStartedAt
+        ? new Date(timerFirstStartedAt).toISOString()
         : "",
-      timerElapsedSeconds: timerStartedAt
-        ? String(Math.max(0, Math.floor((Date.now() - timerStartedAt) / 1000)))
-        : "",
+      timerElapsedSeconds:
+        timerElapsedMs > 0 || timerStartedAt
+          ? String(
+              Math.max(
+                0,
+                Math.floor(
+                  (timerElapsedMs +
+                    (timerStartedAt ? Date.now() - timerStartedAt : 0)) /
+                    1000,
+                ),
+              ),
+            )
+          : "",
       exportedAt,
     };
     const outputRows = [
@@ -10077,7 +10163,7 @@ export default function MainScreenPage() {
           {timerDisplay && (
             <span
               data-tour="session-timer"
-              className={`font-mono text-lg font-semibold tabular-nums ${timerDisplay === "시간 종료" ? "text-red-500" : missionDurationMinutes && timerStartedAt && missionDurationMinutes * 60 * 1000 - (Date.now() - timerStartedAt) < 60000 ? "text-red-500" : "text-slate-900"}`}
+              className={`font-mono text-lg font-semibold tabular-nums ${timerDisplay === "시간 종료" ? "text-red-500" : missionDurationMinutes && (timerElapsedMs > 0 || timerStartedAt) && missionDurationMinutes * 60 * 1000 - (timerElapsedMs + (timerStartedAt ? Date.now() - timerStartedAt : 0)) < 60000 ? "text-red-500" : "text-slate-900"}`}
             >
               {missionDurationMinutes
                 ? `⏱ ${timerDisplay}`
@@ -10102,7 +10188,36 @@ export default function MainScreenPage() {
             ))}
           {!isReadOnly && selectedOptionId && (
             <div data-tour="session-finish" className="flex items-center gap-2">
-              {showFinalDesignWarning && (
+              {showEarlyEndWarning && (
+                <>
+                  <span className="text-xs text-amber-600">
+                    아직 {missionDurationMinutes || 30}분이 지나지 않았습니다.
+                    그래도 종료할까요?
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowEarlyEndWarning(false);
+                      if (!finalArtboardId && artboards.length > 0) {
+                        setShowFinalDesignWarning(true);
+                      } else {
+                        void completeSession();
+                      }
+                    }}
+                    className="rounded-full bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-slate-700"
+                  >
+                    종료
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowEarlyEndWarning(false)}
+                    className="rounded-full border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-600 transition hover:bg-slate-50"
+                  >
+                    취소
+                  </button>
+                </>
+              )}
+              {!showEarlyEndWarning && showFinalDesignWarning && (
                 <>
                   <span className="text-xs text-amber-600">
                     최종 디자인을 선택하지 않았습니다. 그래도 종료할까요?
@@ -10126,11 +10241,22 @@ export default function MainScreenPage() {
                   </button>
                 </>
               )}
-              {!showFinalDesignWarning && (
+              {!showEarlyEndWarning && !showFinalDesignWarning && (
                 <button
                   type="button"
                   onClick={() => {
                     if (!hasSessionStarted) return;
+                    // 온보딩 제외: 제한 시간(기본 30분) 전 종료는 먼저 확인받는다.
+                    // 경과는 일시정지 누적 모델의 총 경과 기준 (15.326).
+                    const durationMs =
+                      (missionDurationMinutes || 30) * 60 * 1000;
+                    const elapsedNowMs =
+                      timerElapsedMs +
+                      (timerStartedAt ? Date.now() - timerStartedAt : 0);
+                    if (!isOnboardingMission && elapsedNowMs < durationMs) {
+                      setShowEarlyEndWarning(true);
+                      return;
+                    }
                     if (!finalArtboardId && artboards.length > 0) {
                       setShowFinalDesignWarning(true);
                     } else {
@@ -10145,12 +10271,12 @@ export default function MainScreenPage() {
                   className="rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-700 disabled:bg-slate-200 disabled:text-slate-500"
                 >
                   {sessionCompleted
-                    ? "세션 종료됨"
+                    ? "미션 종료됨"
                     : !hasSessionStarted
                       ? "세션 시작 전"
                       : isCompletingSession
                         ? "메모리 확정 중..."
-                        : "세션 종료"}
+                        : "미션 종료"}
                 </button>
               )}
             </div>
@@ -10366,6 +10492,8 @@ export default function MainScreenPage() {
                   } finally {
                     const startedAt = Date.now();
                     setProfileSaving(false);
+                    setTimerElapsedMs(0);
+                    setTimerFirstStartedAt(startedAt);
                     setTimerStartedAt(startedAt);
                     setProfileModalConfirmed(true);
                     void persistSessionSnapshot(startedAt);
@@ -11297,7 +11425,7 @@ export default function MainScreenPage() {
               세션이 아직 종료되지 않았어요
             </h2>
             <p className="mb-6 text-sm leading-relaxed text-slate-600">
-              <strong>세션 종료</strong> 버튼을 누르지 않으면 이번 세션의
+              <strong>미션 종료</strong> 버튼을 누르지 않으면 이번 세션의
               메모리가 저장되지 않을 수 있습니다. 계속 나가시겠어요?
             </p>
             <div className="flex gap-3">

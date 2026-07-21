@@ -83,8 +83,8 @@ const EMPTY_IDEA_STEPS: TourStep[] = [
   },
   {
     target: "session-finish",
-    title: "세션 종료",
-    body: "작업을 마치면 세션 종료를 눌러 대화와 선택한 최종 디자인을 저장합니다. 목업이 있는데 Final Design을 선택하지 않으면 한 번 더 확인합니다.",
+    title: "미션 종료",
+    body: "작업을 마치면 미션 종료를 눌러 대화와 선택한 최종 디자인을 저장합니다. 제한 시간 전에 누르거나, 목업이 있는데 Final Design을 선택하지 않았다면 한 번 더 확인합니다.",
   },
   {
     target: "tutorial-button",
@@ -149,7 +149,7 @@ const IDEA_STEPS: TourStep[] = [
   {
     target: "final-design",
     title: "Final Design",
-    body: "여러 시안과 목업 중 최종으로 남길 화면을 선택하는 곳입니다. 선택한 결과는 세션 종료 후 리뷰에서 확인할 수 있어요.",
+    body: "여러 시안과 목업 중 최종으로 남길 화면을 선택하는 곳입니다. 선택한 결과는 미션 종료 후 리뷰에서 확인할 수 있어요.",
   },
   {
     target: "content-panel",
@@ -166,8 +166,8 @@ const IDEA_STEPS: TourStep[] = [
   },
   {
     target: "session-finish",
-    title: "세션 종료",
-    body: "작업을 마치면 세션 종료를 눌러 대화와 선택한 최종 디자인을 저장합니다. 목업이 있는데 Final Design을 선택하지 않으면 한 번 더 확인합니다.",
+    title: "미션 종료",
+    body: "작업을 마치면 미션 종료를 눌러 대화와 선택한 최종 디자인을 저장합니다. 제한 시간 전에 누르거나, 목업이 있는데 Final Design을 선택하지 않았다면 한 번 더 확인합니다.",
   },
   {
     target: "tutorial-button",
