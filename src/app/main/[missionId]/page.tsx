@@ -592,6 +592,25 @@ const SESSION_PROGRESS_MESSAGES = [
   "리뷰 화면을 준비하고 있어요",
 ] as const;
 
+// 첫 setup 방문 때 로컬로 seed되는 빈 시안 1은 실제 작업이 아니다. 저장·시작
+// 판정에서 이런 시안을 제외해, 시작 전 draft 문서가 다음 방문에서 이미 시작한
+// 세션으로 오판되어 setup(타이머를 시작하는 유일한 화면)을 건너뛰지 않게 한다
+// (15.317). 내용이 있거나 디자인 스타일이 붙은 시안만 시작 신호로 본다.
+function isMeaningfulSessionIdea(idea: unknown) {
+  if (!idea || typeof idea !== "object") return false;
+  const record = idea as {
+    description?: unknown;
+    designStyle?: unknown;
+    designStyles?: unknown;
+  };
+  return (
+    (typeof record.description === "string" &&
+      record.description.trim().length > 0) ||
+    Boolean(record.designStyle) ||
+    (Array.isArray(record.designStyles) && record.designStyles.length > 0)
+  );
+}
+
 function sessionMemorySummaryKey(targetUid: string, missionId: string) {
   return `${targetUid}:${missionId}`;
 }
@@ -4430,13 +4449,16 @@ export default function MainScreenPage() {
       setSessionCompleted(completed);
       // A session that was ever started must skip the pre-session setup page on
       // resume. The timer/status are the authoritative "already started" signals;
-      // content checks are kept as a fallback for older snapshots.
+      // content checks are kept as a fallback for older snapshots. Ideas count
+      // only when meaningful — the seeded empty 시안 1 must not skip setup, or
+      // the timer could never start (15.317).
       const sessionAlreadyStarted =
         completed ||
         session?.status === "active" ||
         Number(session?.timerStartedAt ?? session?.startedAt ?? 0) > 0 ||
         (session?.messages?.length ?? 0) > 0 ||
-        (session?.ideas?.length ?? 0) > 0 ||
+        (Array.isArray(session?.ideas) &&
+          session.ideas.some(isMeaningfulSessionIdea)) ||
         (session?.artboards?.length ?? 0) > 0;
       if (sessionAlreadyStarted) setProfileModalConfirmed(true);
       setTimerEndedAt(
@@ -5281,11 +5303,17 @@ export default function MainScreenPage() {
       if (isReadOnly || !userId || !missionId) return;
       const effectiveTimerStartedAt =
         startedAtOverride === undefined ? timerStartedAt : startedAtOverride;
+      // 시작 전 draft 저장에는 손대지 않은 seed 시안을 포함하지 않는다. 저장된
+      // seed가 다음 방문에서 시작 신호로 읽혀 setup을 건너뛰게 만들었다 (15.317).
+      const ideasToSave =
+        effectiveTimerStartedAt || sessionCompleted
+          ? ideas
+          : ideas.filter(isMeaningfulSessionIdea);
       const hasSnapshotContent =
         messages.length > 0 ||
         artboards.length > 0 ||
         references.length > 0 ||
-        ideas.length > 0 ||
+        ideasToSave.length > 0 ||
         activityLog.length > 0 ||
         Boolean(missionTitle) ||
         Boolean(missionBrief) ||
@@ -5301,7 +5329,7 @@ export default function MainScreenPage() {
           artboards: artboardsToSave,
           references,
           activityLog: trimActivityLogHtmlForSave(activityLog.slice(-500)),
-          ideas,
+          ideas: ideasToSave,
           missionTitle,
           missionBrief,
           selectedOptionId,

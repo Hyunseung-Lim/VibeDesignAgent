@@ -87,7 +87,7 @@
 - 관리자가 설정한 제목/브리핑/기간/디바이스가 읽기 전용으로 표시
 - 수정은 어드민 페이지에서만 가능
 - 옵션이 1개뿐인 미션은 세션 로드 시 해당 옵션을 자동 선택하고 `selectedOptionId`, `missionTitle`, `missionBrief`, `selectedDevice`를 세션 문서에 저장. 다중 옵션 선택 화면은 `options.length > 1`일 때만 노출되며 현재 미션엔 해당 없음
-- 일반 미션의 세션 시작 전 setup은 단일 스크롤 페이지다. 미션 요약 카드(`전체 미션 설명` → `제한 시간` → `해당 옵션 brief` → `제공 이미지/설명(assetImages[].note)`) 아래에 `사전 정보 입력` 카드를 같이 노출하고, 미션 요약 뒤의 `다음: 사전 정보 입력` pill은 그 카드로 스크롤한다. 하단 고정 버튼은 `세션 시작하기`다. 온보딩은 before-session memory를 만들지 않으므로 사전 정보 입력 카드를 숨기고 미션 요약 + 시작 버튼만 표시한다. 옵션이 여러 개인 미션은 옵션 선택 화면을 거쳐 이 페이지로 오고 `옵션 다시 선택`으로 되돌아간다 `[현행 2026-06-21 → 15.102]`
+- 일반 미션의 세션 시작 전 setup은 단일 스크롤 페이지다. 미션 요약 카드(`전체 미션 설명` → `제한 시간` → `해당 옵션 brief` → `제공 이미지/설명(assetImages[].note)`) 아래에 `사전 정보 입력` 카드를 같이 노출하고, 미션 요약 뒤의 `다음: 사전 정보 입력` pill은 그 카드로 스크롤한다. 하단 고정 버튼은 `세션 시작하기`다. 온보딩은 before-session memory를 만들지 않으므로 사전 정보 입력 카드를 숨기고 미션 요약 + 시작 버튼만 표시한다. 옵션이 여러 개인 미션은 옵션 선택 화면을 거쳐 이 페이지로 오고 `옵션 다시 선택`으로 되돌아간다 `[현행 2026-06-21 → 15.102]` 세션 재입장 시 setup 스킵 판정은 completed/active status, timer, messages, artboards, 내용 있는 시안(내용 있는 description 또는 design style 보유)만 시작 신호로 본다 — 첫 방문 때 로컬 seed되는 빈 `시안 1`은 신호가 아니며 시작 전 자동저장 draft에도 저장되지 않는다. 타이머는 setup의 `세션 시작하기` 버튼에서만 시작된다 `[현행 2026-07-21 → 15.317]`
 - 실제 세션 시작은 사용자가 `세션 시작하기` 버튼을 누를 때 발생하며, 이때 `timerStartedAt`을 세팅
 - 세션 종료 버튼은 `timerStartedAt` 또는 복구 가능한 세션 데이터(messages/ideas/artboards/references/activityLog)가 생기기 전에는 비활성화되고, 세션 종료 완료 후에는 `status: completed` 기준으로 비활성화
 
@@ -4936,3 +4936,10 @@ type ChatPlan = {
 - 수정(표시): self/admin clusters GET이 사용자의 모든 after snapshot(loadAfterClusterSnapshots)과 마지막 완료 미션(pickLatestAfterSnapshot: missionOrder상 가장 뒤, 온보딩은 맨 앞 취급, generatedAt은 동순위 tiebreak — 리뷰 제출 재생성으로 과거 미션 generatedAt이 더 최신일 수 있어 순서 기준을 쓴다)을 함께 반환한다. MemoryClusterPage는 세션 칩 선택 시 해당 미션의 동결 snapshot cluster/edge를 그대로 렌더하고, 노드 가시성은 리뷰 overlay와 같은 규칙(snapshot 멤버 ∪ 현재 비활성)이다. 전체 탭은 마지막 완료 세션 snapshot과 완전 동일하고 새 메모리 하이라이트(+N/다이아몬드)만 없다. snapshot 없는 미션/세션 외 버킷은 기존 최신 캐시 node 필터로 폴백하고 stale 경고도 그 경로에서만 뜬다.
 - 수정(승계): generateAndStoreSessionClusterSnapshots의 직전 세대 선택을 snapshot 체인 우선으로 바꿨다 — after-only 재생성(리뷰 제출)은 자기 after→before(스테이징 preview와 같은 순서), 세션 종료 경로는 직전 미션 after snapshot, 없으면 full 캐시 폴백. 리뷰 제출 시 preview와 제출본의 색 승계 기준이 달랐던 불일치(preview는 after 우선, 저장 재생성은 before 우선)도 함께 정리했다.
 - 불변: 저장된 snapshot 문서와 제출된 리뷰 응답은 다시 쓰지 않는다. 최신 memoryClusters 캐시는 세션 종료마다 계속 재생성되며 retrieval cluster evidence와 폴백 용도로 유지된다.
+
+### 15.317 Seeded empty idea no longer skips session setup or hides the timer `[implemented 2026-07-21]`
+
+- 증상: 가끔 세션 상단 타이머가 사라지고, 튜토리얼의 타이머 스텝이 세션 종료 버튼을 하이라이트했다. 타이머 칩은 timerDisplay가 비면 미렌더되고, 투어 타이머 스텝의 fallbackTarget이 session-finish라 종료 버튼이 하이라이트된 것 — 겹침이 아니라 미렌더.
+- 원인: 미션 첫 방문(setup)에서 튜토리얼용으로 로컬 seed되는 빈 시안 1이 디바운스 자동저장으로 draft 문서에 저장되고, 재방문 시 sessionAlreadyStarted 판정이 ideas.length>0을 시작 신호로 읽어 setup을 건너뛰었다. 타이머를 시작하는 유일한 경로(세션 시작하기 버튼)가 사라져 세션 내내 timerStartedAt이 null로 남는다. 프로덕션 스캔(read-only): 시작 신호 세션 32건 중 5건 — JONGIK 103001(msgs 6 실작업 완료), Suyeon 온보딩·임현승 201001(빈 완료), 임예린·따란(draft, 재현 대기).
+- 수정: isMeaningfulSessionIdea(내용 있는 description 또는 designStyle/designStyles 보유) 판정을 도입해 (1) sessionAlreadyStarted의 ideas 신호를 meaningful 시안으로 제한하고 (2) 시작 전(timer 없음 && 미완료) 자동저장 payload에서 seed 시안을 제외한다. 판정 변경만으로 임예린·따란 draft 2건은 다음 방문에서 setup부터 정상 진행된다 — 데이터 마이그레이션 없음.
+- 보류(사용자 결정): 이미 타이머 없이 진행/완료된 세션의 backfill(진단 3번)은 진행하지 않음. 시작 직후 즉시 새로고침으로 fire-and-forget 시작 저장이 유실되는 부차 경로와 멀티탭 stale flush도 이번 범위 밖.
