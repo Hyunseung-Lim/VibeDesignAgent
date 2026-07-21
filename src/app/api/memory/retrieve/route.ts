@@ -37,32 +37,29 @@ const DEFAULT_LIMIT = 10;
 const IDLE_DECAY_WEIGHT_LOSS = 0.009;
 const IDLE_DECAY_MAX_WEIGHT_LOSS = 0.018;
 const MIN_MEMORY_WEIGHT = 0;
-// Active-memory target curve (15.283/15.322): 총 70개까지 70, 100개에 85,
-// 이후 제곱근 곡선. 목표 체크포인트: total 100 → 85 (80-90), 200 → ~114
-// (110-120), 300 → ~133 (120-140).
-const ACTIVE_MEMORY_BASE_CAP = 70;
-const ACTIVE_MEMORY_LINEAR_END_COUNT = 100;
-const ACTIVE_MEMORY_LINEAR_END_CAP = 85;
-const ACTIVE_MEMORY_SQRT_GROWTH = 5;
+// Active-memory target curve (15.324): total 100 → 80, 200 → 120을 고정점으로
+// 하는 선형 구간(40 + 0.4 × total)과 200 이후 완만한 제곱근 구간(300 → ~142).
+// 기존 곡선(70까지 목표 70)은 초기 목표가 높아 풀이 70개 규모가 되어도 감쇠
+// 압박이 걸리지 않았다 — 낮은 초기 목표로 바닥 코호트가 70개 부근부터 소멸
+// 구간에 들어간다.
+const TARGET_LINEAR_BASE = 40;
+const TARGET_LINEAR_SLOPE = 0.4;
+const TARGET_LINEAR_END_COUNT = 200;
+const TARGET_LINEAR_END_CAP = 120;
+const TARGET_SQRT_GROWTH = 4;
+// 제곱근 구간이 200 지점에서 값·기울기 모두 자연스럽게 이어지도록 하는 오프셋.
+const TARGET_SQRT_OFFSET = 160;
 
 function activeMemoryCap(totalMemoryCount: number) {
-  if (totalMemoryCount <= ACTIVE_MEMORY_BASE_CAP) return ACTIVE_MEMORY_BASE_CAP;
-  if (totalMemoryCount <= ACTIVE_MEMORY_LINEAR_END_COUNT) {
-    const progress =
-      (totalMemoryCount - ACTIVE_MEMORY_BASE_CAP) /
-      (ACTIVE_MEMORY_LINEAR_END_COUNT - ACTIVE_MEMORY_BASE_CAP);
-    return Math.floor(
-      ACTIVE_MEMORY_BASE_CAP +
-        (ACTIVE_MEMORY_LINEAR_END_CAP - ACTIVE_MEMORY_BASE_CAP) * progress,
-    );
+  const total = Math.max(0, totalMemoryCount);
+  if (total <= TARGET_LINEAR_END_COUNT) {
+    return Math.floor(TARGET_LINEAR_BASE + TARGET_LINEAR_SLOPE * total);
   }
   return Math.floor(
-    ACTIVE_MEMORY_LINEAR_END_CAP +
-      ACTIVE_MEMORY_SQRT_GROWTH *
-        (Math.sqrt(totalMemoryCount - ACTIVE_MEMORY_BASE_CAP) -
-          Math.sqrt(
-            ACTIVE_MEMORY_LINEAR_END_COUNT - ACTIVE_MEMORY_BASE_CAP,
-          )),
+    TARGET_LINEAR_END_CAP +
+      TARGET_SQRT_GROWTH *
+        (Math.sqrt(total - TARGET_SQRT_OFFSET) -
+          Math.sqrt(TARGET_LINEAR_END_COUNT - TARGET_SQRT_OFFSET)),
   );
 }
 
@@ -317,10 +314,12 @@ function idleDecayWeightLoss(activeCount: number, totalMemoryCount: number) {
       ).toFixed(6),
     );
   }
-  // 목표 미만: 멈추지 않고 활성/목표 비율만큼 비례 감속. 풀이 작을수록
-  // 천천히 잊고, 목표에 다가갈수록 base 속도에 수렴한다 (15.322).
+  // 목표 미만: 멈추지 않고 활성/목표 비율의 제곱근으로 감속. 선형 비율은
+  // 초기 풀에서 감쇠가 지나치게 느려 바닥 코호트가 70개 규모에 도달할 때까지
+  // 소멸 파이프라인이 차지 않았다 — √비율은 작은 풀에서도 완만히 잊으면서
+  // 목표에 다가갈수록 base에 수렴한다 (15.324).
   return Number(
-    ((IDLE_DECAY_WEIGHT_LOSS * activeCount) / target).toFixed(6),
+    (IDLE_DECAY_WEIGHT_LOSS * Math.sqrt(activeCount / target)).toFixed(6),
   );
 }
 
