@@ -45,14 +45,6 @@ export type ClusteringInputVariant = (typeof CLUSTERING_INPUT_VARIANTS)[number];
 export const CLUSTERING_INPUT_VARIANT: ClusteringInputVariant =
   "keyword-episodic-semantic-link";
 
-export function normalizeClusteringInputVariant(
-  value: unknown,
-): ClusteringInputVariant {
-  return CLUSTERING_INPUT_VARIANTS.includes(value as ClusteringInputVariant)
-    ? (value as ClusteringInputVariant)
-    : CLUSTERING_INPUT_VARIANT;
-}
-
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 export type ClusterInputItem = {
