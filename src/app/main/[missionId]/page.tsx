@@ -3562,12 +3562,13 @@ export default function MainScreenPage() {
         setMemoryReviewSubmittedAt(data.feedback?.submittedAt ?? null);
         setMemoryReviewSaveStatus("saved");
         if (submitted) {
-          // 제출로 재활성화가 실제 적용됐으면 after cluster snapshot을 한 번
-          // 재생성한다. 로비 이동을 막지 않는 best-effort 호출.
-          const hadReactivation = Object.values(
-            stagedMemoryActivationsRef.current,
-          ).some((staged) => staged.active);
-          if (hadReactivation) {
+          // 제출로 활성/비활성 토글이 실제 적용됐으면 after cluster snapshot을
+          // 한 번 재생성한다(15.310/15.319). 비활성화만 있어도 after의 활성
+          // 집합이 바뀌므로 재생성해야 다음 세션 before(직전 종료 상태)와
+          // 이어진다. 로비 이동을 막지 않는 best-effort 호출.
+          const hadActivationChange =
+            Object.keys(stagedMemoryActivationsRef.current).length > 0;
+          if (hadActivationChange) {
             void fetch("/api/memory/session-clusters", {
               method: "POST",
               keepalive: true,
