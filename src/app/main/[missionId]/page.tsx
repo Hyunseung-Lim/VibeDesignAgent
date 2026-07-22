@@ -7118,21 +7118,53 @@ export default function MainScreenPage() {
               ? FORKED_STYLE_MOCKUP_PROMPT
               : ""),
         );
-        const prompt =
-          parsedPrompt ||
-          (effectiveGenerateMatch
-            ? defaultMockupPromptForIdea(activeIdea, device)
-            : CURRENT_MOCKUP_REFINEMENT_PROMPT);
         const mockupIdeaId = effectiveActiveIdeaId;
-        const isNew = Boolean(
+        const isNewAction = Boolean(
           effectiveGenerateMatch || shouldAutoGenerateForkedStyleMockup,
         );
+        // An EDIT_MOCKUP aimed at an idea with no artboard would reach
+        // /api/stitch without a screenId and silently run a fresh generation
+        // from the bare edit instruction (no design brief, no assets).
+        // Promote it to an explicit new-mockup generation instead
+        // (dev_document 15.328). Uses the same target lookup as the edit
+        // path below, so any board that lookup would find keeps edit mode.
+        const promotedEditWithoutBoard =
+          !isNewAction &&
+          !(
+            selectedElementBoard ??
+            (activeArtboardId
+              ? artboards.find((a) => a.id === activeArtboardId)
+              : currentIdeaBoards.at(-1)) ??
+            null
+          );
+        const isNew = isNewAction || promotedEditWithoutBoard;
+        const prompt =
+          parsedPrompt ||
+          (isNew
+            ? defaultMockupPromptForIdea(activeIdea, device)
+            : CURRENT_MOCKUP_REFINEMENT_PROMPT);
         let stitchPrompt = buildMockupPrompt(
           prompt,
           isNew ? activeIdea : null,
           // Only inject mission brief for new mockups — edits don't need the full product context
           isNew ? missionBrief : undefined,
         );
+        if (promotedEditWithoutBoard) {
+          console.warn(
+            "[mockup] EDIT_MOCKUP had no target artboard; promoted to new generation",
+            { mockupIdeaId },
+          );
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === assistantId
+                ? {
+                    ...m,
+                    content: `${m.content}\n\nℹ️ 이 시안에는 아직 목업이 없어, 요청 내용을 반영한 새 목업을 생성합니다.`,
+                  }
+                : m,
+            ),
+          );
+        }
         if (!isNew && selectedElements.length > 0) {
           stitchPrompt = [
             stitchPrompt,

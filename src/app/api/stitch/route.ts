@@ -311,6 +311,30 @@ async function withTransientRetry<T>(
   throw lastError;
 }
 
+// Stitch intermittently rejects well-formed requests with INVALID_ARGUMENT
+// (observed 2026-07-22 on create_project and generate_screen_from_text; the
+// same calls succeeded on retry ~30s later — dev_document 15.328). Retry once
+// with a short backoff on paths where invalid argument carries no contract
+// meaning. Asset-led generation is excluded: there invalid argument is the
+// signal that routes to the OpenAI fallback (15.262).
+async function withInvalidArgumentRetry<T>(
+  label: string,
+  run: () => Promise<T>,
+): Promise<T> {
+  try {
+    return await run();
+  } catch (err) {
+    if (!isStitchInvalidArgumentError(err)) throw err;
+    const delay = 8000 + Math.floor(Math.random() * 2000);
+    console.warn(
+      `[stitch] ${label} rejected as invalid argument; retrying once in ${delay}ms:`,
+      errorMessage(err),
+    );
+    await sleep(delay);
+    return run();
+  }
+}
+
 function compactWhitespace(value: string) {
   return value.replace(/\s+/g, " ").trim();
 }
@@ -1587,12 +1611,14 @@ export async function POST(request: Request) {
       );
     }
     let { client, sdk } = stitch;
-    let project;
+    let project: StitchProject;
     let actualProjectId: string = projectId ?? "";
 
     if (!projectId) {
       console.log("[stitch] creating project...");
-      project = await sdk.createProject("VibeDesign");
+      project = await withInvalidArgumentRetry("create_project", () =>
+        sdk.createProject("VibeDesign"),
+      );
       actualProjectId = project.id;
       console.log("[stitch] project created:", actualProjectId);
     } else {
@@ -1640,7 +1666,9 @@ export async function POST(request: Request) {
           previousProjectId: actualProjectId || null,
         }),
       );
-      project = await sdk.createProject("VibeDesign");
+      project = await withInvalidArgumentRetry("create_project", () =>
+        sdk.createProject("VibeDesign"),
+      );
       actualProjectId = project.id;
       beforeScreenIds = new Set();
       resolvedDesignSystemId = null;
@@ -1784,7 +1812,9 @@ export async function POST(request: Request) {
           client = apiKeyStitch.client;
           sdk = apiKeyStitch.sdk;
           console.log("[stitch] creating API-key fallback project...");
-          project = await sdk.createProject("VibeDesign");
+          project = await withInvalidArgumentRetry("create_project", () =>
+            sdk.createProject("VibeDesign"),
+          );
           actualProjectId = project.id;
           resolvedDesignSystemId = null;
           resolvedStyleHash = null;
@@ -1854,23 +1884,15 @@ export async function POST(request: Request) {
     } else {
       console.log("[stitch] generating screen for prompt:", prompt.slice(0, 80));
       try {
-        screen = await generateScreen(
-          client,
-          project,
-          prompt,
-          deviceType,
-          beforeScreenIds,
+        screen = await withInvalidArgumentRetry("text generation", () =>
+          generateScreen(client, project, prompt, deviceType, beforeScreenIds),
         );
       } catch (generateErr) {
         if (isStitchNotFoundError(generateErr)) {
           await createFreshGenerationProject("text generation target not found");
           try {
-            screen = await generateScreen(
-              client,
-              project,
-              prompt,
-              deviceType,
-              beforeScreenIds,
+            screen = await withInvalidArgumentRetry("text generation", () =>
+              generateScreen(client, project, prompt, deviceType, beforeScreenIds),
             );
           } catch (freshGenerateErr) {
             if (!isIncompleteResponseError(freshGenerateErr)) {
