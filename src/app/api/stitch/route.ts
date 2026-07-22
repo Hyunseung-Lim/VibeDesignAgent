@@ -30,7 +30,15 @@ import {
   styleImageReconstructPrompt,
 } from "@/lib/prompts";
 
-export const maxDuration = 180;
+export const maxDuration = 300;
+
+// Vercel kills the function at maxDuration with a plain-text
+// FUNCTION_INVOCATION_TIMEOUT the client can only show raw (observed
+// 2026-07-21, dev_document 15.327). Budget the slow OpenAI asset fallback so
+// it fails with an explicit JSON error inside the limit instead: skip retries
+// that cannot fit in the remaining budget and cap each completion call to it.
+const ROUTE_TIME_BUDGET_MS = 270_000;
+const FALLBACK_RETRY_RESERVE_MS = 90_000;
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
@@ -1340,7 +1348,11 @@ async function generateOpenAiAssetFallbackScreen(
   productPrompt: string,
   deviceType: DeviceType,
   assets: AssetImageRequest[],
+  deadlineAt: number,
 ): Promise<StitchScreenHandle> {
+  // Never start a retry that cannot finish before Vercel's maxDuration kill.
+  const hasRetryBudget = () =>
+    Date.now() + FALLBACK_RETRY_RESERVE_MS < deadlineAt;
   const deviceLabel =
     deviceType === "MOBILE" ? "390px wide mobile app screen" : "responsive desktop website";
   const fallbackPrompt = assetImageTokenFallbackPrompt(
@@ -1374,28 +1386,38 @@ async function generateOpenAiAssetFallbackScreen(
               )
               .join("\n"),
           ].join("\n");
-    const completion = await openai.chat.completions.create({
-      model: process.env.OPENAI_STITCH_FALLBACK_MODEL ?? "gpt-5.4-mini",
-      messages: [
-        { role: "system", content: systemContent },
-        {
-          role: "user",
-          content: missingFeedback
-            ? `${fallbackPrompt}\n\n${missingFeedback}`
-            : fallbackPrompt,
-        },
-      ],
-    });
+    const completion = await openai.chat.completions.create(
+      {
+        model: process.env.OPENAI_STITCH_FALLBACK_MODEL ?? "gpt-5.4-mini",
+        messages: [
+          { role: "system", content: systemContent },
+          {
+            role: "user",
+            content: missingFeedback
+              ? `${fallbackPrompt}\n\n${missingFeedback}`
+              : fallbackPrompt,
+          },
+        ],
+      },
+      // Fail this call inside the route budget rather than letting Vercel
+      // kill the whole function mid-generation.
+      { timeout: Math.max(60_000, deadlineAt - Date.now() - 10_000) },
+    );
     const html = replaceAssetTokens(
       completeHtmlDocument(completion.choices[0]?.message?.content ?? ""),
       assets,
     );
     if (!/<(main|section|article|div|body)\b/i.test(html)) {
       if (attempt < maxAttempts) {
+        if (hasRetryBudget()) {
+          console.warn(
+            "[stitch] OpenAI fallback returned no usable markup; retrying",
+          );
+          continue;
+        }
         console.warn(
-          "[stitch] OpenAI fallback returned no usable markup; retrying",
+          "[stitch] OpenAI fallback retry skipped: route time budget exhausted",
         );
-        continue;
       }
       throw new Error("OpenAI HTML fallback returned no usable mockup markup.");
     }
@@ -1404,10 +1426,15 @@ async function generateOpenAiAssetFallbackScreen(
       lastCoverage = coverage;
       logAssetCoverageFailure("openai-fallback", html, assets);
       if (attempt < maxAttempts) {
+        if (hasRetryBudget()) {
+          console.warn(
+            `[stitch] OpenAI fallback missed mission assets (${coverage.matchedCount}/${coverage.totalCount}); retrying with feedback`,
+          );
+          continue;
+        }
         console.warn(
-          `[stitch] OpenAI fallback missed mission assets (${coverage.matchedCount}/${coverage.totalCount}); retrying with feedback`,
+          "[stitch] OpenAI fallback retry skipped: route time budget exhausted",
         );
-        continue;
       }
       throw new Error(
         `OpenAI HTML fallback did not preserve every mission asset (${coverage.matchedCount}/${coverage.totalCount}).`,
@@ -1441,6 +1468,7 @@ async function deriveDesignStyleFromHtml(html: string): Promise<string> {
 }
 
 export async function POST(request: Request) {
+  const routeDeadlineAt = Date.now() + ROUTE_TIME_BUDGET_MS;
   const requestingUser = await verifyFirebaseIdToken(request);
   if (!requestingUser) {
     return Response.json({ error: "unauthorized" }, { status: 401 });
@@ -1523,6 +1551,7 @@ export async function POST(request: Request) {
           prompt,
           deviceType,
           assetImageInputs,
+          routeDeadlineAt,
         );
         const fallbackHtml = await fallbackScreen.getHtml();
         console.log(
@@ -1717,6 +1746,7 @@ export async function POST(request: Request) {
               prompt,
               deviceType,
               assetImageInputs,
+              routeDeadlineAt,
             );
             if (screen.id.startsWith("openai-asset-fallback-")) {
               actualProjectId = "";
@@ -1733,6 +1763,7 @@ export async function POST(request: Request) {
             prompt,
             deviceType,
             assetImageInputs,
+            routeDeadlineAt,
           );
           if (screen.id.startsWith("openai-asset-fallback-")) {
             actualProjectId = projectId ?? "";
@@ -1782,6 +1813,7 @@ export async function POST(request: Request) {
               prompt,
               deviceType,
               assetImageInputs,
+              routeDeadlineAt,
             );
             if (screen.id.startsWith("openai-asset-fallback-")) {
               actualProjectId = projectId ?? "";
@@ -1954,6 +1986,7 @@ export async function POST(request: Request) {
             prompt,
             deviceType,
             assetImageInputs,
+            routeDeadlineAt,
           );
           html = await screen.getHtml();
           selected = {
