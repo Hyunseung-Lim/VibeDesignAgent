@@ -6,6 +6,7 @@ export const SESSION_PROGRESS_FIELDS = [
   "status",
   "timerStartedAt",
   "timerElapsedMs",
+  "timerFirstStartedAt",
   "startedAt",
   "endedAt",
   "selectedOptionId",

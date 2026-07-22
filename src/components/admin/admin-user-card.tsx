@@ -79,21 +79,32 @@ function formatSessionDateTime(timestamp: number) {
   }).format(new Date(timestamp));
 }
 
-function formatSessionMinutes(startedAt: number, endedAt: number) {
-  const minutes = Math.max(0, Math.round((endedAt - startedAt) / 60000));
-  return `${minutes}분`;
+function formatMinutes(elapsedMs: number) {
+  return `${Math.max(0, Math.round(elapsedMs / 60000))}분`;
 }
 
+// 일시정지 누적 모델(15.326) 기준 표시: 시작은 timerFirstStartedAt(레거시는
+// timerStartedAt), 소요/경과는 timerElapsedMs 누적(+진행 중 구간). 누적이 없는
+// 레거시 문서는 기존처럼 벽시계 차이로 계산한다.
 function missionTimingParts(progress: MissionProgress | undefined) {
-  const startedAt = progress?.timerStartedAt ?? null;
+  const startedAt =
+    progress?.timerFirstStartedAt ?? progress?.timerStartedAt ?? null;
   const endedAt = progress?.endedAt ?? null;
+  const completed = progress?.status === "completed";
+  const elapsedMs =
+    progress?.timerElapsedMs != null
+      ? progress.timerElapsedMs +
+        (!completed && progress.timerStartedAt
+          ? Math.max(0, Date.now() - progress.timerStartedAt)
+          : 0)
+      : startedAt
+        ? Math.max(0, (endedAt ?? Date.now()) - startedAt)
+        : null;
   const parts: string[] = [];
   if (startedAt) parts.push(`시작 ${formatSessionDateTime(startedAt)}`);
   if (endedAt) parts.push(`종료 ${formatSessionDateTime(endedAt)}`);
-  if (startedAt && endedAt) {
-    parts.push(`소요 ${formatSessionMinutes(startedAt, endedAt)}`);
-  } else if (startedAt) {
-    parts.push(`경과 ${formatSessionMinutes(startedAt, Date.now())}`);
+  if (elapsedMs != null && (startedAt || endedAt)) {
+    parts.push(`${completed ? "소요" : "경과"} ${formatMinutes(elapsedMs)}`);
   }
   return parts;
 }

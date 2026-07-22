@@ -4,6 +4,9 @@ export type MissionProgress = {
   // 일시정지 누적 모델(15.326)의 확정 누적 경과. legacy 문서·합성 fallback은
   // 없을 수 있다(optional) — 소비처는 ?? 0으로 읽는다.
   timerElapsedMs?: number | null;
+  // 최초 시작 벽시계 시각(15.326). 누적 모델에서 timerStartedAt은 마지막 저장
+  // 시각이라(완료·일시정지면 null) 시작 표시는 이 필드를 우선 사용한다.
+  timerFirstStartedAt?: number | null;
   endedAt: number | null;
   status: string | null;
 };
@@ -27,6 +30,10 @@ export function missionProgressFromSession(
     timerStartedAt,
     timerElapsedMs:
       typeof data.timerElapsedMs === "number" ? data.timerElapsedMs : null,
+    timerFirstStartedAt:
+      typeof data.timerFirstStartedAt === "number"
+        ? data.timerFirstStartedAt
+        : timerStartedAt,
     endedAt,
     status: typeof data.status === "string" ? data.status : null,
     hasActivity: Boolean(

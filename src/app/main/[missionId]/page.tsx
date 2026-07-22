@@ -3298,6 +3298,20 @@ export default function MainScreenPage() {
   const isViewingAsAdmin = !!(viewAs && isAdmin);
   const isReadOnly = isReviewMode || isViewingAsAdmin;
   const showReviewAnnotations = isReviewMode || isViewingAsAdmin;
+  // 온보딩 제외: 제한 시간 2분 전(30분 미션이면 28분)까지 미션 종료 잠금
+  // (15.328). timerDisplay가 매초 갱신되며 리렌더되므로 경과 판정도 매초
+  // 재평가된다.
+  const missionEndUnlockMinutes = Math.max(
+    0,
+    (missionDurationMinutes || 30) - 2,
+  );
+  const missionEndLocked =
+    !isOnboardingMission &&
+    !sessionCompleted &&
+    timerElapsedMs +
+      (timerStartedAt ? Date.now() - timerStartedAt : 0) <
+      missionEndUnlockMinutes * 60 * 1000;
+
   const hasSessionStarted = Boolean(
     timerStartedAt ||
     timerElapsedMs > 0 ||
@@ -10266,7 +10280,13 @@ export default function MainScreenPage() {
                   disabled={
                     !hasSessionStarted ||
                     isCompletingSession ||
-                    sessionCompleted
+                    sessionCompleted ||
+                    missionEndLocked
+                  }
+                  title={
+                    missionEndLocked
+                      ? `${missionEndUnlockMinutes}분 경과 후부터 종료할 수 있어요`
+                      : undefined
                   }
                   className="rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-700 disabled:bg-slate-200 disabled:text-slate-500"
                 >
