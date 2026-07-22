@@ -1265,6 +1265,25 @@ function isSyntheticStitchScreenId(screenId?: string | null) {
   );
 }
 
+// Firestore rejects session documents over 1 MiB. Attached style images ride
+// on messages as full base64 data URLs (~300KB+ each) and URL-capture
+// previews add tens of KB more — enough to push the document over the limit
+// and permanently break every later save, including mission completion
+// (dev_document 15.329). The pixels only matter for the turn that sends them
+// to Stitch, so persist message shapes without them; in-memory messages keep
+// rendering the images for the current visit.
+function trimMessagesForSave<
+  T extends { styleImage?: unknown; stitchReferenceImage?: unknown },
+>(messages: T[]): T[] {
+  return messages.map((message) => {
+    if (!message.styleImage && !message.stitchReferenceImage) return message;
+    const trimmed = { ...message };
+    delete trimmed.styleImage;
+    delete trimmed.stitchReferenceImage;
+    return trimmed;
+  });
+}
+
 type CreateNoteData = {
   title?: string;
   description?: string;
@@ -5344,11 +5363,14 @@ export default function MainScreenPage() {
     };
   }, [isMissionContextReady, isReadOnly, missionId]);
 
+  // Throttles the "session save failed" toast so a persistently failing
+  // autosave (every 1.5s debounce) warns the participant without spamming.
+  const lastSaveFailureToastAtRef = useRef(0);
   const persistSessionSnapshot = useCallback(
     async (
       startedAtOverride?: number | null,
       options?: { pauseTimer?: boolean },
-    ) => {
+    ): Promise<boolean | undefined> => {
       if (isReadOnly || !userId || !missionId) return;
       const segmentStartedAt =
         startedAtOverride === undefined ? timerStartedAt : startedAtOverride;
@@ -5381,35 +5403,51 @@ export default function MainScreenPage() {
         timerHasStarted;
       if (!hasSnapshotContent) return;
       const artboardsToSave = artboards;
-      await setDoc(
-        sessionRefFor(userId),
-        cleanForFirestore({
-          messages,
-          missionId,
-          artboards: artboardsToSave,
-          references,
-          activityLog: trimActivityLogHtmlForSave(activityLog.slice(-500)),
-          ideas: ideasToSave,
-          missionTitle,
-          missionBrief,
-          selectedOptionId,
-          selectedDevice: device,
-          stitchProjectId: stitchProjectId || null,
-          finalArtboardId: finalArtboardId ?? null,
-          startedAt: timerRunning ? nowMs : null,
-          timerStartedAt: timerRunning ? nowMs : null,
-          timerElapsedMs: foldedElapsedMs,
-          timerFirstStartedAt:
-            timerFirstStartedAt ?? segmentStartedAt ?? null,
-          status: sessionCompleted
-            ? "completed"
-            : timerHasStarted
-              ? "active"
-              : "draft",
-          updatedAt: nowMs,
-        }),
-        { merge: true },
-      );
+      try {
+        await setDoc(
+          sessionRefFor(userId),
+          cleanForFirestore({
+            messages: trimMessagesForSave(messages),
+            missionId,
+            artboards: artboardsToSave,
+            references,
+            activityLog: trimActivityLogHtmlForSave(activityLog.slice(-500)),
+            ideas: ideasToSave,
+            missionTitle,
+            missionBrief,
+            selectedOptionId,
+            selectedDevice: device,
+            stitchProjectId: stitchProjectId || null,
+            finalArtboardId: finalArtboardId ?? null,
+            startedAt: timerRunning ? nowMs : null,
+            timerStartedAt: timerRunning ? nowMs : null,
+            timerElapsedMs: foldedElapsedMs,
+            timerFirstStartedAt:
+              timerFirstStartedAt ?? segmentStartedAt ?? null,
+            status: sessionCompleted
+              ? "completed"
+              : timerHasStarted
+                ? "active"
+                : "draft",
+            updatedAt: nowMs,
+          }),
+          { merge: true },
+        );
+      } catch (saveError) {
+        // A save that keeps failing (oversized document, permissions, network)
+        // must be visible: silent failure let a participant work for minutes
+        // with nothing persisted (dev_document 15.329).
+        console.warn("Unable to persist session snapshot", saveError);
+        const failureNow = Date.now();
+        if (failureNow - lastSaveFailureToastAtRef.current > 60_000) {
+          lastSaveFailureToastAtRef.current = failureNow;
+          toast.error(
+            "세션 저장에 실패했습니다. 새로고침하지 말고 관리자에게 알려주세요.",
+          );
+        }
+        return false;
+      }
+      return true;
     },
     [
       isReadOnly,
@@ -8651,7 +8689,10 @@ export default function MainScreenPage() {
         clearTimeout(saveTimerRef.current);
         saveTimerRef.current = null;
       }
-      await persistSessionSnapshot();
+      const snapshotSaved = await persistSessionSnapshot();
+      if (snapshotSaved === false) {
+        throw new Error("Session snapshot save failed before completion.");
+      }
       const finalBoard = finalArtboardId
         ? (artboards.find((board) => board.id === finalArtboardId) ?? null)
         : null;
