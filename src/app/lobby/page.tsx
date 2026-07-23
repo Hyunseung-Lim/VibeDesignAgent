@@ -319,14 +319,28 @@ export default function LobbyPage() {
     const isMissionCompleted = isOnboardingMission
       ? onboardingCompleted
       : progress?.status === "completed";
-    return { mission, progress, status, isOnboardingMission, isMissionCompleted };
+    const isReviewSubmitted = Boolean(reviewSubmittedByMissionId[mission.id]);
+    // 순차 잠금의 클리어 조건은 세션 완료 + 메모리 리뷰 제출이다(15.333).
+    // 리뷰를 미루고 다음 미션을 시작한 뒤 이전 리뷰에서 메모리를 비활성화하면
+    // 진행 중 세션의 retrieval 조건이 소급 변형돼 연구 데이터가 흐려지기 때문.
+    const isStepCleared = isMissionCompleted && isReviewSubmitted;
+    return {
+      mission,
+      progress,
+      status,
+      isOnboardingMission,
+      isMissionCompleted,
+      isReviewSubmitted,
+      isStepCleared,
+    };
   });
   // Strict linear path: onboarding first, then missions in the user's order.
-  // Exactly the first incomplete mission is "current"; everything after is locked.
+  // Exactly the first uncleared mission (incomplete, or completed with an
+  // unsubmitted memory review) is "current"; everything after is locked.
   // While onboarding status is still resolving, nothing is unlocked yet.
   const currentMissionIndex = isCheckingOnboarding
     ? -1
-    : missionSummaries.findIndex((item) => !item.isMissionCompleted);
+    : missionSummaries.findIndex((item) => !item.isStepCleared);
   const completedCount = missionSummaries.filter(
     (item) => item.isMissionCompleted,
   ).length;
@@ -428,18 +442,34 @@ export default function LobbyPage() {
           ) : (
             <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
               {missionSummaries.map(
-                ({ mission, status, isOnboardingMission, isMissionCompleted }, index) => {
+                (
+                  {
+                    mission,
+                    status,
+                    isOnboardingMission,
+                    isMissionCompleted,
+                    isReviewSubmitted,
+                  },
+                  index,
+                ) => {
                   const isCurrent = index === currentMissionIndex;
                   const isLocked =
                     !isMissionCompleted &&
                     (currentMissionIndex === -1 || index > currentMissionIndex);
-                  // The blocking step is whatever is "current"; tailor the reason.
-                  const blockingIsOnboarding =
-                    currentMissionIndex >= 0 &&
-                    missionSummaries[currentMissionIndex]?.isOnboardingMission;
-                  const lockReason = blockingIsOnboarding
-                    ? "온보딩 완료 후 진행 가능"
-                    : "이전 미션 완료 후 진행 가능";
+                  // The blocking step is whatever is "current"; tailor the
+                  // reason. A completed-but-unreviewed mission blocks on its
+                  // memory review, not on completion (15.333).
+                  const blocking =
+                    currentMissionIndex >= 0
+                      ? missionSummaries[currentMissionIndex]
+                      : null;
+                  const lockReason = blocking?.isMissionCompleted
+                    ? blocking.isOnboardingMission
+                      ? "온보딩 미션의 메모리 리뷰 제출 후 진행 가능"
+                      : "이전 미션의 메모리 리뷰 제출 후 진행 가능"
+                    : blocking?.isOnboardingMission
+                      ? "온보딩 완료 후 진행 가능"
+                      : "이전 미션 완료 후 진행 가능";
                   const openMission = () => router.push(`/main/${mission.id}`);
                   return (
                     <MissionCard
@@ -447,9 +477,7 @@ export default function LobbyPage() {
                       mission={mission}
                       status={status}
                       isCompleted={isMissionCompleted}
-                      isReviewSubmitted={Boolean(
-                        reviewSubmittedByMissionId[mission.id],
-                      )}
+                      isReviewSubmitted={isReviewSubmitted}
                       isCurrent={isCurrent}
                       isLocked={isLocked}
                       lockReason={lockReason}

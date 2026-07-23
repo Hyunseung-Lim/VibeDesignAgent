@@ -135,12 +135,19 @@ export function AdminUserCard({
     ]),
   );
   // Sequential-lock rule from the lobby: onboarding first, then the user's
-  // order; the first incomplete mission is "current" and everything after it is
-  // locked. Admin is read-only, so locks are surfaced as a badge, not enforced.
+  // order; the first uncleared mission — incomplete, or completed with an
+  // unsubmitted memory review (15.333) — is "current" and everything after it
+  // is locked. Admin is read-only, so locks are surfaced as a badge, not
+  // enforced.
   const completedFlags = missionIds.map((missionId) =>
     isMissionCompleted(user, missionId, onboardingMissionId),
   );
-  const currentMissionIndex = completedFlags.findIndex((done) => !done);
+  const clearedFlags = missionIds.map(
+    (missionId, index) =>
+      completedFlags[index] &&
+      Boolean(user.memoryReviewSubmittedByMissionId[missionId]),
+  );
+  const currentMissionIndex = clearedFlags.findIndex((cleared) => !cleared);
   const completedMissionCount = completedFlags.filter(Boolean).length;
   return (
     <div className="rounded-3xl border border-border bg-card p-5 shadow-sm">
