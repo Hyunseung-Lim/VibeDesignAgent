@@ -131,6 +131,8 @@ const ONBOARDING_MISSION_ID = "onboarding";
 const CHAT_MIN_WIDTH = 360;
 const CHAT_MAX_WIDTH = 720;
 const CHAT_DEFAULT_WIDTH = 448;
+// 채팅 스타일 참고 이미지 첨부 상한(15.335).
+const MAX_ATTACHED_STYLE_IMAGES = 3;
 
 // A memory belongs to the cumulative set for the selected mission when it is the
 // onboarding base, or was created in a mission at/before the selected one in the
@@ -195,6 +197,9 @@ type Message = {
   citedReferences?: { id: string; title: string; imageUrl?: string }[] | null;
   citedTexts?: string[] | null;
   styleImage?: { dataUrl: string; name?: string } | null;
+  // 다중 첨부(최대 3장, 15.335). styleImage는 첫 장을 담는 하위호환 필드로
+  // 유지된다 — carry-forward/Stitch/메모리 source 등 단일 계약 소비처용.
+  styleImages?: { dataUrl: string; name?: string }[] | null;
   stitchReferenceImage?: {
     dataUrl: string;
     sourceUrl?: string;
@@ -1273,12 +1278,22 @@ function isSyntheticStitchScreenId(screenId?: string | null) {
 // to Stitch, so persist message shapes without them; in-memory messages keep
 // rendering the images for the current visit.
 function trimMessagesForSave<
-  T extends { styleImage?: unknown; stitchReferenceImage?: unknown },
+  T extends {
+    styleImage?: unknown;
+    styleImages?: unknown;
+    stitchReferenceImage?: unknown;
+  },
 >(messages: T[]): T[] {
   return messages.map((message) => {
-    if (!message.styleImage && !message.stitchReferenceImage) return message;
+    if (
+      !message.styleImage &&
+      !message.styleImages &&
+      !message.stitchReferenceImage
+    )
+      return message;
     const trimmed = { ...message };
     delete trimmed.styleImage;
+    delete trimmed.styleImages;
     delete trimmed.stitchReferenceImage;
     return trimmed;
   });
@@ -3070,10 +3085,12 @@ export default function MainScreenPage() {
   const [assistantFeedbackReason, setAssistantFeedbackReason] = useState("");
   const [isSubmittingAssistantFeedback, setIsSubmittingAssistantFeedback] =
     useState(false);
-  const [attachedStyleImage, setAttachedStyleImage] = useState<{
-    dataUrl: string;
-    name?: string;
-  } | null>(null);
+  // 스타일 참고 이미지 첨부(최대 3장, 15.335). 첫 장이 primary로 기존 단일
+  // 계약(Stitch 이미지 주도, memory source, carry-forward)을 그대로 탄다.
+  const [attachedStyleImages, setAttachedStyleImages] = useState<
+    { dataUrl: string; name?: string }[]
+  >([]);
+  const attachedStyleImage = attachedStyleImages[0] ?? null;
   const [isLoading, setIsLoading] = useState(false);
   const [artboards, setArtboards] = useState<Artboard[]>([]);
   const [activeArtboardId, setActiveArtboardId] = useState<string | null>(null);
@@ -6175,19 +6192,70 @@ export default function MainScreenPage() {
     setSelectedElements([]);
   }, [clearIframeSelections]);
 
+  // 3장 제한을 비동기 파이프라인(FileReader/Image decode) 도중에도 정확히
+  // 지키기 위한 동기 거울 — state는 커밋 시점에만 갱신되기 때문.
+  const attachedStyleImagesRef = useRef<{ dataUrl: string; name?: string }[]>(
+    [],
+  );
+  useEffect(() => {
+    attachedStyleImagesRef.current = attachedStyleImages;
+  }, [attachedStyleImages]);
+  const pendingStyleImageAttachRef = useRef(0);
+
   const handleAttachStyleImage = useCallback((file: File) => {
     if (!file.type.startsWith("image/")) return;
     if (file.size > 12 * 1024 * 1024) {
-      alert("이미지가 너무 큽니다 (최대 12MB).");
+      toast.error("이미지가 너무 큽니다 (최대 12MB).");
       return;
     }
+    if (
+      attachedStyleImagesRef.current.length +
+        pendingStyleImageAttachRef.current >=
+      MAX_ATTACHED_STYLE_IMAGES
+    ) {
+      toast.info(
+        `이미지는 최대 ${MAX_ATTACHED_STYLE_IMAGES}장까지 첨부할 수 있어요.`,
+      );
+      return;
+    }
+    pendingStyleImageAttachRef.current += 1;
+    const finish = () => {
+      pendingStyleImageAttachRef.current = Math.max(
+        0,
+        pendingStyleImageAttachRef.current - 1,
+      );
+    };
+    // 다운스케일·재압축 후에도 dataURL이 이 길이를 넘으면 첨부를 거부한다.
+    // 세션 문서 1MiB는 trimMessagesForSave가 지키지만(15.329), 채팅 vision /
+    // 레퍼런스 분석 / Stitch 업로드 요청 페이로드가 3장 합산으로 비대해져
+    // 서버 한도(chat 8MB, references 5MB)나 함수 body 한도에 닿는 것을
+    // 입구에서 막는다(15.335).
+    const MAX_STYLE_IMAGE_DATA_URL_CHARS = 1_500_000;
+    const commit = (image: { dataUrl: string; name?: string }) => {
+      if (image.dataUrl.length > MAX_STYLE_IMAGE_DATA_URL_CHARS) {
+        toast.error(
+          "이미지 용량이 너무 커서 첨부할 수 없어요. 더 작은 이미지를 사용해주세요.",
+        );
+        finish();
+        return;
+      }
+      setAttachedStyleImages((prev) =>
+        prev.length >= MAX_ATTACHED_STYLE_IMAGES ? prev : [...prev, image],
+      );
+      finish();
+    };
     const reader = new FileReader();
+    reader.onerror = finish;
     reader.onload = () => {
-      if (typeof reader.result !== "string") return;
+      if (typeof reader.result !== "string") {
+        finish();
+        return;
+      }
       const original = reader.result;
       // Downscale before keeping it: the same dataURL is sent to Stitch (which
-      // re-caps at 1600px anyway), shown in the chat bubble, and persisted with
-      // the session — so a full-res base64 would bloat the Firestore doc.
+      // re-caps at 1600px anyway), shown in the chat bubble, and included in
+      // chat/reference vision payloads — so a full-res base64 would bloat
+      // every request carrying it.
       const img = new Image();
       img.onload = () => {
         const maxDim = 1280;
@@ -6199,17 +6267,18 @@ export default function MainScreenPage() {
         canvas.height = h;
         const ctx = canvas.getContext("2d");
         if (!ctx) {
-          setAttachedStyleImage({ dataUrl: original, name: file.name });
+          commit({ dataUrl: original, name: file.name });
           return;
         }
         ctx.drawImage(img, 0, 0, w, h);
-        setAttachedStyleImage({
-          dataUrl: canvas.toDataURL("image/jpeg", 0.85),
-          name: file.name,
-        });
+        let dataUrl = canvas.toDataURL("image/jpeg", 0.85);
+        // 고밀도 스크린샷 등으로 여전히 크면 한 단계 더 압축해 본다.
+        if (dataUrl.length > 700_000) {
+          dataUrl = canvas.toDataURL("image/jpeg", 0.7);
+        }
+        commit({ dataUrl, name: file.name });
       };
-      img.onerror = () =>
-        setAttachedStyleImage({ dataUrl: original, name: file.name });
+      img.onerror = () => commit({ dataUrl: original, name: file.name });
       img.src = original;
     };
     reader.readAsDataURL(file);
@@ -6267,12 +6336,14 @@ export default function MainScreenPage() {
       }
       setSelectedReferences([]);
       updateCitedTexts([]);
-      setAttachedStyleImage(null);
+      setAttachedStyleImages([]);
       return;
     }
-    // Snapshot the attached style image for this turn; the GENERATE_MOCKUP call
-    // happens later in the streaming handler, after we clear the composer chip.
-    const styleImageForTurn = attachedStyleImage?.dataUrl ?? null;
+    // Snapshot the attached style images for this turn; the GENERATE_MOCKUP
+    // call happens later in the streaming handler, after we clear the composer
+    // chip. 첫 장(primary)이 기존 단일 계약을 그대로 탄다(15.335).
+    const styleImagesForTurn = attachedStyleImages;
+    const styleImageForTurn = styleImagesForTurn[0]?.dataUrl ?? null;
     const citedTextsForTurn = [...citedTextsRef.current];
     // Phase 2: if no image is attached, a URL in the message or a cited
     // reference's URL drives appearance (server screenshots it). Attached image
@@ -6319,7 +6390,8 @@ export default function MainScreenPage() {
             }))
           : null,
       citedTexts: citedTextsForTurn.length > 0 ? citedTextsForTurn : null,
-      styleImage: attachedStyleImage,
+      styleImage: styleImagesForTurn[0] ?? null,
+      styleImages: styleImagesForTurn.length > 0 ? styleImagesForTurn : null,
       composerCommand: commandForTurn,
       composerMention: mentionForTurn,
     };
@@ -6348,7 +6420,8 @@ export default function MainScreenPage() {
     const memorySources: MemoryDraftSources = {
       texts: citedTextsForTurn,
       links: selectedReferences.map(memorySourceLinkFromReference),
-      image: attachedStyleImage,
+      // 메모리 source 스키마는 단일 image 계약 유지 — 첫 장(primary)만 기록.
+      image: styleImagesForTurn[0] ?? null,
       uiResult: selectedElement
         ? {
             artboardId: selectedElement.artboardId,
@@ -6368,7 +6441,7 @@ export default function MainScreenPage() {
     }
     setSelectedReferences([]);
     updateCitedTexts([]);
-    setAttachedStyleImage(null);
+    setAttachedStyleImages([]);
 
     if (manualReference) {
       const alreadyExists = references.some((reference) =>
@@ -6558,9 +6631,12 @@ export default function MainScreenPage() {
           styleImageContext: styleImageForTurn
             ? {
                 present: true,
-                name: attachedStyleImage?.name,
+                name: styleImagesForTurn[0]?.name,
+                count: styleImagesForTurn.length,
                 // 서버가 vision 입력으로 provider에 직접 전달한다(15.301).
                 dataUrl: styleImageForTurn,
+                // 다중 첨부(최대 3장) — 첫 장 high, 나머지 low로 주입(15.335).
+                dataUrls: styleImagesForTurn.map((image) => image.dataUrl),
               }
             : undefined,
           // 최근 턴에서 첨부했던 이미지 1장을 참고용 저해상도로 동반해
@@ -7117,7 +7193,7 @@ export default function MainScreenPage() {
           customQuery,
           parseRequestedReferenceCount(text),
           text,
-          attachedStyleImage,
+          styleImagesForTurn,
         )
           .then((result) => appendReferenceResult(result))
           .finally(() =>
@@ -7141,7 +7217,7 @@ export default function MainScreenPage() {
           fallbackReferenceQuery || text,
           parseRequestedReferenceCount(text),
           text,
-          attachedStyleImage,
+          styleImagesForTurn,
         )
           .then((result) => appendReferenceResult(result))
           .finally(() =>
@@ -8496,7 +8572,7 @@ export default function MainScreenPage() {
     selectedElements,
     selectedReferences,
     updateCitedTexts,
-    attachedStyleImage,
+    attachedStyleImages,
     ideas,
     references,
     device,
@@ -8524,7 +8600,7 @@ export default function MainScreenPage() {
       customQuery?: string | null,
       requestedCount?: number | null,
       userRequestText?: string | null,
-      styleImage?: { dataUrl: string; name?: string } | null,
+      styleImages?: { dataUrl: string; name?: string }[] | null,
     ): Promise<ReferenceFetchResult> => {
       if (isFetchingRefs || isReadOnly) return { references: [] };
       setIsFetchingRefs(true);
@@ -8545,7 +8621,10 @@ export default function MainScreenPage() {
             customQuery,
             userRequest: userRequestText ?? undefined,
             requestedCount: requestedCount ?? undefined,
-            styleImage: styleImage ?? undefined,
+            styleImage: styleImages?.[0] ?? undefined,
+            // 다중 첨부(최대 3장) — 서버 vision 스타일 분석이 함께 본다(15.335).
+            styleImages:
+              styleImages && styleImages.length > 0 ? styleImages : undefined,
             existingReferences: [...references, ...loggedReferenceLinks],
             referencePreferenceContext: missionId
               ? buildReferencePreferenceContext(
@@ -11500,7 +11579,7 @@ export default function MainScreenPage() {
               selectedElements={selectedElements}
               citedTexts={citedTexts}
               selectedReferences={selectedReferences}
-              styleImage={attachedStyleImage}
+              styleImages={attachedStyleImages}
               inputText={inputText}
               composerCommand={composerCommand}
               composerMention={composerMention}
@@ -11525,7 +11604,11 @@ export default function MainScreenPage() {
                 )
               }
               onAttachStyleImage={handleAttachStyleImage}
-              onClearStyleImage={() => setAttachedStyleImage(null)}
+              onRemoveStyleImage={(index) =>
+                setAttachedStyleImages((prev) =>
+                  prev.filter((_, i) => i !== index),
+                )
+              }
               onInputTextChange={setInputText}
               onCancelMockupGeneration={cancelMockupGeneration}
               onCancelMessage={cancelMessage}

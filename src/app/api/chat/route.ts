@@ -394,9 +394,14 @@ function normalizeStyleImageContext(value: unknown) {
   const record = value as Record<string, unknown>;
   if (record.present !== true) return null;
   const name = truncateText(record.name, 200).replace(/[\r\n]+/g, " ").trim();
+  const rawCount = Number(record.count);
+  const count = Number.isFinite(rawCount)
+    ? Math.min(Math.max(Math.round(rawCount), 1), MAX_STYLE_IMAGE_COUNT)
+    : 1;
   return {
     present: true,
     name: name || undefined,
+    count,
   };
 }
 
@@ -406,6 +411,8 @@ function normalizeStyleImageContext(value: unknown) {
 const STYLE_IMAGE_DATA_URL_PATTERN =
   /^data:image\/(?:png|jpeg|jpg|webp|gif);base64,[A-Za-z0-9+/=]+$/;
 const MAX_STYLE_IMAGE_DATA_URL_LENGTH = 8 * 1024 * 1024;
+// 이번 턴 첨부 이미지 상한 — 클라이언트 첨부 상한(15.335)과 동일하게 유지.
+const MAX_STYLE_IMAGE_COUNT = 3;
 
 function extractStyleImageDataUrl(value: unknown): string | null {
   if (!value || typeof value !== "object") return null;
@@ -419,6 +426,23 @@ function extractStyleImageDataUrl(value: unknown): string | null {
     return null;
   }
   return STYLE_IMAGE_DATA_URL_PATTERN.test(trimmed) ? trimmed : null;
+}
+
+// 다중 첨부(최대 3장, 15.335): dataUrls 배열을 우선 읽고 없으면 단일 dataUrl로
+// 폴백한다. 각 항목은 단일 계약과 같은 패턴/길이 검증을 통과해야 한다.
+function extractStyleImageDataUrls(value: unknown): string[] {
+  if (!value || typeof value !== "object") return [];
+  const record = value as Record<string, unknown>;
+  const candidates = Array.isArray(record.dataUrls)
+    ? record.dataUrls
+    : [record.dataUrl];
+  const urls: string[] = [];
+  for (const candidate of candidates) {
+    if (urls.length >= MAX_STYLE_IMAGE_COUNT) break;
+    const url = extractStyleImageDataUrl({ dataUrl: candidate });
+    if (url && !urls.includes(url)) urls.push(url);
+  }
+  return urls;
 }
 
 function forceRequestedCommand(
@@ -544,8 +568,9 @@ function anthropicMessages(input: BuiltChatMessage[]) {
 }
 
 type ChatVisionImages = {
-  // 이번 턴에 첨부된 이미지 — 정밀 판독이 필요하므로 detail high.
-  current: string | null;
+  // 이번 턴에 첨부된 이미지(최대 3장, 15.335) — 첫 장은 정밀 판독용 detail
+  // high, 나머지는 비용을 낮춘 low로 주입한다.
+  current: string[];
   // 최근 턴에서 첨부했던 이미지 — 후속 질문 대응용 저비용 detail low.
   previous: string | null;
 };
@@ -556,7 +581,7 @@ function openaiInputWithImage(
   input: BuiltChatMessage[],
   images: ChatVisionImages,
 ) {
-  if (!images.current && !images.previous) return input;
+  if (images.current.length === 0 && !images.previous) return input;
   const lastUserIdx = input.findLastIndex(
     (message) => message.role === "user",
   );
@@ -567,11 +592,21 @@ function openaiInputWithImage(
       | { type: "input_text"; text: string }
       | { type: "input_image"; image_url: string; detail: "high" | "low" }
     > = [{ type: "input_text", text: message.content }];
-    if (images.current) {
-      parts.push(
-        { type: "input_text", text: "[이번 턴에 첨부된 이미지]" },
-        { type: "input_image", image_url: images.current, detail: "high" },
-      );
+    if (images.current.length > 0) {
+      parts.push({
+        type: "input_text",
+        text:
+          images.current.length > 1
+            ? `[이번 턴에 첨부된 이미지 ${images.current.length}장]`
+            : "[이번 턴에 첨부된 이미지]",
+      });
+      images.current.forEach((imageUrl, imageIndex) => {
+        parts.push({
+          type: "input_image",
+          image_url: imageUrl,
+          detail: imageIndex === 0 ? "high" : "low",
+        });
+      });
     }
     if (images.previous) {
       parts.push(
@@ -662,7 +697,7 @@ async function* createAnthropicChatStream(
 
   const { system, messages } = anthropicMessages(input);
   const imageBlocks = [
-    images.current ? anthropicImageBlock(images.current) : null,
+    ...images.current.map((imageUrl) => anthropicImageBlock(imageUrl)),
     images.previous ? anthropicImageBlock(images.previous) : null,
   ].filter(Boolean);
   if (imageBlocks.length > 0) {
@@ -1124,14 +1159,15 @@ export async function POST(request: Request) {
       : null;
   const normalizedStyleImageContext =
     normalizeStyleImageContext(styleImageContext);
-  const styleImageDataUrl = extractStyleImageDataUrl(styleImageContext);
+  const styleImageDataUrls = extractStyleImageDataUrls(styleImageContext);
   const previousImageDataUrl = extractStyleImageDataUrl(previousImageContext);
   if (normalizedStyleImageContext) {
     console.info(
       "[api/chat] attached style image context:",
       JSON.stringify({
         hasName: Boolean(normalizedStyleImageContext.name),
-        hasImageData: Boolean(styleImageDataUrl),
+        hasImageData: styleImageDataUrls.length > 0,
+        imageCount: styleImageDataUrls.length,
       }),
     );
   }
@@ -1517,7 +1553,10 @@ export async function POST(request: Request) {
     systemMessages.push({
       role: "system",
       label: "styleImageContext",
-      content: chatAttachedStyleImagePrompt(normalizedStyleImageContext.name),
+      content: chatAttachedStyleImagePrompt(
+        normalizedStyleImageContext.name,
+        normalizedStyleImageContext.count,
+      ),
     });
   }
 
@@ -1674,7 +1713,7 @@ export async function POST(request: Request) {
     hasRefUrls,
     selectedResponseProvider,
     allowWebSearch,
-    { current: styleImageDataUrl, previous: previousImageDataUrl },
+    { current: styleImageDataUrls, previous: previousImageDataUrl },
   );
 
   const encoder = new TextEncoder();

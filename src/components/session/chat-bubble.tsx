@@ -31,6 +31,7 @@ export type ChatBubbleMessage = {
   citedReferences?: { id: string; title: string; imageUrl?: string }[] | null;
   citedTexts?: string[] | null;
   styleImage?: { dataUrl: string; name?: string } | null;
+  styleImages?: { dataUrl: string; name?: string }[] | null;
   stitchReferenceImage?: {
     dataUrl: string;
     sourceUrl?: string;
@@ -206,16 +207,21 @@ export function ChatBubble({
                 )}
               </div>
             )}
-            {message.styleImage && (
-              <div className="flex justify-end">
+            {(message.styleImages?.length
+              ? message.styleImages
+              : message.styleImage
+                ? [message.styleImage]
+                : []
+            ).map((styleImage, index) => (
+              <div key={`style-image-${index}`} className="flex justify-end">
                 <button
                   type="button"
                   onClick={() =>
                     setPreviewImage({
-                      title: message.styleImage?.name || "첨부 이미지",
+                      title: styleImage.name || "첨부 이미지",
                       description: "사용자가 채팅에 첨부한 이미지",
-                      imageUrl: message.styleImage!.dataUrl,
-                      alt: message.styleImage?.name || "첨부 이미지",
+                      imageUrl: styleImage.dataUrl,
+                      alt: styleImage.name || "첨부 이미지",
                     })
                   }
                   className="group/image relative max-w-full rounded-lg focus:outline-none focus:ring-2 focus:ring-white/60"
@@ -223,8 +229,8 @@ export function ChatBubble({
                   title="크게 보기"
                 >
                   <img
-                    src={message.styleImage.dataUrl}
-                    alt={message.styleImage.name || "첨부 이미지"}
+                    src={styleImage.dataUrl}
+                    alt={styleImage.name || "첨부 이미지"}
                     className="max-h-44 max-w-full rounded-lg object-contain"
                   />
                   <span className="absolute right-2 top-2 inline-flex size-7 items-center justify-center rounded-md bg-slate-900/70 text-white opacity-0 transition group-hover/image:opacity-100 group-focus-visible/image:opacity-100">
@@ -232,7 +238,7 @@ export function ChatBubble({
                   </span>
                 </button>
               </div>
-            )}
+            ))}
             {(message.citedElements?.length
               ? message.citedElements
               : message.citedElement

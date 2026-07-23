@@ -256,9 +256,19 @@ export function chatCurrentRequestPrompt() {
   return `The most recent user message is the current request and has the highest priority.\nTreat earlier conversation only as background. Do not repeat, continue, or complete a previous task unless this current request explicitly asks you to. If the current request says to make it Korean / 한국어로 만들어줘 and a current mockup exists, interpret that as editing the visible text in the current mockup into Korean, not as repeating a previous color or layout change.`;
 }
 
-export function chatAttachedStyleImagePrompt(name?: string) {
-  const label = name?.trim() ? ` Filename: ${name.trim().slice(0, 200)}.` : "";
-  return `The latest user turn includes an attached reference/style image, and the image itself is part of this turn's input — you can see it directly.${label} Ground any statement about the image (layout, grid, colors, item counts, text) in what is actually visible; if something is not legible, say so instead of guessing. Treat the image requirement as satisfied: do not ask the user to upload or share a reference again. If the user's text says this, this feeling, like this, 이번엔 이런 느낌, or asks to make/generate using the attached image, route the turn as image-led mockup generation when an active design brief exists. The downstream Stitch step also receives the actual image pixels.`;
+export function chatAttachedStyleImagePrompt(name?: string, count = 1) {
+  const label = name?.trim()
+    ? ` First filename: ${name.trim().slice(0, 200)}.`
+    : "";
+  const subject =
+    count > 1
+      ? `${count} attached reference/style images, and the images themselves are part of this turn's input — you can see them directly`
+      : "an attached reference/style image, and the image itself is part of this turn's input — you can see it directly";
+  const multiNote =
+    count > 1
+      ? " The first image is the primary style reference for downstream mockup generation; treat the others as supplementary style evidence."
+      : "";
+  return `The latest user turn includes ${subject}.${label}${multiNote} Ground any statement about the image (layout, grid, colors, item counts, text) in what is actually visible; if something is not legible, say so instead of guessing. Treat the image requirement as satisfied: do not ask the user to upload or share a reference again. If the user's text says this, this feeling, like this, 이번엔 이런 느낌, or asks to make/generate using the attached image, route the turn as image-led mockup generation when an active design brief exists. The downstream Stitch step also receives the actual image pixels.`;
 }
 
 export function chatMockupHtmlPrompt(mockupHtml: string) {

@@ -69,7 +69,7 @@ type ChatInputProps = {
   selectedElements: ChatInputSelectedElement[];
   citedTexts: string[];
   selectedReferences: ChatInputReference[];
-  styleImage: { dataUrl: string; name?: string } | null;
+  styleImages: { dataUrl: string; name?: string }[];
   inputText: string;
   composerCommand: ChatComposerCommand | null;
   composerMention: ChatComposerMention | null;
@@ -86,7 +86,7 @@ type ChatInputProps = {
   onClearSelectedReferences: () => void;
   onRemoveSelectedReference: (id: string) => void;
   onAttachStyleImage: (file: File) => void;
-  onClearStyleImage: () => void;
+  onRemoveStyleImage: (index: number) => void;
   onInputTextChange: (value: string) => void;
   onCancelMockupGeneration: () => void;
   onCancelMessage: () => void;
@@ -637,7 +637,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
   selectedElements,
   citedTexts,
   selectedReferences,
-  styleImage,
+  styleImages,
   inputText,
   composerCommand,
   composerMention,
@@ -654,7 +654,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
   onClearSelectedReferences,
   onRemoveSelectedReference,
   onAttachStyleImage,
-  onClearStyleImage,
+  onRemoveStyleImage,
   onInputTextChange,
   onCancelMockupGeneration,
   onCancelMessage,
@@ -695,7 +695,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
     selectedElements.length > 0 ||
     citedTexts.length > 0 ||
     selectedReferences.length > 0 ||
-    Boolean(styleImage);
+    styleImages.length > 0;
 
   const closeSuggestions = () => {
     setTrigger(null);
@@ -813,15 +813,16 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
                 onRemove={() => onRemoveSelectedReference(reference.id)}
               />
             ))}
-            {styleImage && (
+            {styleImages.map((styleImage, index) => (
               <ComposerAttachment
+                key={`${index}-${styleImage.name ?? "image"}`}
                 imageUrl={styleImage.dataUrl}
                 icon={<ImageIcon className="size-4" />}
                 title="스타일 참고 이미지"
                 description={styleImage.name || "첨부 이미지"}
-                onRemove={onClearStyleImage}
+                onRemove={() => onRemoveStyleImage(index)}
               />
-            )}
+            ))}
             {citedTexts.length > 1 && (
               <button
                 type="button"
@@ -977,11 +978,11 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
                 /
               </Button>
               <label
-                title="스타일 참고 이미지 첨부 (이 이미지처럼 목업 생성)"
+                title="스타일 참고 이미지 첨부 (최대 3장, 이 이미지처럼 목업 생성)"
                 className={cn(
                   buttonVariants({ variant: "ghost", size: "icon" }),
                   "rounded-full",
-                  styleImage
+                  styleImages.length > 0
                     ? "text-slate-700"
                     : "text-slate-400 hover:text-slate-600",
                   !missionContextReady && "pointer-events-none opacity-40",
@@ -991,11 +992,14 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
                 <input
                   type="file"
                   accept="image/png,image/jpeg,image/webp"
+                  multiple
                   className="hidden"
                   disabled={!missionContextReady}
                   onChange={(event) => {
-                    const file = event.target.files?.[0];
-                    if (file) onAttachStyleImage(file);
+                    // 장수 제한/크기 검증은 onAttachStyleImage가 수행한다.
+                    for (const file of Array.from(event.target.files ?? [])) {
+                      onAttachStyleImage(file);
+                    }
                     event.target.value = "";
                   }}
                 />

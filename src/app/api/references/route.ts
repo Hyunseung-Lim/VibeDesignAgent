@@ -447,7 +447,7 @@ function compactReferencePreferenceContext(value: unknown) {
 }
 
 async function describeStyleImageForSearch(
-  dataUrl: string,
+  dataUrls: string[],
   context: {
     missionTitle: string;
     missionBrief: string;
@@ -455,7 +455,7 @@ async function describeStyleImageForSearch(
     userRequest: string | null;
   },
 ) {
-  if (!dataUrl) return "";
+  if (dataUrls.length === 0) return "";
   try {
     const completion = await openai.chat.completions.create({
       model: QUERY_MODEL,
@@ -463,7 +463,7 @@ async function describeStyleImageForSearch(
         {
           role: "system",
           content:
-            "Analyze the attached UI/design reference image for web search. Return one compact English phrase under 80 words that can be appended to a design reference search query. Focus only on visible style cues: UI artifact type, layout, composition, color palette, typography, image treatment, density, spacing, surface style, and mood. Do not identify people or infer private traits. Do not mention that it is an attached image.",
+            "Analyze the attached UI/design reference image(s) for web search. Return one compact English phrase under 80 words that can be appended to a design reference search query. If multiple images are attached, merge their shared style direction into the one phrase. Focus only on visible style cues: UI artifact type, layout, composition, color palette, typography, image treatment, density, spacing, surface style, and mood. Do not identify people or infer private traits. Do not mention that these are attached images.",
         },
         {
           role: "user",
@@ -477,10 +477,10 @@ async function describeStyleImageForSearch(
                 "Describe the visible design style as reusable search cues for finding similar UI/UX references.",
               ].join("\n"),
             },
-            {
-              type: "image_url",
-              image_url: { url: dataUrl, detail: "low" },
-            },
+            ...dataUrls.map((dataUrl) => ({
+              type: "image_url" as const,
+              image_url: { url: dataUrl, detail: "low" as const },
+            })),
           ],
         },
       ],
@@ -856,6 +856,7 @@ export async function POST(request: Request) {
     referencePreferenceContext?: unknown;
     requestedCount?: unknown;
     styleImage?: unknown;
+    styleImages?: unknown;
   };
   try {
     body = await request.json();
@@ -886,6 +887,26 @@ export async function POST(request: Request) {
       ? (body.styleImage as Record<string, unknown>)
       : null;
   const styleImageDataUrl = safeImageDataUrl(styleImageRecord?.dataUrl);
+  // 다중 첨부(최대 3장, 15.335) — styleImages 배열을 우선 읽고, 구버전
+  // 클라이언트의 단일 styleImage로 폴백한다. 각 항목은 단일 계약과 같은
+  // safeImageDataUrl 검증(형식/5MB)을 통과해야 한다.
+  const styleImageDataUrls = (() => {
+    const rawList = Array.isArray(body.styleImages)
+      ? (body.styleImages as unknown[])
+      : [];
+    const urls: string[] = [];
+    for (const entry of rawList) {
+      if (urls.length >= 3) break;
+      const record =
+        entry && typeof entry === "object"
+          ? (entry as Record<string, unknown>)
+          : null;
+      const url = safeImageDataUrl(record?.dataUrl);
+      if (url && !urls.includes(url)) urls.push(url);
+    }
+    if (urls.length === 0 && styleImageDataUrl) urls.push(styleImageDataUrl);
+    return urls;
+  })();
 
   if (!missionTitle && !missionBrief && !customQuery) {
     return Response.json(
@@ -904,7 +925,7 @@ export async function POST(request: Request) {
     }
 
     const imageStyleSearchCues = await describeStyleImageForSearch(
-      styleImageDataUrl,
+      styleImageDataUrls,
       {
         missionTitle,
         missionBrief,
