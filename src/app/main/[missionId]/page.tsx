@@ -2696,6 +2696,9 @@ function MemoryReviewIntroPanel({
     initialReviewText(initialAnswers, MEMORY_REVIEW_INTRO_KEYS.futureMemory),
   );
   const [isSaving, setIsSaving] = useState(false);
+  // Part 1을 두 스텝으로 나눈다: 0 = Likert 1~3, 1 = 자유응답(4). 아래
+  // 세션 화면이 가리지 않도록 한 번에 한 묶음만 보여준다.
+  const [introStep, setIntroStep] = useState<0 | 1>(0);
 
   const selectUnderstandingRating = useCallback((value: number) => {
     setUnderstandingRating(value);
@@ -2716,11 +2719,12 @@ function MemoryReviewIntroPanel({
         : "border-slate-200 bg-white text-slate-600 hover:border-slate-400 hover:bg-white hover:text-slate-950"
     }`;
 
-  const canContinue =
+  const canAdvanceRatings =
     understandingRating !== null &&
     preferenceRating !== null &&
-    helpfulnessRating !== null &&
-    futureMemoryText.trim().length > 0;
+    helpfulnessRating !== null;
+
+  const canContinue = canAdvanceRatings && futureMemoryText.trim().length > 0;
 
   const submitIntro = async () => {
     if (!canContinue || isSaving) return;
@@ -2781,7 +2785,7 @@ function MemoryReviewIntroPanel({
   return (
     <section className="shrink-0 border-b border-slate-300 bg-slate-100 px-4 py-2 lg:px-6">
       <div className="mx-auto max-w-[100rem] overflow-hidden rounded-lg border border-slate-200 bg-white shadow-[0_8px_18px_rgba(15,23,42,0.08)]">
-        <div className="flex items-center gap-3 border-b border-slate-200 px-5 py-2.5">
+        <div className="flex items-center justify-between gap-3 border-b border-slate-200 px-5 py-2.5">
           <div className="flex min-w-0 items-baseline gap-2">
             <p className="shrink-0 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
               Review Part 1
@@ -2791,44 +2795,50 @@ function MemoryReviewIntroPanel({
               오늘 세션 돌아보기
             </h2>
           </div>
+          <p className="shrink-0 text-[11px] font-semibold tabular-nums text-slate-400">
+            {introStep + 1} / 2
+          </p>
         </div>
         <div className="space-y-2.5 px-5 py-2.5">
-          <div className="grid gap-2.5 md:grid-cols-3">
-            <section className="flex flex-col justify-between gap-2 rounded-lg border border-slate-200 bg-slate-50/70 p-2.5">
+          {introStep === 0 ? (
+            <div className="grid gap-2.5 md:grid-cols-3">
+              <section className="flex flex-col justify-between gap-2 rounded-lg border border-slate-200 bg-slate-50/70 p-2.5">
+                <p className="text-[13px] font-semibold leading-snug text-slate-800">
+                  1. 오늘 세션에서, 에이전트가 내 작업 방식을 잘 이해하고 있다고
+                  느꼈습니다.
+                </p>
+                {renderRatingRow(understandingRating, selectUnderstandingRating)}
+              </section>
+              <section className="flex flex-col justify-between gap-2 rounded-lg border border-slate-200 bg-slate-50/70 p-2.5">
+                <p className="text-[13px] font-semibold leading-snug text-slate-800">
+                  2. 에이전트가 내 디자인 취향과 선호를 잘 이해하고 있다고
+                  느꼈습니다.
+                </p>
+                {renderRatingRow(preferenceRating, selectPreferenceRating)}
+              </section>
+              <section className="flex flex-col justify-between gap-2 rounded-lg border border-slate-200 bg-slate-50/70 p-2.5">
+                <p className="text-[13px] font-semibold leading-snug text-slate-800">
+                  3. 오늘 세션에서, 에이전트와의 협업이 수월했다고 느꼈습니다.
+                </p>
+                {renderRatingRow(helpfulnessRating, selectHelpfulnessRating)}
+              </section>
+            </div>
+          ) : (
+            <section className="flex min-h-0 flex-col space-y-1.5 rounded-lg border border-slate-200 bg-slate-50/70 p-2.5">
               <p className="text-[13px] font-semibold leading-snug text-slate-800">
-                1. 오늘 세션에서, 에이전트가 내 작업 방식을 잘 이해하고 있다고
-                느꼈습니다.
+                4. 오늘 세션 내용 중, 에이전트가 앞으로 기억해 주었으면 하는
+                것들을 최대한 많이, 자세하게 적어주세요.
               </p>
-              {renderRatingRow(understandingRating, selectUnderstandingRating)}
+              <Textarea
+                value={futureMemoryText}
+                onChange={(event) => {
+                  setFutureMemoryText(event.target.value);
+                }}
+                placeholder="예: 내가 반복해서 요청한 방식, 좋았던 결과, 다음 작업에도 이어졌으면 하는 기준"
+                className="min-h-16 flex-1 resize-none text-sm leading-relaxed"
+              />
             </section>
-            <section className="flex flex-col justify-between gap-2 rounded-lg border border-slate-200 bg-slate-50/70 p-2.5">
-              <p className="text-[13px] font-semibold leading-snug text-slate-800">
-                2. 에이전트가 내 디자인 취향과 선호를 잘 이해하고 있다고
-                느꼈습니다.
-              </p>
-              {renderRatingRow(preferenceRating, selectPreferenceRating)}
-            </section>
-            <section className="flex flex-col justify-between gap-2 rounded-lg border border-slate-200 bg-slate-50/70 p-2.5">
-              <p className="text-[13px] font-semibold leading-snug text-slate-800">
-                3. 오늘 세션에서, 에이전트와의 협업이 수월했다고 느꼈습니다.
-              </p>
-              {renderRatingRow(helpfulnessRating, selectHelpfulnessRating)}
-            </section>
-          </div>
-          <section className="flex min-h-0 flex-col space-y-1.5 rounded-lg border border-slate-200 bg-slate-50/70 p-2.5">
-            <p className="text-[13px] font-semibold leading-snug text-slate-800">
-              4. 오늘 세션 내용 중, 에이전트가 앞으로 기억해 주었으면 하는
-              것들을 최대한 많이, 자세하게 적어주세요.
-            </p>
-            <Textarea
-              value={futureMemoryText}
-              onChange={(event) => {
-                setFutureMemoryText(event.target.value);
-              }}
-              placeholder="예: 내가 반복해서 요청한 방식, 좋았던 결과, 다음 작업에도 이어졌으면 하는 기준"
-              className="min-h-16 flex-1 resize-none text-sm leading-relaxed"
-            />
-          </section>
+          )}
         </div>
         <div className="flex items-center justify-between gap-3 border-t border-slate-200 px-4 py-2">
           <p className="min-w-0 text-[11px] text-slate-400">
@@ -2840,14 +2850,37 @@ function MemoryReviewIntroPanel({
                   ? "저장됨"
                   : "Draft"}
           </p>
-          <button
-            type="button"
-            onClick={submitIntro}
-            disabled={!canContinue || isSaving || saveStatus === "saving"}
-            className="rounded-full bg-slate-900 px-4 py-1.5 text-xs font-semibold text-white transition hover:bg-slate-700 disabled:cursor-not-allowed disabled:bg-slate-300"
-          >
-            {isSaving ? "저장 중..." : "다음 →"}
-          </button>
+          <div className="flex items-center gap-2">
+            {introStep === 1 && (
+              <button
+                type="button"
+                onClick={() => setIntroStep(0)}
+                disabled={isSaving}
+                className="rounded-full border border-slate-200 px-4 py-1.5 text-xs font-semibold text-slate-600 transition hover:bg-slate-50 hover:text-slate-900 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                ← 이전
+              </button>
+            )}
+            {introStep === 0 ? (
+              <button
+                type="button"
+                onClick={() => setIntroStep(1)}
+                disabled={!canAdvanceRatings}
+                className="rounded-full bg-slate-900 px-4 py-1.5 text-xs font-semibold text-white transition hover:bg-slate-700 disabled:cursor-not-allowed disabled:bg-slate-300"
+              >
+                다음 →
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={submitIntro}
+                disabled={!canContinue || isSaving || saveStatus === "saving"}
+                className="rounded-full bg-slate-900 px-4 py-1.5 text-xs font-semibold text-white transition hover:bg-slate-700 disabled:cursor-not-allowed disabled:bg-slate-300"
+              >
+                {isSaving ? "저장 중..." : "다음 →"}
+              </button>
+            )}
+          </div>
         </div>
       </div>
     </section>
@@ -3714,6 +3747,47 @@ export default function MainScreenPage() {
     },
     [],
   );
+  // 메모리 리뷰 오버레이의 열림 "의도"는 mreview URL 파라미터(intro|memory)에
+  // durable하게 남긴다. 가시성 자체는 기존 state가 즉시 제어하고, URL은
+  // ?review=1 네비게이션 도중 페이지가 리마운트되어 overlay state만 초기값으로
+  // 리셋되는 간헐 이슈의 복원용이다(아래 sync effect). admin viewAs는 URL을
+  // 쓰지 않는 기존 state-only 흐름을 유지한다.
+  const memoryReviewStageParam = searchParams.get("mreview");
+  // 사용자가 방금 닫은 단계는 router.replace로 URL이 갱신될 때까지 stale
+  // searchParams가 오버레이를 즉시 다시 여는 것을 막기 위해 기억해 둔다.
+  const clearedMemoryReviewStageRef = useRef<string | null>(null);
+  const setMemoryReviewStageParam = useCallback(
+    (stage: "intro" | "memory" | null) => {
+      const params = new URLSearchParams(searchParams.toString());
+      if (stage) params.set("mreview", stage);
+      else params.delete("mreview");
+      const query = params.toString();
+      router.replace(`/main/${missionId}${query ? `?${query}` : ""}`, {
+        scroll: false,
+      });
+    },
+    [missionId, router, searchParams],
+  );
+  useEffect(() => {
+    if (isViewingAsAdmin) return;
+    if (!memoryReviewStageParam) {
+      clearedMemoryReviewStageRef.current = null;
+      return;
+    }
+    if (memoryReviewStageParam === clearedMemoryReviewStageRef.current) return;
+    if (isMemoryReviewIntroOpen || isMemoryDiffOpen) return;
+    if (memoryReviewStageParam === "intro") {
+      setIsMemoryReviewIntroOpen(true);
+      setRightPanelTab("chat");
+    } else if (memoryReviewStageParam === "memory") {
+      setIsMemoryDiffOpen(true);
+    }
+  }, [
+    memoryReviewStageParam,
+    isViewingAsAdmin,
+    isMemoryReviewIntroOpen,
+    isMemoryDiffOpen,
+  ]);
   const continueMemoryReviewFromIntro = useCallback(
     async (introAnswers: MemoryReviewAnswers) => {
       const nextAnswers = {
@@ -3724,9 +3798,10 @@ export default function MainScreenPage() {
       if (!saved) return false;
       setIsMemoryReviewIntroOpen(false);
       setIsMemoryDiffOpen(true);
+      setMemoryReviewStageParam("memory");
       return true;
     },
-    [saveMemoryReviewFeedback],
+    [saveMemoryReviewFeedback, setMemoryReviewStageParam],
   );
   // 토글은 서버에 바로 쓰지 않고 staging만 한다. 제출 시 review-feedback
   // 라우트가 최종 상태를 일괄 적용하고 토글 이력 전체를 memoryActivationLogs에
@@ -8671,10 +8746,18 @@ export default function MainScreenPage() {
     }
     setIsMemoryReviewIntroOpen(true);
     setRightPanelTab("chat");
-    if (!isReviewMode) {
-      router.push(`/main/${missionId}?review=1`);
+    // 오버레이 열림 의도를 mreview=intro로 URL에 같이 남긴다 — 이 네비게이션
+    // 도중 리마운트로 overlay state가 리셋되어도 sync effect가 다시 연다.
+    const params = new URLSearchParams(searchParams.toString());
+    params.set("review", "1");
+    params.set("mreview", "intro");
+    const target = `/main/${missionId}?${params.toString()}`;
+    if (isReviewMode) {
+      router.replace(target, { scroll: false });
+    } else {
+      router.push(target);
     }
-  }, [isReviewMode, isViewingAsAdmin, missionId, router]);
+  }, [isReviewMode, isViewingAsAdmin, missionId, router, searchParams]);
   const completeSession = async () => {
     if (isReadOnly || isCompletingSession || sessionCompleted || !missionId)
       return;
@@ -11133,6 +11216,9 @@ export default function MainScreenPage() {
                           onClick={() => {
                             setSelectedGraphMemoryId(memory.id);
                             setIsMemoryDiffOpen(true);
+                            if (!isViewingAsAdmin) {
+                              setMemoryReviewStageParam("memory");
+                            }
                           }}
                         />
                       ))}
@@ -11435,7 +11521,13 @@ export default function MainScreenPage() {
       {isMemoryDiffOpen && (
         <SessionMemoryDiff
           headerActions={memoryPhaseToggle}
-          onClose={() => setIsMemoryDiffOpen(false)}
+          onClose={() => {
+            setIsMemoryDiffOpen(false);
+            if (!isViewingAsAdmin) {
+              clearedMemoryReviewStageRef.current = "memory";
+              setMemoryReviewStageParam(null);
+            }
+          }}
         >
           {renderSessionImpactGraph("overlay")}
         </SessionMemoryDiff>
