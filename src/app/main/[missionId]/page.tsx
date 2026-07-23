@@ -4240,6 +4240,10 @@ export default function MainScreenPage() {
 
   const chatInputRef = useRef<ChatInputHandle>(null);
   const chatScrollRef = useRef<HTMLDivElement>(null);
+  // ref와 별개의 element state — 채팅 스크롤 영역은 세션 로딩/setup 이후에야
+  // 마운트되므로, mount-once effect가 null ref를 보고 리스너 등록을 영영
+  // 건너뛰던 버그(15.334)를 element 등장에 반응하는 deps로 고친다.
+  const [chatScrollEl, setChatScrollEl] = useState<HTMLDivElement | null>(null);
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
 
   const leftPanelSectionLockUntilRef = useRef(0);
@@ -5639,16 +5643,30 @@ export default function MainScreenPage() {
   }, [timerStartedAt, timerElapsedMs, sessionCompleted, missionDurationMinutes]);
 
   useEffect(() => {
-    const el = chatScrollRef.current;
-    if (!el) return;
+    const el = chatScrollEl;
+    if (!el) {
+      setShowScrollToBottom(false);
+      return;
+    }
     const handleScroll = () => {
       setShowScrollToBottom(
         el.scrollHeight - el.scrollTop - el.clientHeight > 100,
       );
     };
+    handleScroll();
     el.addEventListener("scroll", handleScroll, { passive: true });
     return () => el.removeEventListener("scroll", handleScroll);
-  }, []);
+  }, [chatScrollEl]);
+
+  // 새 메시지/스트리밍 토큰으로 아래에 콘텐츠가 늘어나는 것은 scroll 이벤트를
+  // 만들지 않으므로, messages 변화마다 바닥 이탈 여부를 재측정한다.
+  useEffect(() => {
+    const el = chatScrollEl;
+    if (!el) return;
+    setShowScrollToBottom(
+      el.scrollHeight - el.scrollTop - el.clientHeight > 100,
+    );
+  }, [chatScrollEl, messages]);
 
   // Listen for element selection from iframe
   const editModeRef = useRef(false);
@@ -11143,7 +11161,12 @@ export default function MainScreenPage() {
             onTabChange={setRightPanelTab}
             onScrollToBottom={() => {
               const element = chatScrollRef.current;
-              if (element) element.scrollTop = element.scrollHeight;
+              if (element) {
+                element.scrollTo({
+                  top: element.scrollHeight,
+                  behavior: "smooth",
+                });
+              }
             }}
           >
             {/* Before-session memory panel */}
@@ -11247,7 +11270,10 @@ export default function MainScreenPage() {
               )}
             {/* Messages */}
             <div
-              ref={chatScrollRef}
+              ref={(el) => {
+                chatScrollRef.current = el;
+                setChatScrollEl(el);
+              }}
               className={`min-h-0 flex-1 space-y-4 overflow-y-auto p-6 ${
                 showReviewAnnotations && rightPanelTab === "before"
                   ? "hidden"

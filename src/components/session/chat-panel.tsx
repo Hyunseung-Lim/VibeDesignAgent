@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { ChevronDownIcon } from "lucide-react";
 
 type ChatPanelTab = "before" | "chat";
 
@@ -65,13 +66,16 @@ export function ChatPanel({
         </div>
       )}
       {children}
-      {showScrollToBottom && (
+      {/* 채팅 탭에서 스크롤이 바닥에서 떨어져 있을 때만 표시 — 세션 이전
+          탭에서는 채팅 스크롤 영역이 hidden이라 버튼도 숨긴다. */}
+      {showScrollToBottom && (!showReviewTabs || activeTab === "chat") && (
         <button
           type="button"
           onClick={onScrollToBottom}
-          className="absolute bottom-20 left-1/2 -translate-x-1/2 flex items-center gap-1 rounded-full bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white shadow-lg transition hover:bg-slate-700"
+          aria-label="맨 아래로 스크롤"
+          className="absolute bottom-24 left-1/2 flex size-9 -translate-x-1/2 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-600 shadow-[0_4px_14px_rgba(15,23,42,0.18)] transition hover:bg-slate-50 hover:text-slate-900"
         >
-          ↓
+          <ChevronDownIcon size={18} aria-hidden />
         </button>
       )}
     </aside>

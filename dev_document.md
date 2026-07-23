@@ -154,6 +154,7 @@
 - **스트리밍**: SSE 방식으로 실시간 토큰 출력
 - **웹 검색 표시**: 검색 발생 시 `[WEB_SEARCHED]` 마커 → "웹 검색 완료" 배지 표시
 - **인용 링크**: 웹 검색 출처 `(domain.com)` 자동으로 클릭 가능한 마크다운 링크로 변환
+- **채팅 스크롤 버튼**: 채팅 스크롤이 바닥에서 100px 이상 떨어지면(직접 위로 스크롤한 경우와 새 답변 스트리밍으로 아래 콘텐츠가 늘어난 경우 모두 — messages 변화마다 재측정) 채팅 패널 하단 중앙에 원형 아래 화살표 버튼을 표시하고, 누르면 맨 아래로 smooth 스크롤한다. 세션 이전 탭에서는 표시하지 않는다 `[현행 2026-07-24 → 15.334]`
 - **채팅 bubble UI**: user message는 어두운 filled bubble, assistant message는 기본적으로 ghost bubble(배경/테두리 없이 본문 중심)로 표시한다. user bubble에 hover/focus하면 버블 아래에 보낸 시간이 `Jul 21, 09:32 AM` 형식으로 나타난다. 선택된 assistant turn과 error turn만 별도 surface를 갖고, 진행 상태와 tool action marker는 bubble 안의 Marker-style row로 낮은 위계에서 표시한다. `[WEB_SEARCHED]` 같은 marker row는 클릭하면 원문 marker 세부 내용을 펼친다 `[현행 2026-07-16 → 15.273]`
 - **특수 블록 처리**:
   - `[CREATE_NOTE: ...]` → 새 아이디어(시안) 생성. 저장 payload는 목표/대상 사용자, 핵심 경험, 화면 구조, 미션 필수 콘텐츠, 제약을 포함한 독립적인 Design Brief여야 한다. 모델이 한 줄 작업 지시문을 반환하면 클라이언트가 먼저 assistant 응답 본문에서 실질 브리프를 복구하고, 없을 때 미션 맥락과 현재 사용자 요청으로 시작 가능한 브리프를 복구한다. 단, 현재 시안이 빈 shell이면(디자인 스타일만 먼저 작성된 경우, 또는 세션 시작 시 시드된 빈 디폴트 시안 1: description·designStyle·artboard 모두 없음) 새 시안을 만들지 않고 해당 시안 내용을 채움 `[현행 2026-06-30 → 15.98/15.116/15.153]`
@@ -5056,3 +5057,9 @@ type ChatPlan = {
 - 배경(연구 리스크): 메모리 리뷰를 제출하지 않고 다음 미션을 시작한 뒤, 뒤늦게 이전 세션 리뷰에서 메모리 비활성화를 누르면 진행 중(또는 이후) 세션의 retrieval 조건이 소급 변형된다 — 어떤 메모리 풀에서 세션이 진행됐는지 재구성이 불가능해져 연구가 미궁에 빠질 수 있다. 제출된 리뷰는 read-only(토글 불가)이므로 위험 구간은 완료-리뷰 미제출 상태뿐이다.
 - 변경: 순차 잠금의 클리어 판정을 세션 완료에서 세션 완료 + 해당 미션 memoryReviewFeedback.submittedAt 존재로 강화한다. 로비(`src/app/lobby/page.tsx`)의 currentMissionIndex는 첫 미클리어 미션(미완료 또는 완료-리뷰 미제출)을 가리키고, 완료-리뷰 미제출 미션이 현재가 되면 그 카드가 하이라이트되며(카드 버튼은 기존 리뷰하기) 다음 미션들은 잠긴다. lockReason은 막고 있는 단계에 맞춰 온보딩/이전 미션의 완료 또는 메모리 리뷰 제출을 안내한다. 온보딩 리뷰도 동일 적용. admin 유저 카드(`admin-user-card.tsx`)의 현재/잠김 배지도 같은 판정으로 미러링(표시 전용). 데이터는 기존 `/api/users/me/progress`의 reviewSubmittedAt을 그대로 사용, API 변경 없음.
 - 주의: 잠금은 기존 15.65와 같은 로비 레벨(카드 클릭 차단 + toast)이다 — direct URL 진입은 종전에도 막지 않았고 동일하게 둔다. 배포 시점에 이미 리뷰 미제출 상태로 다음 미션을 진행 중인 참가자가 있으면 그 미션 카드가 소급 잠기며, 이전 리뷰 제출 후 재개할 수 있다(일시정지 누적 타이머라 시간 손실 없음).
+
+### 15.334 Revive the chat scroll-to-bottom button `[implemented 2026-07-24]`
+
+- 요청: 채팅이 맨 아래로 스크롤되어 있지 않을 때(또는 새 답변으로 아래에 텍스트가 추가됐을 때) 아래 화살표 버튼을 띄우고 누르면 맨 밑으로 이동.
+- 확인: 기능은 이미 구현돼 있었으나(state showScrollToBottom + scroll listener + ChatPanel 버튼) 죽어 있었다. 리스너 effect가 deps 빈 배열의 mount-once였는데, 첫 마운트 시점에는 세션 로딩/setup 화면이라 채팅 스크롤 영역이 아직 렌더되지 않아 null ref를 보고 조용히 return — 리스너가 영영 등록되지 않아 버튼이 절대 뜨지 않았다. 또한 scroll 이벤트에만 반응해 답변 스트리밍으로 scrollHeight가 늘어나는 경우를 감지하지 못했고, 세션 이전 탭에서도(채팅 영역이 hidden인데) 버튼이 뜰 수 있었다.
+- 수정: ① 스크롤 컨테이너 ref를 callback ref + element state(chatScrollEl)로 바꿔 요소가 실제로 마운트될 때 리스너를 등록하고 즉시 1회 측정. ② messages 변화(스트리밍 토큰 포함)마다 바닥 이탈 여부를 재측정하는 effect 추가. ③ ChatPanel 버튼을 채팅 탭에서만 표시하고 원형 ChevronDown 버튼으로 교체, 클릭 시 smooth 스크롤. 임계값은 기존 100px 유지. 새 메시지 자동 스크롤(auto-stick)은 의도적으로 추가하지 않음 — 버튼 방식이 요청 사항.
