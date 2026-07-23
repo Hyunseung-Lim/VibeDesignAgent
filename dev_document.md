@@ -1461,7 +1461,7 @@ type ChatPlan = {
 - 접근성:
   - [x] 모든 interactive element에 keyboard focus 표시 `[globals.css 전역 :focus-visible outline + primitive focus ring]`
   - [x] icon-only button에 `aria-label` `[agent 뒤로가기, admin 미션/참여자/삭제 버튼 등 8곳 보강]`
-  - [x] Dialog/Sheet focus trap과 escape close 확인 `[radix 기본 제공. custom overlay(PromptViewer/SessionMemoryDiff)에 ESC close 추가 — focus trap은 미적용, 필요 시 Dialog 전환 검토]`
+  - [x] Dialog/Sheet focus trap과 escape close 확인 `[radix 기본 제공. custom overlay(PromptViewer/SessionMemoryDiff)에 ESC close 추가 — focus trap은 미적용, 필요 시 Dialog 전환 검토]` `[stale 2026-07-24 → 15.332: SessionMemoryDiff의 ESC close는 제거 — 리뷰 작업 공간에서 IME/내부 dialog ESC까지 가로채 오버레이를 닫는 문제]`
   - [x] destructive action은 Alert Dialog 사용 `[main 디자인 삭제, admin 미션/유저 데이터 삭제 모두 AlertDialog 확인]`
   - [x] error message는 `role="alert"` 또는 적절한 live region 사용 `[login/lobby 기존 2곳 + admin/new, memory-log-views 추가]`
 - 상태:
@@ -5044,3 +5044,9 @@ type ChatPlan = {
 - 증상: 미션 종료 후 `메모리 리뷰하기`를 누르면 메모리 리뷰창(Part 1/Part 2 overlay)이 열렸다가 간헐적으로 사라지고 읽기 전용 세션 리뷰 화면만 남는다.
 - 원인 분석: 리뷰 진입(`openSessionReview`)이 오버레이 열림(React state `isMemoryReviewIntroOpen`/`isMemoryDiffOpen`, 초기값 false)과 `?review=1` URL 이동을 동시에 수행하는데, 두 근거가 분리돼 있다 — 읽기 전용 세션 리뷰는 URL(`review=1`)에서, 오버레이는 휘발성 state에서 파생. 이 네비게이션 도중 페이지가 리마운트되면 state만 초기값으로 리셋되고 URL은 남아 정확히 신고된 화면이 된다. 오버레이를 닫는 코드는 명시적 2곳(Part 1→2 전환, 사용자 닫기)뿐이라 자발적으로 닫힐 수 없음을 확인 — 리마운트가 유일한 경로. 페이지 최상위에서 Suspense 경계 없이 `useSearchParams()`를 쓰는 구조가 search param 네비게이션에서 타이밍 의존적 리마운트를 만들 수 있어 간헐성과 부합한다.
 - 수정: 오버레이 열림 의도를 `mreview=intro|memory` URL 파라미터로 durable하게 기록한다. ① `openSessionReview`는 `review=1&mreview=intro`를 한 번의 네비게이션으로 push(이미 review 모드면 replace). ② Part 1→2 전환은 `mreview=memory`로 replace. ③ Part 2 닫기와 세션 이전 탭 메모리 카드 진입도 각각 param 제거/설정. ④ sync effect가 URL에 mreview가 있는데 오버레이 state가 모두 닫혀 있으면 해당 단계를 다시 연다(open 단방향 — 닫기는 state+URL을 함께 지우므로 재오픈 루프 없음. 방금 닫은 단계는 ref로 기억해 stale searchParams가 도착 전 재오픈하는 race 차단). 가시성 자체는 여전히 state가 즉시 제어하므로 열고 닫는 체감 동작은 동일하고, 리마운트 후에만 URL이 복원 근거가 된다. admin viewAs는 종전대로 state-only(URL 미기록, sync effect 제외).
+
+### 15.332 Remove ESC-to-close from the session memory review overlay `[implemented 2026-07-24]`
+
+- 배경(참가자 피드백): 세션 이후 메모리 리뷰 화면에서 ESC를 누르면 세션 화면으로 돌아가서 불편하다. 15.331은 리마운트로 인한 비의도적 닫힘만 복원하고, ESC는 onClose를 타는 의도적 닫기 경로라 해결되지 않음을 확인.
+- 원인: `SessionMemoryDiff`가 window 전역 keydown 리스너로 모든 Escape에 onClose를 호출했다. 리뷰 답변 입력 중 한글 IME 조합 취소, mention 모드 종료(memory-review-panel의 자체 Escape 핸들러가 stopPropagation을 하지 않아 이중 발화), 내부 dialog 닫기용 ESC까지 전부 오버레이 전체를 닫았다.
+- 수정: `src/components/memory/session-memory-diff.tsx`의 전역 Escape 리스너를 제거. 이 오버레이는 순간적인 모달이 아니라 리뷰 작업 공간이므로 닫기는 헤더의 리뷰 페이지로 돌아가기 버튼으로만 한다(참가자/admin 공통). 15.10 접근성 체크리스트의 ESC close 추가 기록에 stale 마킹.

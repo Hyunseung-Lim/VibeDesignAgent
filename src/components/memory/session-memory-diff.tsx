@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, type ReactNode } from "react";
+import { type ReactNode } from "react";
 import { ArrowLeftIcon } from "lucide-react";
 
 interface SessionMemoryDiffProps {
@@ -20,14 +20,10 @@ export function SessionMemoryDiff({
   onClose,
   children,
 }: SessionMemoryDiffProps) {
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [onClose]);
-
+  // 의도적으로 ESC 닫기를 두지 않는다. 이 오버레이는 순간적인 모달이 아니라
+  // 리뷰 작업 공간이고, window 전역 Escape 리스너는 답변 입력 중 IME 취소,
+  // mention 모드 종료, 내부 dialog 닫기용 ESC까지 가로채 리뷰 전체를 닫아
+  // 버렸다(15.332). 닫기는 헤더의 돌아가기 버튼으로만 한다.
   return (
     <div className="fixed inset-0 z-50 flex flex-col bg-white">
       {/* Header — same structure as the agent page header */}
