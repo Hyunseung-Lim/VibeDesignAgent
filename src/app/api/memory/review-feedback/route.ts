@@ -179,6 +179,64 @@ function storedMemoryActivations(value: unknown): MemoryActivations {
   return cleanMemoryActivations(value) ?? { states: {}, events: [] };
 }
 
+// answers의 mergeAnswers와 같은 이유로 memoryActivations도 통째 교체가 아닌
+// memoryId별 merge를 한다: draft 복원이 끝나기 전의 클라이언트(리마운트 직후)가
+// 일부 토글만 담긴 payload를 보내도 기존 staged 토글이 지워지면 안 된다.
+// 반대로 사용자가 토글을 baseline으로 되돌린 undo(states에서 항목 제거)는
+// 반영돼야 하므로, memoryId별로 더 최신 결정(state toggledAt과 event toggledAt
+// 중 최댓값)을 가진 쪽의 표현 — state 항목 또는 부재(=baseline) — 을 택한다.
+// 이력 없이 항목만 사라진 payload(복원 전 클라이언트)는 결정 시각 0으로 취급돼
+// 기존 항목을 이기지 못한다. events는 (toggledAt, memoryId, active) 기준
+// union이라 out-of-order 도착에도 이력이 유실되지 않는다.
+function mergeMemoryActivations(
+  previous: MemoryActivations,
+  incoming: MemoryActivations,
+): MemoryActivations {
+  const eventKey = (event: ActivationEvent) =>
+    `${event.toggledAt}:${event.active}:${event.memoryId}`;
+  const mergedEvents = new Map<string, ActivationEvent>();
+  for (const event of [...previous.events, ...incoming.events]) {
+    mergedEvents.set(eventKey(event), event);
+  }
+  const events = Array.from(mergedEvents.values())
+    .sort((a, b) => a.toggledAt - b.toggledAt)
+    .slice(-MAX_ACTIVATION_EVENTS);
+
+  const decisionAt = (side: MemoryActivations, memoryId: string) => {
+    let at = side.states[memoryId]?.toggledAt ?? 0;
+    for (const event of side.events) {
+      if (event.memoryId === memoryId && event.toggledAt > at) {
+        at = event.toggledAt;
+      }
+    }
+    return at;
+  };
+  const states: Record<string, ActivationState> = {};
+  const memoryIds = new Set([
+    ...Object.keys(previous.states),
+    ...Object.keys(incoming.states),
+  ]);
+  for (const memoryId of memoryIds) {
+    const incomingAt = decisionAt(incoming, memoryId);
+    const previousAt = decisionAt(previous, memoryId);
+    // 동시각이면 state 항목이 있는 쪽을 우선해, 이력 없는 부재가 기존 항목을
+    // 지우지 못하게 한다.
+    const winner =
+      incomingAt > previousAt ||
+      (incomingAt === previousAt && incoming.states[memoryId])
+        ? incoming
+        : previous;
+    const state = winner.states[memoryId];
+    if (state) states[memoryId] = state;
+  }
+  return {
+    states: Object.fromEntries(
+      Object.entries(states).slice(0, MAX_ACTIVATION_STATES),
+    ),
+    events,
+  };
+}
+
 // 제출 시점에 staged 최종 상태를 메모리 문서에 적용하고, 토글 이력 전체를
 // append-only 로그로 남긴다. 메모리 문서는 마지막 상태만 들고 있으므로
 // 언제/어떤 리뷰 세션에서 토글했는지는 이 로그가 유일한 근거다.
@@ -313,9 +371,13 @@ export async function POST(request: Request) {
     feedbackPath(user.localId, missionId),
     token,
   )) as Record<string, unknown> | null;
-  const memoryActivations =
-    cleanMemoryActivations(body.memoryActivations) ??
-    storedMemoryActivations(previous?.memoryActivations);
+  const incomingActivations = cleanMemoryActivations(body.memoryActivations);
+  const previousActivations = storedMemoryActivations(
+    previous?.memoryActivations,
+  );
+  const memoryActivations = incomingActivations
+    ? mergeMemoryActivations(previousActivations, incomingActivations)
+    : previousActivations;
 
   // 활성/비활성 토글은 draft 동안 staging만 되다가 최초 제출 시 한 번 적용된다.
   // 재제출/중복 클릭이 메모리를 다시 patch하거나 로그를 중복 생성하지 않도록

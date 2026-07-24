@@ -3343,6 +3343,13 @@ export default function MainScreenPage() {
     Record<string, StagedMemoryActivation>
   >({});
   const memoryActivationEventsRef = useRef<MemoryActivationEvent[]>([]);
+  // 리마운트 직후에는 위 staging ref들이 비어 있고, 서버 draft 복원(GET)이
+  // 끝나기 전이다. 이 상태로 memoryActivations를 전송하면 서버가 빈 staging을
+  // 최신 상태로 오해할 수 있으므로, 복원이 끝날 때까지 전송을 생략하고 토글
+  // UI도 잠근다. 복원 성공/최종 실패 모두 true가 된다 (실패 시에도 merge가
+  // 서버 쪽에서 기존 staged를 보호한다).
+  const memoryReviewRestoreDoneRef = useRef(false);
+  const [memoryReviewRestoreDone, setMemoryReviewRestoreDone] = useState(false);
   // Admin viewAs(또는 이미 제출된 리뷰)에서 표시 전용으로 읽는 토글 목록.
   // 참가자 본인의 진행 중 리뷰는 stagedMemoryActivations가 live source다.
   const [viewOnlyMemoryActivations, setViewOnlyMemoryActivations] = useState<
@@ -3604,21 +3611,26 @@ export default function MainScreenPage() {
         memoryReviewAnswersRef.current = nextAnswers;
         setMemoryReviewAnswers(nextAnswers);
       }
-      const memoryActivations = {
-        states: Object.fromEntries(
-          Object.entries(stagedMemoryActivationsRef.current).map(
-            ([id, staged]) => [
-              id,
-              {
-                active: staged.active,
-                reason: staged.reason,
-                toggledAt: staged.toggledAt,
-              },
-            ],
-          ),
-        ),
-        events: memoryActivationEventsRef.current,
-      };
+      // 복원 전에는 staging ref가 서버 draft를 반영하지 못한 빈 상태라, 필드
+      // 자체를 생략해 서버가 기존 저장분을 유지하게 한다 (서버 merge와 이중
+      // 방어 — 15.336).
+      const memoryActivations = memoryReviewRestoreDoneRef.current
+        ? {
+            states: Object.fromEntries(
+              Object.entries(stagedMemoryActivationsRef.current).map(
+                ([id, staged]) => [
+                  id,
+                  {
+                    active: staged.active,
+                    reason: staged.reason,
+                    toggledAt: staged.toggledAt,
+                  },
+                ],
+              ),
+            ),
+            events: memoryActivationEventsRef.current,
+          }
+        : null;
       const payloadKey = JSON.stringify({
         answers,
         memoryActivations,
@@ -3642,26 +3654,52 @@ export default function MainScreenPage() {
           body: JSON.stringify({
             missionId,
             answers,
-            memoryActivations,
+            ...(memoryActivations ? { memoryActivations } : {}),
             submitted,
           }),
         });
         if (!response.ok) throw new Error("save_failed");
         const data = (await response.json()) as {
-          feedback?: { submittedAt?: number | null };
+          feedback?: {
+            submittedAt?: number | null;
+            memoryActivations?: {
+              states?: Record<
+                string,
+                { active?: unknown; reason?: unknown; toggledAt?: unknown }
+              >;
+            } | null;
+          };
         };
         memoryReviewSaveKeyRef.current = payloadKey;
         memoryReviewDirtyRef.current = false;
         setMemoryReviewSubmittedAt(data.feedback?.submittedAt ?? null);
         setMemoryReviewSaveStatus("saved");
         if (submitted) {
+          // 실제 적용된 states는 서버 응답(merge 결과)이 진실이다 — 복원 전
+          // 제출로 클라이언트 staging이 비어 있어도 서버 draft의 staged 토글이
+          // 적용됐을 수 있으므로, 적용 여부 판단과 변경 목록 모두 응답 기준으로
+          // 만든다 (15.336).
+          const appliedStates: MemoryActivationEvent[] = Object.entries(
+            data.feedback?.memoryActivations?.states ?? {},
+          ).flatMap(([memoryId, state]) =>
+            typeof state?.active === "boolean"
+              ? [
+                  {
+                    memoryId,
+                    active: state.active,
+                    reason:
+                      typeof state.reason === "string" ? state.reason : null,
+                    toggledAt:
+                      typeof state.toggledAt === "number" ? state.toggledAt : 0,
+                  },
+                ]
+              : [],
+          );
           // 제출로 활성/비활성 토글이 실제 적용됐으면 after cluster snapshot을
           // 한 번 재생성한다(15.310/15.319). 비활성화만 있어도 after의 활성
           // 집합이 바뀌므로 재생성해야 다음 세션 before(직전 종료 상태)와
           // 이어진다. 로비 이동을 막지 않는 best-effort 호출.
-          const hadActivationChange =
-            Object.keys(stagedMemoryActivationsRef.current).length > 0;
-          if (hadActivationChange) {
+          if (appliedStates.length > 0) {
             void fetch("/api/memory/session-clusters", {
               method: "POST",
               keepalive: true,
@@ -3674,16 +3712,7 @@ export default function MainScreenPage() {
           }
           // staging은 적용 완료로 비우되, 리뷰 패널의 변경 목록은 표시 전용
           // 상태로 넘겨 제출 직후에도 계속 보이게 한다.
-          setViewOnlyMemoryActivations(
-            Object.entries(stagedMemoryActivationsRef.current).map(
-              ([memoryId, staged]) => ({
-                memoryId,
-                active: staged.active,
-                reason: staged.reason,
-                toggledAt: staged.toggledAt,
-              }),
-            ),
-          );
+          setViewOnlyMemoryActivations(appliedStates);
           stagedMemoryActivationsRef.current = {};
           setStagedMemoryActivations({});
         }
@@ -3704,21 +3733,24 @@ export default function MainScreenPage() {
     const token = memoryReviewTokenRef.current;
     if (!token) return;
     const answers = memoryReviewAnswersRef.current;
-    const memoryActivations = {
-      states: Object.fromEntries(
-        Object.entries(stagedMemoryActivationsRef.current).map(
-          ([id, staged]) => [
-            id,
-            {
-              active: staged.active,
-              reason: staged.reason,
-              toggledAt: staged.toggledAt,
-            },
-          ],
-        ),
-      ),
-      events: memoryActivationEventsRef.current,
-    };
+    // 복원 전에는 saveMemoryReviewFeedback와 같은 이유로 필드를 생략한다.
+    const memoryActivations = memoryReviewRestoreDoneRef.current
+      ? {
+          states: Object.fromEntries(
+            Object.entries(stagedMemoryActivationsRef.current).map(
+              ([id, staged]) => [
+                id,
+                {
+                  active: staged.active,
+                  reason: staged.reason,
+                  toggledAt: staged.toggledAt,
+                },
+              ],
+            ),
+          ),
+          events: memoryActivationEventsRef.current,
+        }
+      : null;
     const payloadKey = JSON.stringify({
       answers,
       memoryActivations,
@@ -3726,7 +3758,11 @@ export default function MainScreenPage() {
     });
     if (payloadKey === memoryReviewSaveKeyRef.current) return;
     try {
-      void fetch("/api/memory/review-feedback", {
+      // dirty 해제와 dedupe 키 갱신은 응답 확인 후에만 한다 — 전송이 실패했는데
+      // 저장된 것으로 마킹하면 이후 flush/save가 dedupe에 걸려 영영 재전송되지
+      // 않는다. unload 직전이라 .then이 실행되지 못하면 dirty가 남지만, 그건
+      // 다음 기회에 재전송되는 안전한 방향이다 (15.336).
+      fetch("/api/memory/review-feedback", {
         method: "POST",
         keepalive: true,
         headers: {
@@ -3736,12 +3772,16 @@ export default function MainScreenPage() {
         body: JSON.stringify({
           missionId,
           answers,
-          memoryActivations,
+          ...(memoryActivations ? { memoryActivations } : {}),
           submitted: false,
         }),
-      });
-      memoryReviewSaveKeyRef.current = payloadKey;
-      memoryReviewDirtyRef.current = false;
+      })
+        .then((response) => {
+          if (!response.ok) return;
+          memoryReviewSaveKeyRef.current = payloadKey;
+          memoryReviewDirtyRef.current = false;
+        })
+        .catch(() => {});
     } catch {
       // Unload path: nothing actionable if the keepalive request cannot start.
     }
@@ -3827,6 +3867,15 @@ export default function MainScreenPage() {
   const setMemoryActiveFromReview = useCallback(
     (memoryId: string, active: boolean, reason?: string) => {
       if (isViewingAsAdmin || memoryReviewSubmittedAt != null) return false;
+      // draft 복원 전에는 이미 토글해 둔 항목이 화면·ref에 없어서, 이 상태의
+      // 조작은 이전 토글을 모르는 채 겹쳐 쓰게 된다. 복원이 끝날 때까지 막는다
+      // (15.336).
+      if (!memoryReviewRestoreDoneRef.current) {
+        toast.info(
+          "이전 리뷰 데이터를 불러오는 중입니다. 잠시 후 다시 시도해 주세요.",
+        );
+        return false;
+      }
       const trimmedReason = reason?.trim() || null;
       if (!active && !trimmedReason) return false;
 
@@ -3955,7 +4004,14 @@ export default function MainScreenPage() {
       }
 
       memoryReviewDirtyRef.current = true;
-      void saveMemoryReviewFeedback(false);
+      // 임시 저장 실패를 무음으로 두지 않는다 — staging은 화면에 남아 제출 시
+      // 반영되지만, 새로고침하면 사라질 수 있음을 알린다 (15.336).
+      void saveMemoryReviewFeedback(false).then((saved) => {
+        if (saved) return;
+        toast.error(
+          "토글을 서버에 임시 저장하지 못했습니다. 이 화면에는 유지되고 제출 시 반영되지만, 새로고침하면 사라질 수 있습니다.",
+        );
+      });
       toast.success(
         active
           ? "메모리를 활성화로 표시했습니다. 리뷰 제출 시 반영됩니다."
@@ -5211,6 +5267,8 @@ export default function MainScreenPage() {
       setStagedMemoryActivations({});
       memoryActivationEventsRef.current = [];
       setViewOnlyMemoryActivations([]);
+      memoryReviewRestoreDoneRef.current = false;
+      setMemoryReviewRestoreDone(false);
       return;
     }
     // On refresh the Firebase session restores asynchronously, so currentUser
@@ -5219,6 +5277,10 @@ export default function MainScreenPage() {
     const currentUser = firebaseAuth.currentUser;
     if (!currentUser) return;
     if (isViewingAsAdmin && !targetSessionUserId) return;
+
+    // 새 복원이 시작되면 이전 복원 완료 상태를 무효화한다.
+    memoryReviewRestoreDoneRef.current = false;
+    setMemoryReviewRestoreDone(false);
 
     let cancelled = false;
     const load = async () => {
@@ -5346,11 +5408,17 @@ export default function MainScreenPage() {
           setMemoryReviewAnswers(answers);
           setMemoryReviewSubmittedAt(feedback?.submittedAt ?? null);
           setMemoryReviewSaveStatus(feedback ? "saved" : "idle");
+          memoryReviewRestoreDoneRef.current = true;
+          setMemoryReviewRestoreDone(true);
           return;
         } catch {
           if (cancelled) return;
           if (attempt === maxAttempts - 1) {
             setMemoryReviewSaveStatus("error");
+            // 최종 실패 시에도 잠금은 푼다 — 서버 merge가 기존 staged를
+            // 보호하므로, 복원 실패가 리뷰 진행 자체를 막지 않게 한다.
+            memoryReviewRestoreDoneRef.current = true;
+            setMemoryReviewRestoreDone(true);
             return;
           }
           await new Promise((resolve) =>
@@ -10021,7 +10089,10 @@ export default function MainScreenPage() {
               selectedMemoryId={selectedGraphMemoryId}
               onSelectMemory={setSelectedGraphMemoryId}
               onSetMemoryActive={
-                isViewingAsAdmin ? undefined : setMemoryActiveFromReview
+                // draft 복원 전에는 토글 UI를 아예 내리지 않는다 (15.336).
+                isViewingAsAdmin || !memoryReviewRestoreDone
+                  ? undefined
+                  : setMemoryActiveFromReview
               }
               getMissionLabel={(originMissionId) => {
                 if (originMissionId === ONBOARDING_MISSION_ID) return "온보딩";
