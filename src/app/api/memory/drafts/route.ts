@@ -356,20 +356,39 @@ async function encodeAndSaveDraft(params: {
     .filter(Boolean)
     .join("\n\n");
 
-  const completion = await openai.chat.completions.create({
-    model: "gpt-5.4-mini",
-    response_format: { type: "json_object" },
-    messages: [
-      {
-        role: "system",
-        content: assistantFeedback
-          ? `${MEMORY_ENCODE_PROMPT}\n\n${MEMORY_FEEDBACK_ENCODE_ADDENDUM}`
-          : MEMORY_ENCODE_PROMPT,
-      },
-      { role: "user", content },
-    ],
-  });
-  const encoded = parseMemory(completion.choices[0]?.message?.content ?? "{}");
+  let encoded: EncodedMemory;
+  let encodeError: string | null = null;
+  try {
+    const completion = await openai.chat.completions.create({
+      model: "gpt-5.4-mini",
+      response_format: { type: "json_object" },
+      messages: [
+        {
+          role: "system",
+          content: assistantFeedback
+            ? `${MEMORY_ENCODE_PROMPT}\n\n${MEMORY_FEEDBACK_ENCODE_ADDENDUM}`
+            : MEMORY_ENCODE_PROMPT,
+        },
+        { role: "user", content },
+      ],
+    });
+    encoded = parseMemory(completion.choices[0]?.message?.content ?? "{}");
+  } catch (error) {
+    // final-design draft는 completeSession이 실패를 하드 블록으로 취급해
+    // 미션 종료 자체가 막힌다 (2026-07-25 OpenAI 계정 단위 장애로 실제 발생).
+    // 이 경로만 LLM 인코딩 없이 사실 기반 fallback(episode = 원문 입력)으로
+    // 저장해 종료를 계속 진행시킨다. 보강된 비교 텍스트는 input 필드에 이미
+    // 보존되므로 연구 데이터의 핵심은 유지된다. 다른 draft 경로는 기존대로
+    // 던져서 해당 턴 메모리가 생성되지 않았음을 클라이언트가 알게 한다.
+    if (!finalDesign) throw error;
+    console.warn("[memory/drafts] final-design encode failed, using fallback", error);
+    encodeError = String(error instanceof Error ? error.message : error).slice(0, 500);
+    encoded = {
+      keywords: [],
+      episode: fallbackInput.slice(0, 2000),
+      semantic: null,
+    };
+  }
   const previousAssistantFeedbackWeightAdjustment =
     existingDraft?.assistantFeedbackWeightAdjustment &&
     typeof existingDraft.assistantFeedbackWeightAdjustment === "object" &&
@@ -444,6 +463,9 @@ async function encodeAndSaveDraft(params: {
           }
         : null,
       assistantFeedbackWeightAdjustment,
+      // LLM 인코딩 fallback 여부 (final-design 경로 전용). 성공 시 null로
+      // 지워져 재인코딩이 마커를 남기지 않는다.
+      encodeError,
       status: "draft",
       createdAt,
       lastRequestId: createdAt,
