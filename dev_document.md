@@ -5114,3 +5114,12 @@ type ChatPlan = {
 - 요청(인터뷰 준비, 리뷰 답변 탭 개선 1): admin 리뷰 답변 카드의 주관식 답변이 2줄 잘림(line-clamp-2)이라, 특정 참가자 보기로 토글했을 때는 모달을 열지 않고도 전문을 읽을 수 있어야 한다.
 - 구현(`src/components/admin/review-feedback-view.tsx`): participantFilter가 all이 아니면 expandAnswers 모드 — 답변 line-clamp 제거 + whitespace-pre-line(줄바꿈 보존), 질문 라벨 truncate 제거, 2열 grid를 1열로 전환하고 행 간격을 넓힌다. 전체 참가자 모드는 기존 2줄 잘림/2열 요약 카드 그대로다. 카드 클릭으로 상세 모달을 여는 동작은 두 모드 모두 유지.
 - 문항 커버리지는 기존 buildCardTextRows 그대로(Part 1 자유응답 4번 + Part 2 주관식/rating 이유 전부) — 잘림은 CSS뿐이었다.
+
+### 15.340 Review answers tab: by-question view, Likert session graphs, activation detail `[implemented 2026-07-27]`
+
+- 요청(인터뷰 준비, 리뷰 답변 탭 개선 2): ① 제출됨만 필터 정리 ② 세션별 보기 외에 답변(문항)별 보기 추가 — 답변은 세션 순서대로 ③ Likert 문항은 참가자당 10칸(온보딩+미션 9 = 최대 10세션) 미니 그래프로, 미진행 세션 칸은 비움 ④ 9번(메모리 체크)은 확인 완료 문구 대신 실제 활성/비활성 변경 내용과 사유 표시.
+- 제출됨만 버튼 제거: 실측 113건 중 111 제출/미제출 draft 2건뿐이라 필터 가치가 없고, 카드의 제출됨/임시저장 배지로 충분하다. submittedOnly state와 필터 조건 삭제.
+- 보기 토글(`src/components/admin/review-feedback-view.tsx`): 같은 자리에 세션별/답변별 segmented 토글. 답변별 보기는 문항 1~11 카드 순서로, 각 카드 안에 참가자(P번호 순, 관리자 뒤) → 세션 순(제출/저장 시각 오름차순) 답변을 나열한다. 세션 칩(SessionOrderChip)은 순번. 미션명 형태로, 미션명을 · 구분자에서 줄바꿈하고 고정 폭(w-44) 컬럼에서 오른쪽 끝을 맞춰 모든 답변의 시작 위치가 세로로 정렬된다.
+- Likert 그래프(RatingSessionGraph): rating 문항(1,2,3,10)은 참가자별 고정 10칸 — 칸 = 세션 순번, 값 있으면 score/7 비례 높이 바 + 숫자, 세션은 있는데 미응답이면 – 트랙만, 미진행 칸은 dashed 빈칸. 툴팁에 순번. 미션명 · 점수. 10번 문항은 그래프 아래 세션별 이유 텍스트를 붙인다.
+- 9번 활성/비활성 표시(ActivationChanges): memoryActivations.states 각 항목을 재활성화/비활성화 배지 + 메모리 본문 요약 + 참가자 사유로 렌더. 세션별 카드와 답변별 보기 공용이며, 변경이 없는 세션은 기존 답변 텍스트(확인 완료 등)를 유지한다. 카드가 button으로 감싸이므로 span 마크업만 사용.
+- API(`src/app/api/admin/review-feedback/route.ts`): 변경된 memoryId가 opaque해서 본문을 알 수 없던 것을 해결 — states의 memoryId별로 memories_0_1_2 문서를 읽어 memorySummaries(id -> episodic > semantic > keywords, 200자 절단)를 row에 추가. 조회는 activation 있는 리뷰(실측 66건)에만 발생.

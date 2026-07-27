@@ -4,7 +4,6 @@ import { useMemo, useState } from "react";
 import Link from "next/link";
 import { ArrowUpRightIcon } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
@@ -36,6 +35,8 @@ export type AdminReviewFeedbackRow = {
     states?: Record<string, unknown>;
     events?: unknown[];
   } | null;
+  // 변경된 메모리 id -> 본문 요약 (episodic 우선). 9번 문항 표시용.
+  memorySummaries?: Record<string, string> | null;
   submittedAt: number | null;
   updatedAt: number | null;
 };
@@ -165,6 +166,41 @@ function buildCardTextRows(): QuestionRow[] {
   return rows;
 }
 
+// 답변별 보기 문항 목록: 1~11 번호를 매기고 rating 문항은 이유 key를 붙인다.
+type QuestionViewRow = QuestionRow & { reasonAnswerKey?: string };
+
+function buildQuestionViewRows(): QuestionViewRow[] {
+  const rows: QuestionViewRow[] = [];
+  let number = 1;
+  for (const question of PART1_QUESTIONS) {
+    rows.push({
+      key: question.key,
+      label: question.label,
+      kind: question.rating ? "rating" : "text",
+      number: number++,
+    });
+  }
+  for (const question of REVIEW_QUESTIONS) {
+    rows.push({
+      key: question.id,
+      label: question.label,
+      kind: question.type === "rating" ? "rating" : "text",
+      number: number++,
+      reasonAnswerKey:
+        question.type === "rating" ? reasonKey(question.id) : undefined,
+    });
+  }
+  return rows;
+}
+
+// 참가자의 리뷰를 세션 진행 순서(제출/저장 시각 오름차순)로 정렬한다.
+function sortRowsBySessionOrder(rows: AdminReviewFeedbackRow[]) {
+  return [...rows].sort(
+    (a, b) =>
+      (a.submittedAt ?? a.updatedAt ?? 0) - (b.submittedAt ?? b.updatedAt ?? 0),
+  );
+}
+
 function sessionHref(row: AdminReviewFeedbackRow) {
   return `/main/${encodeURIComponent(row.missionId)}?viewAs=${encodeURIComponent(row.uid)}`;
 }
@@ -215,6 +251,134 @@ function AnswerValue({ kind, text }: { kind: QuestionRow["kind"]; text: string }
     );
   }
   return <span className="whitespace-pre-wrap text-foreground">{text}</span>;
+}
+
+// 9번(메모리 체크) 표시: "확인 완료" 텍스트 대신, 실제로 어떤 메모리가
+// 활성/비활성됐고 참가자가 적은 사유가 무엇인지 보여준다. 카드가 button으로
+// 감싸이는 곳에서도 쓰므로 span 기반 마크업만 사용한다.
+function ActivationChanges({ row }: { row: AdminReviewFeedbackRow }) {
+  const states = activationStates(row);
+  if (states.length === 0) return null;
+  return (
+    <span className="grid gap-1.5">
+      {states.map((entry) => (
+        <span
+          key={entry.memoryId}
+          className="block rounded-lg border border-border bg-muted/40 px-2.5 py-1.5"
+        >
+          <span className="flex items-start gap-1.5">
+            <Badge
+              variant="secondary"
+              className={cn(
+                "mt-px shrink-0 rounded-full",
+                entry.active
+                  ? "border-indigo-200 bg-indigo-50 text-indigo-700"
+                  : "border-rose-200 bg-rose-50 text-rose-700",
+              )}
+            >
+              {entry.active ? "재활성화" : "비활성화"}
+            </Badge>
+            <span className="min-w-0 flex-1 text-xs leading-relaxed text-foreground/90">
+              {row.memorySummaries?.[entry.memoryId] ?? entry.memoryId}
+            </span>
+          </span>
+          {entry.reason ? (
+            <span className="mt-1 block text-[11px] leading-relaxed text-muted-foreground">
+              사유: {entry.reason}
+            </span>
+          ) : null}
+        </span>
+      ))}
+    </span>
+  );
+}
+
+// Likert(1~7) 답변을 세션 순서대로 보여주는 10칸 미니 그래프. 참가자당
+// 최대 10세션(온보딩 + 미션 9)이므로 칸은 항상 10개를 그리고, 아직 진행하지
+// 않은 세션 칸은 비워 둔다.
+const RATING_GRAPH_SLOTS = 10;
+
+function RatingSessionGraph({
+  rows,
+  answerKey,
+  missionTitle,
+}: {
+  rows: AdminReviewFeedbackRow[];
+  answerKey: string;
+  missionTitle: (missionId: string) => string;
+}) {
+  const slotCount = Math.max(RATING_GRAPH_SLOTS, rows.length);
+  return (
+    <div className="flex items-end gap-1">
+      {Array.from({ length: slotCount }, (_, index) => {
+        const row = rows[index] ?? null;
+        const raw = row ? answerText(row, answerKey).trim() : "";
+        const score = raw ? Number(raw) : null;
+        const valid =
+          score != null && Number.isFinite(score) && score >= 1 && score <= 7;
+        return (
+          <div
+            key={row ? `${row.uid}:${row.missionId}` : `empty-${index}`}
+            title={
+              row
+                ? `${index + 1}. ${missionTitle(row.missionId)} · ${valid ? `${score} / 7` : "미응답"}`
+                : `${index + 1}번째 세션 (미진행)`
+            }
+            className="flex w-8 flex-col items-center gap-0.5"
+          >
+            <span
+              className={cn(
+                "text-[10px] font-semibold tabular-nums",
+                valid ? "text-foreground" : "text-muted-foreground/40",
+              )}
+            >
+              {valid ? score : row ? "–" : "·"}
+            </span>
+            <div
+              className={cn(
+                "flex h-12 w-full items-end overflow-hidden rounded-md",
+                row
+                  ? "border border-border bg-muted/40"
+                  : "border border-dashed border-border/70 bg-transparent",
+              )}
+            >
+              {valid ? (
+                <div
+                  className="w-full rounded-t-[3px] bg-slate-700"
+                  style={{ height: `${(score / 7) * 100}%` }}
+                />
+              ) : null}
+            </div>
+            <span className="text-[9px] tabular-nums text-muted-foreground/60">
+              {index + 1}
+            </span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// 답변별 보기의 세션 순번 칩. 미션명을 · 구분자에서 줄바꿈하고, 고정 폭
+// 컬럼에서 오른쪽 끝을 맞춰 답변 시작 위치가 세로로 정렬되게 한다.
+function SessionOrderChip({ index, title }: { index: number; title: string }) {
+  const parts = title
+    .split("·")
+    .map((part) => part.trim())
+    .filter(Boolean);
+  return (
+    <span className="flex w-44 shrink-0 justify-end">
+      <span className="rounded-md border border-border bg-muted/50 px-1.5 py-0.5 text-right text-[10px] font-medium leading-snug text-muted-foreground">
+        <span className="tabular-nums">{index + 1}.</span>{" "}
+        {parts[0] ?? title}
+        {parts.slice(1).map((part) => (
+          <span key={part} className="block">
+            {part}
+          </span>
+        ))}
+      </span>
+    </span>
+  );
 }
 
 function HeaderRatingBadges({ row }: { row: AdminReviewFeedbackRow }) {
@@ -382,6 +546,7 @@ export function ReviewFeedbackView({
 }) {
   const questionRows = useMemo(() => buildQuestionRows(), []);
   const cardTextRows = useMemo(() => buildCardTextRows(), []);
+  const questionViewRows = useMemo(() => buildQuestionViewRows(), []);
   const [participantFilter, setParticipantFilter] = useState("all");
   const participantNumberOf = (uid: string) =>
     participantNumberByUid?.[uid] ?? null;
@@ -389,7 +554,8 @@ export function ReviewFeedbackView({
     const number = participantNumberOf(row.uid);
     return `${number != null ? `P${number} · ` : ""}${participantLabel(row)}`;
   };
-  const [submittedOnly, setSubmittedOnly] = useState(false);
+  // 세션별(사용자 → 세션 카드) / 답변별(문항 → 참가자 → 세션 순 답변) 보기.
+  const [viewMode, setViewMode] = useState<"session" | "question">("session");
   const [detailRow, setDetailRow] = useState<AdminReviewFeedbackRow | null>(null);
 
   const participants = useMemo(() => {
@@ -414,9 +580,7 @@ export function ReviewFeedbackView({
   }, [rows, participantNumberByUid]);
 
   const filteredRows = rows.filter(
-    (row) =>
-      (participantFilter === "all" || row.uid === participantFilter) &&
-      (!submittedOnly || row.submittedAt != null),
+    (row) => participantFilter === "all" || row.uid === participantFilter,
   );
   // 특정 참가자 보기에서는 카드 답변을 자르지 않고 전문을 보여준다 —
   // 인터뷰 중 한 사람의 리뷰를 모달 없이 통으로 읽기 위한 모드.
@@ -443,6 +607,10 @@ export function ReviewFeedbackView({
   const adminGroups = byUser.filter((userRows) =>
     isAdminEmail(userRows[0].email),
   );
+  // 답변별 보기용: 같은 참가자 순서에, 각 그룹 내부는 세션 진행 순서로.
+  const orderedUserGroups = [...participantGroups, ...adminGroups].map(
+    sortRowsBySessionOrder,
+  );
 
   return (
     <div className="space-y-4">
@@ -461,15 +629,29 @@ export function ReviewFeedbackView({
             ))}
           </SelectContent>
         </Select>
-        <Button
-          type="button"
-          variant={submittedOnly ? "default" : "outline"}
-          size="sm"
-          onClick={() => setSubmittedOnly((value) => !value)}
-          className="rounded-xl text-xs"
-        >
-          제출됨만
-        </Button>
+        <div className="flex items-center rounded-xl border border-border bg-card p-0.5">
+          {(
+            [
+              ["session", "세션별"],
+              ["question", "답변별"],
+            ] as const
+          ).map(([mode, label]) => (
+            <button
+              key={mode}
+              type="button"
+              onClick={() => setViewMode(mode)}
+              aria-pressed={viewMode === mode}
+              className={cn(
+                "cursor-pointer rounded-[10px] px-3 py-1.5 text-xs font-semibold transition",
+                viewMode === mode
+                  ? "bg-slate-700 text-white"
+                  : "text-muted-foreground hover:text-foreground",
+              )}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
         <p className="ml-auto text-xs text-muted-foreground">
           {filteredRows.length}건
         </p>
@@ -478,6 +660,95 @@ export function ReviewFeedbackView({
       {filteredRows.length === 0 ? (
         <div className="flex h-24 items-center justify-center rounded-3xl border border-dashed border-border bg-card text-sm text-muted-foreground">
           조건에 맞는 리뷰 답변이 없습니다.
+        </div>
+      ) : viewMode === "question" ? (
+        <div className="space-y-4">
+          {questionViewRows.map((question) => (
+            <div
+              key={question.key}
+              className="rounded-2xl border border-border bg-card px-4 py-3.5"
+            >
+              <p className="text-xs font-semibold leading-relaxed text-muted-foreground">
+                {question.number != null ? `${question.number}. ` : ""}
+                {question.label}
+              </p>
+              <div className="mt-3 space-y-4">
+                {orderedUserGroups.map((userRows) => (
+                  <div key={userRows[0].uid} className="space-y-1.5">
+                    {orderedUserGroups.length > 1 ? (
+                      <p className="text-xs font-semibold text-foreground">
+                        {numberedLabel(userRows[0])}
+                      </p>
+                    ) : null}
+                    {question.kind === "rating" ? (
+                      <div className="space-y-2">
+                        <RatingSessionGraph
+                          rows={userRows}
+                          answerKey={question.key}
+                          missionTitle={missionTitle}
+                        />
+                        {question.reasonAnswerKey
+                          ? userRows.map((row, sessionIndex) => {
+                              const reason = answerText(
+                                row,
+                                question.reasonAnswerKey!,
+                              ).trim();
+                              if (!reason) return null;
+                              return (
+                                <div
+                                  key={`${row.uid}:${row.missionId}`}
+                                  className="flex items-start gap-2"
+                                >
+                                  <SessionOrderChip
+                                    index={sessionIndex}
+                                    title={missionTitle(row.missionId)}
+                                  />
+                                  <p className="min-w-0 flex-1 whitespace-pre-line text-xs leading-relaxed text-foreground/90">
+                                    {reason}
+                                  </p>
+                                </div>
+                              );
+                            })
+                          : null}
+                      </div>
+                    ) : (
+                      <div className="space-y-2">
+                        {userRows.map((row, sessionIndex) => {
+                          const isMemoryCheck =
+                            question.key === "memory_activity_review";
+                          const text = answerText(row, question.key).trim();
+                          const changeCount = isMemoryCheck
+                            ? activationStates(row).length
+                            : 0;
+                          if (!text && changeCount === 0) return null;
+                          return (
+                            <div
+                              key={`${row.uid}:${row.missionId}`}
+                              className="flex items-start gap-2"
+                            >
+                              <SessionOrderChip
+                                index={sessionIndex}
+                                title={missionTitle(row.missionId)}
+                              />
+                              <div className="min-w-0 flex-1">
+                                {isMemoryCheck && changeCount > 0 ? (
+                                  <ActivationChanges row={row} />
+                                ) : (
+                                  <p className="whitespace-pre-line text-xs leading-relaxed text-foreground/90">
+                                    {text}
+                                  </p>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
         </div>
       ) : (
         <div className="space-y-6">
@@ -506,7 +777,13 @@ export function ReviewFeedbackView({
                       ...question,
                       text: answerText(row, question.key).trim(),
                     }))
-                    .filter((question) => question.text);
+                    .filter(
+                      (question) =>
+                        question.text ||
+                        // 9번은 텍스트가 비어도 실제 메모리 변경이 있으면 표시.
+                        (question.key === "memory_activity_review" &&
+                          activationCount > 0),
+                    );
                   return (
                     <div
                       key={`${row.uid}:${row.missionId}`}
@@ -569,16 +846,21 @@ export function ReviewFeedbackView({
                                   : ""}
                                 {question.label}
                               </span>
-                              <span
-                                className={cn(
-                                  "text-xs leading-relaxed text-foreground/90",
-                                  expandAnswers
-                                    ? "block whitespace-pre-line"
-                                    : "line-clamp-2",
-                                )}
-                              >
-                                {question.text}
-                              </span>
+                              {question.key === "memory_activity_review" &&
+                              activationCount > 0 ? (
+                                <ActivationChanges row={row} />
+                              ) : (
+                                <span
+                                  className={cn(
+                                    "text-xs leading-relaxed text-foreground/90",
+                                    expandAnswers
+                                      ? "block whitespace-pre-line"
+                                      : "line-clamp-2",
+                                  )}
+                                >
+                                  {question.text}
+                                </span>
+                              )}
                             </span>
                           ))}
                         </button>
