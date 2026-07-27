@@ -418,6 +418,9 @@ export function ReviewFeedbackView({
       (participantFilter === "all" || row.uid === participantFilter) &&
       (!submittedOnly || row.submittedAt != null),
   );
+  // 특정 참가자 보기에서는 카드 답변을 자르지 않고 전문을 보여준다 —
+  // 인터뷰 중 한 사람의 리뷰를 모달 없이 통으로 읽기 위한 모드.
+  const expandAnswers = participantFilter !== "all";
 
   const byUser = useMemo(() => {
     const groups = new Map<string, AdminReviewFeedbackRow[]>();
@@ -545,12 +548,20 @@ export function ReviewFeedbackView({
                         <button
                           type="button"
                           onClick={() => setDetailRow(row)}
-                          className="mt-2.5 grid w-full cursor-pointer gap-x-5 gap-y-2 border-t border-border/60 pt-2.5 text-left sm:grid-cols-2"
+                          className={cn(
+                            "mt-2.5 grid w-full cursor-pointer gap-x-5 border-t border-border/60 pt-2.5 text-left",
+                            expandAnswers
+                              ? "gap-y-3"
+                              : "gap-y-2 sm:grid-cols-2",
+                          )}
                         >
                           {textAnswers.map((question) => (
                             <span key={question.key} className="min-w-0">
                               <span
-                                className="block truncate text-[10px] font-medium text-muted-foreground/70"
+                                className={cn(
+                                  "block text-[10px] font-medium text-muted-foreground/70",
+                                  !expandAnswers && "truncate",
+                                )}
                                 title={question.label}
                               >
                                 {question.number != null
@@ -558,7 +569,14 @@ export function ReviewFeedbackView({
                                   : ""}
                                 {question.label}
                               </span>
-                              <span className="line-clamp-2 text-xs leading-relaxed text-foreground/90">
+                              <span
+                                className={cn(
+                                  "text-xs leading-relaxed text-foreground/90",
+                                  expandAnswers
+                                    ? "block whitespace-pre-line"
+                                    : "line-clamp-2",
+                                )}
+                              >
                                 {question.text}
                               </span>
                             </span>

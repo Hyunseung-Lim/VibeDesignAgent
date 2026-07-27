@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   AtSignIcon,
   ChevronDownIcon,
@@ -45,6 +45,11 @@ type MemoryClusterSidePanelProps = {
   onMentionCluster?: (cluster: MemoryCluster) => void;
   onMentionMemory?: (item: ClusterGraphItem) => void;
   getMissionLabel?: (missionId: string) => string;
+  /**
+   * 비활성 그룹의 사유 필터 chip 노출 여부. /agent와 admin 사용자 메모리
+   * 페이지 전용(연구 관측) — 세션 리뷰 overlay에서는 켜지 않는다.
+   */
+  showInactiveReasonFilter?: boolean;
 };
 
 function formatDate(timestamp: number) {
@@ -170,27 +175,49 @@ function isInactiveMemoryItem(
   return item.action?.split(" / ").includes("archived") ?? false;
 }
 
-// 비활성 경로는 두 가지뿐: 세션 종료 시 auto-duplicate 아카이브(archivedAt 기록)
-// 또는 idle decay로 weight가 0에 도달한 경우.
-function inactiveReasonLabel(
+// 비활성 사유 분류. 카드의 "비활성 이유" 라벨과 비활성 그룹의 사유 필터가 같은
+// 판정을 공유하도록 key를 먼저 뽑는다: 사용자 직접 비활성화(user_disabled) >
+// 세션 종료 시 auto-duplicate 등 아카이브(archivedAt 기록) > idle decay weight 0.
+type InactiveReasonKey = "similar_archived" | "weight_zero" | "user_disabled";
+
+// 필터 chip 순서는 비활성 그룹 설명 문구(유사 메모리 정리, weight 0 도달,
+// 사용자 설정)와 맞춘다.
+const INACTIVE_REASON_FILTERS: { key: InactiveReasonKey; label: string }[] = [
+  { key: "similar_archived", label: "유사 메모리 정리" },
+  { key: "weight_zero", label: "weight 0 도달" },
+  { key: "user_disabled", label: "사용자 비활성화" },
+];
+
+function inactiveReasonKeyFor(
   item: ClusterGraphItem,
   memory: MemoryItem | null,
-) {
-  const inactiveReason = memory?.inactiveReason ?? item.inactiveReason;
-  const inactiveReasonDetail =
-    memory?.inactiveReasonDetail ?? item.inactiveReasonDetail;
-  if (inactiveReason === "user_disabled") {
-    return inactiveReasonDetail
-      ? `사용자가 직접 비활성화함 · ${inactiveReasonDetail}`
-      : "사용자가 직접 비활성화함";
+): InactiveReasonKey {
+  if ((memory?.inactiveReason ?? item.inactiveReason) === "user_disabled") {
+    return "user_disabled";
   }
   if (
     memory?.archivedAt ||
     item.archivedAt ||
     (item.action?.split(" / ").includes("archived") ?? false)
   ) {
-    return "유사 메모리 존재";
+    return "similar_archived";
   }
+  return "weight_zero";
+}
+
+function inactiveReasonLabel(
+  item: ClusterGraphItem,
+  memory: MemoryItem | null,
+) {
+  const key = inactiveReasonKeyFor(item, memory);
+  if (key === "user_disabled") {
+    const inactiveReasonDetail =
+      memory?.inactiveReasonDetail ?? item.inactiveReasonDetail;
+    return inactiveReasonDetail
+      ? `사용자가 직접 비활성화함 · ${inactiveReasonDetail}`
+      : "사용자가 직접 비활성화함";
+  }
+  if (key === "similar_archived") return "유사 메모리 존재";
   return "weight 0 도달";
 }
 
@@ -233,6 +260,7 @@ export function MemoryClusterSidePanel({
   onMentionCluster,
   onMentionMemory,
   getMissionLabel = defaultMissionLabel,
+  showInactiveReasonFilter = false,
 }: MemoryClusterSidePanelProps) {
   const relatedActionLabels = visibleMemoryActionLabels(
     cluster?.relatedActions.join(" / "),
@@ -244,13 +272,74 @@ export function MemoryClusterSidePanel({
     selectedMemoryId != null
       ? memories.find((candidate) => candidate.id === selectedMemoryId) ?? null
       : null;
-  const selectedFallbackItem =
-    selectedMemory && !items.some((item) => item.id === selectedMemory.id)
-      ? clusterGraphItemFromMemory(selectedMemory)
-      : null;
-  const displayItems = selectedFallbackItem
-    ? [selectedFallbackItem, ...items]
-    : items;
+  const selectedFallbackItem = useMemo(
+    () =>
+      selectedMemory && !items.some((item) => item.id === selectedMemory.id)
+        ? clusterGraphItemFromMemory(selectedMemory)
+        : null,
+    [selectedMemory, items],
+  );
+  const displayItems = useMemo(
+    () => (selectedFallbackItem ? [selectedFallbackItem, ...items] : items),
+    [selectedFallbackItem, items],
+  );
+  const isInactiveGroup = cluster?.id === "session-inactive";
+  // 사유 필터는 /agent·admin 관측 화면에서만 켠다 (세션 리뷰 overlay 제외).
+  const inactiveReasonFilterEnabled = isInactiveGroup && showInactiveReasonFilter;
+  const memoryById = useMemo(
+    () => new Map(memories.map((memory) => [memory.id, memory])),
+    [memories],
+  );
+  // 비활성 그룹 전용 사유 필터. 그룹을 벗어나면 초기화한다.
+  const [inactiveReasonFilter, setInactiveReasonFilter] =
+    useState<InactiveReasonKey | null>(null);
+  useEffect(() => {
+    setInactiveReasonFilter(null);
+  }, [cluster?.id]);
+  const inactiveReasonCounts = useMemo(() => {
+    const counts: Record<InactiveReasonKey, number> = {
+      similar_archived: 0,
+      weight_zero: 0,
+      user_disabled: 0,
+    };
+    if (!inactiveReasonFilterEnabled) return counts;
+    for (const item of displayItems) {
+      const memory = memoryById.get(item.id) ?? null;
+      if (!isInactiveMemoryItem(item, memory)) continue;
+      counts[inactiveReasonKeyFor(item, memory)] += 1;
+    }
+    return counts;
+  }, [displayItems, inactiveReasonFilterEnabled, memoryById]);
+  const visibleItems = useMemo(() => {
+    if (!inactiveReasonFilterEnabled || !inactiveReasonFilter) return displayItems;
+    return displayItems.filter((item) => {
+      const memory = memoryById.get(item.id) ?? null;
+      // 활성 fallback 카드(선택된 메모리)는 사유 필터 대상이 아니다.
+      if (!isInactiveMemoryItem(item, memory)) return true;
+      return inactiveReasonKeyFor(item, memory) === inactiveReasonFilter;
+    });
+  }, [displayItems, inactiveReasonFilter, inactiveReasonFilterEnabled, memoryById]);
+  // 그래프 노드 클릭 등으로 새로 선택된 메모리가 현재 사유 필터에 걸러져
+  // 목록에서 안 보이면, 선택이 이긴다 — 필터를 해제해 카드를 노출한다.
+  // (chip 클릭은 selectedMemoryId를 바꾸지 않으므로 여기 걸리지 않는다.)
+  const prevSelectedMemoryIdRef = useRef(selectedMemoryId);
+  useEffect(() => {
+    const previous = prevSelectedMemoryIdRef.current;
+    prevSelectedMemoryIdRef.current = selectedMemoryId;
+    if (!selectedMemoryId || selectedMemoryId === previous) return;
+    if (!inactiveReasonFilter) return;
+    const selectedItem = displayItems.find(
+      (item) => item.id === selectedMemoryId,
+    );
+    if (!selectedItem) return;
+    const memory = memoryById.get(selectedMemoryId) ?? null;
+    if (
+      isInactiveMemoryItem(selectedItem, memory) &&
+      inactiveReasonKeyFor(selectedItem, memory) !== inactiveReasonFilter
+    ) {
+      setInactiveReasonFilter(null);
+    }
+  }, [selectedMemoryId, inactiveReasonFilter, displayItems, memoryById]);
   // Original input / Keyword boxes are collapsed by default per memory card.
   const [expandedInputIds, setExpandedInputIds] = useState<Set<string>>(
     new Set(),
@@ -294,6 +383,8 @@ export function MemoryClusterSidePanel({
     setDeactivationReason("");
   };
   // Scroll the detail list to the item selected from the graph/node click.
+  // inactiveReasonFilter dep: 선택이 필터를 해제한 다음 렌더에서 카드가 생기므로
+  // 그때 한 번 더 스크롤을 시도한다.
   const selectedItemRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     if (!selectedMemoryId) return;
@@ -301,7 +392,7 @@ export function MemoryClusterSidePanel({
       block: "nearest",
       behavior: "smooth",
     });
-  }, [selectedMemoryId]);
+  }, [selectedMemoryId, inactiveReasonFilter]);
   return (
     <aside className="flex w-88 shrink-0 flex-col border-r border-border bg-card xl:w-96">
       <div className="border-b border-border px-5 py-4">
@@ -331,6 +422,53 @@ export function MemoryClusterSidePanel({
             왼쪽 목록이나 그래프의 점을 선택하면 상세가 여기에 표시됩니다.
           </p>
         )}
+        {inactiveReasonFilterEnabled && displayItems.length > 0 ? (
+          <div
+            className="mt-3 flex flex-wrap gap-1.5"
+            role="group"
+            aria-label="비활성 사유 필터"
+          >
+            <button
+              type="button"
+              onClick={() => setInactiveReasonFilter(null)}
+              aria-pressed={inactiveReasonFilter == null}
+              className={`cursor-pointer rounded-full border px-2.5 py-1 text-[11px] font-medium transition ${
+                inactiveReasonFilter == null
+                  ? "border-slate-700 bg-slate-700 text-white"
+                  : "border-slate-200 bg-white text-slate-500 hover:border-slate-300 hover:bg-slate-50"
+              }`}
+            >
+              전체{" "}
+              <span className="tabular-nums">{displayItems.length}</span>
+            </button>
+            {INACTIVE_REASON_FILTERS.map(({ key, label }) => {
+              const count = inactiveReasonCounts[key];
+              const active = inactiveReasonFilter === key;
+              return (
+                <button
+                  key={key}
+                  type="button"
+                  disabled={count === 0}
+                  onClick={() =>
+                    setInactiveReasonFilter((current) =>
+                      current === key ? null : key,
+                    )
+                  }
+                  aria-pressed={active}
+                  className={`rounded-full border px-2.5 py-1 text-[11px] font-medium transition ${
+                    active
+                      ? "cursor-pointer border-slate-700 bg-slate-700 text-white"
+                      : count === 0
+                        ? "cursor-not-allowed border-slate-100 bg-slate-50 text-slate-300"
+                        : "cursor-pointer border-slate-200 bg-white text-slate-500 hover:border-slate-300 hover:bg-slate-50"
+                  }`}
+                >
+                  {label} <span className="tabular-nums">{count}</span>
+                </button>
+              );
+            })}
+          </div>
+        ) : null}
         {cluster && mentionMode ? (
           <button
             type="button"
@@ -375,12 +513,19 @@ export function MemoryClusterSidePanel({
                 {cluster ? "Included memory items" : "Selected memory"}
               </p>
               <div className="space-y-2">
-                {cluster?.id === "session-inactive" && displayItems.length === 0 ? (
+                {isInactiveGroup && displayItems.length === 0 ? (
                   <p className="rounded-lg border border-dashed border-slate-200 bg-slate-50 px-3 py-6 text-center text-xs text-slate-400">
                     비활성 메모리가 없습니다.
                   </p>
                 ) : null}
-                {displayItems.map((item) => {
+                {inactiveReasonFilterEnabled &&
+                displayItems.length > 0 &&
+                visibleItems.length === 0 ? (
+                  <p className="rounded-lg border border-dashed border-slate-200 bg-slate-50 px-3 py-6 text-center text-xs text-slate-400">
+                    해당 이유로 비활성화된 메모리가 없습니다.
+                  </p>
+                ) : null}
+                {visibleItems.map((item) => {
                   const selected = item.id === selectedMemoryId;
                   const memory =
                     memories.find((candidate) => candidate.id === item.id) ??

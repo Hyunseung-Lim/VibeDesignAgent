@@ -713,6 +713,7 @@ export function MemoryClusterPage({
                 memories={memories}
                 selectedMemoryId={selectedMemoryId}
                 onSelectMemory={setSelectedMemoryId}
+                showInactiveReasonFilter
                 getMissionLabel={(missionId) =>
                   sessionFilterLabel(missionId, missionTitleById[missionId])
                 }
