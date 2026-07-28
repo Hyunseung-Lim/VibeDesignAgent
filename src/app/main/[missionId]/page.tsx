@@ -9730,16 +9730,27 @@ export default function MainScreenPage() {
     const snapshotItemIds = new Set(activeClusterSnapshot.itemIds);
     const shouldUseSnapshotItems = !activeClusterSnapshot.isFallback;
     // 비활성 그룹은 /agent와 같은 전체 기준(archivedAt 존재 또는 weight 0)으로
-    // 표시한다. 이번 세션으로 인한 비활성(세션 관련 아카이브/weight 0 도달)은
-    // 그룹 행의 +N 배지로 따로 센다(15.299).
+    // 표시한다.
+    const isInactiveGraphMemory = (
+      memory: (typeof cumulativeGraphMemories)[number],
+    ) =>
+      Boolean(memory.archivedAt) ||
+      (memory.weight != null && memory.weight <= 0);
+    // 이번 세션발 비활성(+N 배지, 15.344): 세션 처리 중 아카이브됐거나, 지금
+    // 비활성이면서 세션 이전 스냅샷 입력에 있었거나(직전까지 활성) 이번 세션에
+    // 생성(promoted)된 것만 센다. weight<=0 전부를 세션발로 치던 15.299
+    // 휴리스틱은 상시 decay(15.322) 이후 누적 사망까지 +N으로 세는 오류가 됐다.
+    const beforeSnapshotItemIds = new Set(
+      sessionMemorySummary.clusterSnapshots.before.isFallback
+        ? []
+        : sessionMemorySummary.clusterSnapshots.before.itemIds,
+    );
     const isSessionScopedInactive = (
       memory: (typeof cumulativeGraphMemories)[number],
     ) =>
       sessionArchivedIds.has(memory.id) ||
-      (memory.weight != null && memory.weight <= 0);
-    const isInactiveGraphMemory = (
-      memory: (typeof cumulativeGraphMemories)[number],
-    ) => Boolean(memory.archivedAt) || isSessionScopedInactive(memory);
+      (isInactiveGraphMemory(memory) &&
+        (beforeSnapshotItemIds.has(memory.id) || promotedIds.has(memory.id)));
     // Staging으로 재활성화됐지만 어떤 클러스터 itemIds에도 없는 메모리
     // (리뷰 이전부터 비활성이라 스냅샷 입력에서 빠졌던 것). 제출 후 클러스터
     // 재생성 전까지 비활성 그룹 자리에 활성 스타일로 남긴다.
@@ -9781,7 +9792,7 @@ export default function MainScreenPage() {
           Boolean(referenced) ||
           isPromoted ||
           isArchivedSession ||
-          (isInactiveWeight && memoryGraphPhase === "after")
+          (memoryGraphPhase === "after" && isSessionScopedInactive(memory))
         );
       }
       if (memoryGraphFilter === "referenced") return Boolean(referenced);
