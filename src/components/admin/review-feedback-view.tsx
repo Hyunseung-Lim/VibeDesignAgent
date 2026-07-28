@@ -359,6 +359,97 @@ function RatingSessionGraph({
   );
 }
 
+// 전체 참가자 보기의 Likert 문항: 참가자별 그래프를 나열하지 않고 세션
+// 순번별 전체 평균 그래프 하나만 보여준다 (15.341). 슬롯 구성과 시각 언어는
+// RatingSessionGraph와 동일하고, 값 라벨만 평균(소수 1자리)이다.
+function AverageRatingSessionGraph({
+  userGroups,
+  answerKey,
+}: {
+  userGroups: AdminReviewFeedbackRow[][];
+  answerKey: string;
+}) {
+  const slotCount = Math.max(
+    RATING_GRAPH_SLOTS,
+    ...userGroups.map((group) => group.length),
+    0,
+  );
+  const slots = Array.from({ length: slotCount }, (_, index) => {
+    const scores = userGroups.flatMap((group) => {
+      const row = group[index];
+      if (!row) return [];
+      const score = Number(answerText(row, answerKey).trim());
+      return Number.isFinite(score) && score >= 1 && score <= 7 ? [score] : [];
+    });
+    const average =
+      scores.length > 0
+        ? scores.reduce((sum, value) => sum + value, 0) / scores.length
+        : null;
+    return { average, count: scores.length };
+  });
+  const answeredSlots = slots.filter((slot) => slot.average != null);
+  const totalCount = answeredSlots.reduce((sum, slot) => sum + slot.count, 0);
+  const overallAverage =
+    totalCount > 0
+      ? answeredSlots.reduce(
+          (sum, slot) => sum + (slot.average ?? 0) * slot.count,
+          0,
+        ) / totalCount
+      : null;
+  return (
+    <div className="space-y-1.5">
+      <div className="flex items-end gap-1">
+        {slots.map((slot, index) => (
+          <div
+            key={index}
+            title={
+              slot.average != null
+                ? `${index + 1}번째 세션 · 평균 ${slot.average.toFixed(1)} / 7 · 응답 ${slot.count}명`
+                : `${index + 1}번째 세션 · 응답 없음`
+            }
+            className="flex w-8 flex-col items-center gap-0.5"
+          >
+            <span
+              className={cn(
+                "text-[10px] font-semibold tabular-nums",
+                slot.average != null
+                  ? "text-foreground"
+                  : "text-muted-foreground/40",
+              )}
+            >
+              {slot.average != null ? slot.average.toFixed(1) : "·"}
+            </span>
+            <div
+              className={cn(
+                "flex h-12 w-full items-end overflow-hidden rounded-md",
+                slot.average != null
+                  ? "border border-border bg-muted/40"
+                  : "border border-dashed border-border/70 bg-transparent",
+              )}
+            >
+              {slot.average != null ? (
+                <div
+                  className="w-full rounded-t-[3px] bg-slate-700"
+                  style={{ height: `${(slot.average / 7) * 100}%` }}
+                />
+              ) : null}
+            </div>
+            <span className="text-[9px] tabular-nums text-muted-foreground/60">
+              {index + 1}
+            </span>
+          </div>
+        ))}
+      </div>
+      <p className="text-[10px] text-muted-foreground">
+        전체 참가자 평균 · 세션 순번별
+        {overallAverage != null
+          ? ` · 전체 평균 ${overallAverage.toFixed(1)} / 7 · 응답 ${totalCount}건`
+          : ""}
+      </p>
+    </div>
+  );
+}
+
 // 답변별 보기의 세션 순번 칩. 미션명을 · 구분자에서 줄바꿈하고, 고정 폭
 // 컬럼에서 오른쪽 끝을 맞춰 답변 시작 위치가 세로로 정렬되게 한다.
 function SessionOrderChip({ index, title }: { index: number; title: string }) {
@@ -607,9 +698,12 @@ export function ReviewFeedbackView({
   const adminGroups = byUser.filter((userRows) =>
     isAdminEmail(userRows[0].email),
   );
-  // 답변별 보기용: 같은 참가자 순서에, 각 그룹 내부는 세션 진행 순서로.
-  const orderedUserGroups = [...participantGroups, ...adminGroups].map(
-    sortRowsBySessionOrder,
+  // 답변별 보기용: 관리자 계정은 아예 제외하고(15.341), 같은 참가자 순서에
+  // 각 그룹 내부는 세션 진행 순서로.
+  const questionUserGroups = participantGroups.map(sortRowsBySessionOrder);
+  const questionRowCount = questionUserGroups.reduce(
+    (sum, group) => sum + group.length,
+    0,
   );
 
   return (
@@ -621,12 +715,17 @@ export function ReviewFeedbackView({
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="all">전체 참가자</SelectItem>
-            {participants.map((participant) => (
-              <SelectItem key={participant.uid} value={participant.uid}>
-                {participant.label}
-                {participant.isAdmin ? " · 관리자" : ""}
-              </SelectItem>
-            ))}
+            {participants
+              .filter(
+                (participant) =>
+                  viewMode !== "question" || !participant.isAdmin,
+              )
+              .map((participant) => (
+                <SelectItem key={participant.uid} value={participant.uid}>
+                  {participant.label}
+                  {participant.isAdmin ? " · 관리자" : ""}
+                </SelectItem>
+              ))}
           </SelectContent>
         </Select>
         <div className="flex items-center rounded-xl border border-border bg-card p-0.5">
@@ -639,7 +738,21 @@ export function ReviewFeedbackView({
             <button
               key={mode}
               type="button"
-              onClick={() => setViewMode(mode)}
+              onClick={() => {
+                setViewMode(mode);
+                // 답변별 보기는 관리자를 제외하므로, 관리자가 선택된 채
+                // 전환하면 전체 참가자로 되돌린다 (15.341).
+                if (
+                  mode === "question" &&
+                  participants.some(
+                    (participant) =>
+                      participant.uid === participantFilter &&
+                      participant.isAdmin,
+                  )
+                ) {
+                  setParticipantFilter("all");
+                }
+              }}
               aria-pressed={viewMode === mode}
               className={cn(
                 "cursor-pointer rounded-[10px] px-3 py-1.5 text-xs font-semibold transition",
@@ -653,11 +766,13 @@ export function ReviewFeedbackView({
           ))}
         </div>
         <p className="ml-auto text-xs text-muted-foreground">
-          {filteredRows.length}건
+          {viewMode === "question" ? questionRowCount : filteredRows.length}건
         </p>
       </div>
 
-      {filteredRows.length === 0 ? (
+      {(viewMode === "question"
+        ? questionRowCount === 0
+        : filteredRows.length === 0) ? (
         <div className="flex h-24 items-center justify-center rounded-3xl border border-dashed border-border bg-card text-sm text-muted-foreground">
           조건에 맞는 리뷰 답변이 없습니다.
         </div>
@@ -673,9 +788,15 @@ export function ReviewFeedbackView({
                 {question.label}
               </p>
               <div className="mt-3 space-y-4">
-                {orderedUserGroups.map((userRows) => (
+                {question.kind === "rating" && participantFilter === "all" ? (
+                  <AverageRatingSessionGraph
+                    userGroups={questionUserGroups}
+                    answerKey={question.key}
+                  />
+                ) : (
+                  questionUserGroups.map((userRows) => (
                   <div key={userRows[0].uid} className="space-y-1.5">
-                    {orderedUserGroups.length > 1 ? (
+                    {questionUserGroups.length > 1 ? (
                       <p className="text-xs font-semibold text-foreground">
                         {numberedLabel(userRows[0])}
                       </p>
@@ -745,7 +866,8 @@ export function ReviewFeedbackView({
                       </div>
                     )}
                   </div>
-                ))}
+                  ))
+                )}
               </div>
             </div>
           ))}

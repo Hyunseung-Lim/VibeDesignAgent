@@ -18,7 +18,7 @@ import {
   getDocs,
 } from "firebase/firestore";
 import { firebaseAuth, db } from "@/lib/firebase";
-import { isAdminEmail } from "@/lib/admin";
+import { isAdminEmail, isHiddenAdminViewEmail } from "@/lib/admin";
 import { cn } from "@/lib/utils";
 import {
   AlertDialog,
@@ -294,6 +294,74 @@ function stableHash(value: string) {
     hash = Math.imul(hash, 16777619);
   }
   return (hash >>> 0).toString(36);
+}
+
+// 리뷰 답변 탭 맨 위의 참가자별 진행률 스트립 (15.342). P번호 순 참가자만
+// 표시하고(관리자 제외), 완료 판정은 유저 카드와 같은 규칙 — 온보딩은 프로필
+// 플래그, 나머지는 완료 세션 — 을 쓴다. missionOrder가 아직 없는 신규 계정은
+// 전체 미션 수로 분모를 대신한다.
+function ParticipantProgressStrip({
+  users,
+  onboardingMissionId,
+  fallbackMissionCount,
+}: {
+  users: AdminUser[];
+  onboardingMissionId: string;
+  fallbackMissionCount: number;
+}) {
+  const participants = users.filter((user) => !user.isAdmin);
+  if (participants.length === 0) return null;
+  return (
+    <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-border bg-card px-4 py-3">
+      <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+        진행률
+      </span>
+      {participants.map((user) => {
+        const totalMissions =
+          1 +
+          (user.missionOrder.length > 0
+            ? user.missionOrder.length
+            : Math.max(fallbackMissionCount, 0));
+        const completedMissions =
+          (user.onboardingStatus === "completed" ? 1 : 0) +
+          user.completedSessionMissionIds.filter(
+            (missionId) =>
+              missionId !== onboardingMissionId &&
+              (user.missionOrder.length === 0 ||
+                user.missionOrder.includes(missionId)),
+          ).length;
+        const percent =
+          totalMissions > 0
+            ? Math.min(100, Math.round((completedMissions / totalMissions) * 100))
+            : 0;
+        return (
+          <div
+            key={user.id}
+            className="flex items-center gap-1.5 rounded-xl border border-border bg-muted/40 px-2 py-1"
+            title={`${user.displayName ?? user.email ?? user.id} · ${completedMissions}/${totalMissions} 완료`}
+          >
+            {user.participantNumber != null ? (
+              <span className="font-mono text-[10px] font-semibold text-foreground">
+                P{user.participantNumber}
+              </span>
+            ) : null}
+            <span className="max-w-20 truncate text-[11px] font-medium text-foreground">
+              {user.displayName ?? user.email ?? user.id}
+            </span>
+            <span className="h-1.5 w-14 overflow-hidden rounded-full bg-border">
+              <span
+                className="block h-full rounded-full bg-slate-700"
+                style={{ width: `${percent}%` }}
+              />
+            </span>
+            <span className="text-[10px] tabular-nums text-muted-foreground">
+              {completedMissions}/{totalMissions}
+            </span>
+          </div>
+        );
+      })}
+    </div>
+  );
 }
 
 export default function AdminPage() {
@@ -650,7 +718,10 @@ export default function AdminPage() {
       });
     }
 
-    const rawUsers = Array.from(users.values());
+    // 폐기 계정(HIDDEN_ADMIN_VIEW_EMAILS)은 어떤 소스로 들어와도 목록에서 제외.
+    const rawUsers = Array.from(users.values()).filter(
+      (user) => !isHiddenAdminViewEmail(user.email),
+    );
     const statuses = await fetchOnboardingStatuses(
       rawUsers.map((user) => user.id),
     );
@@ -1677,6 +1748,12 @@ export default function AdminPage() {
               )}
             </Button>
           </div>
+
+          <ParticipantProgressStrip
+            users={adminUsers}
+            onboardingMissionId={ONBOARDING_MISSION_ID}
+            fallbackMissionCount={missions.length}
+          />
 
           {reviewFeedbackError ? (
             <div className="flex h-32 items-center justify-center rounded-3xl border border-dashed border-border bg-card text-sm text-destructive">
