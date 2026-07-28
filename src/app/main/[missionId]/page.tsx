@@ -9668,11 +9668,9 @@ export default function MainScreenPage() {
           type="button"
           onClick={() => {
             setMemoryGraphPhase(phase);
-            if (
-              phase === "before" &&
-              (memoryGraphFilter === "promoted" ||
-                memoryGraphFilter === "archived")
-            ) {
+            // promoted(이번 세션 승격분)는 before에 없으므로 필터를 되돌린다.
+            // 비활성 필터는 15.343부터 before에서도 유효해 유지한다.
+            if (phase === "before" && memoryGraphFilter === "promoted") {
               setMemoryGraphFilter("changed");
             }
           }}
@@ -9759,8 +9757,10 @@ export default function MainScreenPage() {
     ) => {
       const referenced = referencedByMemoryId.get(memory.id);
       const isPromoted = promotedIds.has(memory.id);
-      // 비활성은 클러스터 스냅샷 입력에서 제외되므로, after 페이즈에서 예외로
-      // 살려 비활성 메모리 그룹에 dimmed로 표시한다.
+      // 비활성은 클러스터 스냅샷 입력에서 제외되므로 예외로 살려 비활성 메모리
+      // 그룹에 dimmed로 표시한다. before(N)=after(N-1) 등식(15.318)에 맞춰
+      // 세션 이전 페이즈에서도 누적 비활성을 after와 같은 규칙으로 보여준다
+      // (15.343) — 이번 세션 승격분(promoted)만 before에서 계속 숨긴다.
       const isArchivedSession = sessionArchivedIds.has(memory.id);
       const isArchivedAny = Boolean(memory.archivedAt) || isArchivedSession;
       const isInactiveWeight = memory.weight != null && memory.weight <= 0;
@@ -9769,15 +9769,12 @@ export default function MainScreenPage() {
       if (
         shouldUseSnapshotItems &&
         !snapshotItemIds.has(memory.id) &&
-        !(isInactive && memoryGraphPhase === "after") &&
+        !isInactive &&
         !(isStagedActiveUnclustered(memory) && memoryGraphPhase === "after")
       ) {
         return false;
       }
       if (memoryGraphPhase === "before" && isPromoted) return false;
-      if (memoryGraphPhase === "before" && isArchivedAny && !referenced) {
-        return false;
-      }
       if (memoryGraphFilter === "all") return true;
       if (memoryGraphFilter === "changed") {
         return (
@@ -9789,7 +9786,7 @@ export default function MainScreenPage() {
       }
       if (memoryGraphFilter === "referenced") return Boolean(referenced);
       if (memoryGraphFilter === "promoted") return isPromoted;
-      return isInactive && memoryGraphPhase === "after";
+      return isInactive;
     };
     const visibleMemoryItems = cumulativeGraphMemories.filter((memory) =>
       isVisibleGraphMemory(memory, showInactiveGraphMemories),
@@ -9802,11 +9799,16 @@ export default function MainScreenPage() {
         isVisibleGraphMemory(memory, true),
     ).length;
     // 이번 세션으로 인해 비활성된 것만 +N 배지로 표시 (그 외는 이전 세션에서
-    // 이미 정리된 누적 비활성).
-    const inactiveAddedCount = cumulativeGraphMemories.filter(
-      (memory) =>
-        isSessionScopedInactive(memory) && isVisibleGraphMemory(memory, true),
-    ).length;
+    // 이미 정리된 누적 비활성). 세션 이전 페이즈는 누적 비활성만 보여주므로
+    // 세션발 +N 배지는 after 전용이다 (15.343).
+    const inactiveAddedCount =
+      memoryGraphPhase === "after"
+        ? cumulativeGraphMemories.filter(
+            (memory) =>
+              isSessionScopedInactive(memory) &&
+              isVisibleGraphMemory(memory, true),
+          ).length
+        : 0;
     const visibleMemoryIds = new Set(visibleMemoryItems.map((item) => item.id));
     const inactiveMemoryIds = new Set(
       visibleMemoryItems
