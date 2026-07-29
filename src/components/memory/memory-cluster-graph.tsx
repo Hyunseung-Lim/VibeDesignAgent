@@ -53,6 +53,11 @@ type ClusterableMemoryItem = {
   archivedAt?: number | null;
   archiveReason?: string | null;
   inactive?: boolean;
+  /**
+   * True면 caller가 활성/비활성을 이미 확정한 것(세션 리뷰의 phase snapshot
+   * 멤버십 판정, 15.345). weight/archivedAt 휴리스틱으로 재판정하지 않는다.
+   */
+  inactiveResolved?: boolean;
   inactiveReason?: string | null;
   inactiveReasonDetail?: string | null;
   keyword: string[];
@@ -168,6 +173,9 @@ function userInputText(item: ClusterableMemoryItem) {
 }
 
 function isInactiveGraphItem(item: ClusterableMemoryItem) {
+  // caller가 phase 시점 상태를 이미 판정한 경우(세션 리뷰의 snapshot 멤버십,
+  // 15.345) 현재 문서 상태로 재판정하지 않는다.
+  if (item.inactiveResolved) return Boolean(item.inactive);
   if (item.inactive) return true;
   if (item.archivedAt) return true;
   if (item.weight != null && item.weight <= 0) return true;

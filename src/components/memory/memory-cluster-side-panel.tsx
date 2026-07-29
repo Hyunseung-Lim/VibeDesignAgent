@@ -167,6 +167,10 @@ function isInactiveMemoryItem(
   item: ClusterGraphItem,
   memory: MemoryItem | null,
 ) {
+  // caller가 phase 시점 상태를 이미 판정한 경우(세션 리뷰의 snapshot 멤버십,
+  // 15.345) 현재 문서의 weight/archivedAt로 재판정하지 않는다 — 과거 세션
+  // 리뷰에서 이후 decay 사망이 소급 표시되는 것을 막는다.
+  if (item.inactiveResolved) return Boolean(item.inactive);
   if (item.inactive) return true;
   if (memory?.archivedAt || item.archivedAt) return true;
   if ((memory?.weight ?? item.weight) != null && (memory?.weight ?? item.weight)! <= 0) {

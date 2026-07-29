@@ -9727,24 +9727,44 @@ export default function MainScreenPage() {
     const sessionArchivedIds = new Set(
       sessionArchivedMemories.map((item) => item.id),
     );
-    const snapshotItemIds = new Set(activeClusterSnapshot.itemIds);
+    // 스냅샷 입력은 생성 시점의 활성 메모리만 담으므로, 멤버십 자체가 그
+    // 페이즈 시점 활성 여부의 동결 기록이다. itemIds가 비어 있는 구세대
+    // 스냅샷은 cluster itemIds 합집합으로 복원한다.
+    const snapshotMemberIds = (snapshot: typeof activeClusterSnapshot) =>
+      new Set(
+        snapshot.itemIds.length > 0
+          ? snapshot.itemIds
+          : snapshot.graphClusters.flatMap((cluster) => cluster.itemIds),
+      );
+    const snapshotItemIds = snapshotMemberIds(activeClusterSnapshot);
     const shouldUseSnapshotItems = !activeClusterSnapshot.isFallback;
-    // 비활성 그룹은 /agent와 같은 전체 기준(archivedAt 존재 또는 weight 0)으로
-    // 표시한다.
-    const isInactiveGraphMemory = (
+    // 조회 시점 문서 상태 기준 비활성(/agent와 같은 기준). 스냅샷이 없는
+    // legacy 세션의 폴백 판정에만 쓴다.
+    const isCurrentlyInactiveMemory = (
       memory: (typeof cumulativeGraphMemories)[number],
     ) =>
       Boolean(memory.archivedAt) ||
       (memory.weight != null && memory.weight <= 0);
-    // 이번 세션발 비활성(+N 배지, 15.344): 세션 처리 중 아카이브됐거나, 지금
-    // 비활성이면서 세션 이전 스냅샷 입력에 있었거나(직전까지 활성) 이번 세션에
-    // 생성(promoted)된 것만 센다. weight<=0 전부를 세션발로 치던 15.299
-    // 휴리스틱은 상시 decay(15.322) 이후 누적 사망까지 +N으로 세는 오류가 됐다.
-    const beforeSnapshotItemIds = new Set(
-      sessionMemorySummary.clusterSnapshots.before.isFallback
-        ? []
-        : sessionMemorySummary.clusterSnapshots.before.itemIds,
-    );
+    // 그 페이즈 시점 기준 비활성(15.345): 과거 세션 리뷰를 현재 weight/
+    // archivedAt으로 판정하면 이후 세션의 decay/아카이브 사망이 소급 적용되어
+    // 당시 활성이던 클러스터 멤버가 비활성 그룹으로 빠지고 클러스터가
+    // 무너진다. 스냅샷이 있으면 멤버십으로 그 시점 상태를 복원하고, 없을
+    // 때만 현재 상태로 폴백한다.
+    const isInactiveGraphMemory = (
+      memory: (typeof cumulativeGraphMemories)[number],
+    ) =>
+      shouldUseSnapshotItems
+        ? !snapshotItemIds.has(memory.id)
+        : isCurrentlyInactiveMemory(memory);
+    // 이번 세션발 비활성(+N 배지, 15.344/15.345): 세션 처리 중 아카이브됐거나,
+    // after 시점 비활성이면서 세션 이전 스냅샷 입력에 있었거나(직전까지 활성)
+    // 이번 세션에 생성(promoted)된 것만 센다. after 페이즈에서만 호출되며,
+    // 스냅샷이 있으면 (before ∪ promoted) − after 집합 연산과 같아 과거
+    // 세션을 나중에 봐도 이후 누적 사망을 세지 않는다.
+    const beforeSnapshot = sessionMemorySummary.clusterSnapshots.before;
+    const beforeSnapshotItemIds = beforeSnapshot.isFallback
+      ? new Set<string>()
+      : snapshotMemberIds(beforeSnapshot);
     const isSessionScopedInactive = (
       memory: (typeof cumulativeGraphMemories)[number],
     ) =>
@@ -9768,23 +9788,15 @@ export default function MainScreenPage() {
     ) => {
       const referenced = referencedByMemoryId.get(memory.id);
       const isPromoted = promotedIds.has(memory.id);
-      // 비활성은 클러스터 스냅샷 입력에서 제외되므로 예외로 살려 비활성 메모리
-      // 그룹에 dimmed로 표시한다. before(N)=after(N-1) 등식(15.318)에 맞춰
-      // 세션 이전 페이즈에서도 누적 비활성을 after와 같은 규칙으로 보여준다
-      // (15.343) — 이번 세션 승격분(promoted)만 before에서 계속 숨긴다.
+      // 페이즈 시점 판정(15.345): 스냅샷 멤버는 클러스터에 남고, 비멤버는 그
+      // 시점 비활성으로 보아 비활성 메모리 그룹에 dimmed로 표시한다 —
+      // 멤버십이 곧 가시성이라 별도 스냅샷 가드는 필요 없다. before(N)=
+      // after(N-1) 등식(15.318)에 맞춰 세션 이전 페이즈에서도 누적 비활성을
+      // after와 같은 규칙으로 보여주고(15.343), 이번 세션 승격분(promoted)만
+      // before에서 계속 숨긴다.
       const isArchivedSession = sessionArchivedIds.has(memory.id);
-      const isArchivedAny = Boolean(memory.archivedAt) || isArchivedSession;
-      const isInactiveWeight = memory.weight != null && memory.weight <= 0;
-      const isInactive = isArchivedAny || isInactiveWeight;
+      const isInactive = isInactiveGraphMemory(memory);
       if (isInactive && !includeInactive) return false;
-      if (
-        shouldUseSnapshotItems &&
-        !snapshotItemIds.has(memory.id) &&
-        !isInactive &&
-        !(isStagedActiveUnclustered(memory) && memoryGraphPhase === "after")
-      ) {
-        return false;
-      }
       if (memoryGraphPhase === "before" && isPromoted) return false;
       if (memoryGraphFilter === "all") return true;
       if (memoryGraphFilter === "changed") {
@@ -9866,6 +9878,9 @@ export default function MainScreenPage() {
         archivedAt: memory.archivedAt ?? null,
         archiveReason: memory.archiveReason ?? null,
         inactive: isInactiveGraphMemory(memory),
+        // 위 inactive가 phase snapshot 멤버십 판정(15.345)이므로 표시 계층이
+        // 현재 weight/archivedAt로 재판정하지 않게 확정 플래그를 세운다.
+        inactiveResolved: true,
         inactiveReason: memory.inactiveReason ?? null,
         inactiveReasonDetail: memory.inactiveReasonDetail ?? null,
         pendingActivation: stagedMemoryActivations[memory.id]

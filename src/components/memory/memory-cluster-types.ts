@@ -65,6 +65,13 @@ export type ClusterGraphItem = {
   archivedAt?: number | null;
   archiveReason?: string | null;
   inactive?: boolean;
+  /**
+   * True면 caller가 활성/비활성을 이미 확정한 것이다(예: 세션 리뷰가 phase
+   * snapshot 멤버십으로 그 시점 상태를 판정). 표시 계층은 weight/archivedAt
+   * 휴리스틱으로 재판정하지 않고 inactive 값을 그대로 믿어야 한다 — 과거
+   * 세션 리뷰에서 현재 문서 상태가 당시 상태를 덮어쓰는 것을 막는다(15.345).
+   */
+  inactiveResolved?: boolean;
   inactiveReason?: string | null;
   inactiveReasonDetail?: string | null;
   /**
