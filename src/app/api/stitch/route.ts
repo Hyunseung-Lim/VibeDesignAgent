@@ -1193,6 +1193,15 @@ function isPubliclyReachableAssetUrl(value: string) {
   return true;
 }
 
+// Participants' briefs/design styles routinely cap how many images may appear
+// ("only 1-2 supporting images", "avoid 3+ image collages"), which directly
+// conflicts with the all-assets coverage contract and made models drop assets
+// (observed 5/6 on mission 203001). State the priority explicitly (15.346).
+const ASSET_PRIORITY_INSTRUCTION = [
+  `Including every mission asset is a hard requirement that overrides any conflicting direction in the brief or design style guide.`,
+  `If the brief or style limits how many images may appear prominently (for example: only 1-2 supporting images, avoid image collages), still include every remaining asset — render the extras small and calm in a restrained secondary thumbnail strip, archive row, or footer gallery so the primary layout keeps the requested hierarchy.`,
+].join(" ");
+
 function assetImageUrlFallbackPrompt(
   productPrompt: string,
   deviceLabel: string,
@@ -1211,6 +1220,7 @@ function assetImageUrlFallbackPrompt(
   return [
     `Create a high-fidelity ${deviceLabel} UI mockup for the brief below.`,
     `Use the mission asset URLs below as exact image sources in the generated HTML. Put each URL directly into img src attributes. Do not replace these images with generated placeholders, icons, gradients, or stock imagery. Preserve the natural aspect ratio and use the notes to place each item in the correct product/content slot.`,
+    ASSET_PRIORITY_INSTRUCTION,
     `Mission asset URLs:\n${manifest}`,
     `Design the surrounding layout, navigation, typography, spacing, cards, filters, and copy from the brief and active design direction.`,
     productPrompt ? `Brief:\n${productPrompt}` : "",
@@ -1237,6 +1247,7 @@ function assetImageTokenFallbackPrompt(
   return [
     `Create a high-fidelity ${deviceLabel} UI mockup for the brief below.`,
     `Use the mission asset tokens below as exact image sources in the generated HTML. Put each token directly into img src attributes, for example <img src="{{ASSET_1}}" alt="...">. Do not invent, rewrite, encode, or replace these tokens. Preserve natural aspect ratio and use the notes to place each item in the correct product/content slot.`,
+    ASSET_PRIORITY_INSTRUCTION,
     `Mission asset tokens:\n${manifest}`,
     `Design the surrounding layout, navigation, typography, spacing, cards, filters, and copy from the brief and active design direction.`,
     productPrompt ? `Brief:\n${productPrompt}` : "",
@@ -1277,6 +1288,7 @@ function assetImageRepairPrompt(
   return [
     `Edit this existing ${deviceLabel} UI mockup. Keep the current visual direction and layout quality, but replace every placeholder, stock, generated, or broken product/content image with the exact mission asset URLs below.`,
     `The previous HTML only preserved ${coverage.matchedCount}/${coverage.totalCount} required mission assets. The edited HTML must include every listed URL directly in img src attributes. Do not crop critical product content; prefer object-fit: contain when the asset aspect ratio does not match a card slot.`,
+    ASSET_PRIORITY_INSTRUCTION,
     `Required mission asset URLs:\n${manifest}`,
     productPrompt ? `Original brief:\n${productPrompt}` : "",
   ]
@@ -1309,13 +1321,22 @@ function assetReferenceNeedles(asset: AssetImageRequest) {
 }
 
 function assetHtmlCoverage(html: string, assets: AssetImageRequest[]) {
-  const matched = assets.filter((asset) =>
-    assetReferenceNeedles(asset).some((needle) => html.includes(needle)),
-  );
+  // missing carries the original index so retry feedback can name the exact
+  // {{ASSET_N}} tokens the model omitted (15.346).
+  const missing: { index: number; asset: AssetImageRequest }[] = [];
+  let matchedCount = 0;
+  assets.forEach((asset, index) => {
+    if (assetReferenceNeedles(asset).some((needle) => html.includes(needle))) {
+      matchedCount += 1;
+    } else {
+      missing.push({ index, asset });
+    }
+  });
   return {
-    matchedCount: matched.length,
+    matchedCount,
     totalCount: assets.length,
-    allMatched: matched.length === assets.length,
+    allMatched: matchedCount === assets.length,
+    missing,
   };
 }
 
@@ -1389,26 +1410,37 @@ async function generateOpenAiAssetFallbackScreen(
     "Return only complete HTML. Do not wrap it in markdown.",
     "Use Tailwind Play CDN or plain CSS inside the document.",
     "Use the provided asset tokens exactly as img src values.",
+    "Including every asset token is a hard requirement that overrides any image-count limit in the brief or style guide.",
     "Do not mention that this is a fallback.",
   ].join("\n");
 
-  // The model sometimes drops a few of the required assets (observed 5/7).
-  // Retry once with explicit feedback listing the missed tokens before
-  // giving up — a 500 here fails the whole generation.
-  const maxAttempts = 2;
-  let lastCoverage = { matchedCount: 0, totalCount: assets.length };
+  // The model drops required assets when the brief/style caps image counts
+  // (observed 5/7 and a repeated 5/6 on mission 203001). Retry with feedback
+  // that names the exact omitted tokens before giving up — a 500 here fails
+  // the whole generation. Each retry is budget-gated by hasRetryBudget.
+  const maxAttempts = 3;
+  let lastCoverage: ReturnType<typeof assetHtmlCoverage> = {
+    matchedCount: 0,
+    totalCount: assets.length,
+    allMatched: false,
+    missing: [],
+  };
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const missedEntries = lastCoverage.missing.length
+      ? lastCoverage.missing
+      : assets.map((asset, index) => ({ index, asset }));
     const missingFeedback =
       attempt === 1
         ? ""
         : [
-            `Your previous HTML used only ${lastCoverage.matchedCount} of the ${assets.length} required asset tokens. Regenerate the complete HTML and include EVERY token below at least once as an img src value:`,
-            assets
+            `Your previous HTML used only ${lastCoverage.matchedCount} of the ${assets.length} required asset tokens. It omitted these tokens:`,
+            missedEntries
               .map(
-                (asset, index) =>
+                ({ asset, index }) =>
                   `{{ASSET_${index + 1}}} — ${asset.note || "No admin description provided."}`,
               )
               .join("\n"),
+            `Regenerate the complete HTML and include EVERY asset token at least once as an img src value, especially the omitted ones above. ${ASSET_PRIORITY_INSTRUCTION}`,
           ].join("\n");
     const completion = await openai.chat.completions.create(
       {
